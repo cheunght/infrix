@@ -1,0 +1,2230 @@
+from django.db.models import Case, CharField, Count, F, Q, Prefetch, Sum, Value, When
+from django.db.models.functions import Coalesce
+from django.db import transaction
+import csv
+import io
+import re
+from collections import defaultdict
+from decimal import Decimal, InvalidOperation
+from django.contrib.auth import authenticate, login, logout
+from django.core.exceptions import ValidationError as DjangoValidationError
+from django.middleware.csrf import get_token
+from django.contrib.auth.models import Group, User
+from django_filters.rest_framework import DjangoFilterBackend
+from rest_framework import viewsets
+from rest_framework.filters import OrderingFilter, SearchFilter
+from rest_framework.decorators import action, api_view, permission_classes, parser_classes
+from rest_framework.parsers import MultiPartParser, FormParser
+from rest_framework.permissions import AllowAny, IsAdminUser, IsAuthenticated
+from rest_framework.response import Response
+from django.http import HttpResponse
+from django.shortcuts import get_object_or_404
+from django.utils import timezone
+from datetime import date, timedelta
+from openpyxl import Workbook
+from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
+from openpyxl.utils import get_column_letter
+from .models import AuditLog, Asset, AssetCategory, AssetCustomValue, AssetNetworkAddress, AssetTag, Brand, CustomField, CustomFieldOption, DataCenter, DeviceType, FaultEvent, InventoryItem, InventoryTask, MaintenanceContract, ProcurementRecord, Rack, RackUnitAllocation, RepairRecord, ServerRoom, SoftwareLicense, SparePart, SpareStock, SpareStockTransaction, Tag
+from .serializers import AuditLogSerializer, AssetCategorySerializer, AssetDetailSerializer, AssetListSerializer, AssetSerializer, AssetWriteSerializer, BrandSerializer, CustomFieldOptionSerializer, CustomFieldSerializer, DataCenterSerializer, DeviceTypeSerializer, FaultEventSerializer, GroupSerializer, InventoryItemSerializer, InventoryTaskSerializer, RackSerializer, RepairRecordSerializer, ServerRoomSerializer, SoftwareLicenseSerializer, SparePartSerializer, SpareStockSerializer, SpareStockTransactionSerializer, TagSerializer, UserSerializer
+from .services import apply_spare_stock_transaction, sync_asset_fault_status, sync_repair_completion
+from .audit import model_snapshot, write_audit_log
+from .permissions import BusinessRolePermission, CanExportAssets, CanExportFaults, CanExportInventory, CanExportRacks, CanImportAssets, CanManageInventory, CanViewAuditLog, CanViewDashboard, CanViewInventory, CanViewLicenses, IsSystemAdministrator
+from .roles import ROLE_DEFINITIONS, ROLE_NAME_TO_CODE, user_capabilities, user_role_code
+
+
+class AuditedModelViewSetMixin:
+    audit_resource = None
+
+    def audit_snapshot(self, instance):
+        return model_snapshot(instance)
+
+    @transaction.atomic
+    def perform_create(self, serializer):
+        instance = serializer.save()
+        write_audit_log(
+            self.request,
+            action="create",
+            resource_type=self.audit_resource,
+            resource_id=instance.pk,
+            after=self.audit_snapshot(instance),
+        )
+
+    @transaction.atomic
+    def perform_update(self, serializer):
+        before = self.audit_snapshot(serializer.instance)
+        instance = serializer.save()
+        write_audit_log(
+            self.request,
+            action="update",
+            resource_type=self.audit_resource,
+            resource_id=instance.pk,
+            before=before,
+            after=self.audit_snapshot(instance),
+        )
+
+    @transaction.atomic
+    def perform_destroy(self, instance):
+        before = self.audit_snapshot(instance)
+        resource_id = instance.pk
+        instance.delete()
+        write_audit_log(
+            self.request,
+            action="delete",
+            resource_type=self.audit_resource,
+            resource_id=resource_id,
+            before=before,
+        )
+
+
+def _date_filter_errors(request, fields):
+    """Return a field error for malformed ISO dates before they reach SQL."""
+    for field in fields:
+        value = request.query_params.get(field, "").strip()
+        if value:
+            try:
+                date.fromisoformat(value)
+            except ValueError:
+                return {field: "日期必须使用 YYYY-MM-DD 格式"}
+    return None
+
+
+class AssetViewSet(AuditedModelViewSetMixin, viewsets.ModelViewSet):
+    queryset = Asset.objects.select_related("department", "category", "brand", "device_type", "asset_data_center", "rack_allocation__rack__room__data_center").prefetch_related("network_addresses", "procurement_records", "maintenance_contracts", "asset_tags__tag", "custom_values__field__options").order_by("asset_no")
+    serializer_class = AssetSerializer
+    permission_classes = [BusinessRolePermission]
+    permission_resource = "assets"
+    audit_resource = "asset"
+    filter_backends = [DjangoFilterBackend, SearchFilter]
+    filterset_fields = ["status", "asset_type", "department", "brand", "device_type", "model"]
+    search_fields = [
+        "asset_no", "name", "asset_type", "brand_model", "serial_number", "purpose", "owner_name", "notes", "status",
+        "category__name", "category__color", "brand__name", "device_type__name", "model", "department__name", "department__code",
+        "network_addresses__address", "network_addresses__role", "network_addresses__status", "network_addresses__notes",
+        "rack_allocation__rack__code", "rack_allocation__rack__room__name", "rack_allocation__rack__room__data_center__name",
+        "rack_allocation__start_u", "rack_allocation__end_u",
+        "procurement_records__purchase_date", "procurement_records__supplier", "procurement_records__order_no", "procurement_records__amount", "procurement_records__notes",
+        "maintenance_contracts__provider", "maintenance_contracts__contract_no", "maintenance_contracts__notes",
+        "maintenance_contracts__start_date", "maintenance_contracts__expiry_date",
+        "asset_tags__tag__name", "custom_values__text_value", "custom_values__json_value",
+    ]
+
+    def get_queryset(self):
+        queryset = super().get_queryset()
+        if self.request.query_params.get("search", "").strip():
+            queryset = queryset.distinct()
+        if self.request.query_params.get("compact", "").lower() in {"1", "true", "yes"}:
+            queryset = queryset.select_related(
+                "category", "brand", "device_type", "asset_data_center", "rack_allocation__rack__room__data_center"
+            ).prefetch_related(None).prefetch_related(
+                Prefetch(
+                    "network_addresses",
+                    queryset=AssetNetworkAddress.objects.only("id", "asset_id", "role", "address"),
+                ),
+                Prefetch(
+                    "procurement_records",
+                    queryset=ProcurementRecord.objects.only("id", "asset_id", "purchase_date", "supplier", "order_no").order_by("-purchase_date", "-id"),
+                ),
+                Prefetch(
+                    "maintenance_contracts",
+                    queryset=MaintenanceContract.objects.only("id", "asset_id", "provider", "expiry_date").order_by("-updated_at", "-id"),
+                ),
+                Prefetch("asset_tags", queryset=AssetTag.objects.select_related("tag")),
+                Prefetch("custom_values", queryset=AssetCustomValue.objects.select_related("field").prefetch_related("field__options")),
+            )
+        tag = self.request.query_params.get("tag", "").strip()
+        if tag:
+            queryset = queryset.filter(asset_tags__tag__name__iexact=tag)
+        for query_key, value in self.request.query_params.items():
+            if not query_key.startswith("custom__") or not value.strip():
+                continue
+            field_key = query_key[8:]
+            field = CustomField.objects.filter(key=field_key, is_active=True).first()
+            if not field:
+                queryset = queryset.none()
+                break
+            base = {"custom_values__field_id": field.id}
+            if field.field_type in {"text", "textarea"}:
+                base["custom_values__text_value__icontains"] = value
+            elif field.field_type in {"select", "number", "date"}:
+                if field.field_type == "number":
+                    try:
+                        value = Decimal(value)
+                    except InvalidOperation:
+                        queryset = queryset.none()
+                        break
+                base["custom_values__text_value" if field.field_type == "select" else "custom_values__number_value" if field.field_type == "number" else "custom_values__date_value"] = value
+            elif field.field_type == "boolean":
+                if value.lower() in {"true", "1", "yes", "是"}:
+                    base["custom_values__boolean_value"] = True
+                elif value.lower() in {"false", "0", "no", "否"}:
+                    base["custom_values__boolean_value"] = False
+                else:
+                    queryset = queryset.none()
+                    break
+            else:
+                base["custom_values__json_value__icontains"] = value
+            queryset = queryset.filter(**base)
+        if tag or any(key.startswith("custom__") for key in self.request.query_params):
+            queryset = queryset.distinct()
+        return queryset
+
+    def get_serializer_class(self):
+        if self.action in {"create", "update", "partial_update"}:
+            return AssetWriteSerializer
+        if self.action == "retrieve":
+            return AssetDetailSerializer
+        if self.request.query_params.get("compact", "").lower() in {"1", "true", "yes"}:
+            return AssetListSerializer
+        return AssetSerializer
+
+    def audit_snapshot(self, instance):
+        refreshed = self.queryset.get(pk=instance.pk)
+        return AssetDetailSerializer(refreshed).data
+
+    @transaction.atomic
+    def perform_destroy(self, instance):
+        before = self.audit_snapshot(instance)
+        resource_id = instance.pk
+        try:
+            instance.delete()
+        except Exception as exc:
+            from django.db.models.deletion import ProtectedError
+            from rest_framework.exceptions import ValidationError as DRFValidationError
+            if isinstance(exc, ProtectedError):
+                protected = list(exc.protected_objects)
+                if any(isinstance(item, InventoryItem) for item in protected):
+                    raise DRFValidationError("资产存在历史盘点记录，不能删除") from exc
+                if any(isinstance(item, FaultEvent) for item in protected):
+                    raise DRFValidationError("资产存在关联故障记录，不能删除") from exc
+                raise DRFValidationError("资产存在关联数据，不能删除") from exc
+            raise
+        write_audit_log(
+            self.request,
+            action="delete",
+            resource_type=self.audit_resource,
+            resource_id=resource_id,
+            before=before,
+        )
+
+
+class RackViewSet(AuditedModelViewSetMixin, viewsets.ModelViewSet):
+    queryset = Rack.objects.select_related("room", "room__data_center").prefetch_related(
+        Prefetch("allocations", queryset=RackUnitAllocation.objects.select_related("asset", "asset__category", "asset__brand", "asset__device_type", "rack__room__data_center"))
+    )
+    serializer_class = RackSerializer
+    permission_classes = [BusinessRolePermission]
+    permission_resource = "racks"
+    audit_resource = "rack"
+    filter_backends = [DjangoFilterBackend, SearchFilter]
+    filterset_fields = ["room", "room__data_center", "code", "status"]
+    search_fields = ["code", "name", "rack_type", "owner_name", "room__name", "room__data_center__name"]
+
+    def get_queryset(self):
+        queryset = super().get_queryset()
+        category = self.request.query_params.get("category", "").strip()
+        if category:
+            queryset = queryset.filter(Q(allocations__asset__category__name=category) | Q(allocations__asset__category__isnull=True, allocations__asset__asset_type=category)).distinct()
+        active = self.request.query_params.get("is_active", "true").strip().lower()
+        if self.action in {"retrieve", "update", "partial_update", "destroy"}:
+            return queryset.order_by("room__data_center__name", "room__name", "code")
+        if active in {"true", "false"}:
+            queryset = queryset.filter(is_active=active == "true")
+        status = self.request.query_params.get("status", "").strip()
+        if status in {"in_use", "reserved", "disabled"}:
+            queryset = queryset.filter(status=status)
+        return queryset.order_by("room__data_center__name", "room__name", "code")
+
+    def perform_destroy(self, instance):
+        if instance.allocations.exists():
+            from rest_framework.exceptions import ValidationError as DRFValidationError
+            raise DRFValidationError("机柜仍有资产占用，不能删除，请先迁移资产或停用机柜")
+        super().perform_destroy(instance)
+
+
+class ServerRoomViewSet(AuditedModelViewSetMixin, viewsets.ModelViewSet):
+    queryset = ServerRoom.objects.select_related("data_center").annotate(
+        racks_count=Count("racks", distinct=True),
+        assets_count=Count("racks__allocations__asset", distinct=True),
+    ).order_by("data_center__name", "name")
+    serializer_class = ServerRoomSerializer
+    permission_classes = [BusinessRolePermission]
+    permission_resource = "racks"
+    audit_resource = "server_room"
+    filter_backends = [DjangoFilterBackend, SearchFilter, OrderingFilter]
+    filterset_fields = ["data_center", "is_active"]
+    search_fields = ["name", "data_center__name"]
+    ordering_fields = ["name", "created_at", "updated_at"]
+
+    def get_queryset(self):
+        queryset = super().get_queryset()
+        if self.action in {"retrieve", "update", "partial_update", "destroy"}:
+            return queryset
+        active = self.request.query_params.get("is_active", "true").strip().lower()
+        if active in {"true", "false"}:
+            queryset = queryset.filter(is_active=active == "true")
+        return queryset
+
+    def perform_destroy(self, instance):
+        if instance.racks.exists():
+            from rest_framework.exceptions import ValidationError as DRFValidationError
+            racks = list(instance.racks.values_list("code", flat=True)[:5])
+            raise DRFValidationError(
+                f"机房仍包含机柜（{', '.join(racks)}），不能删除，请先迁移或删除机柜后再操作"
+            )
+        try:
+            super().perform_destroy(instance)
+        except Exception as exc:
+            from django.db.models.deletion import ProtectedError
+            from rest_framework.exceptions import ValidationError as DRFValidationError
+            if isinstance(exc, ProtectedError):
+                if instance.spare_stocks.exists():
+                    raise DRFValidationError("机房仍有备件库存，不能删除，请先调整库存地点") from exc
+                if instance.spare_source_transactions.exists() or instance.spare_target_transactions.exists():
+                    raise DRFValidationError("机房存在备件库存流水，不能删除") from exc
+            raise
+
+
+class DataCenterViewSet(AuditedModelViewSetMixin, viewsets.ModelViewSet):
+    queryset = DataCenter.objects.annotate(
+        assets_count=(
+            Count("rooms__racks__allocations__asset", distinct=True)
+            + Count(
+                "unmounted_assets",
+                filter=Q(unmounted_assets__rack_allocation__isnull=True),
+                distinct=True,
+            )
+        ),
+        rooms_count=Count("rooms", distinct=True),
+    ).order_by("name")
+    serializer_class = DataCenterSerializer
+    permission_classes = [BusinessRolePermission]
+    permission_resource = "racks"
+    audit_resource = "data_center"
+
+    def get_queryset(self):
+        queryset = super().get_queryset()
+        # Keep inactive data centers addressable for administrator actions.
+        # The list defaults to active entries, but update/delete must still
+        # resolve a previously disabled entry instead of returning 404.
+        if self.action in {"retrieve", "update", "partial_update", "destroy"}:
+            return queryset
+        active = self.request.query_params.get("is_active", "true").strip().lower()
+        if active in {"true", "false"}:
+            queryset = queryset.filter(is_active=active == "true")
+        search = self.request.query_params.get("search", "").strip()
+        if search:
+            queryset = queryset.filter(Q(name__icontains=search) | Q(address__icontains=search))
+        return queryset
+
+    def perform_destroy(self, instance):
+        if instance.rooms.exists():
+            from rest_framework.exceptions import ValidationError as DRFValidationError
+            rooms = list(instance.rooms.values_list("name", flat=True)[:5])
+            raise DRFValidationError(f"数据中心仍包含机房（{', '.join(rooms)}），不能删除，请先删除机房或停用")
+        try:
+            super().perform_destroy(instance)
+        except Exception as exc:
+            from django.db.models.deletion import ProtectedError
+            from rest_framework.exceptions import ValidationError as DRFValidationError
+            if isinstance(exc, ProtectedError):
+                if instance.unmounted_assets.exists():
+                    raise DRFValidationError("数据中心仍有未上架资产归属，不能删除，请先调整资产所属数据中心") from exc
+                if instance.inventory_tasks.exists():
+                    raise DRFValidationError("数据中心仍有历史盘点任务，不能删除") from exc
+                if instance.spare_stocks.exists():
+                    raise DRFValidationError("数据中心仍有备件库存，不能删除，请先调整库存地点") from exc
+                if instance.spare_source_transactions.exists() or instance.spare_target_transactions.exists():
+                    raise DRFValidationError("数据中心存在备件库存流水，不能删除") from exc
+            raise
+
+    def destroy(self, request, *args, **kwargs):
+        # Resolve by primary key directly so an inactive data center is not
+        # hidden by the list filter during DELETE and turned into a 404.
+        from rest_framework.exceptions import NotFound
+        try:
+            instance = DataCenter.objects.get(pk=kwargs.get(self.lookup_field, kwargs.get("pk")))
+        except DataCenter.DoesNotExist as exc:
+            raise NotFound("数据中心不存在") from exc
+        self.perform_destroy(instance)
+        from rest_framework.response import Response
+        return Response(status=204)
+
+
+class AssetCategoryViewSet(AuditedModelViewSetMixin, viewsets.ModelViewSet):
+    queryset = AssetCategory.objects.annotate(assets_count=Count("assets")).order_by("name")
+    serializer_class = AssetCategorySerializer
+    permission_classes = [BusinessRolePermission]
+    permission_resource = "settings"
+    audit_resource = "asset_category"
+
+    def perform_destroy(self, instance):
+        if instance.assets.exists():
+            from rest_framework.exceptions import ValidationError as DRFValidationError
+            raise DRFValidationError("设备分类正在使用，不能删除")
+        super().perform_destroy(instance)
+
+
+class DictionaryViewSet(AuditedModelViewSetMixin, viewsets.ModelViewSet):
+    filter_backends = [DjangoFilterBackend, SearchFilter, OrderingFilter]
+    search_fields = ["name"]
+    ordering_fields = ["name", "created_at", "updated_at"]
+    ordering = ["name", "id"]
+
+    permission_classes = [BusinessRolePermission]
+    permission_resource = "settings"
+
+    def get_queryset(self):
+        queryset = self.queryset.annotate(assets_count=Count("assets"))
+        active = self.request.query_params.get("is_active", "true").strip().lower()
+        if "settings.manage" not in user_capabilities(self.request.user):
+            active = "true"
+        if active in {"true", "false"}:
+            queryset = queryset.filter(is_active=active == "true")
+        return queryset
+
+    def perform_create(self, serializer):
+        super().perform_create(serializer)
+        instance = serializer.instance
+        instance.assets_count = 0
+
+    def perform_update(self, serializer):
+        super().perform_update(serializer)
+        instance = serializer.instance
+        instance.assets_count = instance.assets.count()
+
+    def perform_destroy(self, instance):
+        if instance.assets.exists():
+            from rest_framework.exceptions import ValidationError as DRFValidationError
+            raise DRFValidationError("字典项正在被资产使用，不能删除，请先停用")
+        super().perform_destroy(instance)
+
+
+class BrandViewSet(DictionaryViewSet):
+    queryset = Brand.objects.all()
+    serializer_class = BrandSerializer
+    audit_resource = "brand"
+
+
+class DeviceTypeViewSet(DictionaryViewSet):
+    queryset = DeviceType.objects.all()
+    serializer_class = DeviceTypeSerializer
+    audit_resource = "device_type"
+
+
+class CustomFieldViewSet(AuditedModelViewSetMixin, viewsets.ModelViewSet):
+    queryset = CustomField.objects.select_related("device_type").prefetch_related("options").annotate(
+        assets_count=Count("asset_values__asset", distinct=True)
+    ).order_by("device_type__name", "sort_order", "id")
+    serializer_class = CustomFieldSerializer
+    permission_classes = [BusinessRolePermission]
+    permission_resource = "custom_fields"
+    audit_resource = "custom_field"
+    filter_backends = [DjangoFilterBackend, SearchFilter, OrderingFilter]
+    filterset_fields = ["device_type", "field_type", "is_active"]
+    search_fields = ["key", "name", "device_type__name"]
+    ordering_fields = ["name", "sort_order", "created_at", "updated_at"]
+
+    def get_queryset(self):
+        queryset = super().get_queryset()
+        if self.action not in {"retrieve", "update", "partial_update", "destroy"}:
+            active = self.request.query_params.get("is_active", "true").strip().lower()
+            if "custom_fields.manage" not in user_capabilities(self.request.user):
+                active = "true"
+            if active in {"true", "false"}:
+                queryset = queryset.filter(is_active=active == "true")
+        return queryset
+
+    @action(detail=False, methods=["get"], url_path="schema")
+    def schema_fields(self, request):
+        device_type = request.query_params.get("device_type", "").strip()
+        queryset = self.get_queryset().filter(is_active=True)
+        if device_type:
+            queryset = queryset.filter(device_type_id=device_type)
+        else:
+            queryset = queryset.none()
+        return Response(CustomFieldSerializer(queryset, many=True).data)
+
+    def perform_destroy(self, instance):
+        from rest_framework.exceptions import ValidationError as DRFValidationError
+        if instance.asset_values.exists():
+            raise DRFValidationError("字段已有资产值，不能删除，请先停用")
+        if instance.options.exists():
+            raise DRFValidationError("字段仍有选项，不能删除，请先删除选项")
+        super().perform_destroy(instance)
+
+
+class CustomFieldOptionViewSet(AuditedModelViewSetMixin, viewsets.ModelViewSet):
+    queryset = CustomFieldOption.objects.select_related("field", "field__device_type").order_by("field_id", "sort_order", "id")
+    serializer_class = CustomFieldOptionSerializer
+    permission_classes = [BusinessRolePermission]
+    permission_resource = "custom_fields"
+    audit_resource = "custom_field_option"
+    filter_backends = [DjangoFilterBackend, SearchFilter, OrderingFilter]
+    filterset_fields = ["field", "is_active"]
+    search_fields = ["value", "label", "field__name"]
+    ordering_fields = ["sort_order", "created_at", "updated_at"]
+
+    def perform_destroy(self, instance):
+        from rest_framework.exceptions import ValidationError as DRFValidationError
+        if instance.field.asset_values.filter(json_value__contains=[instance.value]).exists() or instance.field.asset_values.filter(text_value=instance.value).exists():
+            raise DRFValidationError("选项已有资产使用，不能删除，请先停用")
+        super().perform_destroy(instance)
+
+
+class TagViewSet(AuditedModelViewSetMixin, viewsets.ModelViewSet):
+    queryset = Tag.objects.annotate(assets_count=Count("asset_tags__asset", distinct=True)).order_by("name", "id")
+    serializer_class = TagSerializer
+    permission_classes = [BusinessRolePermission]
+    permission_resource = "tags"
+    audit_resource = "tag"
+    filter_backends = [DjangoFilterBackend, SearchFilter, OrderingFilter]
+    filterset_fields = ["is_active"]
+    search_fields = ["name"]
+    ordering_fields = ["name", "created_at", "updated_at"]
+
+    def get_queryset(self):
+        queryset = super().get_queryset()
+        if self.action not in {"retrieve", "update", "partial_update", "destroy"}:
+            active = self.request.query_params.get("is_active", "true").strip().lower()
+            if "tags.manage" not in user_capabilities(self.request.user):
+                active = "true"
+            if active in {"true", "false"}:
+                queryset = queryset.filter(is_active=active == "true")
+        return queryset
+
+    def perform_destroy(self, instance):
+        from rest_framework.exceptions import ValidationError as DRFValidationError
+        if instance.asset_tags.exists():
+            raise DRFValidationError("标签正在被资产使用，不能删除，请先停用")
+        super().perform_destroy(instance)
+
+
+class SparePartViewSet(AuditedModelViewSetMixin, viewsets.ModelViewSet):
+    queryset = SparePart.objects.select_related("brand").annotate(
+        total_quantity=Coalesce(Sum("stocks__quantity"), 0),
+        location_count=Count("stocks", distinct=True),
+        part_type_label_search=Case(
+            *[
+                When(part_type=code, then=Value(label))
+                for code, label in SparePart.PART_TYPES
+            ],
+            default=Value(""),
+            output_field=CharField(),
+        ),
+    ).order_by("name", "part_type", "id")
+    serializer_class = SparePartSerializer
+    permission_classes = [BusinessRolePermission]
+    permission_resource = "spares"
+    audit_resource = "spare_part"
+    filter_backends = [DjangoFilterBackend, SearchFilter, OrderingFilter]
+    filterset_fields = ["part_type", "brand", "is_active"]
+    search_fields = ["name", "part_type", "part_type_label_search", "brand__name", "model", "specification", "notes"]
+    ordering_fields = ["name", "part_type", "created_at", "updated_at"]
+
+    def get_queryset(self):
+        queryset = super().get_queryset()
+        # A part can be stored at more than one location. Filter through its
+        # stock balances and de-duplicate the result when it matches several
+        # locations.
+        data_center = self.request.query_params.get("data_center", "").strip()
+        server_room = self.request.query_params.get("server_room", "").strip()
+        if data_center:
+            queryset = queryset.filter(stocks__data_center_id=data_center)
+        if server_room:
+            queryset = queryset.filter(stocks__server_room_id=server_room)
+        if data_center or server_room:
+            queryset = queryset.distinct()
+        if self.action in {"retrieve", "update", "partial_update", "destroy"}:
+            return queryset
+        active = self.request.query_params.get("is_active", "true").strip().lower()
+        if "spares.manage" not in user_capabilities(self.request.user):
+            active = "true"
+        if active in {"true", "false"}:
+            queryset = queryset.filter(is_active=active == "true")
+        return queryset
+
+    def perform_destroy(self, instance):
+        from rest_framework.exceptions import ValidationError as DRFValidationError
+        if instance.stocks.exists():
+            raise DRFValidationError("备件已经建立库存地点，不能删除，请先停用")
+        if instance.transactions.exists():
+            raise DRFValidationError("备件存在库存流水，不能删除，请先停用")
+        super().perform_destroy(instance)
+
+
+class SpareStockViewSet(viewsets.ReadOnlyModelViewSet):
+    queryset = SpareStock.objects.select_related("part", "part__brand", "data_center", "server_room").order_by(
+        "part__name", "data_center__name", "server_room__name", "id"
+    )
+    serializer_class = SpareStockSerializer
+    permission_classes = [BusinessRolePermission]
+    permission_resource = "spares"
+    filter_backends = [DjangoFilterBackend, OrderingFilter]
+    filterset_fields = ["part", "data_center", "server_room"]
+    ordering_fields = ["quantity", "updated_at"]
+
+
+class SpareStockTransactionViewSet(viewsets.ModelViewSet):
+    queryset = SpareStockTransaction.objects.select_related(
+        "part", "part__brand", "operator", "source_data_center", "source_server_room",
+        "target_data_center", "target_server_room",
+    ).order_by("-created_at", "-id")
+    serializer_class = SpareStockTransactionSerializer
+    permission_classes = [BusinessRolePermission]
+    permission_resource = "spares"
+    http_method_names = ["get", "post", "head", "options"]
+    filter_backends = [DjangoFilterBackend, SearchFilter, OrderingFilter]
+    filterset_fields = ["part", "operation_type", "source_data_center", "target_data_center", "operator"]
+    search_fields = ["part__name", "part__model", "reference", "notes", "operator__username"]
+    ordering_fields = ["created_at", "quantity", "operation_type"]
+
+    @transaction.atomic
+    def perform_create(self, serializer):
+        from rest_framework.exceptions import ValidationError as DRFValidationError
+        try:
+            transaction_row = apply_spare_stock_transaction(serializer.validated_data, self.request.user)
+        except DjangoValidationError as exc:
+            detail = getattr(exc, "message_dict", None) or {"detail": "; ".join(exc.messages)}
+            raise DRFValidationError(detail) from exc
+        serializer.instance = transaction_row
+        write_audit_log(
+            self.request,
+            action="create",
+            resource_type="spare_stock_transaction",
+            resource_id=transaction_row.pk,
+            after=SpareStockTransactionSerializer(transaction_row).data,
+        )
+
+
+class SoftwareLicenseViewSet(AuditedModelViewSetMixin, viewsets.ModelViewSet):
+    queryset = SoftwareLicense.objects.all()
+    serializer_class = SoftwareLicenseSerializer
+    filter_backends = [SearchFilter, OrderingFilter]
+    search_fields = ["name", "vendor", "license_type", "notes"]
+    ordering_fields = ["name", "vendor", "expiry_date", "authorized_count", "used_count", "created_at"]
+    ordering = ["expiry_date", "name", "id"]
+    permission_classes = [BusinessRolePermission]
+    permission_resource = "licenses"
+    audit_resource = "software_license"
+
+    def get_queryset(self):
+        queryset = super().get_queryset()
+        status = self.request.query_params.get("status", "").strip()
+        today = timezone.localdate()
+        expiry_limit = today + timedelta(days=90)
+        within_limit = Q(used_count__lte=F("authorized_count"))
+        if status == "over_limit":
+            queryset = queryset.filter(used_count__gt=F("authorized_count"))
+        elif status == "expired":
+            queryset = queryset.filter(within_limit, expiry_date__lt=today)
+        elif status == "expiring":
+            queryset = queryset.filter(within_limit, expiry_date__gte=today, expiry_date__lte=expiry_limit)
+        elif status == "normal":
+            queryset = queryset.filter(within_limit).filter(Q(expiry_date__isnull=True) | Q(expiry_date__gt=expiry_limit))
+        return queryset
+
+
+class GroupViewSet(viewsets.ReadOnlyModelViewSet):
+    queryset = Group.objects.filter(name__in=ROLE_NAME_TO_CODE).annotate(user_count=Count("user")).order_by("id")
+    serializer_class = GroupSerializer
+    permission_classes = [IsSystemAdministrator]
+    filter_backends = [SearchFilter, OrderingFilter]
+    search_fields = ["name"]
+    ordering_fields = ["name", "user_count"]
+
+
+class UserViewSet(viewsets.ModelViewSet):
+    queryset = User.objects.prefetch_related("groups").order_by("username")
+    serializer_class = UserSerializer
+    permission_classes = [IsSystemAdministrator]
+    filter_backends = [SearchFilter, OrderingFilter]
+    search_fields = ["username", "first_name", "last_name", "email"]
+    ordering_fields = ["username", "date_joined", "last_login"]
+
+    def perform_destroy(self, instance):
+        if instance.pk == self.request.user.pk:
+            from rest_framework.exceptions import ValidationError as DRFValidationError
+            raise DRFValidationError("不能删除当前登录账号")
+        if instance.is_superuser:
+            from rest_framework.exceptions import ValidationError as DRFValidationError
+            raise DRFValidationError("不能通过业务接口删除超级管理员")
+        instance.delete()
+
+
+class FaultEventViewSet(AuditedModelViewSetMixin, viewsets.ModelViewSet):
+    queryset = FaultEvent.objects.select_related("asset", "repair")
+    serializer_class = FaultEventSerializer
+    filter_backends = [DjangoFilterBackend, SearchFilter, OrderingFilter]
+    filterset_fields = ["asset", "is_closed"]
+    search_fields = ["asset__asset_no", "asset__name", "reason", "description"]
+    ordering_fields = ["occurred_at", "created_at"]
+    ordering = ["-occurred_at"]
+    permission_classes = [BusinessRolePermission]
+    permission_resource = "faults"
+    audit_resource = "fault_event"
+
+    def get_queryset(self):
+        queryset = super().get_queryset()
+        start = self.request.query_params.get("start")
+        end = self.request.query_params.get("end")
+        if start:
+            queryset = queryset.filter(occurred_at__date__gte=start)
+        if end:
+            queryset = queryset.filter(occurred_at__date__lte=end)
+        return queryset
+
+    def list(self, request, *args, **kwargs):
+        errors = _date_filter_errors(request, ("start", "end"))
+        if errors:
+            return Response(errors, status=400)
+        return super().list(request, *args, **kwargs)
+
+    @transaction.atomic
+    def perform_create(self, serializer):
+        super().perform_create(serializer)
+        fault = serializer.instance
+        sync_asset_fault_status(fault.asset_id)
+
+    @transaction.atomic
+    def perform_update(self, serializer):
+        previous_asset_id = serializer.instance.asset_id
+        super().perform_update(serializer)
+        fault = serializer.instance
+        sync_asset_fault_status(previous_asset_id)
+        if fault.asset_id != previous_asset_id:
+            sync_asset_fault_status(fault.asset_id)
+
+    @transaction.atomic
+    def perform_destroy(self, instance):
+        asset_id = instance.asset_id
+        super().perform_destroy(instance)
+        sync_asset_fault_status(asset_id)
+
+
+class RepairRecordViewSet(AuditedModelViewSetMixin, viewsets.ModelViewSet):
+    queryset = RepairRecord.objects.select_related("fault", "fault__asset")
+    serializer_class = RepairRecordSerializer
+    filter_backends = [DjangoFilterBackend, OrderingFilter]
+    filterset_fields = ["fault"]
+    ordering_fields = ["created_at", "started_at", "finished_at"]
+    ordering = ["-created_at"]
+    permission_classes = [BusinessRolePermission]
+    permission_resource = "faults"
+    audit_resource = "repair_record"
+
+    @transaction.atomic
+    def perform_create(self, serializer):
+        super().perform_create(serializer)
+        repair = serializer.instance
+        sync_repair_completion(repair)
+
+    @transaction.atomic
+    def perform_update(self, serializer):
+        super().perform_update(serializer)
+        repair = serializer.instance
+        sync_repair_completion(repair)
+
+    @transaction.atomic
+    def perform_destroy(self, instance):
+        fault = instance.fault
+        super().perform_destroy(instance)
+        FaultEvent.objects.filter(pk=fault.pk).update(is_closed=False, resolved_at=None)
+        sync_asset_fault_status(fault.asset_id)
+
+
+def _inventory_snapshot(asset):
+    allocation = getattr(asset, "rack_allocation", None)
+    network = {
+        item.role: item.address
+        for item in getattr(asset, "network_addresses", []).all()
+    }
+    if allocation:
+        location = {
+            "data_center_id": allocation.rack.room.data_center_id,
+            "data_center": allocation.rack.room.data_center.name,
+            "server_room_id": allocation.rack.room_id,
+            "server_room": allocation.rack.room.name,
+            "rack_id": allocation.rack_id,
+            "rack_code": allocation.rack.code,
+            "start_u": allocation.start_u,
+            "end_u": allocation.end_u,
+        }
+    else:
+        location = {
+            "data_center_id": asset.asset_data_center_id,
+            "data_center": asset.asset_data_center.name if asset.asset_data_center_id else "",
+            "server_room_id": None,
+            "server_room": "",
+            "rack_id": None,
+            "rack_code": "",
+            "start_u": None,
+            "end_u": None,
+        }
+    return {
+        "asset_no": asset.asset_no,
+        "name": asset.name,
+        "asset_type": asset.asset_type,
+        "serial_number": asset.serial_number,
+        "status": asset.status,
+        "business_ip": network.get("business", ""),
+        "management_ip": network.get("management", ""),
+        "oob_ip": network.get("oob", ""),
+        **location,
+    }
+
+
+def _inventory_scope_assets(task):
+    queryset = Asset.objects.select_related(
+        "asset_data_center",
+        "rack_allocation__rack__room__data_center",
+    ).prefetch_related("network_addresses")
+    if task.server_room_id:
+        return queryset.filter(
+            rack_allocation__rack__room_id=task.server_room_id,
+            rack_allocation__rack__is_active=True,
+            rack_allocation__rack__room__is_active=True,
+        ).order_by("asset_no")
+    return queryset.filter(
+        Q(
+            rack_allocation__rack__room__data_center_id=task.data_center_id,
+            rack_allocation__rack__is_active=True,
+            rack_allocation__rack__room__is_active=True,
+        )
+        | Q(rack_allocation__isnull=True, asset_data_center_id=task.data_center_id)
+    ).distinct().order_by("asset_no")
+
+
+class InventoryTaskViewSet(AuditedModelViewSetMixin, viewsets.ModelViewSet):
+    queryset = InventoryTask.objects.select_related(
+        "data_center", "server_room", "inspector"
+    ).prefetch_related("items")
+    serializer_class = InventoryTaskSerializer
+    permission_classes = [BusinessRolePermission]
+    permission_resource = "inventory"
+    audit_resource = "inventory_task"
+    filter_backends = [DjangoFilterBackend, SearchFilter, OrderingFilter]
+    filterset_fields = ["status", "data_center", "server_room", "inspector"]
+    search_fields = ["name", "data_center__name", "server_room__name", "inspector__username"]
+    ordering_fields = ["created_at", "start_at", "end_at", "name"]
+    ordering = ["-created_at", "-id"]
+
+    def get_permissions(self):
+        if self.action == "export":
+            return [CanExportInventory()]
+        if self.action in {"complete", "reopen"}:
+            return [CanManageInventory()]
+        return super().get_permissions()
+
+    @transaction.atomic
+    def perform_create(self, serializer):
+        task = serializer.save(inspector=serializer.validated_data.get("inspector") or self.request.user)
+        assets = _inventory_scope_assets(task)
+        InventoryItem.objects.bulk_create([
+            InventoryItem(task=task, asset=asset, system_snapshot=_inventory_snapshot(asset))
+            for asset in assets
+        ])
+        write_audit_log(
+            self.request,
+            action="create",
+            resource_type=self.audit_resource,
+            resource_id=task.pk,
+            after={"task": model_snapshot(task), "items_created": len(assets)},
+        )
+
+    @action(detail=True, methods=["get"], url_path="items")
+    def items(self, request, pk=None):
+        # ``get_object`` applies the list search backends to query parameters.
+        # The item search belongs to the nested item queryset, so resolving the
+        # task from the base queryset prevents ``?search=SN...`` from filtering
+        # the task itself to a false 404.
+        task = get_object_or_404(InventoryTask, pk=pk)
+        queryset = InventoryItem.objects.filter(task=task).select_related(
+            "asset", "checked_by", "actual_rack__room__data_center"
+        ).order_by("asset__asset_no", "id")
+        search = request.query_params.get("search", "").strip()
+        if search:
+            queryset = queryset.filter(
+                Q(asset__asset_no__icontains=search)
+                | Q(asset__name__icontains=search)
+                | Q(asset__serial_number__icontains=search)
+                | Q(asset__network_addresses__address__icontains=search)
+            ).distinct()
+        status = request.query_params.get("status", "").strip()
+        if status:
+            queryset = queryset.filter(status=status)
+        page = self.paginate_queryset(queryset)
+        serializer = InventoryItemSerializer(page or queryset, many=True)
+        if page is not None:
+            return self.get_paginated_response(serializer.data)
+        return Response(serializer.data)
+
+    @action(detail=True, methods=["post"], url_path="complete")
+    @transaction.atomic
+    def complete(self, request, pk=None):
+        task = InventoryTask.objects.select_for_update().get(pk=self.get_object().pk)
+        if task.status == "completed":
+            return Response(InventoryTaskSerializer(task).data)
+        pending = task.items.filter(status="pending").count()
+        if pending:
+            return Response({"detail": f"还有 {pending} 台设备未盘点，不能完成任务"}, status=400)
+        task.status = "completed"
+        task.completed_at = timezone.now()
+        task.save(update_fields=["status", "completed_at", "updated_at"])
+        write_audit_log(
+            request,
+            action="complete",
+            resource_type=self.audit_resource,
+            resource_id=task.pk,
+            after={"status": task.status, "completed_at": task.completed_at},
+        )
+        return Response(InventoryTaskSerializer(task).data)
+
+    @action(detail=True, methods=["post"], url_path="reopen")
+    @transaction.atomic
+    def reopen(self, request, pk=None):
+        task = self.get_object()
+        task.status = "in_progress"
+        task.completed_at = None
+        task.save(update_fields=["status", "completed_at", "updated_at"])
+        write_audit_log(
+            request,
+            action="reopen",
+            resource_type=self.audit_resource,
+            resource_id=task.pk,
+            after={"status": task.status},
+        )
+        return Response(InventoryTaskSerializer(task).data)
+
+    @action(detail=True, methods=["get"], url_path="export")
+    def export(self, request, pk=None):
+        task = self.get_object()
+        items = InventoryItem.objects.filter(task=task).select_related(
+            "asset", "checked_by", "actual_rack__room__data_center"
+        ).order_by("asset__asset_no", "id")
+        book = Workbook()
+        sheet = book.active
+        sheet.title = "盘点结果"
+        headers = [
+            "盘点名称", "数据中心", "机房", "盘点人", "资产编号", "资产名称", "序列号", "设备类型", "业务 IP", "管理 IP", "带外 IP",
+            "系统机柜", "系统 U 位", "盘点结果", "实际数据中心", "实际机房", "实际机柜", "实际 U 位",
+            "盘点时间", "盘点人", "备注",
+        ]
+        sheet.append(headers)
+        for item in items:
+            snapshot = item.system_snapshot or {}
+            system_u = ""
+            if snapshot.get("start_u") is not None:
+                system_u = f"U{snapshot.get('start_u')}–U{snapshot.get('end_u')}"
+            actual_u = ""
+            if item.actual_start_u is not None:
+                actual_u = f"U{item.actual_start_u}–U{item.actual_end_u}"
+            sheet.append([
+                task.name, task.data_center.name, task.server_room.name if task.server_room_id else "整个数据中心",
+                task.inspector.get_full_name() or task.inspector.username, item.asset.asset_no, item.asset.name,
+                item.asset.serial_number or "", item.asset.asset_type,
+                snapshot.get("business_ip", ""), snapshot.get("management_ip", ""), snapshot.get("oob_ip", ""),
+                snapshot.get("rack_code", ""), system_u,
+                dict(InventoryItem.STATUS).get(item.status, item.status),
+                item.actual_rack.room.data_center.name if item.actual_rack_id else "",
+                item.actual_rack.room.name if item.actual_rack_id else "",
+                item.actual_rack.code if item.actual_rack_id else "", actual_u,
+                timezone.localtime(item.checked_at).replace(tzinfo=None) if item.checked_at else "",
+                item.checked_by.get_full_name() or item.checked_by.username if item.checked_by_id else "",
+                item.notes,
+            ])
+        for cell in sheet[1]:
+            cell.font = Font(bold=True, color="FFFFFF")
+            cell.fill = PatternFill("solid", fgColor="2563EB")
+            cell.alignment = Alignment(horizontal="center")
+        for column in sheet.columns:
+            values = [len(str(cell.value or "")) for cell in column]
+            sheet.column_dimensions[get_column_letter(column[0].column)].width = min(max(max(values) + 2, 12), 32)
+        response = HttpResponse(content_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+        response["Content-Disposition"] = f'attachment; filename="itam-inventory-{task.id}-{timezone.localdate().isoformat()}.xlsx"'
+        book.save(response)
+        return response
+
+
+class InventoryItemViewSet(viewsets.ModelViewSet):
+    queryset = InventoryItem.objects.select_related(
+        "task", "asset", "checked_by", "actual_rack__room__data_center"
+    )
+    serializer_class = InventoryItemSerializer
+    permission_classes = [BusinessRolePermission]
+    permission_resource = "inventory"
+    http_method_names = ["get", "patch", "head", "options"]
+    filter_backends = [DjangoFilterBackend]
+    filterset_fields = ["task", "status"]
+
+    @transaction.atomic
+    def perform_update(self, serializer):
+        item = serializer.instance
+        if item.task.status == "completed":
+            from rest_framework.exceptions import ValidationError as DRFValidationError
+            raise DRFValidationError({"detail": "已完成的盘点任务已锁定，不能修改"})
+        before = InventoryItemSerializer(item).data
+        updated = serializer.save()
+        if updated.status == "pending":
+            updated.checked_by = None
+            updated.checked_at = None
+        else:
+            updated.checked_by = self.request.user
+            updated.checked_at = timezone.now()
+        updated.save(update_fields=["checked_by", "checked_at", "updated_at"])
+        write_audit_log(
+            self.request,
+            action="update",
+            resource_type="inventory_item",
+            resource_id=updated.pk,
+            before=before,
+            after=InventoryItemSerializer(updated).data,
+        )
+
+
+@api_view(["GET"])
+@permission_classes([CanViewInventory])
+def asset_inventory_records(request, pk):
+    records = InventoryItem.objects.filter(asset_id=pk).select_related(
+        "task", "task__data_center", "task__server_room", "checked_by", "actual_rack__room__data_center"
+    )
+    if not Asset.objects.filter(pk=pk).exists():
+        from rest_framework.exceptions import NotFound
+        raise NotFound("资产不存在")
+    return Response(InventoryItemSerializer(records, many=True).data)
+
+
+@api_view(["GET"])
+@permission_classes([CanManageInventory])
+def inventory_inspectors(request):
+    users = User.objects.filter(is_active=True).order_by("username")
+    return Response([
+        {"id": user.id, "username": user.username, "display_name": user.get_full_name() or user.username}
+        for user in users
+    ])
+
+
+class AuditLogViewSet(viewsets.ReadOnlyModelViewSet):
+    queryset = AuditLog.objects.select_related("actor").order_by("-created_at", "-id")
+    serializer_class = AuditLogSerializer
+    permission_classes = [CanViewAuditLog]
+    filter_backends = [DjangoFilterBackend, SearchFilter, OrderingFilter]
+    filterset_fields = ["actor", "resource_type", "action", "resource_id"]
+    search_fields = ["actor__username", "actor__first_name", "actor__last_name", "resource_type", "resource_id"]
+    ordering_fields = ["created_at"]
+
+    def get_queryset(self):
+        queryset = super().get_queryset()
+        start = self.request.query_params.get("start")
+        end = self.request.query_params.get("end")
+        if start:
+            try:
+                start = date.fromisoformat(start)
+            except ValueError:
+                return queryset.none()
+            queryset = queryset.filter(created_at__date__gte=start)
+        if end:
+            try:
+                end = date.fromisoformat(end)
+            except ValueError:
+                return queryset.none()
+            queryset = queryset.filter(created_at__date__lte=end)
+        return queryset
+
+    def list(self, request, *args, **kwargs):
+        errors = _date_filter_errors(request, ("start", "end"))
+        if errors:
+            return Response(errors, status=400)
+        return super().list(request, *args, **kwargs)
+
+
+@api_view(["POST"])
+@permission_classes([AllowAny])
+def auth_login(request):
+    username = request.data.get("username", "").strip()
+    password = request.data.get("password", "")
+    user = authenticate(request, username=username, password=password)
+    if not user or not user.is_active:
+        return Response({"detail": "用户名或密码错误"}, status=400)
+    login(request, user)
+    role_code = user_role_code(user)
+    return Response({
+        "username": user.username,
+        "display_name": user.get_full_name() or user.username,
+        "is_staff": role_code == "system_admin",
+        "role_code": role_code,
+        "role_name": ROLE_DEFINITIONS[role_code]["name"],
+        "permissions": user_capabilities(user),
+    })
+
+
+@api_view(["GET"])
+@permission_classes([AllowAny])
+def auth_csrf(request):
+    return Response({"csrfToken": get_token(request)})
+
+
+@api_view(["GET"])
+@permission_classes([IsAuthenticated])
+def auth_me(request):
+    role_code = user_role_code(request.user)
+    return Response({
+        "username": request.user.username,
+        "display_name": request.user.get_full_name() or request.user.username,
+        "is_staff": role_code == "system_admin",
+        "role_code": role_code,
+        "role_name": ROLE_DEFINITIONS[role_code]["name"],
+        "permissions": user_capabilities(request.user),
+    })
+
+
+@api_view(["POST"])
+@permission_classes([IsAuthenticated])
+def auth_logout(request):
+    logout(request)
+    return Response({"ok": True})
+
+
+@api_view(["POST"])
+@permission_classes([IsAuthenticated])
+def auth_change_password(request):
+    old_password = request.data.get("old_password", "")
+    new_password = request.data.get("new_password", "")
+    if len(new_password) < 8:
+        return Response({"detail": "新密码至少需要 8 位"}, status=400)
+    if not request.user.check_password(old_password):
+        return Response({"detail": "原密码错误"}, status=400)
+    request.user.set_password(new_password)
+    request.user.save(update_fields=["password"])
+    login(request, request.user)
+    return Response({"ok": True})
+
+
+IMPORT_MAX_FILE_SIZE = 10 * 1024 * 1024
+IMPORT_MAX_ROWS = 10000
+IMPORT_FIELD_LABELS = {
+    "asset_no": "资产编号",
+    "name": "资产名称",
+    "asset_type": "资产类型",
+    "category": "设备分类",
+    "brand": "品牌",
+    "device_type": "设备类型",
+    "asset_data_center": "所属数据中心",
+    "model": "型号",
+    "serial_number": "序列号",
+    "status": "状态",
+    "configuration": "机柜位置",
+    "data_center": "数据中心",
+    "server_room": "机房",
+    "rack_code": "机柜编号",
+    "rack_start_u": "起始 U",
+    "rack_end_u": "结束 U",
+    "business_ip": "业务 IP",
+    "management_ip": "管理 IP",
+    "oob_ip": "带外 IP",
+    "purchase_date": "采购日期",
+    "supplier": "供应商",
+    "purchase_order_no": "采购单号",
+    "purchase_amount": "采购金额",
+    "maintenance_provider": "维保厂商",
+    "maintenance_contract_no": "维保合同号",
+    "maintenance_start_date": "维保开始日",
+    "maintenance_expiry_date": "维保到期日",
+    "tags": "标签",
+}
+
+
+def _import_error_items(detail):
+    """Normalize DRF/Django errors to the preview's field/message shape."""
+    if isinstance(detail, dict):
+        result = []
+        for field, value in detail.items():
+            values = value if isinstance(value, (list, tuple)) else [value]
+            for item in values:
+                result.append({
+                    "field": str(field),
+                    "label": IMPORT_FIELD_LABELS.get(str(field), str(field)),
+                    "message": str(item),
+                })
+        return result
+    if isinstance(detail, (list, tuple)):
+        return [{"field": "row", "label": "整行", "message": str(item)} for item in detail]
+    return [{"field": "row", "label": "整行", "message": str(detail or "数据格式不正确")}]
+
+
+def _read_asset_import(upload):
+    if not upload:
+        raise ValueError("请上传 CSV 文件")
+    if upload.size > IMPORT_MAX_FILE_SIZE:
+        raise ValueError("CSV 文件不能超过 10 MB")
+    try:
+        content = upload.read().decode("utf-8-sig")
+    except UnicodeDecodeError as exc:
+        raise ValueError("CSV 必须使用 UTF-8 编码") from exc
+    reader = csv.DictReader(io.StringIO(content))
+    headers = set(reader.fieldnames or [])
+    required = {"asset_no", "name"}
+    if not required.issubset(headers) or not ({"category", "asset_type", "device_type"} & headers):
+        raise ValueError("CSV 必须包含 asset_no、name，以及 category、asset_type 或 device_type 列")
+    rows = []
+    for line, row in enumerate(reader, start=2):
+        if line > IMPORT_MAX_ROWS + 1:
+            raise ValueError("单次导入最多支持 10000 条资产")
+        rows.append((line, row))
+    return headers, rows
+
+
+def _prepare_asset_import_payload(row, headers):
+    """Resolve dictionary references and convert a CSV row to write payload.
+
+    This function intentionally does not touch the database beyond read-only
+    lookups.  Both preview and the real import call the same resolver so that
+    a row cannot pass preview and fail later because of different parsing.
+    """
+    asset_no = (row.get("asset_no") or "").strip()
+    asset_name = (row.get("name") or "").strip()
+    if not asset_no:
+        raise DjangoValidationError({"asset_no": "资产编号不能为空"})
+    if not asset_name:
+        raise DjangoValidationError({"name": "资产名称不能为空"})
+
+    category_name = (row.get("category") or row.get("asset_type") or "").strip()
+    category = AssetCategory.objects.filter(name__iexact=category_name).first() if category_name else None
+    if (row.get("category") or "").strip() and not category:
+        raise DjangoValidationError({"category": f"未找到设备分类“{category_name}”"})
+    brand_name = (row.get("brand") or "").strip()
+    brand = Brand.objects.filter(name__iexact=brand_name, is_active=True).first() if brand_name else None
+    if brand_name and not brand:
+        raise DjangoValidationError({"brand": f"未找到品牌“{brand_name}”"})
+    model_name = (row.get("model") or row.get("asset_model") or "").strip()
+    device_type_name = (row.get("device_type") or "").strip()
+    device_type = DeviceType.objects.filter(name__iexact=device_type_name, is_active=True).first() if device_type_name else None
+    if device_type_name and not device_type:
+        raise DjangoValidationError({"device_type": f"未找到设备类型“{device_type_name}”"})
+    asset_data_center_name = (row.get("asset_data_center") or "").strip()
+    asset_data_center = DataCenter.objects.filter(name__iexact=asset_data_center_name, is_active=True).first() if asset_data_center_name else None
+    if asset_data_center_name and not asset_data_center:
+        raise DjangoValidationError({"asset_data_center": f"未找到所属数据中心“{asset_data_center_name}”"})
+    legacy_type = (row.get("asset_type") or category_name).strip()
+    if not device_type and legacy_type:
+        device_type = DeviceType.objects.filter(name__iexact=legacy_type, is_active=True).first()
+    asset_type = device_type.name if device_type else (category.name if category else legacy_type)
+    if not asset_type:
+        raise DjangoValidationError({"asset_type": "设备类型不能为空"})
+
+    custom_values = {}
+    for header in sorted(headers):
+        if not header.startswith("custom__"):
+            continue
+        field_key = header[8:].strip()
+        field = CustomField.objects.filter(key=field_key).first()
+        if not field:
+            raise DjangoValidationError({header: f"未知自定义字段编码“{field_key}”"})
+        raw_custom = (row.get(header) or "").strip()
+        if not raw_custom:
+            continue
+        if field.field_type == "multiselect":
+            custom_values[field_key] = [item.strip() for item in raw_custom.split(";") if item.strip()]
+        elif field.field_type == "boolean":
+            if raw_custom.lower() in {"true", "1", "yes", "是"}:
+                custom_values[field_key] = True
+            elif raw_custom.lower() in {"false", "0", "no", "否"}:
+                custom_values[field_key] = False
+            else:
+                raise DjangoValidationError({header: "布尔值只能填写 true/false、是/否"})
+        else:
+            custom_values[field_key] = raw_custom
+
+    tag_values = []
+    tag_text = (row.get("tags") or "").strip()
+    if tag_text:
+        for tag_name in [item.strip() for item in tag_text.split(";") if item.strip()]:
+            tag = Tag.objects.filter(name__iexact=tag_name, is_active=True).first()
+            if not tag:
+                raise DjangoValidationError({"tags": f"未找到启用标签“{tag_name}”"})
+            tag_values.append(tag.pk)
+    return {
+        "asset_no": asset_no,
+        "name": asset_name,
+        "asset_type": asset_type,
+        "category": category.pk if category else None,
+        "brand": brand.pk if brand else None,
+        "device_type": device_type.pk if device_type else None,
+        "asset_data_center": asset_data_center.pk if asset_data_center else None,
+        "model": model_name,
+        "brand_model": row.get("brand_model", ""),
+        "serial_number": row.get("serial_number") or None,
+        "purpose": row.get("purpose", ""),
+        "status": row.get("status") or "in_stock",
+        "owner_name": row.get("owner_name", ""),
+        "notes": row.get("notes", ""),
+        "configuration": row,
+        "tags": tag_values,
+        "custom_values": custom_values,
+    }
+
+
+def _preview_asset_changes(asset, payload):
+    fields = [
+        ("name", "资产名称", asset.name, payload.get("name", "")),
+        ("asset_type", "资产类型", asset.asset_type, payload.get("asset_type", "")),
+        ("model", "型号", asset.model or "", payload.get("model", "")),
+        ("serial_number", "序列号", asset.serial_number or "", payload.get("serial_number") or ""),
+        ("purpose", "用途", asset.purpose or "", payload.get("purpose", "")),
+        ("status", "状态", asset.status, payload.get("status", "in_stock")),
+        ("owner_name", "使用人", asset.owner_name or "", payload.get("owner_name", "")),
+        ("notes", "备注", asset.notes or "", payload.get("notes", "")),
+    ]
+    relation_fields = [
+        ("category", "设备分类", getattr(asset.category, "name", ""), payload.get("category")),
+        ("brand", "品牌", getattr(asset.brand, "name", ""), payload.get("brand")),
+        ("device_type", "设备类型", getattr(asset.device_type, "name", ""), payload.get("device_type")),
+        ("asset_data_center", "所属数据中心", getattr(asset.asset_data_center, "name", ""), payload.get("asset_data_center")),
+    ]
+    for field, label, old, new_id in relation_fields:
+        model = {"category": AssetCategory, "brand": Brand, "device_type": DeviceType, "asset_data_center": DataCenter}[field]
+        new = model.objects.filter(pk=new_id).values_list("name", flat=True).first() if new_id else ""
+        fields.append((field, label, old or "", new or ""))
+    changes = []
+    for field, label, old, new in fields:
+        if str(old or "") != str(new or ""):
+            changes.append({"field": field, "label": label, "old_value": old or "", "new_value": new or ""})
+    return changes
+
+
+def _preview_asset_row(line, row, headers, seen_asset_nos):
+    asset_no = (row.get("asset_no") or "").strip()
+    name = (row.get("name") or "").strip()
+    base = {"line": line, "asset_no": asset_no, "name": name, "action": "create", "changes": [], "errors": []}
+    if asset_no in seen_asset_nos:
+        base["action"] = "conflict"
+        base["errors"] = [{"field": "asset_no", "label": "资产编号", "message": "文件内重复的资产编号，确认导入时将跳过该行"}]
+        return base
+    if asset_no:
+        seen_asset_nos.add(asset_no)
+    existing = Asset.objects.select_related("category", "brand", "device_type", "asset_data_center").filter(asset_no=asset_no).first() if asset_no else None
+    try:
+        payload = _prepare_asset_import_payload(row, headers)
+    except Exception as exc:
+        base["action"] = "error"
+        base["errors"] = _import_error_items(getattr(exc, "message_dict", None) or getattr(exc, "detail", None) or str(exc))
+        return base
+    if existing:
+        base["action"] = "conflict"
+        base["changes"] = _preview_asset_changes(existing, payload)
+        base["errors"] = [{"field": "asset_no", "label": "资产编号", "message": "资产编号已存在，确认导入时不会更新该资产"}]
+        return base
+    try:
+        with transaction.atomic():
+            serializer = AssetWriteSerializer(data=payload)
+            serializer.is_valid(raise_exception=True)
+            serializer.save()
+            transaction.set_rollback(True)
+    except Exception as exc:
+        base["action"] = "error"
+        detail = getattr(exc, "detail", None) or getattr(exc, "message_dict", None) or str(exc)
+        base["errors"] = _import_error_items(detail)
+    return base
+
+
+@api_view(["POST"])
+@permission_classes([CanImportAssets])
+@parser_classes([MultiPartParser, FormParser])
+def asset_import_preview(request):
+    try:
+        headers, rows = _read_asset_import(request.FILES.get("file"))
+    except ValueError as exc:
+        return Response({"detail": str(exc)}, status=400)
+    seen_asset_nos = set()
+    preview_rows = [_preview_asset_row(line, row, headers, seen_asset_nos) for line, row in rows]
+    ready = sum(item["action"] == "create" and not item["errors"] for item in preview_rows)
+    conflicts = sum(item["action"] == "conflict" for item in preview_rows)
+    errors = sum(item["action"] == "error" for item in preview_rows)
+    return Response({
+        "filename": request.FILES["file"].name,
+        "total": len(preview_rows),
+        "summary": {"ready": ready, "conflicts": conflicts, "errors": errors},
+        "rows": preview_rows,
+    })
+
+
+@api_view(["POST"])
+@permission_classes([CanImportAssets])
+@parser_classes([MultiPartParser, FormParser])
+@transaction.atomic
+def asset_import(request):
+    try:
+        headers, rows = _read_asset_import(request.FILES.get("file"))
+    except ValueError as exc:
+        return Response({"detail": str(exc)}, status=400)
+    created, errors, seen_asset_nos = 0, [], set()
+    for line, row in rows:
+        asset_no = (row.get("asset_no") or "").strip()
+        asset_name = (row.get("name") or "").strip()
+        if not asset_no or not asset_name:
+            missing = {}
+            if not asset_no:
+                missing["asset_no"] = "资产编号不能为空"
+            if not asset_name:
+                missing["name"] = "资产名称不能为空"
+            errors.append({"line": line, "detail": missing})
+            continue
+        if asset_no in seen_asset_nos:
+            errors.append({"line": line, "detail": {"asset_no": "文件内重复的资产编号"}})
+            continue
+        seen_asset_nos.add(asset_no)
+        if Asset.objects.filter(asset_no=asset_no).exists():
+            errors.append({"line": line, "detail": {"asset_no": "资产编号已存在"}})
+            continue
+        try:
+            payload = _prepare_asset_import_payload(row, headers)
+            serializer = AssetWriteSerializer(data=payload)
+            serializer.is_valid(raise_exception=True)
+            serializer.save()
+            created += 1
+        except Exception as exc:
+            detail = getattr(exc, "detail", None) or getattr(exc, "message_dict", None) or str(exc)
+            errors.append({"line": line, "detail": detail if detail else "数据格式不正确"})
+    write_audit_log(
+        request,
+        action="import",
+        resource_type="asset",
+        resource_id="bulk",
+        after={"filename": request.FILES["file"].name, "created": created, "failed": len(errors)},
+    )
+    return Response({"created": created, "errors": errors})
+
+
+@api_view(["GET"])
+@permission_classes([CanExportAssets])
+def asset_export(request):
+    ids_param = request.query_params.get("ids", "").strip()
+    queryset = Asset.objects.select_related("category", "brand", "device_type", "asset_data_center", "rack_allocation__rack__room__data_center").prefetch_related(
+        "network_addresses", "procurement_records", "maintenance_contracts", "asset_tags__tag", "custom_values__field__options"
+    ).order_by("asset_no")
+    if ids_param:
+        try:
+            asset_ids = [int(value) for value in ids_param.split(",") if value.strip()]
+        except ValueError:
+            return Response({"detail": "资产 ID 格式不正确"}, status=400)
+        queryset = queryset.filter(id__in=asset_ids)
+
+    assets = list(queryset)
+    custom_fields = list(
+        CustomField.objects.filter(
+            Q(device_type__assets__in=assets) | Q(asset_values__asset__in=assets)
+        ).distinct().prefetch_related("options").order_by("device_type__name", "sort_order", "id")
+    ) if assets else []
+    headers = [
+        "资产编号", "资产名称", "分类", "设备类型", "品牌", "型号", "品牌/型号", "序列号", "用途", "状态", "使用人",
+        "数据中心", "机房", "机柜编号", "起止 U 位", "业务 IP", "管理 IP", "带外 IP", "采购日期",
+        "供应商", "采购单号", "维保厂商", "维保合同号", "维保开始日", "维保到期日", "备注", "标签",
+    ]
+    headers.extend([f"custom__{field.key}" for field in custom_fields])
+    status_labels = dict(Asset.STATUS)
+    book = Workbook()
+    sheet = book.active
+    sheet.title = "资产台账"
+    sheet.append(headers)
+    for asset in assets:
+        networks = {item.role: item.address for item in asset.network_addresses.all()}
+        rack = getattr(asset, "rack_allocation", None)
+        procurement = next(iter(asset.procurement_records.all()), None)
+        maintenance = next(iter(asset.maintenance_contracts.all()), None)
+        custom_by_key = {}
+        for item in asset.custom_values.all():
+            field = item.field
+            if field.field_type in {"text", "textarea", "select"}:
+                value = item.text_value
+            elif field.field_type == "number":
+                value = str(item.number_value) if item.number_value is not None else ""
+            elif field.field_type == "date":
+                value = item.date_value.isoformat() if item.date_value else ""
+            elif field.field_type == "boolean":
+                value = "true" if item.boolean_value else "false"
+            else:
+                value = ";".join(item.json_value or [])
+            custom_by_key[field.key] = value
+        tag_text = ";".join(item.tag.name for item in asset.asset_tags.all())
+        row_values = [
+            asset.asset_no, asset.name, asset.category.name if asset.category_id else "", asset.device_type.name if asset.device_type_id else asset.asset_type,
+            asset.brand.name if asset.brand_id else "", asset.model or "", asset.brand_model, asset.serial_number or "", asset.purpose, status_labels.get(asset.status, asset.status), asset.owner_name,
+            rack.rack.room.data_center.name if rack else (asset.asset_data_center.name if asset.asset_data_center_id else ""), rack.rack.room.name if rack else "", rack.rack.code if rack else "",
+            f"U{rack.start_u}-U{rack.end_u}" if rack else "", networks.get("business", ""), networks.get("management", ""), networks.get("oob", ""),
+            procurement.purchase_date if procurement else "", procurement.supplier if procurement else "", procurement.order_no if procurement else "",
+            maintenance.provider if maintenance else "", maintenance.contract_no if maintenance else "", maintenance.start_date if maintenance else "", maintenance.expiry_date if maintenance else "", asset.notes,
+            tag_text,
+        ]
+        row_values.extend(custom_by_key.get(field.key, "") for field in custom_fields)
+        sheet.append(row_values)
+    for column in sheet.columns:
+        width = min(max(len(str(cell.value or "")) for cell in column) + 2, 32)
+        sheet.column_dimensions[get_column_letter(column[0].column)].width = width
+    response = HttpResponse(content_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+    response["Content-Disposition"] = 'attachment; filename="assets.xlsx"'
+    book.save(response)
+    return response
+
+
+def _repair_queryset(request):
+    queryset = FaultEvent.objects.select_related("asset", "repair").order_by("-occurred_at")
+    keyword = request.query_params.get("search", "").strip()
+    status = request.query_params.get("is_closed", "").strip().lower()
+    start = request.query_params.get("start")
+    end = request.query_params.get("end")
+    if keyword:
+        queryset = queryset.filter(Q(asset__asset_no__icontains=keyword) | Q(asset__name__icontains=keyword) | Q(reason__icontains=keyword) | Q(description__icontains=keyword))
+    if status in {"true", "false"}:
+        queryset = queryset.filter(is_closed=status == "true")
+    if start:
+        queryset = queryset.filter(occurred_at__date__gte=start)
+    if end:
+        queryset = queryset.filter(occurred_at__date__lte=end)
+    return queryset
+
+
+@api_view(["GET"])
+@permission_classes([CanExportFaults])
+def repair_record_export(request):
+    errors = _date_filter_errors(request, ("start", "end"))
+    if errors:
+        return Response(errors, status=400)
+    book = Workbook()
+    sheet = book.active
+    sheet.title = "维修记录"
+    sheet.append(["资产编号", "资产名称", "故障发生时间", "故障原因", "故障描述", "维修完成时间", "状态"])
+    for fault in _repair_queryset(request):
+        repair = getattr(fault, "repair", None)
+        sheet.append([
+            fault.asset.asset_no, fault.asset.name, timezone.localtime(fault.occurred_at).replace(tzinfo=None),
+            fault.reason, fault.description,
+            timezone.localtime(repair.finished_at).replace(tzinfo=None) if repair and repair.finished_at else "",
+            "已关闭" if fault.is_closed else "未关闭",
+        ])
+    for column in sheet.columns:
+        sheet.column_dimensions[get_column_letter(column[0].column)].width = min(max(len(str(cell.value or "")) for cell in column) + 2, 40)
+    response = HttpResponse(content_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+    response["Content-Disposition"] = f'attachment; filename="itam-repairs-{timezone.localdate().isoformat()}.xlsx"'
+    book.save(response)
+    return response
+
+
+@api_view(["GET"])
+@permission_classes([CanViewLicenses])
+def license_summary(request):
+    today = timezone.localdate()
+    expiry_limit = today + timedelta(days=90)
+    licenses = SoftwareLicense.objects.all()
+    return Response({
+        "total": licenses.count(),
+        "within_90_days": licenses.filter(expiry_date__gte=today, expiry_date__lte=expiry_limit).count(),
+        "over_license_risk": licenses.filter(used_count__gt=F("authorized_count")).count(),
+    })
+
+
+def _rack_effective_used_u(allocations, total_u=None):
+    """Count allocated U plus single-U gaps between adjacent devices.
+
+    A one-U gap between two devices is treated as unavailable. Larger gaps
+    remain available because the system does not reserve general cooling space.
+    """
+    ordered = sorted(allocations, key=lambda allocation: (allocation.start_u, allocation.end_u))
+    used_u = sum(allocation.units for allocation in ordered)
+    for previous, current in zip(ordered, ordered[1:]):
+        if current.start_u - previous.end_u - 1 == 1:
+            used_u += 1
+    return min(used_u, total_u) if total_u is not None else used_u
+
+
+@api_view(["GET"])
+@permission_classes([CanViewDashboard])
+def dashboard_overview(request):
+    """Return the data used by the operations dashboard.
+
+    The endpoint deliberately keeps the original response fields while adding
+    the aggregates used by the Infrix home page.  Filters are applied to every
+    asset-, rack-, fault- and maintenance-based aggregate so a dashboard view
+    never mixes locations from different scopes.
+    """
+    data_center_value = request.query_params.get("data_center", "").strip()
+    server_room_value = (
+        request.query_params.get("server_room", "").strip()
+        or request.query_params.get("room", "").strip()
+    )
+    selected_data_center = None
+    selected_server_room = None
+    if data_center_value:
+        try:
+            selected_data_center = DataCenter.objects.get(
+                pk=int(data_center_value), is_active=True
+            )
+        except (ValueError, DataCenter.DoesNotExist):
+            return Response({"detail": "数据中心筛选无效"}, status=400)
+    if server_room_value:
+        try:
+            selected_server_room = ServerRoom.objects.select_related(
+                "data_center"
+            ).get(pk=int(server_room_value), is_active=True, data_center__is_active=True)
+        except (ValueError, ServerRoom.DoesNotExist):
+            return Response({"detail": "机房筛选无效"}, status=400)
+        if selected_data_center and selected_server_room.data_center_id != selected_data_center.id:
+            return Response({"detail": "所选机房不属于当前数据中心"}, status=400)
+        if not selected_data_center:
+            selected_data_center = selected_server_room.data_center
+
+    assets = Asset.objects.all()
+    if selected_server_room:
+        assets = assets.filter(
+            rack_allocation__rack__room_id=selected_server_room.id,
+            rack_allocation__rack__is_active=True,
+            rack_allocation__rack__room__is_active=True,
+        )
+    elif selected_data_center:
+        assets = assets.filter(
+            Q(
+                rack_allocation__rack__room__data_center_id=selected_data_center.id,
+                rack_allocation__rack__is_active=True,
+                rack_allocation__rack__room__is_active=True,
+            )
+            | Q(rack_allocation__isnull=True, asset_data_center_id=selected_data_center.id)
+        )
+    assets = assets.distinct()
+    asset_rows = list(
+        assets.select_related(
+            "device_type",
+            "asset_data_center",
+            "rack_allocation__rack__room__data_center",
+        ).prefetch_related("network_addresses")
+    )
+    asset_ids = [asset.id for asset in asset_rows]
+    # Capacity and rack metrics describe the currently usable infrastructure.
+    # Data centers, rooms and racks are soft-deleted via ``is_active``; using
+    # the unfiltered relations here would keep retired locations visible on
+    # the dashboard even though they no longer appear in the management lists.
+    rack_queryset = Rack.objects.filter(
+            is_active=True,
+            room__is_active=True,
+            room__data_center__is_active=True,
+        )
+    if selected_data_center:
+        rack_queryset = rack_queryset.filter(room__data_center_id=selected_data_center.id)
+    if selected_server_room:
+        rack_queryset = rack_queryset.filter(room_id=selected_server_room.id)
+    racks = list(
+        rack_queryset.select_related("room__data_center")
+        .prefetch_related("allocations")
+        .order_by("room__data_center__name", "room__name", "code")
+    )
+    room_queryset = ServerRoom.objects.filter(
+        is_active=True, data_center__is_active=True
+    )
+    if selected_data_center:
+        room_queryset = room_queryset.filter(data_center_id=selected_data_center.id)
+    if selected_server_room:
+        room_queryset = room_queryset.filter(pk=selected_server_room.id)
+    rooms = list(
+        room_queryset.select_related("data_center").order_by(
+            "data_center__name", "name"
+        )
+    )
+    used_u = 0
+    device_count = 0
+    room_capacity_map = {
+        room.id: {
+            "room_id": room.id,
+            "data_center": room.data_center.name,
+            "room": room.name,
+            "used_u": 0,
+            "total_u": 0,
+        }
+        for room in rooms
+    }
+    active_data_centers = DataCenter.objects.filter(is_active=True).order_by("name")
+    if selected_data_center:
+        active_data_centers = active_data_centers.filter(pk=selected_data_center.id)
+    data_center_capacity_map = {
+        data_center.id: {
+            "data_center_id": data_center.id,
+            "data_center": data_center.name,
+            "used_u": 0,
+            "total_u": 0,
+        }
+        for data_center in active_data_centers
+    }
+    for rack in racks:
+        allocations = list(rack.allocations.all())
+        rack_used_u = _rack_effective_used_u(allocations, rack.total_u)
+        used_u += rack_used_u
+        device_count += len(allocations)
+        room_capacity = room_capacity_map.setdefault(rack.room_id, {
+            "room_id": rack.room_id,
+            "data_center": rack.room.data_center.name,
+            "room": rack.room.name,
+            "used_u": 0,
+            "total_u": 0,
+        })
+        room_capacity["used_u"] += rack_used_u
+        room_capacity["total_u"] += rack.total_u
+        data_center_capacity = data_center_capacity_map.setdefault(rack.room.data_center_id, {
+            "data_center_id": rack.room.data_center_id,
+            "data_center": rack.room.data_center.name,
+            "used_u": 0,
+            "total_u": 0,
+        })
+        data_center_capacity["used_u"] += rack_used_u
+        data_center_capacity["total_u"] += rack.total_u
+
+    room_capacity = []
+    for item in room_capacity_map.values():
+        total_u = item["total_u"]
+        item["utilization"] = round(item["used_u"] / total_u * 100, 1) if total_u else 0
+        room_capacity.append(item)
+    room_capacity.sort(key=lambda item: (-item["utilization"], item["data_center"], item["room"]))
+
+    data_center_capacity = []
+    for item in data_center_capacity_map.values():
+        total_u = item["total_u"]
+        item["utilization"] = round(item["used_u"] / total_u * 100, 1) if total_u else 0
+        data_center_capacity.append(item)
+    data_center_capacity.sort(key=lambda item: (-item["utilization"], item["data_center"]))
+
+    status_meta = {
+        "in_use": ("使用中", "#16A34A"),
+        "in_stock": ("在库", "#2563EB"),
+        "repair": ("维修中", "#D97706"),
+        "idle": ("闲置", "#8B5CF6"),
+        "retired": ("已报废", "#98A2B3"),
+    }
+    status_counts = dict(
+        assets.values("status")
+        .annotate(count=Count("id"))
+        .values_list("status", "count")
+    )
+    asset_total = sum(status_counts.values())
+    status_distribution = [
+        {"status": status, "label": label, "count": status_counts.get(status, 0), "color": color}
+        for status, (label, color) in status_meta.items()
+    ]
+
+    type_palette = ["#2563EB", "#10B981", "#8B5CF6", "#F59E0B", "#94A3B8", "#06B6D4"]
+    type_counts = defaultdict(int)
+    for asset in asset_rows:
+        type_name = (
+            asset.device_type.name
+            if asset.device_type_id and asset.device_type
+            else (asset.asset_type or "其他设备")
+        )
+        type_counts[type_name] += 1
+    type_distribution = [
+        {
+            "type": name,
+            "label": name,
+            "count": count,
+            "color": type_palette[index % len(type_palette)],
+        }
+        for index, (name, count) in enumerate(
+            sorted(type_counts.items(), key=lambda item: (-item[1], item[0]))
+        )
+    ]
+
+    rack_capacity = []
+    data_center_overview_map = {
+        data_center.id: {
+            "data_center_id": data_center.id,
+            "data_center": data_center.name,
+            "asset_count": 0,
+            "rack_count": 0,
+            "total_u": 0,
+            "used_u": 0,
+            "free_u": 0,
+            "utilization": 0,
+        }
+        for data_center in active_data_centers
+    }
+    for asset in asset_rows:
+        allocation = getattr(asset, "rack_allocation", None)
+        if allocation and not (
+            allocation.rack.is_active
+            and allocation.rack.room.is_active
+            and allocation.rack.room.data_center.is_active
+        ):
+            continue
+        location_data_center_id = (
+            allocation.rack.room.data_center_id
+            if allocation
+            else asset.asset_data_center_id
+        )
+        if location_data_center_id in data_center_overview_map:
+            data_center_overview_map[location_data_center_id]["asset_count"] += 1
+
+    for rack in racks:
+        allocations = list(rack.allocations.all())
+        rack_used_u = _rack_effective_used_u(allocations, rack.total_u)
+        total_u = rack.total_u or 0
+        free_u = max(total_u - rack_used_u, 0)
+        utilization = round(rack_used_u / total_u * 100, 1) if total_u else 0
+        rack_capacity.append(
+            {
+                "id": rack.id,
+                "code": rack.code,
+                "data_center": rack.room.data_center.name,
+                "data_center_id": rack.room.data_center_id,
+                "server_room": rack.room.name,
+                "server_room_id": rack.room_id,
+                "total_u": total_u,
+                "used_u": rack_used_u,
+                "free_u": free_u,
+                "utilization": utilization,
+                "device_count": len(allocations),
+            }
+        )
+        overview = data_center_overview_map.get(rack.room.data_center_id)
+        if overview is not None:
+            overview["rack_count"] += 1
+            overview["total_u"] += total_u
+            overview["used_u"] += rack_used_u
+
+    data_center_overview = []
+    for overview in data_center_overview_map.values():
+        overview["free_u"] = max(overview["total_u"] - overview["used_u"], 0)
+        overview["utilization"] = (
+            round(overview["used_u"] / overview["total_u"] * 100, 1)
+            if overview["total_u"]
+            else 0
+        )
+        data_center_overview.append(overview)
+    rack_capacity.sort(
+        key=lambda item: (-item["utilization"], item["free_u"], item["code"])
+    )
+
+    today = timezone.localdate()
+    expiry_30 = today + timedelta(days=30)
+    expiry_60 = today + timedelta(days=60)
+    expiry_90 = today + timedelta(days=90)
+    contracts = MaintenanceContract.objects.filter(asset_id__in=asset_ids)
+    expiry_counts = {
+        "expired": contracts.filter(expiry_date__lt=today).count(),
+        "within_30_days": contracts.filter(expiry_date__gte=today, expiry_date__lte=expiry_30).count(),
+        "within_60_days": contracts.filter(expiry_date__gte=today, expiry_date__lte=expiry_60).count(),
+        "within_90_days": contracts.filter(expiry_date__gte=today, expiry_date__lte=expiry_90).count(),
+    }
+
+    open_faults = FaultEvent.objects.filter(is_closed=False, asset_id__in=asset_ids)
+    recent_alerts = []
+    for fault in open_faults.select_related("asset").order_by("-occurred_at")[:6]:
+        title = (fault.reason or fault.description or "设备故障").splitlines()[0][:120]
+        recent_alerts.append({
+            "id": fault.id,
+            "asset_id": fault.asset_id,
+            "asset_no": fault.asset.asset_no,
+            "asset_name": fault.asset.name,
+            "title": title,
+            "occurred_at": fault.occurred_at,
+            "level": "warning",
+        })
+
+    expiring_contracts = MaintenanceContract.objects.select_related("asset").filter(
+        asset_id__in=asset_ids,
+        expiry_date__gte=today,
+        expiry_date__lte=expiry_90,
+    ).order_by("expiry_date", "asset__asset_no")
+    upcoming_expirations = []
+    for contract in expiring_contracts[:8]:
+        days_remaining = (contract.expiry_date - today).days
+        upcoming_expirations.append({
+            "asset_id": contract.asset_id,
+            "asset_no": contract.asset.asset_no,
+            "asset_name": contract.asset.name,
+            "expiry_date": contract.expiry_date,
+            "days_remaining": days_remaining,
+            "label": "设备保修",
+        })
+
+    inventory_queryset = InventoryTask.objects.filter(data_center_id=selected_data_center.id if selected_data_center else None)
+    if not selected_data_center:
+        inventory_queryset = InventoryTask.objects.all()
+    if selected_server_room:
+        inventory_queryset = inventory_queryset.filter(server_room_id=selected_server_room.id)
+    latest_inventory = inventory_queryset.select_related("inspector").order_by("-created_at", "-id").first()
+    inventory_summary = None
+    if latest_inventory:
+        inventory_counts = dict(
+            latest_inventory.items.values("status")
+            .annotate(count=Count("id"))
+            .values_list("status", "count")
+        )
+        total_items = sum(inventory_counts.values())
+        checked_items = total_items - inventory_counts.get("pending", 0)
+        inventory_rack_queryset = Rack.objects.filter(
+            is_active=True,
+            room__is_active=True,
+            room__data_center__is_active=True,
+            room__data_center_id=latest_inventory.data_center_id,
+        )
+        if latest_inventory.server_room_id:
+            inventory_rack_queryset = inventory_rack_queryset.filter(
+                room_id=latest_inventory.server_room_id
+            )
+        inventory_scope_rack_ids = set(
+            inventory_rack_queryset.values_list("id", flat=True)
+        )
+        checked_rack_ids = set()
+        checked_item_rows = latest_inventory.items.filter(status__isnull=False).values(
+            "status", "system_snapshot", "actual_rack_id"
+        )
+        for item in checked_item_rows:
+            if item["status"] == "pending":
+                continue
+            rack_id = item.get("actual_rack_id")
+            if rack_id is None:
+                snapshot = item.get("system_snapshot") or {}
+                rack_id = snapshot.get("rack_id")
+                try:
+                    rack_id = int(rack_id) if rack_id is not None else None
+                except (TypeError, ValueError):
+                    rack_id = None
+            if rack_id in inventory_scope_rack_ids:
+                checked_rack_ids.add(rack_id)
+        total_inventory_racks = len(inventory_scope_rack_ids)
+        inventory_summary = {
+            "task_id": latest_inventory.id,
+            "task_name": latest_inventory.name,
+            "status": latest_inventory.status,
+            "total": total_items,
+            "checked": checked_items,
+            "pending": inventory_counts.get("pending", 0),
+            "normal": inventory_counts.get("normal", 0),
+            "abnormal": sum(
+                value
+                for key, value in inventory_counts.items()
+                if key not in {"pending", "normal"}
+            ),
+            "completion_rate": round(checked_items / total_items * 100, 1) if total_items else 0,
+            "checked_racks": len(checked_rack_ids),
+            "total_racks": total_inventory_racks,
+            "latest_date": latest_inventory.completed_at or latest_inventory.updated_at,
+        }
+
+    asset_by_id = {asset.id: asset for asset in asset_rows}
+    recent_changes = []
+    audit_queryset = (
+        AuditLog.objects.filter(
+            resource_type="asset", resource_id__in=[str(asset_id) for asset_id in asset_ids]
+        )
+        .select_related("actor")
+        .order_by("-created_at", "-id")[:40]
+    )
+    action_labels = {
+        "create": "新增",
+        "update": "更新",
+        "delete": "删除",
+        "import": "批量导入",
+    }
+    for log in audit_queryset:
+        try:
+            asset_id = int(log.resource_id)
+        except (TypeError, ValueError):
+            continue
+        asset = asset_by_id.get(asset_id)
+        if asset is None:
+            continue
+        before = (log.payload or {}).get("before") or {}
+        after = (log.payload or {}).get("after") or {}
+        action_label = action_labels.get(log.action, log.action)
+        before_rack = before.get("rack_allocation") if isinstance(before, dict) else None
+        after_rack = after.get("rack_allocation") if isinstance(after, dict) else None
+        if log.action == "update" and before.get("status") != after.get("status"):
+            action_label = "状态变化"
+        elif log.action == "update" and before_rack != after_rack:
+            if not before_rack and after_rack:
+                action_label = "上架"
+            elif before_rack and not after_rack:
+                action_label = "下架"
+            else:
+                action_label = "迁移"
+        allocation = getattr(asset, "rack_allocation", None)
+        location = "未上架"
+        if allocation:
+            location = f"{allocation.rack.room.data_center.name} / {allocation.rack.room.name} / {allocation.rack.code}"
+        elif asset.asset_data_center_id:
+            location = asset.asset_data_center.name
+        recent_changes.append(
+            {
+                "id": log.id,
+                "action": action_label,
+                "asset_id": asset.id,
+                "asset_no": asset.asset_no,
+                "asset_name": asset.name,
+                "location": location,
+                "actor_name": log.actor.get_full_name() or log.actor.username if log.actor_id else "系统",
+                "created_at": log.created_at,
+            }
+        )
+        if len(recent_changes) >= 8:
+            break
+
+    return Response({
+        "assets": {
+            "total": asset_total,
+            "in_use": status_counts.get("in_use", 0),
+            "in_stock": status_counts.get("in_stock", 0),
+            "repair": status_counts.get("repair", 0),
+            "idle": status_counts.get("idle", 0),
+            "retired": status_counts.get("retired", 0),
+        },
+        "racks": {
+            "total": len(racks),
+            "used_u": used_u,
+            "free_u": max(sum(rack.total_u for rack in racks) - used_u, 0),
+            "device_count": device_count,
+        },
+        "alerts": {"open_faults": open_faults.count()},
+        "expiring": expiry_counts,
+        "status_distribution": status_distribution,
+        "type_distribution": type_distribution,
+        "data_center_capacity": data_center_capacity,
+        # Keep the room-level field for older clients while the dashboard UI
+        # uses the new data-center aggregate above.
+        "room_capacity": room_capacity,
+        "recent_alerts": recent_alerts,
+        "upcoming_expirations": upcoming_expirations,
+        "data_centers": {"total": len(data_center_overview)},
+        "data_center_overview": data_center_overview,
+        "rack_capacity": rack_capacity,
+        "inventory_summary": inventory_summary,
+        "recent_changes": recent_changes,
+    })
+
+
+@api_view(["GET"])
+@permission_classes([CanViewDashboard])
+def facilities_summary(request):
+    """Compact aggregates for the room/rack management tabs."""
+    data_center_id = request.query_params.get("data_center", "").strip()
+    room_id = request.query_params.get("server_room", "").strip()
+    try:
+        data_center_pk = int(data_center_id) if data_center_id else None
+        room_pk = int(room_id) if room_id else None
+    except (TypeError, ValueError):
+        return Response({"detail": "数据中心或机房筛选无效"}, status=400)
+
+    if data_center_pk is not None and not DataCenter.objects.filter(
+        pk=data_center_pk, is_active=True
+    ).exists():
+        return Response({"detail": "数据中心筛选无效"}, status=400)
+    selected_room = None
+    if room_pk is not None:
+        selected_room = ServerRoom.objects.select_related("data_center").filter(
+            pk=room_pk, is_active=True, data_center__is_active=True
+        ).first()
+        if selected_room is None:
+            return Response({"detail": "机房筛选无效"}, status=400)
+        if data_center_pk is not None and selected_room.data_center_id != data_center_pk:
+            return Response({"detail": "所选机房不属于当前数据中心"}, status=400)
+
+    rooms = ServerRoom.objects.filter(data_center__is_active=True).select_related("data_center")
+    if data_center_pk is not None:
+        rooms = rooms.filter(data_center_id=data_center_pk)
+    if room_pk is not None:
+        rooms = rooms.filter(pk=room_pk)
+    racks = Rack.objects.filter(room__in=rooms).select_related("room__data_center").prefetch_related("allocations")
+    room_ids = list(rooms.values_list("id", flat=True))
+    rack_rows = []
+    totals = {"total_u": 0, "used_u": 0, "device_count": 0}
+    for rack in racks.order_by("room__data_center__name", "room__name", "code"):
+        allocations = list(rack.allocations.all())
+        used_u = _rack_effective_used_u(allocations, rack.total_u)
+        free_u = max((rack.total_u or 0) - used_u, 0)
+        totals["total_u"] += rack.total_u or 0
+        totals["used_u"] += used_u
+        totals["device_count"] += len(allocations)
+        rack_rows.append({
+            "id": rack.id,
+            "code": rack.code,
+            "name": rack.name,
+            "room_id": rack.room_id,
+            "server_room": rack.room.name,
+            "data_center": rack.room.data_center.name,
+            "total_u": rack.total_u,
+            "used_u": used_u,
+            "free_u": free_u,
+            "device_count": len(allocations),
+            "status": rack.status,
+            "status_label": dict(Rack.STATUS).get(rack.status, rack.status),
+        })
+    room_rows = []
+    for room in rooms.order_by("data_center__name", "name"):
+        room_racks = [row for row in rack_rows if row["room_id"] == room.id]
+        room_rows.append({
+            "id": room.id,
+            "name": room.name,
+            "data_center": room.data_center.name,
+            "data_center_id": room.data_center_id,
+            "racks_count": len(room_racks),
+            "assets_count": sum(row["device_count"] for row in room_racks),
+            "total_u": sum(row["total_u"] for row in room_racks),
+            "used_u": sum(row["used_u"] for row in room_racks),
+            "is_active": room.is_active,
+        })
+
+    data_centers = DataCenter.objects.filter(is_active=True).order_by("name")
+    if data_center_pk is not None:
+        data_centers = data_centers.filter(pk=data_center_pk)
+    elif room_pk is not None:
+        # A room filter implicitly narrows the data-center summary as well.
+        data_centers = data_centers.filter(pk=selected_room.data_center_id)
+    data_center_rows = []
+    for data_center in data_centers:
+        center_rooms = [row for row in room_rows if row["data_center_id"] == data_center.id]
+        total_u = sum(row["total_u"] for row in center_rooms)
+        used_u = sum(row["used_u"] for row in center_rooms)
+        data_center_rows.append({
+            "id": data_center.id,
+            "name": data_center.name,
+            "rooms_count": len(center_rooms),
+            "assets_count": sum(row["assets_count"] for row in center_rooms),
+            "racks_count": sum(row["racks_count"] for row in center_rooms),
+            "total_u": total_u,
+            "used_u": used_u,
+            "free_u": max(total_u - used_u, 0),
+            "utilization": round(used_u / total_u * 100, 1) if total_u else 0,
+            "is_active": data_center.is_active,
+        })
+    return Response({
+        "rooms_total": len(room_ids),
+        "rooms_in_use": sum(1 for room in room_rows if room["is_active"]),
+        "rooms_disabled": ServerRoom.objects.filter(pk__in=room_ids, is_active=False).count(),
+        "racks_total": len(rack_rows),
+        "racks_in_use": sum(1 for row in rack_rows if row["status"] == "in_use"),
+        "total_u": totals["total_u"],
+        "used_u": totals["used_u"],
+        "free_u": max(totals["total_u"] - totals["used_u"], 0),
+        "data_centers": data_center_rows,
+        "rooms": room_rows,
+        "racks": rack_rows,
+    })
+
+
+def _rack_sheet_name(name, used):
+    cleaned = re.sub(r"[\\/*?:\[\]]", "_", name or "未命名数据中心")[:31] or "未命名数据中心"
+    candidate, suffix = cleaned, 1
+    while candidate in used:
+        suffix_text = f"_{suffix}"
+        candidate = f"{cleaned[:31 - len(suffix_text)]}{suffix_text}"
+        suffix += 1
+    used.add(candidate)
+    return candidate
+
+
+def _rack_prefix(code):
+    match = re.search(r"\d", code or "")
+    return (code[:match.start()] if match else code or "未分组").rstrip("-_ ") or "未分组"
+
+
+def _rack_sort_key(rack):
+    match = re.search(r"(\d+)(?!.*\d)", rack.code or "")
+    return (int(match.group(1)) if match else 0, rack.code or "")
+
+
+@api_view(["GET"])
+@permission_classes([CanExportRacks])
+def rack_layout_export(request):
+    racks = list(Rack.objects.select_related("room__data_center").prefetch_related("allocations__asset").order_by("room__data_center__name", "code"))
+    book = Workbook()
+    book.remove(book.active)
+    used_sheet_names = set()
+    thin = Side(style="thin", color="B8C5D6")
+    border = Border(left=thin, right=thin, top=thin, bottom=thin)
+    status_fills = {
+        "in_use": PatternFill("solid", fgColor="C6EFCE"),
+        "repair": PatternFill("solid", fgColor="FCE4D6"),
+        "idle": PatternFill("solid", fgColor="E4DFEC"),
+        "in_stock": PatternFill("solid", fgColor="D9EAF7"),
+        "retired": PatternFill("solid", fgColor="E7E6E6"),
+    }
+    grouped = {}
+    for rack in racks:
+        grouped.setdefault(rack.room.data_center.name, []).append(rack)
+
+    for data_center_name, data_center_racks in grouped.items():
+        sheet = book.create_sheet(_rack_sheet_name(data_center_name, used_sheet_names))
+        sheet.sheet_view.showGridLines = False
+        sheet["A1"] = f"数据中心：{data_center_name}"
+        sheet["A1"].font = Font(size=14, bold=True, color="17365D")
+        sheet.freeze_panes = "A5"
+        row_cursor = 3
+        by_prefix = {}
+        for rack in data_center_racks:
+            by_prefix.setdefault(_rack_prefix(rack.code), []).append(rack)
+        for prefix, prefix_racks in sorted(by_prefix.items(), key=lambda item: item[0]):
+            prefix_racks.sort(key=_rack_sort_key)
+            rack_width, gap = 5, 2
+            group_start = 1
+            group_end = group_start + len(prefix_racks) * (rack_width + gap) - gap - 1
+            sheet.merge_cells(start_row=row_cursor, start_column=group_start, end_row=row_cursor, end_column=group_end)
+            group_cell = sheet.cell(row_cursor, group_start, f"{prefix} 组")
+            group_cell.font = Font(bold=True, color="FFFFFF")
+            group_cell.fill = PatternFill("solid", fgColor="1F4E78")
+            group_cell.alignment = Alignment(horizontal="center")
+            row_cursor += 1
+            rack_top = row_cursor
+            max_u = max((rack.total_u for rack in prefix_racks), default=45)
+            for index, rack in enumerate(prefix_racks):
+                start_col = group_start + index * (rack_width + gap)
+                end_col = start_col + rack_width - 1
+                sheet.merge_cells(start_row=rack_top, start_column=start_col, end_row=rack_top, end_column=end_col)
+                header = sheet.cell(rack_top, start_col, f"机柜 {rack.code}")
+                header.font = Font(bold=True, color="FFFFFF")
+                header.fill = PatternFill("solid", fgColor="4472C4")
+                header.alignment = Alignment(horizontal="center")
+                sheet.merge_cells(start_row=rack_top + 1, start_column=start_col, end_row=rack_top + 1, end_column=end_col)
+                effective_used_u = _rack_effective_used_u(list(rack.allocations.all()), rack.total_u)
+                meta = sheet.cell(rack_top + 1, start_col, f"{rack.room.name} | {rack.total_u} U | 已用 {effective_used_u} U | 可用 {rack.total_u - effective_used_u} U")
+                meta.font = Font(size=9, color="44546A")
+                meta.alignment = Alignment(horizontal="center")
+                for col in (start_col, end_col):
+                    sheet.column_dimensions[get_column_letter(col)].width = 7
+                for col in range(start_col + 1, end_col):
+                    sheet.column_dimensions[get_column_letter(col)].width = 13
+                for col in range(start_col, end_col + 1):
+                    sheet.cell(rack_top + 2, col).border = border
+                sheet.cell(rack_top + 2, start_col, "U").alignment = Alignment(horizontal="center")
+                sheet.cell(rack_top + 2, start_col + 1, "设备信息").alignment = Alignment(horizontal="center")
+                sheet.merge_cells(start_row=rack_top + 2, start_column=start_col + 1, end_row=rack_top + 2, end_column=end_col - 1)
+                sheet.cell(rack_top + 2, end_col, "U").alignment = Alignment(horizontal="center")
+                for offset in range(rack.total_u):
+                    row = rack_top + 3 + offset
+                    u = rack.total_u - offset
+                    sheet.cell(row, start_col, u)
+                    sheet.cell(row, end_col, u)
+                    for col in range(start_col, end_col + 1):
+                        cell = sheet.cell(row, col)
+                        cell.border = border
+                        cell.alignment = Alignment(horizontal="center", vertical="center", wrap_text=True)
+                ordered_allocations = sorted(rack.allocations.all(), key=lambda allocation: (allocation.start_u, allocation.end_u))
+                for previous, current in zip(ordered_allocations, ordered_allocations[1:]):
+                    if current.start_u - previous.end_u - 1 == 1:
+                        gap_row = rack_top + 3 + (rack.total_u - (previous.end_u + 1))
+                        for col in range(start_col + 1, end_col):
+                            gap_cell = sheet.cell(gap_row, col)
+                            gap_cell.fill = PatternFill("solid", fgColor="AEB8C8")
+                            gap_cell.font = Font(size=9, color="69778C", italic=True)
+                for allocation in rack.allocations.all():
+                    top_row = rack_top + 3 + (rack.total_u - allocation.end_u)
+                    bottom_row = rack_top + 3 + (rack.total_u - allocation.start_u)
+                    asset = allocation.asset
+                    text = "\n".join(filter(None, [asset.asset_no, asset.name, asset.asset_type, asset.brand_model, f"SN: {asset.serial_number}" if asset.serial_number else ""]))
+                    for row in range(top_row, bottom_row + 1):
+                        for col in range(start_col + 1, end_col):
+                            sheet.cell(row, col).fill = status_fills.get(asset.status, PatternFill("solid", fgColor="D9EAF7"))
+                    if top_row != bottom_row:
+                        sheet.merge_cells(start_row=top_row, start_column=start_col + 1, end_row=bottom_row, end_column=end_col - 1)
+                    cell = sheet.cell(top_row, start_col + 1, text)
+                    cell.alignment = Alignment(horizontal="center", vertical="center", wrap_text=True)
+                    cell.font = Font(size=9, bold=True)
+            row_cursor = rack_top + 3 + max_u + 2
+    if not racks:
+        book.create_sheet("无机柜数据")["A1"] = "暂无机柜数据"
+    response = HttpResponse(content_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+    response["Content-Disposition"] = f'attachment; filename="itam-rack-layout-{timezone.localdate().isoformat()}.xlsx"'
+    book.save(response)
+    return response

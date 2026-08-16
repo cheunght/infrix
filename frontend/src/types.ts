@@ -1,0 +1,382 @@
+export type Page =
+  | "dashboard"
+  | "ledger"
+  | "racks"
+  | "repairs"
+  | "licenses"
+  | "spares"
+  | "inventory"
+  | "settings"
+  | "placeholder";
+
+export type Category = { id: number; name: string; color: string; assets_count?: number };
+export type DictionaryItem = {
+  id: number;
+  name: string;
+  is_active: boolean;
+  assets_count?: number;
+  created_at?: string;
+  updated_at?: string;
+};
+export type CustomFieldOption = { id: number; field: number; value: string; label: string; sort_order: number; is_active: boolean };
+export type CustomField = {
+  id: number;
+  device_type: number;
+  device_type_name?: string;
+  key: string;
+  name: string;
+  field_type: "text" | "textarea" | "number" | "date" | "select" | "multiselect" | "boolean";
+  field_type_label?: string;
+  required: boolean;
+  default_value: string;
+  sort_order: number;
+  is_active: boolean;
+  assets_count?: number;
+  options?: CustomFieldOption[];
+};
+export type Tag = { id: number; name: string; is_active: boolean; assets_count?: number; created_at?: string; updated_at?: string };
+export type AssetCustomFieldValue = CustomField & { value: string | number | boolean | string[] | null };
+export type DataCenter = {
+  id: number;
+  name: string;
+  address?: string;
+  is_active: boolean;
+  assets_count?: number;
+  rooms_count?: number;
+  created_at?: string;
+  updated_at?: string;
+};
+export type DashboardStatus = { status: string; label: string; count: number; color: string };
+export type DashboardDataCenterCapacity = {
+  data_center_id: number;
+  data_center: string;
+  used_u: number;
+  total_u: number;
+  utilization: number;
+};
+export type DashboardRoomCapacity = {
+  room_id: number;
+  data_center: string;
+  room: string;
+  used_u: number;
+  total_u: number;
+  utilization: number;
+};
+export type DashboardAlert = {
+  id: number;
+  asset_id: number;
+  asset_no: string;
+  asset_name: string;
+  title: string;
+  occurred_at: string;
+  level: string;
+};
+export type DashboardExpiration = {
+  asset_id: number;
+  asset_no: string;
+  asset_name: string;
+  expiry_date: string;
+  days_remaining: number;
+  label: string;
+};
+export type DashboardTypeDistribution = {
+  type: string;
+  label: string;
+  count: number;
+  color: string;
+};
+export type DashboardDataCenterOverview = {
+  data_center_id: number;
+  data_center: string;
+  asset_count: number;
+  rack_count: number;
+  total_u: number;
+  used_u: number;
+  free_u: number;
+  utilization: number;
+};
+export type DashboardRackCapacity = {
+  id: number;
+  code: string;
+  data_center: string;
+  data_center_id: number;
+  server_room: string;
+  server_room_id: number;
+  total_u: number;
+  used_u: number;
+  free_u: number;
+  utilization: number;
+  device_count: number;
+};
+export type DashboardInventorySummary = {
+  task_id: number;
+  task_name: string;
+  status: "in_progress" | "completed";
+  total: number;
+  checked: number;
+  pending: number;
+  normal: number;
+  abnormal: number;
+  completion_rate: number;
+  checked_racks?: number;
+  total_racks?: number;
+  latest_date: string | null;
+};
+export type DashboardRecentChange = {
+  id: number;
+  action: string;
+  asset_id: number;
+  asset_no: string;
+  asset_name: string;
+  location: string;
+  actor_name: string;
+  created_at: string;
+};
+export type DashboardOverview = {
+  assets: {
+    total: number;
+    in_use: number;
+    in_stock: number;
+    repair: number;
+    idle: number;
+    retired: number;
+  };
+  racks: {
+    total: number;
+    used_u: number;
+    free_u: number;
+    device_count: number;
+    empty_count?: number;
+  };
+  data_centers?: { total: number };
+  expiring: {
+    expired?: number;
+    within_30_days: number;
+    within_60_days?: number;
+    within_90_days?: number;
+  };
+  alerts: { open_faults: number };
+  type_distribution?: DashboardTypeDistribution[];
+  status_distribution: DashboardStatus[];
+  data_center_capacity?: DashboardDataCenterCapacity[];
+  room_capacity?: DashboardRoomCapacity[];
+  recent_alerts: DashboardAlert[];
+  upcoming_expirations: DashboardExpiration[];
+  data_center_overview?: DashboardDataCenterOverview[];
+  rack_capacity?: DashboardRackCapacity[];
+  inventory_summary?: DashboardInventorySummary | null;
+  recent_changes?: DashboardRecentChange[];
+};
+export type AssetNetwork = { id: number; address: string; role: string; is_primary: boolean; notes?: string };
+export type AssetProcurement = { id: number; purchase_date: string; supplier: string; order_no: string; amount: string | null; notes: string };
+export type AssetMaintenance = { id: number; provider: string; contract_no: string; start_date: string | null; expiry_date: string | null; notes: string };
+export type Asset = {
+  id: number;
+  asset_no: string;
+  name: string;
+  asset_type: string;
+  category?: number | null;
+  category_name?: string;
+  brand?: number | null;
+  brand_name?: string;
+  device_type?: number | null;
+  device_type_name?: string;
+  model?: string;
+  model_name?: string;
+  brand_model?: string;
+  status: string;
+  purpose: string;
+  serial_number: string | null;
+  owner_name?: string;
+  notes?: string;
+  asset_data_center?: number | null;
+  asset_data_center_name?: string;
+  network_addresses?: AssetNetwork[];
+  rack_allocation?: { rack?: number; rack_code: string; data_center: string; data_center_id?: number; server_room: string; server_room_id?: number; start_u: number; end_u: number; units: number } | null;
+  procurement_records?: AssetProcurement[];
+  maintenance_contracts?: AssetMaintenance[];
+  business_ip?: string;
+  management_ip?: string;
+  oob_ip?: string;
+  data_center?: string;
+  server_room?: string;
+  rack_code?: string;
+  u_range?: string;
+  purchase_date?: string | null;
+  supplier?: string;
+  purchase_order_no?: string;
+  maintenance_provider?: string;
+  maintenance_expiry_date?: string | null;
+  tag_names?: string[];
+  tags?: Array<{ id: number; name: string; is_active: boolean }>;
+  custom_values?: Record<string, unknown>;
+  custom_fields?: AssetCustomFieldValue[];
+};
+export type AssetDetail = Asset & {
+  network_addresses: Array<{ id: number; address: string; role: string; is_primary: boolean }>;
+  rack_allocation: { rack: number; rack_code: string; data_center: string; data_center_id?: number; server_room: string; server_room_id: number; rack_total_u: number; start_u: number; end_u: number; units: number } | null;
+  procurement_records: Array<{ id: number; purchase_date: string; supplier: string; order_no: string; amount: string | null; notes: string }>;
+  maintenance_contracts: Array<{ id: number; provider: string; contract_no: string; start_date: string | null; expiry_date: string | null; notes: string }>;
+  inventory_records?: InventoryItem[];
+  tags: Array<{ id: number; name: string; is_active: boolean }>;
+  custom_fields: AssetCustomFieldValue[];
+  custom_values: Record<string, unknown>;
+};
+export type InventoryStatus = "pending" | "normal" | "location_mismatch" | "not_found" | "info_mismatch" | "other";
+export type InventoryItem = {
+  id: number;
+  task: number;
+  task_name: string;
+  asset: number;
+  asset_no: string;
+  asset_name: string;
+  asset_type: string;
+  serial_number: string | null;
+  system_data_center: string;
+  system_server_room: string;
+  system_rack_code: string;
+  system_start_u: number | null;
+  system_end_u: number | null;
+  status: InventoryStatus;
+  status_label: string;
+  checked_at: string | null;
+  checked_by: number | null;
+  checked_by_name: string;
+  actual_rack: number | null;
+  actual_data_center: string | null;
+  actual_server_room: string | null;
+  actual_rack_code: string | null;
+  actual_start_u: number | null;
+  actual_end_u: number | null;
+  notes: string;
+};
+export type InventorySummary = {
+  total: number;
+  checked: number;
+  pending: number;
+  normal: number;
+  location_mismatch: number;
+  not_found: number;
+  info_mismatch: number;
+  other: number;
+  completion_rate: number;
+};
+export type InventoryTask = {
+  id: number;
+  name: string;
+  data_center: number;
+  data_center_name: string;
+  server_room: number | null;
+  server_room_name: string | null;
+  inspector: number;
+  inspector_name: string;
+  start_at: string;
+  end_at: string;
+  status: "in_progress" | "completed";
+  completed_at: string | null;
+  notes: string;
+  summary: InventorySummary;
+};
+export type InventoryInspector = { id: number; username: string; display_name: string };
+export type Rack = {
+  id: number;
+  code: string;
+  room: number;
+  total_u: number;
+  name?: string;
+  rack_type?: string;
+  owner_name?: string;
+  notes?: string;
+  data_center_name?: string;
+  server_room_name?: string;
+  is_active?: boolean;
+  status?: "in_use" | "reserved" | "disabled" | string;
+  status_label?: string;
+  used_u?: number;
+  free_u?: number;
+  allocations: Array<{ asset: number; start_u: number; end_u: number; units: number; asset_no: string; asset_name: string; asset_type: string; category_name: string; category_color: string; brand_model?: string; serial_number?: string | null; status: string }>;
+};
+export type ServerRoom = { id: number; data_center: number; data_center_name: string; name: string; is_active: boolean; owner_name?: string; contact_phone?: string; notes?: string; racks_count: number; assets_count: number; created_at?: string; updated_at?: string };
+export type FacilitySummary = {
+  rooms_total: number;
+  rooms_in_use: number;
+  rooms_disabled: number;
+  racks_total: number;
+  racks_in_use: number;
+  total_u: number;
+  used_u: number;
+  free_u: number;
+  data_centers?: Array<{
+    id: number;
+    name: string;
+    rooms_count: number;
+    racks_count: number;
+    assets_count: number;
+    total_u: number;
+    used_u: number;
+    free_u: number;
+    utilization: number;
+    is_active: boolean;
+  }>;
+  rooms: Array<ServerRoom & { total_u?: number; used_u?: number }>;
+  racks: Array<Rack & { room_id: number; device_count?: number }>;
+};
+export type FaultEvent = { id: number; asset: number; asset_no: string; asset_name: string; occurred_at: string; reason: string; description: string; is_closed: boolean; repair: { id: number; fault: number; provider: string; started_at: string | null; finished_at: string | null; notes: string } | null };
+export type Role = { id: number; code: string; name: string; description: string; user_count?: number };
+export type ManagedUser = { id: number; username: string; display_name: string; first_name: string; last_name: string; email: string; is_active: boolean; is_staff: boolean; groups: number[]; assigned_role_code: string; assigned_role_name: string; last_login: string | null; date_joined: string };
+export type AuditLog = { id: number; actor_username: string | null; actor_display_name: string; action: string; resource_type: string; resource_id: string; payload: Record<string, unknown>; created_at: string };
+export type SoftwareLicense = { id: number; name: string; vendor: string; license_type: string; authorized_count: number; used_count: number; utilization: number; remaining_count: number; expiry_date: string | null; status: "over_limit" | "expired" | "expiring" | "normal"; status_label: string; days_remaining: number | null; notes: string };
+export type LicenseSummary = { total: number; within_90_days: number; over_license_risk: number };
+export type SparePart = {
+  id: number;
+  name: string;
+  part_type: string;
+  part_type_label: string;
+  brand: number | null;
+  brand_name: string | null;
+  model: string;
+  specification: string;
+  unit: string;
+  is_active: boolean;
+  notes: string;
+  total_quantity: number;
+  location_count: number;
+  created_at?: string;
+  updated_at?: string;
+};
+export type SpareStock = {
+  id: number;
+  part: number;
+  part_name: string;
+  part_type_label: string;
+  data_center: number;
+  data_center_name: string;
+  server_room: number | null;
+  server_room_name: string | null;
+  quantity: number;
+  updated_at?: string;
+};
+export type SpareTransaction = {
+  id: number;
+  part: number;
+  part_name: string;
+  unit: string;
+  operation_type: string;
+  operation_type_label: string;
+  quantity: number;
+  source_data_center: number | null;
+  source_data_center_name: string | null;
+  source_server_room: number | null;
+  source_server_room_name: string | null;
+  target_data_center: number | null;
+  target_data_center_name: string | null;
+  target_server_room: number | null;
+  target_server_room_name: string | null;
+  before_quantity: number;
+  after_quantity: number;
+  operator: number | null;
+  operator_name: string;
+  reference: string;
+  notes: string;
+  created_at: string;
+};

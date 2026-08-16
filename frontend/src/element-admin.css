@@ -1,0 +1,2475 @@
+:root {
+  --itam-primary-blue: #2563eb;
+  --el-color-primary: #2563eb;
+  --el-color-primary-rgb: 37, 99, 235;
+  --el-color-primary-light-3: #6d9af5;
+  --el-color-primary-light-5: #9ab9f8;
+  --el-color-primary-light-7: #c6d8fb;
+  --el-color-primary-light-8: #dce8fd;
+  --el-color-primary-light-9: #eef4ff;
+  --el-color-primary-dark-2: #1d4ed8;
+  --itam-sidebar-bg: #ffffff;
+  --itam-sidebar-border: #e4e7ed;
+  --itam-sidebar-text: #303746;
+  --itam-sidebar-icon: #6b7280;
+  --itam-sidebar-muted: #7c8ba3;
+  --itam-sidebar-hover: #f6f7f9;
+  --itam-sidebar-active: #eef0f2;
+  --itam-page-bg: #f5f7fa;
+}
+
+body {
+  background: var(--itam-page-bg);
+}
+.shell {
+  min-height: 100vh;
+}
+.ep-sidebar {
+  position: relative;
+  overflow: hidden;
+  padding: 0;
+  border-right: 1px solid var(--itam-sidebar-border);
+  background: var(--itam-sidebar-bg);
+  min-width: 0;
+  flex: 0 0 216px;
+  transition: width 0.2s ease, flex-basis 0.2s ease, padding 0.2s ease;
+}
+/* The legacy .sidebar rules set flex-basis: 216px. Scope the final layout
+   rules to the Element Plus shell so the actual flex item shrinks with the
+   bound el-aside width instead of only hiding its labels. */
+.shell:not(.sidebar-collapsed) > .ep-sidebar {
+  width: 216px !important;
+  flex: 0 0 216px;
+}
+.shell.sidebar-collapsed > .ep-sidebar {
+  width: 64px !important;
+  flex: 0 0 64px;
+  padding-right: 0;
+  padding-left: 0;
+}
+.shell.sidebar-collapsed > .ep-sidebar .sidebar-brand {
+  box-sizing: border-box;
+  width: 64px;
+  justify-content: center;
+  margin-right: 0;
+  margin-left: 0;
+  padding-right: 0;
+  padding-left: 0;
+}
+.shell.sidebar-collapsed > .ep-sidebar .ep-collapse-button {
+  box-sizing: border-box;
+  width: 64px;
+  margin-right: 0;
+  margin-left: 0;
+  padding-right: 0;
+  padding-left: 0;
+  justify-content: center;
+}
+.sidebar-brand {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  height: 64px;
+  padding: 0 18px;
+  color: var(--itam-sidebar-text);
+  font-weight: 600;
+  white-space: nowrap;
+}
+.sidebar-brand .el-icon {
+  color: var(--itam-primary-blue);
+  font-size: 22px;
+}
+.ep-collapse-button {
+  width: calc(100% - 16px);
+  height: 40px;
+  margin: 0 8px 8px;
+  border-radius: 8px;
+  color: var(--itam-sidebar-muted) !important;
+}
+.ep-collapse-button:hover,
+.ep-collapse-button:focus-visible {
+  background: var(--itam-sidebar-hover) !important;
+  color: var(--itam-sidebar-text) !important;
+}
+.ep-sidebar-menu {
+  border-right: 0;
+  background: var(--itam-sidebar-bg);
+}
+.ep-sidebar-menu.el-menu--collapse {
+  width: 64px;
+}
+.ep-sidebar-menu.el-menu--collapse > .el-menu-item,
+.ep-sidebar-menu.el-menu--collapse > .el-sub-menu > .el-sub-menu__title {
+  box-sizing: border-box;
+  width: 64px;
+  min-width: 64px;
+  margin: 4px 0;
+  padding: 0 !important;
+  justify-content: center;
+}
+.ep-sidebar-menu.el-menu--collapse > .el-menu-item .el-icon,
+.ep-sidebar-menu.el-menu--collapse > .el-sub-menu > .el-sub-menu__title .el-icon {
+  display: inline-flex;
+  flex: 0 0 24px;
+  width: 24px !important;
+  height: 24px;
+  margin: 0 !important;
+  align-items: center;
+  justify-content: center;
+  text-align: center;
+}
+.shell.sidebar-collapsed > .ep-sidebar .sidebar-brand > .el-icon,
+.shell.sidebar-collapsed > .ep-sidebar .ep-collapse-button > .el-icon {
+  display: inline-flex;
+  flex: 0 0 24px;
+  width: 24px;
+  height: 24px;
+  margin: 0;
+  align-items: center;
+  justify-content: center;
+}
+.ep-sidebar-menu .el-menu-item,
+.ep-sidebar-menu .el-sub-menu__title {
+  height: 46px;
+  width: calc(100% - 16px);
+  margin: 4px 8px;
+  border-radius: 8px;
+  color: var(--itam-sidebar-text);
+  background: transparent;
+}
+.ep-sidebar-menu .el-menu-item .el-icon,
+.ep-sidebar-menu .el-sub-menu__title .el-icon,
+.ep-sidebar-menu .el-sub-menu__icon-arrow {
+  color: var(--itam-sidebar-icon);
+}
+.ep-sidebar-menu .el-menu-item:hover,
+.ep-sidebar-menu .el-sub-menu__title:hover {
+  color: var(--itam-sidebar-text);
+  background: var(--itam-sidebar-hover);
+}
+.ep-sidebar-menu .el-menu-item.is-active {
+  color: var(--itam-primary-blue);
+  background: var(--el-color-primary-light-9);
+  font-weight: 600;
+}
+.ep-sidebar-menu .el-sub-menu.is-active > .el-sub-menu__title {
+  color: var(--itam-sidebar-text);
+  background: var(--itam-sidebar-active);
+  font-weight: 600;
+}
+.ep-sidebar-menu .el-sub-menu.is-active > .el-sub-menu__title:hover {
+  color: var(--itam-sidebar-text);
+  background: var(--itam-sidebar-active);
+}
+.ep-sidebar-menu .el-menu-item:hover .el-icon,
+.ep-sidebar-menu .el-menu-item.is-active .el-icon,
+.ep-sidebar-menu .el-sub-menu__title:hover .el-icon,
+.ep-sidebar-menu .el-sub-menu.is-active > .el-sub-menu__title .el-icon,
+.ep-sidebar-menu .el-sub-menu.is-active > .el-sub-menu__title .el-sub-menu__icon-arrow {
+  color: var(--itam-sidebar-text);
+}
+.ep-sidebar-menu > .el-menu-item.is-active,
+.ep-sidebar-menu > .el-menu-item.is-active:hover {
+  color: var(--itam-primary-blue);
+  background: var(--el-color-primary-light-9);
+}
+.ep-sidebar-menu > .el-menu-item.is-active .el-icon {
+  color: var(--itam-primary-blue);
+}
+.ep-sidebar-menu .el-sub-menu .el-menu-item {
+  min-width: 0;
+  padding-left: 52px !important;
+  background: var(--itam-sidebar-bg);
+}
+.ep-sidebar-menu .el-sub-menu .el-menu-item:hover {
+  background: var(--itam-sidebar-hover);
+}
+.ep-sidebar-menu .el-sub-menu .el-menu-item.is-active {
+  color: var(--itam-sidebar-text);
+  background: var(--itam-sidebar-active);
+  font-weight: 600;
+}
+.ep-main {
+  min-width: 0;
+  padding: 0 24px 24px;
+  background: var(--itam-page-bg);
+}
+.app-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  height: 64px;
+  padding: 0;
+  margin-bottom: 18px;
+  background: transparent;
+}
+.app-header h1 {
+  margin: 0;
+  font-size: 20px;
+}
+.header-tools {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+}
+.ep-global-search {
+  width: 320px;
+}
+.ep-user-name {
+  margin-left: 8px;
+}
+.ep-toolbar .el-input,
+.ep-toolbar .el-select,
+.ep-toolbar .el-date-editor {
+  max-width: 320px;
+}
+.ep-toolbar .el-date-editor {
+  width: 160px;
+}
+.form-grid .el-form-item,
+.license-form-grid .el-form-item {
+  min-width: 0;
+}
+.form-grid .el-input,
+.form-grid .el-select,
+.form-grid .el-date-editor,
+.form-grid .el-input-number {
+  width: 100%;
+}
+.full-width {
+  grid-column: 1 / -1;
+}
+.color-input {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.color-input .el-input {
+  flex: 1;
+}
+.fault-asset-search {
+  display: flex;
+  gap: 8px;
+}
+.fault-asset-search .el-input {
+  flex: 1;
+}
+.login-card .el-form {
+  width: 100%;
+  text-align: left;
+}
+.login-card .el-form-item,
+.login-card .el-form-item__content,
+.login-card .el-input,
+.login-card .el-input__wrapper,
+.login-card .el-input__inner {
+  width: 100%;
+  min-width: 0;
+  box-sizing: border-box;
+}
+.login-card .el-input__wrapper {
+  min-height: 40px;
+}
+.login-card .el-input__inner {
+  height: 38px;
+  padding: 0 !important;
+  border: 0 !important;
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none !important;
+}
+.login-card .el-form-item__content {
+  display: flex;
+}
+.ep-sidebar .el-menu {
+  width: 100%;
+}
+.ep-sidebar .el-sub-menu .el-menu {
+  background: var(--itam-sidebar-bg);
+}
+.ep-sidebar .el-menu--collapse .el-sub-menu > .el-sub-menu__title {
+  padding-left: 20px !important;
+}
+
+/* Settings is a parent-only navigation item. Selecting a child should leave
+   the parent neutral and use the shared blue for the selected child text. */
+.ep-sidebar-menu .el-sub-menu.is-active > .el-sub-menu__title,
+.ep-sidebar-menu .el-sub-menu.is-active > .el-sub-menu__title:hover {
+  color: var(--itam-sidebar-text);
+  background: transparent;
+  font-weight: 400;
+}
+.ep-sidebar-menu .el-sub-menu.is-active > .el-sub-menu__title .el-icon,
+.ep-sidebar-menu .el-sub-menu.is-active > .el-sub-menu__title .el-sub-menu__icon-arrow {
+  color: var(--itam-sidebar-icon);
+}
+.ep-sidebar-menu .el-sub-menu .el-menu-item.is-active,
+.ep-sidebar-menu .el-sub-menu .el-menu-item.is-active:hover {
+  color: var(--itam-primary-blue);
+  background: var(--el-color-primary-light-9);
+  font-weight: 600;
+}
+.ep-sidebar-menu .el-sub-menu .el-menu-item.is-active .el-icon {
+  color: var(--itam-primary-blue);
+}
+.ep-sidebar-menu .el-sub-menu__title {
+  position: relative;
+  display: flex;
+  align-items: center;
+}
+.ep-sidebar-menu .el-sub-menu__icon-arrow {
+  position: absolute;
+  right: 14px !important;
+}
+
+/* Use the dashboard's in-stock blue consistently for primary actions and
+   data visualizations. */
+.el-button--primary {
+  --el-button-bg-color: var(--itam-primary-blue);
+  --el-button-border-color: var(--itam-primary-blue);
+  --el-button-hover-bg-color: #3f78ed;
+  --el-button-hover-border-color: #3f78ed;
+  --el-button-active-bg-color: #1d4ed8;
+  --el-button-active-border-color: #1d4ed8;
+}
+.ep-main .chart-bar {
+  background: linear-gradient(180deg, #60a5fa, var(--itam-primary-blue));
+}
+.ep-main .capacity-number {
+  color: var(--itam-primary-blue);
+}
+.ep-main .rack-list-item.active {
+  border-color: var(--itam-primary-blue);
+}
+.ep-main .rack-u-card.active {
+  border-color: var(--itam-primary-blue);
+  box-shadow: 0 0 0 2px #2563eb18;
+}
+.ep-main .rack-u-card.active .rack-u-head strong,
+.ep-main .rack-current-tag {
+  color: var(--itam-primary-blue);
+}
+.ep-main .rack-current-tag {
+  background: var(--itam-primary-blue);
+  color: #fff;
+}
+.ep-main .rack-u-card .device:focus,
+.ep-main .rack-u-card .device-selected {
+  outline-color: var(--itam-primary-blue);
+  box-shadow: 0 0 0 3px #fff, 0 0 0 5px var(--itam-primary-blue);
+}
+
+/* Final interaction baseline for every business page.  Keep these rules at
+   the end of the stylesheet so legacy native-control overrides cannot make
+   one page feel taller or denser than another. */
+:root {
+  --itam-control-height: 36px;
+  --itam-control-radius: 7px;
+  --itam-control-gap: 10px;
+}
+
+.ep-main .el-input__wrapper,
+.ep-main .el-select__wrapper,
+.ep-main .el-date-editor.el-input,
+.ep-main .el-date-editor.el-input__wrapper,
+.ep-main .el-input-number,
+.ep-main .el-input-number .el-input__wrapper,
+.ep-main .itam-search-field {
+  min-height: var(--itam-control-height);
+  height: var(--itam-control-height);
+  box-sizing: border-box;
+}
+
+.ep-main .el-input__wrapper,
+.ep-main .el-select__wrapper,
+.ep-main .el-date-editor.el-input,
+.ep-main .el-date-editor.el-input__wrapper,
+.ep-main .el-input-number .el-input__wrapper {
+  border-radius: var(--itam-control-radius);
+}
+
+.ep-main .el-button:not(.is-circle):not(.is-link):not(.is-text):not(.ep-main-collapse-button),
+.ep-main .el-upload .el-button {
+  min-height: var(--itam-control-height);
+  height: var(--itam-control-height);
+  box-sizing: border-box;
+  border-radius: var(--itam-control-radius);
+  white-space: nowrap;
+}
+
+.ep-main .el-input-group__append {
+  height: var(--itam-control-height);
+  min-height: var(--itam-control-height);
+  padding: 0;
+  border-radius: 0 var(--itam-control-radius) var(--itam-control-radius) 0;
+}
+
+.ep-main .el-input-group__append .itam-search-button {
+  width: 42px;
+  height: var(--itam-control-height);
+  min-height: var(--itam-control-height);
+  margin: 0;
+  padding: 0;
+  border: 0;
+  border-radius: 0 var(--itam-control-radius) var(--itam-control-radius) 0;
+}
+
+.itam-search-field {
+  width: min(390px, 100%);
+}
+
+.itam-search-field .el-input__wrapper {
+  border-radius: var(--itam-control-radius) 0 0 var(--itam-control-radius);
+}
+
+.itam-search-field .el-input__prefix {
+  color: var(--el-text-color-secondary);
+}
+
+.itam-search-field .el-input__inner {
+  min-width: 0;
+}
+
+.itam-search-field .el-input-group__append {
+  border-left: 1px solid var(--el-border-color);
+  background: var(--el-fill-color-blank);
+}
+
+.itam-search-field .itam-search-button:hover,
+.itam-search-field .itam-search-button:focus-visible {
+  color: var(--itam-primary-blue);
+  background: var(--el-color-primary-light-9);
+}
+
+.ep-main .ep-toolbar {
+  gap: var(--itam-control-gap);
+  row-gap: 8px;
+}
+
+.ep-main .ep-toolbar > .itam-search-field {
+  flex: 0 1 390px;
+}
+
+.ep-main .el-pagination {
+  min-height: var(--itam-control-height);
+  margin-top: 12px;
+  padding-top: 0;
+  gap: 4px;
+  align-items: center;
+}
+
+.ep-main .el-pagination .el-pagination__sizes .el-select,
+.ep-main .el-pagination .el-pagination__sizes .el-select__wrapper {
+  height: var(--itam-control-height);
+  min-height: var(--itam-control-height);
+}
+
+.ep-main .el-table th.el-table__cell {
+  padding-top: 9px;
+  padding-bottom: 9px;
+}
+
+.ep-main .el-table td.el-table__cell {
+  padding-top: 10px;
+  padding-bottom: 10px;
+}
+
+.ep-main .el-table .el-button.is-link,
+.ep-main .el-table .el-button.is-text {
+  min-height: 30px;
+  height: 30px;
+  padding-top: 4px;
+  padding-bottom: 4px;
+}
+
+.ep-main .el-card__header {
+  padding: 12px 16px;
+}
+
+.ep-main .el-card__body {
+  padding: 14px 16px;
+}
+
+.ep-main .el-dialog .el-input__wrapper,
+.ep-main .el-dialog .el-select__wrapper,
+.ep-main .el-dialog .el-date-editor.el-input,
+.ep-main .el-dialog .el-input-number .el-input__wrapper,
+.ep-main .el-dialog .el-button:not(.is-circle):not(.is-link):not(.is-text) {
+  min-height: var(--itam-control-height);
+  height: var(--itam-control-height);
+}
+
+.ep-main .el-dialog textarea.el-textarea__inner {
+  min-height: 82px;
+  height: auto;
+}
+
+@media (max-width: 900px) {
+  .ep-main .ep-toolbar > .itam-search-field,
+  .ep-main .itam-search-field {
+    flex: 1 1 100%;
+    width: 100%;
+    max-width: none;
+  }
+
+  .ep-main .ep-toolbar .ep-toolbar-spacer {
+    display: none;
+  }
+}
+
+@media (max-width: 760px) {
+  .ep-main {
+    padding: 0 14px 16px;
+  }
+
+  .ep-main .ep-toolbar > .el-select,
+  .ep-main .ep-toolbar > .el-date-editor {
+    flex: 1 1 160px;
+    max-width: none;
+  }
+
+  .ep-main .el-table {
+    min-width: 720px;
+  }
+
+  .ep-main .el-table__body-wrapper,
+  .ep-main .el-table__header-wrapper {
+    overflow-x: auto;
+  }
+}
+
+@media (max-width: 560px) {
+  .ep-main .ep-toolbar > .el-select,
+  .ep-main .ep-toolbar > .el-date-editor,
+  .ep-main .ep-toolbar > .el-button,
+  .ep-main .ep-toolbar > .el-upload {
+    flex: 1 1 100%;
+    width: 100%;
+    max-width: none;
+  }
+
+  .ep-main .el-pagination {
+    justify-content: flex-start;
+    flex-wrap: wrap;
+  }
+}
+
+.el-button + .el-button {
+  margin-left: 8px;
+}
+.ep-main .ep-toolbar .el-button + .el-button,
+.ep-main .ep-actions .el-button + .el-button,
+.ep-main .rack-filter-actions .el-button + .el-button {
+  margin-left: 0;
+}
+.ep-main .el-button {
+  box-sizing: border-box;
+}
+.ep-main .filters .el-button {
+  height: var(--el-component-size);
+  min-height: var(--el-component-size);
+}
+.ep-main .filters .el-input__inner {
+  min-width: 0;
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  outline: none;
+}
+.ep-main .filters .el-input__wrapper {
+  border: 1px solid var(--el-border-color);
+  box-shadow: none;
+}
+.ep-main .filters .el-input__wrapper.is-focus {
+  border-color: var(--el-color-primary);
+  box-shadow: 0 0 0 1px var(--el-color-primary) inset;
+}
+.el-card {
+  border-radius: 8px;
+}
+.el-card__header {
+  padding: 14px 16px;
+}
+.el-card__body {
+  padding: 16px;
+}
+.el-table {
+  --el-table-header-bg-color: #f5f7fa;
+}
+.el-table .cell {
+  line-height: 24px;
+}
+/* Keep rows readable and visually separated across all Element Plus tables. */
+.ep-main .el-table th.el-table__cell {
+  padding-top: 13px;
+  padding-bottom: 13px;
+}
+.ep-main .el-table td.el-table__cell {
+  padding-top: 15px;
+  padding-bottom: 15px;
+}
+.el-pagination {
+  justify-content: flex-end;
+  padding-top: 16px;
+}
+.el-form-item:last-child {
+  margin-bottom: 0;
+}
+.el-drawer__header {
+  margin-bottom: 0;
+  padding-bottom: 16px;
+  border-bottom: 1px solid var(--el-border-color-lighter);
+}
+.el-drawer__body {
+  padding-top: 0;
+}
+
+.ep-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+/* Separate page-level filters/actions from the table below. Card-header
+   toolbars are not adjacent to a table and therefore remain unchanged. */
+.ep-main .ep-toolbar + .el-table,
+.ep-main .ep-toolbar + .table-scroll {
+  margin-top: 16px;
+}
+.ep-toolbar .el-input {
+  width: 320px;
+}
+.ep-toolbar .el-select {
+  width: 160px;
+}
+.ep-toolbar-spacer {
+  flex: 1;
+}
+.ep-page-card {
+  margin-bottom: 16px;
+}
+.license-page {
+  display: grid;
+  gap: 18px;
+}
+.license-summary-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 18px;
+}
+.dashboard-metrics,
+.ep-dashboard-metrics {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 16px;
+  margin-bottom: 16px;
+}
+.dashboard-metrics .el-card,
+.ep-dashboard-metrics .el-card {
+  min-width: 0;
+  min-height: 116px;
+}
+.dashboard-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 16px;
+  margin-bottom: 16px;
+}
+.dashboard-grid > .el-card {
+  min-width: 0;
+  min-height: 250px;
+}
+.ep-actions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 6px;
+}
+.ep-dashboard-metrics .el-card {
+  min-width: 0;
+}
+.ep-progress-row {
+  display: grid;
+  grid-template-columns: 120px minmax(120px, 1fr) 60px;
+  align-items: center;
+  gap: 12px;
+  margin: 14px 0;
+}
+.ep-dashboard-list {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 0;
+  border-bottom: 1px solid var(--el-border-color-lighter);
+  cursor: pointer;
+}
+.ep-dashboard-list span {
+  display: grid;
+  gap: 4px;
+}
+.ep-dashboard-list small,
+.ep-dashboard-list time {
+  color: var(--el-text-color-secondary);
+}
+.ep-column-list {
+  display: grid;
+  gap: 8px;
+  max-height: 360px;
+  overflow: auto;
+}
+.action-message {
+  display: none;
+}
+
+@media (max-width: 760px) {
+  .dashboard-metrics,
+  .ep-dashboard-metrics {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+  .dashboard-grid {
+    grid-template-columns: 1fr;
+  }
+  .ep-toolbar .el-input,
+  .ep-toolbar .el-select,
+  .ep-toolbar .el-date-editor {
+    width: 100%;
+  }
+  .ep-toolbar-spacer {
+    display: none;
+  }
+}
+
+@media (max-width: 520px) {
+  .dashboard-metrics,
+  .ep-dashboard-metrics {
+    grid-template-columns: 1fr;
+  }
+}
+
+/* Keep the settings parent title full-width and pin its disclosure arrow to
+   the far right.  Element Plus positions the arrow absolutely, but the
+   legacy sidebar width rules can leave the title's flex box only as wide as
+   its text.  These final, scoped rules restore the expected full-width
+   containing block without changing the collapsed sidebar behavior. */
+.ep-sidebar-menu:not(.el-menu--collapse) > .el-sub-menu {
+  width: 100% !important;
+}
+
+.ep-sidebar-menu:not(.el-menu--collapse) > .el-sub-menu > .el-sub-menu__title {
+  position: relative !important;
+  display: flex !important;
+  box-sizing: border-box !important;
+  width: calc(100% - 16px) !important;
+  max-width: none !important;
+  padding-right: 42px !important;
+}
+
+.ep-sidebar-menu:not(.el-menu--collapse) > .el-sub-menu > .el-sub-menu__title > .el-sub-menu__icon-arrow,
+.ep-sidebar-menu:not(.el-menu--collapse) > .el-sub-menu > .el-sub-menu__title .el-sub-menu__icon-arrow {
+  position: absolute !important;
+  /* Keep the arrow's top edge aligned with the menu label's visual top. */
+  top: 14px !important;
+  right: 14px !important;
+  left: auto !important;
+  margin-top: 0 !important;
+  margin-right: 0 !important;
+  margin-left: 0 !important;
+}
+
+/* Platform brand mark generated for the login screen and sidebar. */
+.sidebar-brand-icon {
+  display: block;
+  flex: 0 0 30px;
+  width: 30px;
+  height: 30px;
+  object-fit: contain;
+}
+
+.shell.sidebar-collapsed > .ep-sidebar .sidebar-brand-icon {
+  flex-basis: 30px;
+  width: 30px;
+  height: 30px;
+  margin: 0;
+}
+
+/* Keep the expanded navigation compact: the hamburger sits at the upper
+   right of the navigation header instead of consuming a separate menu row. */
+.shell:not(.sidebar-collapsed) > .ep-sidebar .ep-collapse-button {
+  position: absolute;
+  top: 16px;
+  right: 8px;
+  z-index: 2;
+  width: 32px;
+  height: 32px;
+  min-height: 32px;
+  margin: 0;
+  padding: 0 !important;
+  justify-content: center;
+}
+
+.shell:not(.sidebar-collapsed) > .ep-sidebar .sidebar-brand {
+  padding-right: 48px;
+}
+
+.ep-sidebar-menu:not(.el-menu--collapse) {
+  padding-top: 0;
+}
+
+.ep-sidebar-menu:not(.el-menu--collapse) > .el-menu-item,
+.ep-sidebar-menu:not(.el-menu--collapse) > .el-sub-menu > .el-sub-menu__title {
+  width: calc(100% - 8px);
+  margin-right: 4px;
+  margin-left: 4px;
+  padding-right: 16px !important;
+  padding-left: 16px !important;
+}
+
+.ep-sidebar-menu:not(.el-menu--collapse) .el-sub-menu > .el-menu > .el-menu-item {
+  width: calc(100% - 8px);
+  margin-right: 4px;
+  margin-left: 4px;
+  padding-left: 44px !important;
+  padding-right: 12px !important;
+}
+
+.ep-sidebar-menu:not(.el-menu--collapse) > .el-sub-menu > .el-sub-menu__title {
+  padding-right: 36px !important;
+}
+
+.ep-sidebar-menu:not(.el-menu--collapse) > .el-sub-menu > .el-sub-menu__title .el-sub-menu__icon-arrow {
+  /* Let flex layout place the arrow after the title text.  This is more
+     reliable than an absolute offset when Element Plus recalculates menu
+     widths during sidebar transitions. */
+  position: static !important;
+  flex: 0 0 auto;
+  margin: 0 0 0 auto !important;
+  right: auto !important;
+  left: auto !important;
+  top: auto !important;
+}
+
+/* Compact data-dense entries across the admin pages.  Keep the custom rack
+   U-position canvas untouched; these rules only target Element Plus tables
+   and the settings submenu. */
+.ep-main .el-table th.el-table__cell {
+  padding-top: 8px;
+  padding-bottom: 8px;
+}
+
+.ep-main .el-table td.el-table__cell {
+  padding-top: 9px;
+  padding-bottom: 9px;
+}
+
+.ep-main .el-table th .cell {
+  font-size: 12px;
+  line-height: 18px;
+  font-weight: 600;
+}
+
+.ep-main .el-table .cell {
+  font-size: 13px;
+  line-height: 20px;
+}
+
+.ep-main .el-table .el-button {
+  font-size: 13px;
+}
+
+.ep-main .el-table .el-tag {
+  min-height: 22px;
+  height: 22px;
+  padding: 0 8px;
+  font-size: 12px;
+  line-height: 20px;
+}
+
+.ep-main .ep-dashboard-list {
+  gap: 8px;
+  padding: 7px 0;
+}
+
+.ep-main .ep-dashboard-list strong {
+  font-size: 13px;
+}
+
+.ep-main .ep-dashboard-list small,
+.ep-main .ep-dashboard-list time {
+  font-size: 12px;
+}
+
+.ep-sidebar-menu:not(.el-menu--collapse) .el-sub-menu .el-menu-item {
+  height: 36px !important;
+  min-height: 36px;
+  line-height: 36px !important;
+  margin-top: 1px;
+  margin-bottom: 1px;
+  font-size: 13px;
+}
+
+/* The navigation toggle belongs to the page header, immediately beside the
+   sidebar edge, so it remains available without taking space in the menu. */
+.ep-main .page-heading {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+}
+
+.ep-main .ep-main-collapse-button {
+  flex: 0 0 32px;
+  width: 32px;
+  height: 32px;
+  min-height: 32px;
+  margin: 0;
+  padding: 0 !important;
+  border-radius: 8px;
+  color: var(--itam-sidebar-muted) !important;
+}
+
+.ep-main .ep-main-collapse-button:hover,
+.ep-main .ep-main-collapse-button:focus-visible {
+  background: var(--itam-sidebar-hover) !important;
+  color: var(--itam-primary-blue) !important;
+}
+
+.ep-main .ep-main-collapse-button .el-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+  margin: 0;
+}
+
+.import-error-list {
+  max-height: 360px;
+  margin-top: 14px;
+  overflow: auto;
+  padding: 8px 12px;
+  border: 1px solid var(--el-border-color-lighter);
+  border-radius: 6px;
+  background: var(--el-fill-color-lighter);
+}
+
+.import-error-list p {
+  margin: 0;
+  padding: 5px 0;
+  color: var(--el-text-color-regular);
+  line-height: 1.5;
+}
+
+.import-preview-summary {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin: 14px 0;
+}
+
+.import-preview-changes,
+.import-preview-errors {
+  line-height: 1.55;
+  white-space: normal;
+}
+
+.import-preview-errors {
+  color: var(--el-color-danger);
+}
+
+.import-preview-label {
+  color: var(--el-text-color-secondary);
+}
+
+.import-preview-arrow {
+  margin: 0 5px;
+  color: var(--el-text-color-secondary);
+}
+
+/* Final compact-page pass.  This block intentionally comes last so the
+   legacy compatibility rules above cannot re-introduce different heights or
+   table row spacing on individual pages. */
+.ep-main .el-input__wrapper,
+.ep-main .el-select__wrapper,
+.ep-main .el-date-editor.el-input,
+.ep-main .el-date-editor.el-input__wrapper,
+.ep-main .el-input-number,
+.ep-main .el-input-number .el-input__wrapper,
+.ep-main .itam-search-field {
+  height: var(--itam-control-height);
+  min-height: var(--itam-control-height);
+  box-sizing: border-box;
+}
+
+.ep-main .el-button:not(.is-circle):not(.is-link):not(.is-text):not(.ep-main-collapse-button),
+.ep-main .el-upload .el-button {
+  height: var(--itam-control-height);
+  min-height: var(--itam-control-height);
+  box-sizing: border-box;
+  white-space: nowrap;
+}
+
+.ep-main .el-table th.el-table__cell {
+  padding-top: 8px;
+  padding-bottom: 8px;
+}
+
+.ep-main .el-table td.el-table__cell {
+  padding-top: 10px;
+  padding-bottom: 10px;
+}
+
+.ep-main .el-table .cell {
+  line-height: 20px;
+}
+
+.ep-main .el-table .el-button.is-link,
+.ep-main .el-table .el-button.is-text {
+  height: 30px;
+  min-height: 30px;
+}
+
+.ep-main .itam-search-field {
+  width: min(390px, 100%);
+}
+
+.ep-main .itam-search-field .el-input__wrapper {
+  height: var(--itam-control-height);
+  min-height: var(--itam-control-height);
+  border-radius: var(--itam-control-radius) 0 0 var(--itam-control-radius);
+}
+
+.ep-main .itam-search-field .el-input-group__append {
+  height: var(--itam-control-height);
+  min-height: var(--itam-control-height);
+  padding: 0;
+  background: var(--el-fill-color-blank);
+  border-left: 1px solid var(--el-border-color);
+  border-radius: 0 var(--itam-control-radius) var(--itam-control-radius) 0;
+}
+
+.ep-main .itam-search-field .itam-search-button {
+  width: 42px;
+  height: var(--itam-control-height);
+  min-height: var(--itam-control-height);
+  margin: 0;
+  padding: 0;
+  border: 0;
+  border-radius: 0 var(--itam-control-radius) var(--itam-control-radius) 0;
+}
+
+.ep-main .ep-toolbar {
+  gap: var(--itam-control-gap);
+  row-gap: 8px;
+}
+
+.ep-main .ep-toolbar > .itam-search-field {
+  flex: 0 1 390px;
+}
+
+.ep-main .el-pagination {
+  min-height: var(--itam-control-height);
+  margin-top: 12px;
+  align-items: center;
+}
+
+.rack-mounted-toggle .el-form-item__content {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+@media (max-width: 900px) {
+  .ep-main .ep-toolbar > .itam-search-field {
+    flex: 1 1 100%;
+    width: 100%;
+    max-width: none;
+  }
+}
+
+/* Asset detail drawer: keep the identity and current state visible while
+   the longer configuration sections scroll independently below it. */
+.asset-detail-drawer .el-drawer__header {
+  margin-bottom: 0;
+  padding: 18px 22px 16px;
+  border-bottom: 1px solid var(--el-border-color-lighter);
+}
+
+.asset-drawer-heading {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+  width: 100%;
+  min-width: 0;
+}
+
+.asset-drawer-kicker {
+  display: block;
+  color: var(--el-text-color-secondary);
+  font-size: 12px;
+  line-height: 18px;
+}
+
+.asset-drawer-heading h2 {
+  margin: 2px 0 0;
+  color: var(--el-text-color-primary);
+  font-size: 20px;
+  line-height: 28px;
+}
+
+.asset-drawer-heading p {
+  max-width: 380px;
+  margin: 2px 0 0;
+  overflow: hidden;
+  color: var(--el-text-color-regular);
+  font-size: 13px;
+  line-height: 20px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.asset-drawer-close {
+  flex: 0 0 32px;
+  width: 32px;
+  height: 32px;
+  min-height: 32px;
+  margin: 0;
+  color: var(--el-text-color-secondary);
+}
+
+.asset-drawer-close:hover,
+.asset-drawer-close:focus-visible {
+  color: var(--itam-primary-blue);
+  background: var(--el-color-primary-light-9);
+}
+
+.asset-detail-drawer .el-drawer__body {
+  padding: 0;
+}
+
+.asset-detail-summary {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 14px;
+  margin: 16px 18px 0;
+  padding: 12px 14px;
+  border: 1px solid var(--el-color-primary-light-8);
+  border-radius: 9px;
+  background: var(--el-color-primary-light-9);
+}
+
+.asset-detail-summary div {
+  display: grid;
+  gap: 3px;
+  min-width: 0;
+}
+
+.asset-detail-summary span {
+  color: var(--el-text-color-secondary);
+  font-size: 12px;
+  line-height: 18px;
+}
+
+.asset-detail-summary strong {
+  overflow: hidden;
+  color: var(--el-color-primary);
+  font-size: 16px;
+  line-height: 22px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.asset-detail-summary .el-tag {
+  justify-self: start;
+}
+
+.asset-detail-drawer .drawer-content {
+  padding: 0 18px 24px;
+}
+
+.asset-detail-drawer .detail-section {
+  padding: 16px 0;
+}
+
+.asset-detail-drawer .detail-section h3 {
+  margin-bottom: 11px;
+  font-size: 14px;
+}
+
+.asset-detail-drawer .detail-section dl {
+  grid-template-columns: 96px minmax(0, 1fr);
+  gap: 8px 12px;
+  font-size: 13px;
+  line-height: 20px;
+}
+
+@media (max-width: 560px) {
+  .asset-detail-summary {
+    grid-template-columns: 1fr;
+  }
+}
+
+/* Keep page controls visually separated from the data below.  Some list
+   pages render their table through PagedTable, so the table is not a direct
+   sibling of the toolbar; the wrapper needs the spacing and divider. */
+.ep-main .el-card__body > .ep-toolbar + .paged-table {
+  box-sizing: border-box;
+  margin-top: 14px;
+  padding-top: 14px;
+  border-top: 1px solid var(--el-border-color-lighter);
+}
+
+/* Card-header toolbars already have their own header divider.  A little
+   breathing room before the table keeps the header and first row from
+   appearing stuck together on settings, rack-management and dashboard
+   cards. */
+.ep-main .el-card__body > .el-table {
+  box-sizing: border-box;
+  margin-top: 12px;
+  border-top: 1px solid var(--el-border-color-lighter);
+}
+
+/* Preserve a clear separation for any direct table that follows a page
+   toolbar, including future pages that do not use PagedTable yet. */
+.ep-main .el-card__body > .ep-toolbar + .el-table,
+.ep-main .ep-toolbar + .table-scroll {
+  margin-top: 14px;
+}
+
+/* Keep the audit filters on one row on normal desktop widths.  Element Plus
+   gives date pickers a 100% width by default, which otherwise forces the end
+   date onto a second line even when the card still has room. */
+.ep-main .audit-toolbar {
+  flex-wrap: nowrap;
+  gap: 10px;
+}
+
+.ep-main .audit-toolbar > strong {
+  flex: 0 0 auto;
+  white-space: nowrap;
+}
+
+.ep-main .audit-toolbar > .itam-search-field {
+  flex: 1 1 300px;
+  width: 300px;
+  min-width: 220px;
+  max-width: 320px;
+}
+
+.ep-main .audit-toolbar > .el-select {
+  flex: 0 1 150px;
+  width: 150px;
+  max-width: 150px;
+}
+
+.ep-main .audit-toolbar > .el-date-editor.el-input,
+.ep-main .audit-toolbar > .el-date-editor.el-input__wrapper {
+  flex: 0 1 180px;
+  width: 180px;
+  max-width: 180px;
+}
+
+@media (max-width: 1100px) {
+  .ep-main .audit-toolbar {
+    flex-wrap: wrap;
+  }
+
+  .ep-main .audit-toolbar > .itam-search-field {
+    flex: 1 1 240px;
+    max-width: 320px;
+  }
+}
+
+/* Infrix dashboard reference layout.  These styles are scoped to the home
+   page so the compact business tables and rack canvas keep their existing
+   spacing. */
+.dashboard-reference-page {
+  display: grid;
+  gap: 16px;
+}
+
+.dashboard-filter-card,
+.dashboard-reference-card {
+  border: 1px solid #e5eaf2;
+  border-radius: 12px;
+  background: #fff;
+  box-shadow: 0 8px 24px rgba(31, 55, 90, 0.04);
+}
+
+.dashboard-filter-card > .el-card__body {
+  padding: 16px 20px;
+}
+
+.dashboard-filter-heading,
+.dashboard-card-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.dashboard-filter-heading h2 {
+  margin: 3px 0 0;
+  color: #12234a;
+  font-size: 19px;
+}
+
+.dashboard-eyebrow {
+  color: #7a8aa6;
+  font-size: 12px;
+}
+
+.dashboard-filter-controls {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px 18px;
+  margin-top: 12px;
+}
+
+.dashboard-filter-controls .el-form-item {
+  margin: 0;
+}
+
+.dashboard-filter-controls .el-select {
+  width: 230px;
+}
+
+.dashboard-inline-loading {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 24px;
+  color: #71819a;
+  font-size: 13px;
+}
+
+.dashboard-reference-metrics {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 14px;
+}
+
+.dashboard-reference-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 16px;
+}
+
+.dashboard-reference-card {
+  min-width: 0;
+}
+
+.dashboard-reference-card > .el-card__header {
+  padding: 15px 20px;
+  border-bottom: 1px solid #edf1f6;
+  color: #12234a;
+}
+
+.dashboard-reference-card > .el-card__body {
+  padding: 18px 20px;
+}
+
+.dashboard-card-heading strong {
+  font-size: 16px;
+}
+
+.dashboard-card-heading .el-button {
+  padding: 4px 0;
+}
+
+.dashboard-chart-card {
+  min-height: 280px;
+}
+
+.dashboard-donut-layout {
+  display: grid;
+  grid-template-columns: 210px minmax(0, 1fr);
+  align-items: center;
+  gap: 20px;
+  min-height: 205px;
+}
+
+.dashboard-donut {
+  position: relative;
+  width: 190px;
+  height: 190px;
+  margin: 0 auto;
+}
+
+.dashboard-donut svg {
+  width: 100%;
+  height: 100%;
+  transform: rotate(-90deg);
+}
+
+.dashboard-donut-track,
+.dashboard-donut-segment {
+  fill: none;
+  stroke-width: 13;
+}
+
+.dashboard-donut-track { stroke: #edf1f7; }
+.dashboard-donut-segment { stroke-linecap: butt; transition: stroke-dasharray .25s ease; }
+
+.dashboard-donut-center {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-direction: column;
+  color: #12234a;
+}
+
+.dashboard-donut-center strong { font-size: 24px; line-height: 1.1; }
+.dashboard-donut-center span { margin-top: 5px; color: #71819a; font-size: 12px; }
+
+.dashboard-donut-legend {
+  display: grid;
+  gap: 5px;
+  min-width: 0;
+}
+
+.dashboard-legend-item {
+  display: grid;
+  grid-template-columns: 10px minmax(0, 1fr) 46px 54px;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 5px 0;
+  border: 0;
+  background: transparent;
+  color: #51617d;
+  text-align: left;
+  cursor: pointer;
+}
+
+.dashboard-legend-item:hover { color: #2563eb; }
+.dashboard-legend-item i { width: 9px; height: 9px; border-radius: 50%; }
+.dashboard-legend-item strong { color: #12234a; text-align: right; }
+.dashboard-legend-item small { color: #8794aa; text-align: right; }
+
+.data-center-overview-list { display: grid; gap: 9px; }
+
+.data-center-overview-item {
+  display: grid;
+  gap: 8px;
+  width: 100%;
+  padding: 11px 12px;
+  border: 1px solid #e6ebf3;
+  border-radius: 9px;
+  background: #fff;
+  color: #536681;
+  text-align: left;
+  cursor: pointer;
+}
+
+.data-center-overview-item:hover { border-color: #93b4f8; background: #f8fbff; }
+.data-center-overview-title { display: flex; align-items: center; gap: 8px; color: #12234a; }
+.data-center-overview-title strong { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.data-center-icon { display: grid; place-items: center; width: 26px; height: 26px; border-radius: 7px; background: #eaf2ff; color: #2563eb; }
+.data-center-overview-stats { display: flex; flex-wrap: wrap; gap: 16px; font-size: 12px; }
+.data-center-overview-stats b { margin-right: 3px; color: #12234a; font-size: 15px; }
+.data-center-overview-item .el-progress { margin-top: 1px; }
+
+.capacity-highlight-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; }
+.capacity-highlight-grid > div { min-width: 0; padding: 11px 12px; border-radius: 9px; background: #f7f9fc; }
+.capacity-highlight-grid span, .capacity-highlight-grid small { display: block; color: #71819a; font-size: 12px; }
+.capacity-highlight-grid strong { display: block; margin: 8px 0 4px; overflow: hidden; color: #12234a; font-size: 17px; text-overflow: ellipsis; white-space: nowrap; }
+
+.dashboard-table-grid .dashboard-reference-card { overflow: hidden; }
+.dashboard-reference-table { width: 100%; }
+.dashboard-reference-table .el-table__row { cursor: pointer; }
+.dashboard-expiry-warning { color: #dc2626; font-weight: 600; }
+
+.dashboard-quick-actions > .el-card__body { padding-top: 13px; }
+.quick-action-grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 14px; }
+.quick-action-grid button { display: flex; align-items: center; gap: 12px; min-width: 0; padding: 14px 16px; border: 1px solid #e3eaf3; border-radius: 10px; background: #fff; color: #12234a; text-align: left; cursor: pointer; }
+.quick-action-grid button:hover { border-color: #93b4f8; background: #f8fbff; }
+.quick-action-grid button > .el-icon { display: grid; place-items: center; width: 36px; height: 36px; flex: 0 0 36px; border-radius: 9px; background: #eaf2ff; color: #2563eb; font-size: 21px; }
+.quick-action-grid span { display: grid; gap: 4px; min-width: 0; }
+.quick-action-grid strong { font-size: 13px; }
+.quick-action-grid small { color: #8794aa; font-size: 11px; }
+
+@media (max-width: 1150px) {
+  .dashboard-reference-metrics { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .quick-action-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
+
+@media (max-width: 820px) {
+  .dashboard-reference-grid { grid-template-columns: 1fr; }
+  .dashboard-donut-layout { grid-template-columns: 180px minmax(0, 1fr); }
+  .dashboard-donut { width: 170px; height: 170px; }
+}
+
+@media (max-width: 560px) {
+  .dashboard-filter-heading { align-items: flex-start; }
+  .dashboard-filter-controls .el-form-item,
+  .dashboard-filter-controls .el-select { width: 100%; }
+  .dashboard-reference-metrics { grid-template-columns: 1fr; }
+  .dashboard-donut-layout { grid-template-columns: 1fr; }
+  .capacity-highlight-grid, .quick-action-grid { grid-template-columns: 1fr; }
+  .dashboard-donut { width: 160px; height: 160px; }
+}
+
+/* Inventory center */
+.inventory-page {
+  display: grid;
+  gap: 16px;
+}
+.inventory-toolbar {
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px;
+}
+.inventory-toolbar .itam-search-field {
+  min-width: 280px;
+  flex: 1 1 360px;
+}
+.inventory-alert {
+  margin-bottom: 12px;
+}
+.inventory-detail-heading {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 4px 0 2px;
+}
+.inventory-detail-heading h2 {
+  margin: 8px 0 4px;
+  font-size: 22px;
+  color: #1d2b43;
+}
+.inventory-detail-heading p {
+  margin: 0;
+  color: #77869b;
+  font-size: 13px;
+}
+.inventory-summary-grid {
+  display: grid;
+  grid-template-columns: repeat(6, minmax(0, 1fr));
+  gap: 12px;
+}
+.inventory-item-form { margin-top: 16px; }
+.asset-inventory-history { display: grid; gap: 10px; }
+.asset-inventory-history-item {
+  padding: 10px 12px;
+  border: 1px solid #e3e9f2;
+  border-radius: 8px;
+  background: #fafcff;
+}
+.asset-inventory-history-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+.asset-inventory-history-item small { color: #7c8ba0; }
+.asset-inventory-history-item p { margin: 6px 0; color: #465672; white-space: pre-wrap; }
+@media (max-width: 1100px) {
+  .inventory-summary-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+}
+@media (max-width: 650px) {
+  .inventory-summary-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .inventory-detail-heading { flex-direction: column; }
+}
+
+/* Final button baseline: business text buttons share one semantic palette
+   and one layout rhythm. Icon-only controls and the rack canvas controls are
+   intentionally excluded so their compact dimensions remain unchanged. */
+:root {
+  --itam-button-height: 36px;
+  --itam-button-gap: 8px;
+  --itam-button-border: #cbd5e1;
+  --itam-button-text: #334155;
+  --itam-button-hover-bg: #f7faff;
+  --itam-button-danger: #dc2626;
+  --itam-button-danger-border: #fecaca;
+}
+
+.ep-main .ep-toolbar {
+  flex-wrap: nowrap;
+  align-items: center;
+}
+
+.ep-main .ep-toolbar-actions,
+.ep-main .ep-table-actions,
+.ep-main .rack-filter-actions,
+.ep-main .el-dialog__footer {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--itam-button-gap);
+}
+
+.ep-main .ep-toolbar-actions {
+  flex: 0 0 auto;
+  margin-left: auto;
+  flex-wrap: nowrap;
+}
+
+.ep-main .ep-table-actions {
+  justify-content: flex-start;
+  flex-wrap: nowrap;
+}
+
+.ep-main .el-button:not(.is-link):not(.is-text):not(.is-circle):not(.ep-main-collapse-button),
+.ep-main .el-upload .el-button,
+.login-button {
+  min-height: var(--itam-button-height);
+  height: var(--itam-button-height);
+  box-sizing: border-box;
+  padding: 0 16px;
+  border-radius: 7px;
+  font-size: 14px;
+  font-weight: 500;
+  line-height: 1;
+  white-space: nowrap;
+}
+
+.ep-main .el-button:not(.el-button--primary):not(.el-button--danger):not(.el-button--warning):not(.is-link):not(.is-text):not(.is-circle):not(.ep-main-collapse-button),
+.ep-main .el-upload .el-button:not(.el-button--primary):not(.el-button--danger):not(.el-button--warning),
+.login-button {
+  --el-button-text-color: var(--itam-button-text);
+  --el-button-bg-color: #fff;
+  --el-button-border-color: var(--itam-button-border);
+  --el-button-hover-text-color: var(--itam-primary-blue);
+  --el-button-hover-bg-color: var(--itam-button-hover-bg);
+  --el-button-hover-border-color: var(--itam-primary-blue);
+  --el-button-active-text-color: var(--itam-primary-blue);
+  --el-button-active-bg-color: var(--el-color-primary-light-9);
+  --el-button-active-border-color: var(--itam-primary-blue);
+}
+
+.ep-main .el-button--primary,
+.login-button {
+  --el-button-bg-color: var(--itam-primary-blue);
+  --el-button-border-color: var(--itam-primary-blue);
+  --el-button-text-color: #fff;
+  --el-button-hover-bg-color: #3b82f6;
+  --el-button-hover-border-color: #3b82f6;
+  --el-button-hover-text-color: #fff;
+  --el-button-active-bg-color: #1d4ed8;
+  --el-button-active-border-color: #1d4ed8;
+  --el-button-active-text-color: #fff;
+}
+
+.ep-main .el-button--danger {
+  --el-button-bg-color: #fff;
+  --el-button-border-color: var(--itam-button-danger-border);
+  --el-button-text-color: var(--itam-button-danger);
+  --el-button-hover-bg-color: #fff5f5;
+  --el-button-hover-border-color: var(--itam-button-danger);
+  --el-button-hover-text-color: var(--itam-button-danger);
+  --el-button-active-bg-color: #fee2e2;
+  --el-button-active-border-color: var(--itam-button-danger);
+  --el-button-active-text-color: var(--itam-button-danger);
+}
+
+.ep-main .el-button.is-link {
+  min-height: 30px;
+  height: 30px;
+  margin: 0;
+  padding: 4px 0;
+  font-size: 13px;
+  white-space: nowrap;
+}
+
+.ep-main .el-button.is-link:not(.el-button--primary):not(.el-button--danger):not(.el-button--warning) {
+  --el-button-text-color: #64748b;
+  --el-button-hover-text-color: var(--itam-primary-blue);
+}
+
+.ep-main .el-button.is-link.el-button--primary {
+  --el-button-text-color: var(--itam-primary-blue);
+  --el-button-hover-text-color: #1d4ed8;
+}
+
+.ep-main .el-button.is-link.el-button--danger {
+  --el-button-text-color: var(--itam-button-danger);
+  --el-button-hover-text-color: #b91c1c;
+}
+
+.ep-main .ep-toolbar-actions .el-button + .el-button,
+.ep-main .ep-table-actions .el-button + .el-button,
+.ep-main .rack-filter-actions .el-button + .el-button,
+.ep-main .el-dialog__footer .el-button + .el-button {
+  margin-left: 0;
+}
+
+.ep-main .el-dialog__footer {
+  justify-content: flex-end;
+  width: 100%;
+}
+
+/* Element Plus may teleport dialogs outside .ep-main; keep the same footer
+   and text-button rules when that happens. */
+.el-dialog__footer {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: var(--itam-button-gap);
+}
+
+.el-dialog__footer .el-button:not(.is-link):not(.is-text):not(.is-circle) {
+  min-height: var(--itam-button-height);
+  height: var(--itam-button-height);
+  margin-left: 0;
+  padding: 0 16px;
+  border-radius: 7px;
+  font-size: 14px;
+  font-weight: 500;
+  white-space: nowrap;
+}
+
+.el-dialog__footer .el-button:not(.el-button--primary):not(.el-button--danger):not(.el-button--warning):not(.is-link):not(.is-text):not(.is-circle) {
+  --el-button-text-color: var(--itam-button-text);
+  --el-button-bg-color: #fff;
+  --el-button-border-color: var(--itam-button-border);
+  --el-button-hover-text-color: var(--itam-primary-blue);
+  --el-button-hover-bg-color: var(--itam-button-hover-bg);
+  --el-button-hover-border-color: var(--itam-primary-blue);
+}
+
+.el-dialog__footer .el-button--primary {
+  --el-button-bg-color: var(--itam-primary-blue);
+  --el-button-border-color: var(--itam-primary-blue);
+  --el-button-text-color: #fff;
+  --el-button-hover-bg-color: #3b82f6;
+  --el-button-hover-border-color: #3b82f6;
+  --el-button-hover-text-color: #fff;
+  --el-button-active-bg-color: #1d4ed8;
+  --el-button-active-border-color: #1d4ed8;
+  --el-button-active-text-color: #fff;
+}
+
+.el-dialog__footer .el-button--danger {
+  --el-button-bg-color: #fff;
+  --el-button-border-color: var(--itam-button-danger-border);
+  --el-button-text-color: var(--itam-button-danger);
+  --el-button-hover-bg-color: #fff5f5;
+  --el-button-hover-border-color: var(--itam-button-danger);
+  --el-button-hover-text-color: var(--itam-button-danger);
+}
+
+.ep-main .el-button:disabled,
+.ep-main .el-upload.is-disabled .el-button,
+.login-button:disabled {
+  opacity: 0.5;
+}
+
+.spare-page {
+  display: grid;
+  gap: 16px;
+}
+
+.spare-detail-card h3 {
+  margin: 18px 0 10px;
+  color: #273651;
+  font-size: 15px;
+}
+
+.spare-detail-card h3:first-of-type {
+  margin-top: 12px;
+}
+
+.spare-history-title {
+  border-top: 1px solid #edf1f6;
+  padding-top: 18px;
+}
+
+.spare-detail-filters {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-bottom: 8px;
+}
+
+.spare-detail-filters .el-select {
+  width: 220px;
+}
+
+@media (max-width: 1100px) {
+  .ep-main .ep-toolbar {
+    flex-wrap: wrap;
+  }
+
+  .ep-main .ep-toolbar-actions {
+    flex-wrap: wrap;
+  }
+}
+
+/* -------------------------------------------------------------------------
+   INFRIX light brand and navigation finish
+   Keep these rules last: a few legacy styles in style.css/feature-styles.css
+   still target the old dark shell and the old sprite-based navigation.
+   ------------------------------------------------------------------------- */
+:root {
+  --itam-primary-blue: #2563eb;
+  --itam-sidebar-bg: #ffffff;
+  --itam-sidebar-border: #e5eaf2;
+  --itam-sidebar-text: #24324a;
+  --itam-sidebar-icon: #7183a0;
+  --itam-sidebar-muted: #7183a0;
+  --itam-sidebar-hover: #f7f9fc;
+  --itam-sidebar-active: #eef4ff;
+}
+
+.ep-sidebar {
+  background: var(--itam-sidebar-bg) !important;
+  border-right: 1px solid var(--itam-sidebar-border) !important;
+}
+
+.sidebar-brand {
+  box-sizing: border-box;
+  height: 72px;
+  padding: 0 18px;
+  gap: 10px;
+  color: var(--itam-sidebar-text) !important;
+  font-size: 17px;
+  font-weight: 700;
+  letter-spacing: 0.01em;
+}
+
+.shell:not(.sidebar-collapsed) > .ep-sidebar .sidebar-brand {
+  padding: 0 18px 0 10px !important;
+}
+
+.sidebar-brand-icon {
+  display: block;
+  flex: 0 0 34px !important;
+  width: 34px !important;
+  height: 34px !important;
+  object-fit: contain;
+  background: transparent;
+  border-radius: 0;
+}
+
+.sidebar-wordmark {
+  display: block;
+  width: 180px !important;
+  height: 64px !important;
+  object-fit: contain;
+  background: transparent;
+  border-radius: 0;
+}
+
+.shell.sidebar-collapsed > .ep-sidebar .sidebar-brand {
+  width: 64px !important;
+  height: 72px;
+  padding: 0 !important;
+  justify-content: center;
+}
+
+.shell.sidebar-collapsed > .ep-sidebar .sidebar-brand-icon {
+  flex-basis: 32px !important;
+  width: 32px !important;
+  height: 32px !important;
+  margin: 0 !important;
+}
+
+.ep-sidebar-menu,
+.ep-sidebar .el-menu,
+.ep-sidebar .el-sub-menu .el-menu {
+  background: var(--itam-sidebar-bg) !important;
+}
+
+.ep-sidebar-menu .el-menu-item,
+.ep-sidebar-menu .el-sub-menu__title {
+  box-sizing: border-box;
+  height: 44px !important;
+  min-height: 44px !important;
+  line-height: 44px !important;
+  color: var(--itam-sidebar-icon) !important;
+  font-size: 14px;
+  font-weight: 500;
+  transition: background-color 0.16s ease, color 0.16s ease;
+}
+
+.ep-sidebar-menu .el-menu-item .el-icon,
+.ep-sidebar-menu .el-sub-menu__title > .el-icon {
+  display: inline-flex;
+  width: 22px;
+  height: 22px;
+  margin-right: 10px;
+  align-items: center;
+  justify-content: center;
+  color: var(--itam-sidebar-icon) !important;
+  font-size: 19px;
+  vertical-align: middle;
+}
+
+.ep-sidebar-menu .el-menu-item:hover,
+.ep-sidebar-menu .el-sub-menu__title:hover {
+  color: var(--itam-sidebar-text) !important;
+  background: var(--itam-sidebar-hover) !important;
+}
+
+.ep-sidebar-menu .el-menu-item:hover .el-icon,
+.ep-sidebar-menu .el-sub-menu__title:hover > .el-icon,
+.ep-sidebar-menu .el-sub-menu__title:hover .el-sub-menu__icon-arrow {
+  color: var(--itam-sidebar-text) !important;
+}
+
+.ep-sidebar-menu > .el-menu-item.is-active,
+.ep-sidebar-menu > .el-menu-item.is-active:hover {
+  color: var(--itam-primary-blue) !important;
+  background: var(--itam-sidebar-active) !important;
+  font-weight: 600;
+}
+
+.ep-sidebar-menu > .el-menu-item.is-active .el-icon,
+.ep-sidebar-menu .el-sub-menu .el-menu-item.is-active .el-icon,
+.ep-sidebar-menu .el-sub-menu .el-menu-item.is-active {
+  color: var(--itam-primary-blue) !important;
+}
+
+/* A submenu parent is a navigation group, not the active destination. */
+.ep-sidebar-menu > .el-sub-menu.is-active > .el-sub-menu__title,
+.ep-sidebar-menu > .el-sub-menu.is-active > .el-sub-menu__title:hover {
+  color: var(--itam-sidebar-icon) !important;
+  background: transparent !important;
+  font-weight: 500;
+}
+
+.ep-sidebar-menu > .el-sub-menu.is-active > .el-sub-menu__title > .el-icon,
+.ep-sidebar-menu > .el-sub-menu.is-active > .el-sub-menu__title .el-sub-menu__icon-arrow {
+  color: var(--itam-sidebar-icon) !important;
+}
+
+.ep-sidebar-menu .el-sub-menu .el-menu-item.is-active,
+.ep-sidebar-menu .el-sub-menu .el-menu-item.is-active:hover {
+  color: var(--itam-primary-blue) !important;
+  background: var(--itam-sidebar-active) !important;
+  font-weight: 600;
+}
+
+.ep-sidebar-menu:not(.el-menu--collapse) > .el-sub-menu > .el-sub-menu__title {
+  position: relative !important;
+  display: flex !important;
+  width: calc(100% - 8px) !important;
+  max-width: none !important;
+  padding-right: 42px !important;
+}
+
+.ep-sidebar-menu:not(.el-menu--collapse) > .el-sub-menu > .el-sub-menu__title > .el-sub-menu__icon-arrow,
+.ep-sidebar-menu:not(.el-menu--collapse) > .el-sub-menu > .el-sub-menu__title .el-sub-menu__icon-arrow {
+  position: absolute !important;
+  /* Match the arrow top with the first-level text instead of centering it
+     against the full menu row. */
+  top: 14px !important;
+  right: 14px !important;
+  left: auto !important;
+  margin: 0 !important;
+}
+
+.ep-sidebar-menu.el-menu--collapse > .el-menu-item,
+.ep-sidebar-menu.el-menu--collapse > .el-sub-menu > .el-sub-menu__title {
+  width: 64px !important;
+  min-width: 64px !important;
+  height: 44px !important;
+  padding: 0 !important;
+  justify-content: center;
+}
+
+.ep-sidebar-menu.el-menu--collapse > .el-menu-item .el-icon,
+.ep-sidebar-menu.el-menu--collapse > .el-sub-menu > .el-sub-menu__title > .el-icon {
+  width: 22px !important;
+  height: 22px;
+  margin: 0 !important;
+  font-size: 19px;
+}
+
+.ep-sidebar-menu.el-menu--collapse .el-sub-menu__icon-arrow {
+  display: none !important;
+}
+
+.ep-collapse-button,
+.ep-main .ep-main-collapse-button {
+  color: var(--itam-sidebar-muted) !important;
+}
+
+.ep-collapse-button:hover,
+.ep-collapse-button:focus-visible,
+.ep-main .ep-main-collapse-button:hover,
+.ep-main .ep-main-collapse-button:focus-visible {
+  color: var(--itam-primary-blue) !important;
+  background: var(--itam-sidebar-hover) !important;
+}
+
+/* Login uses the same quiet light palette as the white sidebar. */
+.login-screen {
+  min-height: 100vh;
+  background: #f7faff !important;
+}
+
+.login-card {
+  width: min(420px, calc(100vw - 32px)) !important;
+  box-sizing: border-box;
+  padding: 40px 42px !important;
+  border: 1px solid #e5eaf2;
+  border-radius: 18px !important;
+  background: #fff !important;
+  box-shadow: 0 16px 44px rgba(36, 50, 74, 0.1) !important;
+}
+
+.login-brand-wordmark {
+  display: block;
+  width: min(100%, 342px) !important;
+  height: auto !important;
+  margin: 0 auto !important;
+  object-fit: contain;
+  background: transparent;
+  border-radius: 0;
+}
+
+.login-brand {
+  display: grid;
+  justify-items: center;
+  margin-bottom: 24px;
+  text-align: center;
+}
+
+.login-card .el-form {
+  margin-top: 0;
+}
+
+.login-card h1 {
+  margin: 8px 0 4px;
+  color: var(--itam-sidebar-text) !important;
+  letter-spacing: 0.08em;
+}
+
+.login-card p {
+  color: var(--itam-sidebar-icon) !important;
+}
+
+.login-card .el-input__wrapper {
+  min-height: 42px !important;
+  border: 1px solid #dce5f0;
+  box-shadow: none !important;
+}
+
+.login-card .el-input__wrapper.is-focus {
+  border-color: var(--itam-primary-blue);
+  box-shadow: 0 0 0 1px var(--itam-primary-blue) !important;
+}
+
+.login-card .el-input__prefix-inner .el-icon,
+.login-card .el-input__suffix-inner .el-icon {
+  color: var(--itam-sidebar-icon);
+  font-size: 18px;
+}
+
+.login-card .el-input__inner {
+  height: 40px !important;
+}
+
+/* Compact, single-viewport Dashboard layout.  The dashboard host is scoped
+   to the home page so list, rack and settings pages retain their normal
+   scrolling behavior. */
+.dashboard-host {
+  overflow: hidden !important;
+}
+
+.dashboard-host .dashboard-reference-page {
+  position: relative;
+  margin-top: -8px;
+  height: calc(100vh - 110px);
+  min-height: 0;
+  grid-template-rows: var(--itam-stat-card-height, 106px) 218px minmax(118px, 1fr) 142px;
+  gap: 10px;
+  overflow: hidden;
+}
+
+.dashboard-host .dashboard-inline-loading {
+  position: absolute;
+  top: 2px;
+  right: 4px;
+  z-index: 2;
+  min-height: 18px;
+  padding: 2px 8px;
+  border-radius: 6px;
+  background: rgba(255, 255, 255, 0.92);
+  font-size: 12px;
+}
+
+.dashboard-host .dashboard-reference-metrics,
+.dashboard-host .dashboard-reference-grid {
+  min-height: 0;
+}
+
+.dashboard-host .dashboard-reference-card {
+  min-height: 0;
+  height: 100%;
+}
+
+.dashboard-host .dashboard-chart-card,
+.dashboard-host .dashboard-primary-grid .dashboard-reference-card,
+.dashboard-host .dashboard-table-grid .dashboard-reference-card,
+.dashboard-host .dashboard-quick-actions {
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.dashboard-host .dashboard-reference-card > .el-card__header {
+  flex: 0 0 40px;
+  min-height: 40px;
+  padding: 10px 14px;
+}
+
+.dashboard-host .dashboard-reference-card > .el-card__body {
+  min-height: 0;
+  padding: 10px 14px;
+  overflow: hidden;
+}
+
+.dashboard-host .dashboard-chart-card > .el-card__body {
+  display: flex;
+  align-items: center;
+  flex: 1;
+}
+
+.dashboard-host .dashboard-primary-grid > .dashboard-reference-card:not(.dashboard-chart-card) > .el-card__body {
+  display: flex;
+  flex: 1;
+  min-height: 0;
+}
+
+.dashboard-host .dashboard-donut-layout {
+  grid-template-columns: 164px minmax(0, 1fr);
+  gap: 12px;
+  width: 100%;
+  min-height: 0;
+}
+
+.dashboard-host .dashboard-donut {
+  width: 132px;
+  height: 132px;
+}
+
+.dashboard-host .dashboard-donut-center strong { font-size: 20px; }
+.dashboard-host .dashboard-donut-center span { margin-top: 3px; font-size: 11px; }
+.dashboard-host .dashboard-donut-track,
+.dashboard-host .dashboard-donut-segment { stroke-width: 11; }
+.dashboard-host .dashboard-legend-item {
+  grid-template-columns: 10px minmax(0, 1fr) 42px 48px;
+  padding: 3px 18px 3px 0;
+  font-size: 12px;
+}
+
+.dashboard-host .data-center-overview-list {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  grid-auto-rows: minmax(0, 1fr);
+  gap: 8px;
+  min-height: 0;
+  height: 100%;
+  flex: 1;
+  align-content: stretch;
+  align-items: stretch;
+  overflow: hidden;
+}
+
+.dashboard-host .data-center-overview-item {
+  height: 100%;
+  box-sizing: border-box;
+  gap: 6px;
+  min-width: 0;
+  min-height: 96px;
+  padding: 12px 13px;
+  border-radius: 8px;
+}
+
+.dashboard-host .data-center-overview-title { gap: 7px; font-size: 14px; }
+.dashboard-host .data-center-icon { width: 30px; height: 30px; font-size: 17px; }
+.dashboard-host .data-center-overview-stats { gap: 16px; font-size: 13px; }
+.dashboard-host .data-center-overview-stats b { font-size: 16px; }
+
+.dashboard-host .dashboard-table-grid .dashboard-reference-card > .el-card__body {
+  display: flex;
+  flex: 1;
+  overflow: hidden;
+}
+
+.dashboard-host .dashboard-table-scroll {
+  min-height: 0;
+  width: 100%;
+  overflow: hidden !important;
+}
+
+.dashboard-host .dashboard-reference-table {
+  width: 100%;
+  min-width: 0;
+}
+
+.dashboard-host .dashboard-reference-table .el-table__body-wrapper,
+.dashboard-host .dashboard-reference-table .el-table__header-wrapper {
+  overflow: hidden !important;
+}
+
+.dashboard-host .dashboard-reference-table .el-table__cell {
+  padding: 5px 0;
+}
+
+.dashboard-host .dashboard-reference-table .cell {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.dashboard-host .dashboard-quick-actions > .el-card__header {
+  flex-basis: 32px;
+  min-height: 32px;
+  padding: 7px 14px;
+}
+
+.dashboard-host .dashboard-quick-actions > .el-card__body {
+  display: flex;
+  align-items: center;
+  flex: 1;
+  padding: 5px 14px;
+}
+
+.dashboard-host .quick-action-grid { width: 100%; gap: 8px; }
+.dashboard-host .quick-action-grid button { min-height: 100px; padding: 12px 14px; gap: 10px; }
+.dashboard-host .quick-action-grid button > .el-icon { width: 28px; height: 28px; flex-basis: 28px; font-size: 17px; }
+.dashboard-host .quick-action-icon-image {
+  display: block;
+  width: 48px;
+  height: 48px;
+  flex: 0 0 48px;
+  object-fit: contain;
+}
+.dashboard-host .quick-action-grid span { gap: 5px; }
+.dashboard-host .quick-action-grid strong { font-size: 16px; line-height: 1.3; }
+.dashboard-host .quick-action-grid small { display: block; color: #8794aa; font-size: 11px; line-height: 1.25; }
+
+@media (max-height: 820px) and (min-width: 901px) {
+  .dashboard-host .dashboard-reference-page {
+    margin-top: -6px;
+    height: calc(100vh - 100px);
+    grid-template-rows: var(--itam-stat-card-compact-height, 92px) 190px minmax(104px, 1fr) 136px;
+    gap: 8px;
+  }
+  .dashboard-host .dashboard-donut { width: 112px; height: 112px; }
+  .dashboard-host .dashboard-donut-layout { grid-template-columns: 136px minmax(0, 1fr); }
+  .dashboard-host .data-center-overview-title { font-size: 13px; }
+  .dashboard-host .data-center-overview-stats { font-size: 12px; }
+  .dashboard-host .data-center-overview-stats b { font-size: 15px; }
+  .dashboard-host .quick-action-grid button { min-height: 92px; }
+  .dashboard-host .quick-action-icon-image { width: 42px; height: 42px; flex-basis: 42px; }
+  .dashboard-host .quick-action-grid strong { font-size: 15px; }
+}
+
+@media (max-width: 900px) {
+  .dashboard-host { overflow: auto !important; }
+  .dashboard-host .dashboard-reference-page {
+    margin-top: 0;
+    height: auto;
+    min-height: 0;
+    grid-template-rows: none;
+    overflow: visible;
+  }
+  .dashboard-host .dashboard-reference-metrics { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .dashboard-host .data-center-overview-list { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .dashboard-host .data-center-overview-item { min-height: 88px; }
+  .dashboard-host .dashboard-reference-card { height: auto; min-height: 0; }
+  .dashboard-host .dashboard-reference-card > .el-card__body {
+    min-height: auto;
+    overflow: visible;
+  }
+  .dashboard-host .dashboard-chart-card > .el-card__body,
+  .dashboard-host .dashboard-table-grid .dashboard-reference-card > .el-card__body,
+  .dashboard-host .dashboard-quick-actions > .el-card__body {
+    flex: none;
+  }
+}
+
+@media (max-width: 560px) {
+  .dashboard-host .dashboard-reference-metrics { grid-template-columns: 1fr; }
+  .dashboard-host .dashboard-donut-layout { grid-template-columns: 1fr; }
+  .dashboard-host .dashboard-donut { width: 122px; height: 122px; }
+  .dashboard-host .data-center-overview-list { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .dashboard-host .data-center-overview-item { min-height: 82px; }
+  .dashboard-host .quick-action-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
+
+/* Shared KPI cards.  Dashboard is the visual source of truth for the
+   dimensions; all other summary strips use this component and these tokens. */
+:root {
+  --itam-stat-card-height: 106px;
+  --itam-stat-card-compact-height: 92px;
+  --itam-stat-card-radius: 12px;
+}
+
+.statistic-card {
+  min-width: 0;
+  height: var(--itam-stat-card-height);
+  border: 1px solid #e5eaf2;
+  border-radius: var(--itam-stat-card-radius);
+  background: #fff;
+  box-shadow: 0 8px 24px rgba(31, 55, 90, 0.04);
+  overflow: hidden;
+}
+
+.statistic-card.is-clickable {
+  cursor: pointer;
+}
+
+.statistic-card.is-clickable:focus-visible {
+  outline: 2px solid var(--itam-primary-blue);
+  outline-offset: 2px;
+}
+
+.statistic-card > .el-card__body {
+  display: flex;
+  align-items: center;
+  height: 100%;
+  box-sizing: border-box;
+  padding: 18px 20px;
+  overflow: hidden;
+}
+
+.statistic-card__body {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  width: 100%;
+  min-width: 0;
+  height: 100%;
+}
+
+.statistic-card__icon {
+  display: grid;
+  place-items: center;
+  width: 52px;
+  height: 52px;
+  flex: 0 0 52px;
+  border-radius: 13px;
+  font-size: 24px;
+}
+
+.statistic-card__icon img {
+  display: block;
+  width: 40px;
+  height: 40px;
+  object-fit: contain;
+}
+
+.statistic-card--blue .statistic-card__icon { color: #2563eb; background: #eaf2ff; }
+.statistic-card--green .statistic-card__icon { color: #0f9f71; background: #e8fbf4; }
+.statistic-card--purple .statistic-card__icon { color: #7c4ce8; background: #f1ebff; }
+.statistic-card--orange .statistic-card__icon { color: #d97706; background: #fff2e2; }
+.statistic-card--red .statistic-card__icon { color: #dc2626; background: #ffebe9; }
+.statistic-card--gray .statistic-card__icon { color: #718096; background: #f0f3f7; }
+
+.statistic-card__content {
+  display: grid;
+  align-content: center;
+  min-width: 0;
+}
+
+.statistic-card__label,
+.statistic-card__subtitle {
+  display: block;
+  overflow: hidden;
+  color: #536481;
+  font-size: 13px;
+  line-height: 1.25;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.statistic-card__value {
+  display: flex;
+  align-items: baseline;
+  gap: 5px;
+  min-width: 0;
+  margin-top: 7px;
+}
+
+.statistic-card__value strong {
+  color: #12234a;
+  font-size: 30px;
+  font-weight: 600;
+  line-height: 1;
+}
+
+.statistic-card__value small {
+  color: #71819a;
+  font-size: 13px;
+}
+
+.statistic-card__subtitle {
+  margin-top: 5px;
+  color: #8794aa;
+  font-size: 11px;
+}
+
+.facility-stat-grid .statistic-card,
+.license-summary-grid .statistic-card,
+.inventory-summary-grid .statistic-card {
+  height: var(--itam-stat-card-height);
+}
+
+@media (max-height: 820px) and (min-width: 901px) {
+  .dashboard-host .statistic-card,
+  .facility-stat-grid .statistic-card,
+  .license-summary-grid .statistic-card,
+  .inventory-summary-grid .statistic-card {
+    height: var(--itam-stat-card-compact-height);
+  }
+
+  .dashboard-host .statistic-card > .el-card__body,
+  .facility-stat-grid .statistic-card > .el-card__body,
+  .license-summary-grid .statistic-card > .el-card__body,
+  .inventory-summary-grid .statistic-card > .el-card__body {
+    padding: 14px 16px;
+  }
+
+  .dashboard-host .statistic-card__icon,
+  .facility-stat-grid .statistic-card__icon,
+  .license-summary-grid .statistic-card__icon,
+  .inventory-summary-grid .statistic-card__icon {
+    width: 44px;
+    height: 44px;
+    flex-basis: 44px;
+    border-radius: 11px;
+  }
+
+  .dashboard-host .statistic-card__icon img,
+  .facility-stat-grid .statistic-card__icon img,
+  .license-summary-grid .statistic-card__icon img,
+  .inventory-summary-grid .statistic-card__icon img {
+    width: 34px;
+    height: 34px;
+  }
+
+  .dashboard-host .statistic-card__value strong,
+  .facility-stat-grid .statistic-card__value strong,
+  .license-summary-grid .statistic-card__value strong,
+  .inventory-summary-grid .statistic-card__value strong {
+    font-size: 26px;
+  }
+}
+
+@media (max-width: 900px) {
+  .statistic-card {
+    height: auto;
+    min-height: var(--itam-stat-card-height);
+  }
+}
+
+@media (max-width: 560px) {
+  .statistic-card,
+  .facility-stat-grid .statistic-card,
+  .license-summary-grid .statistic-card,
+  .inventory-summary-grid .statistic-card {
+    min-height: var(--itam-stat-card-height);
+  }
+}
