@@ -271,7 +271,7 @@ chown root:"$APP_GROUP" "$ENV_FILE"
 log "写入 systemd 服务"
 cat > /etc/systemd/system/itam.service <<EOF
 [Unit]
-Description=INFRIX Django API
+Description=Infrix Django API
 After=network-online.target mariadb.service
 Wants=network-online.target
 
@@ -356,7 +356,7 @@ done
 if [[ "$service_ready" -ne 1 ]]; then
   systemctl status itam --no-pager >&2 || true
   journalctl -u itam -n 100 --no-pager >&2 || true
-  fail "INFRIX 服务启动失败。"
+  fail "Infrix 服务启动失败。"
 fi
 systemctl reload nginx
 
@@ -373,7 +373,7 @@ done
 if [[ "$api_ready" -ne 1 ]]; then
   systemctl status itam --no-pager >&2 || true
   journalctl -u itam -n 80 --no-pager >&2 || true
-  fail "INFRIX API 健康检查失败。"
+  fail "Infrix API 健康检查失败。"
 fi
 
 if ! curl --retry 5 --retry-delay 1 -fsS --connect-timeout 5 --max-time 10 \
@@ -385,7 +385,7 @@ if ! curl --retry 5 --retry-delay 1 -fsS --connect-timeout 5 --max-time 10 \
 fi
 
 echo
-echo "INFRIX 部署完成：http://$SERVER_NAME/"
+echo "Infrix 部署完成：http://$SERVER_NAME/"
 echo "API 文档：http://$SERVER_NAME/api/docs/"
 echo "环境文件：$ENV_FILE"
 echo "创建管理员：cd $APP_DIR/backend && sudo -u $APP_USER ./run.sh createsuperuser"

@@ -2732,7 +2732,7 @@ const pageContext = {
   <div v-else-if="!authenticated" class="login-screen">
     <div class="login-card">
       <div class="login-brand">
-        <img class="login-brand-wordmark" :src="infrixWordmark" alt="INFRIX" />
+        <img class="login-brand-wordmark" :src="infrixWordmark" alt="Infrix" />
       </div>
       <el-form label-position="top" @submit.prevent="login">
         <el-form-item label="用户名" required
@@ -2775,13 +2775,13 @@ const pageContext = {
           v-if="sidebarCollapsed"
           class="sidebar-brand-icon"
           :src="infrixMark"
-          alt="INFRIX"
+          alt="Infrix"
         />
         <img
           v-else
           class="sidebar-wordmark"
           :src="infrixWordmark"
-          alt="INFRIX"
+          alt="Infrix"
         />
       </div>
       <el-menu

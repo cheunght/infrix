@@ -4,7 +4,7 @@ from assets.roles import ROLE_DEFINITIONS, ensure_preset_groups
 
 
 class Command(BaseCommand):
-    help = "检查并补齐 INFRIX 四个预设业务角色"
+    help = "检查并补齐 Infrix 四个预设业务角色"
 
     def handle(self, *args, **options):
         groups = ensure_preset_groups()

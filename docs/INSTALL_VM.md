@@ -1,6 +1,6 @@
 # Rocky Linux 9 安装与更新说明
 
-本文适用于将 INFRIX 部署到 Rocky Linux 9 虚拟机。安装脚本会安装 Python、Node.js、Nginx、MariaDB、Gunicorn，创建 systemd 服务，并构建 Vue 前端。
+本文适用于将 Infrix 部署到 Rocky Linux 9 虚拟机。安装脚本会安装 Python、Node.js、Nginx、MariaDB、Gunicorn，创建 systemd 服务，并构建 Vue 前端。
 
 仓库只保存源码、迁移、配置示例和必要资源，不保存 SQLite、MySQL 数据、账号、密钥、虚拟环境或前端依赖。私有 GitHub 仓库拉取后，需要按本文重新创建环境。
 
@@ -87,7 +87,7 @@ sudo -E ./deploy/install.sh
 服务启动和 HTTP 健康检查会自动重试；若仍失败，脚本会输出 `systemctl status`
 和最近的 Gunicorn 日志，便于直接定位数据库、迁移或环境变量问题。
 
-如果 Rocky 9 自带的 `/etc/nginx/conf.d/default.conf` 与 INFRIX 都使用
+如果 Rocky 9 自带的 `/etc/nginx/conf.d/default.conf` 与 Infrix 都使用
 `server_name _`，脚本会先将该默认配置备份到 `BACKUP_DIR`，再停用它，避免
 Nginx 将请求转到默认站点。备份文件可以在需要时手工恢复。
 
