@@ -391,7 +391,12 @@ def apply_spare_stock_transaction(validated_data, operator):
     source_stock = _locked_spare_stock(part, source_dc, source_room) if source_dc else None
     target_stock = _locked_spare_stock(part, target_dc, target_room) if target_dc else None
     if source_stock and operation_type in {"outbound", "scrap", "transfer"} and source_stock.quantity < quantity:
-        raise ValidationError({"quantity": f"来源地点库存不足，当前仅有 {source_stock.quantity}{part.unit}"})
+        source_label = source_dc.name if source_dc else "来源地点"
+        if source_room:
+            source_label = f"{source_label} / {source_room.name}"
+        raise ValidationError({
+            "quantity": f"备件“{part.name}”在{source_label}库存不足，当前仅有 {source_stock.quantity}{part.unit}，最多可操作 {source_stock.quantity}{part.unit}",
+        })
 
     before_quantity = 0
     after_quantity = 0

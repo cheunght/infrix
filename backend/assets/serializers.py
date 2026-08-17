@@ -4,10 +4,11 @@ from collections import Counter
 from django.db.models import Count
 from rest_framework import serializers
 from django.contrib.auth.models import Group, User
+from django.contrib.auth.password_validation import validate_password
 from django.utils import timezone
 from datetime import timedelta
 import re
-from .models import AuditLog, Asset, AssetCategory, AssetCustomValue, AssetNetworkAddress, AssetTag, Brand, CustomField, CustomFieldOption, DataCenter, DeviceType, FaultEvent, InventoryItem, InventoryTask, MaintenanceContract, ProcurementRecord, Rack, RackUnitAllocation, RepairRecord, ServerRoom, SoftwareLicense, SparePart, SpareStock, SpareStockTransaction, Tag
+from .models import AuditLog, Asset, AssetCategory, AssetCustomValue, AssetNetworkAddress, AssetTag, Brand, CustomField, CustomFieldOption, DataCenter, DeviceType, FaultEvent, InventoryItem, InventoryTask, MaintenanceContract, ProcurementRecord, Rack, RackUnitAllocation, RepairRecord, ServerRoom, SoftwareLicense, SparePart, SpareStock, SpareStockTransaction, Tag, UserSecurityProfile
 from .services import apply_asset_custom_values, apply_asset_tags, apply_spare_stock_transaction, configure_asset
 from .roles import ROLE_AUDITOR, ROLE_DEFINITIONS, ROLE_NAME_TO_CODE, preset_group_for_code, user_role_code
 
@@ -32,7 +33,12 @@ class GroupSerializer(serializers.ModelSerializer):
 
 class UserSerializer(serializers.ModelSerializer):
     display_name = serializers.SerializerMethodField()
-    password = serializers.CharField(write_only=True, required=False, min_length=8)
+    password = serializers.CharField(
+        write_only=True,
+        required=False,
+        min_length=8,
+        error_messages={"min_length": "密码至少需要 8 位"},
+    )
     groups = serializers.PrimaryKeyRelatedField(many=True, read_only=True)
     role_code = serializers.ChoiceField(
         choices=list(ROLE_DEFINITIONS), required=False, write_only=True
@@ -53,6 +59,13 @@ class UserSerializer(serializers.ModelSerializer):
     def validate(self, attrs):
         if self.instance is None and not attrs.get("password"):
             raise serializers.ValidationError({"password": "新用户必须设置至少 8 位密码"})
+        password = attrs.get("password")
+        if password:
+            password_user = self.instance or User(username=attrs.get("username", ""))
+            try:
+                validate_password(password, user=password_user)
+            except DjangoValidationError as exc:
+                raise serializers.ValidationError({"password": list(exc.messages)})
         return attrs
 
     def create(self, validated_data):
@@ -61,6 +74,10 @@ class UserSerializer(serializers.ModelSerializer):
         user = User(**validated_data)
         user.set_password(password)
         user.save()
+        UserSecurityProfile.objects.update_or_create(
+            user=user,
+            defaults={"must_change_password": True, "password_changed_at": None},
+        )
         group = preset_group_for_code(role_code)
         if group:
             user.groups.set([group])
@@ -74,6 +91,11 @@ class UserSerializer(serializers.ModelSerializer):
         if password:
             instance.set_password(password)
         instance.save()
+        if password:
+            UserSecurityProfile.objects.update_or_create(
+                user=instance,
+                defaults={"must_change_password": True, "password_changed_at": None},
+            )
         if role_code is not None:
             group = preset_group_for_code(role_code)
             if group:
@@ -316,6 +338,31 @@ class SpareStockTransactionSerializer(serializers.ModelSerializer):
             "target_data_center_name", "target_server_room_name", "before_quantity", "after_quantity", "operator",
             "operator_name", "created_at",
         ]
+
+
+class SparePartDetailSerializer(SparePartSerializer):
+    stock_locations = serializers.SerializerMethodField()
+    recent_transactions = serializers.SerializerMethodField()
+
+    def get_stock_locations(self, obj):
+        stocks = obj.stocks.select_related("data_center", "server_room").order_by(
+            "data_center__name", "server_room__name", "id"
+        )
+        return SpareStockSerializer(stocks, many=True).data
+
+    def get_recent_transactions(self, obj):
+        transactions = obj.transactions.select_related(
+            "operator", "source_data_center", "source_server_room",
+            "target_data_center", "target_server_room",
+        ).order_by("-created_at", "-id")[:20]
+        return SpareStockTransactionSerializer(transactions, many=True).data
+
+    class Meta(SparePartSerializer.Meta):
+        fields = SparePartSerializer.Meta.fields + ["stock_locations", "recent_transactions"]
+        read_only_fields = SparePartSerializer.Meta.read_only_fields + [
+            "stock_locations", "recent_transactions",
+        ]
+
 
 class SoftwareLicenseSerializer(serializers.ModelSerializer):
     utilization = serializers.SerializerMethodField()

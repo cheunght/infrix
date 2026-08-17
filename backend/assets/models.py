@@ -498,3 +498,35 @@ class AuditLog(Timestamped):
     resource_type = models.CharField(max_length=80)
     resource_id = models.CharField(max_length=80)
     payload = models.JSONField(default=dict, blank=True)
+
+
+class UserSecurityProfile(Timestamped):
+    user = models.OneToOneField(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.CASCADE,
+        related_name="security_profile",
+    )
+    must_change_password = models.BooleanField(default=False)
+    password_changed_at = models.DateTimeField(null=True, blank=True)
+
+    def __str__(self):
+        return f"{self.user} security profile"
+
+
+class AuthThrottleState(Timestamped):
+    SCOPE_CHOICES = [("account", "账号"), ("ip", "IP")]
+
+    scope = models.CharField(max_length=16, choices=SCOPE_CHOICES)
+    key = models.CharField(max_length=255)
+    failure_count = models.PositiveIntegerField(default=0)
+    first_failed_at = models.DateTimeField(null=True, blank=True)
+    locked_until = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        constraints = [
+            models.UniqueConstraint(fields=["scope", "key"], name="uniq_auth_throttle_scope_key"),
+        ]
+        indexes = [models.Index(fields=["scope", "key"])]
+
+    def __str__(self):
+        return f"{self.scope}:{self.key}"

@@ -105,7 +105,7 @@ function openRackFromRoom(rack: Rack) {
     </template>
 
     <template v-else-if="rackSection === 'rooms'">
-      <section class="facility-stat-grid">
+      <section class="facility-stat-grid statistic-card-grid">
         <StatisticCard
           label="机房总数"
           :value="summary.rooms_total"

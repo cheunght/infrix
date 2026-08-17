@@ -1,12 +1,13 @@
+from django.conf import settings
 from django.db.models import Case, CharField, Count, F, Q, Prefetch, Sum, Value, When
 from django.db.models.functions import Coalesce
 from django.db import transaction
 import csv
 import io
 import re
-from collections import defaultdict
 from decimal import Decimal, InvalidOperation
 from django.contrib.auth import authenticate, login, logout
+from django.contrib.auth.password_validation import validate_password
 from django.core.exceptions import ValidationError as DjangoValidationError
 from django.middleware.csrf import get_token
 from django.contrib.auth.models import Group, User
@@ -24,12 +25,19 @@ from datetime import date, timedelta
 from openpyxl import Workbook
 from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
 from openpyxl.utils import get_column_letter
-from .models import AuditLog, Asset, AssetCategory, AssetCustomValue, AssetNetworkAddress, AssetTag, Brand, CustomField, CustomFieldOption, DataCenter, DeviceType, FaultEvent, InventoryItem, InventoryTask, MaintenanceContract, ProcurementRecord, Rack, RackUnitAllocation, RepairRecord, ServerRoom, SoftwareLicense, SparePart, SpareStock, SpareStockTransaction, Tag
-from .serializers import AuditLogSerializer, AssetCategorySerializer, AssetDetailSerializer, AssetListSerializer, AssetSerializer, AssetWriteSerializer, BrandSerializer, CustomFieldOptionSerializer, CustomFieldSerializer, DataCenterSerializer, DeviceTypeSerializer, FaultEventSerializer, GroupSerializer, InventoryItemSerializer, InventoryTaskSerializer, RackSerializer, RepairRecordSerializer, ServerRoomSerializer, SoftwareLicenseSerializer, SparePartSerializer, SpareStockSerializer, SpareStockTransactionSerializer, TagSerializer, UserSerializer
+from .models import AuthThrottleState, AuditLog, Asset, AssetCategory, AssetCustomValue, AssetNetworkAddress, AssetTag, Brand, CustomField, CustomFieldOption, DataCenter, DeviceType, FaultEvent, InventoryItem, InventoryTask, MaintenanceContract, ProcurementRecord, Rack, RackUnitAllocation, RepairRecord, ServerRoom, SoftwareLicense, SparePart, SpareStock, SpareStockTransaction, Tag, UserSecurityProfile
+from .serializers import AuditLogSerializer, AssetCategorySerializer, AssetDetailSerializer, AssetListSerializer, AssetSerializer, AssetWriteSerializer, BrandSerializer, CustomFieldOptionSerializer, CustomFieldSerializer, DataCenterSerializer, DeviceTypeSerializer, FaultEventSerializer, GroupSerializer, InventoryItemSerializer, InventoryTaskSerializer, RackSerializer, RepairRecordSerializer, ServerRoomSerializer, SoftwareLicenseSerializer, SparePartDetailSerializer, SparePartSerializer, SpareStockSerializer, SpareStockTransactionSerializer, TagSerializer, UserSerializer
 from .services import apply_spare_stock_transaction, sync_asset_fault_status, sync_repair_completion
 from .audit import model_snapshot, write_audit_log
 from .permissions import BusinessRolePermission, CanExportAssets, CanExportFaults, CanExportInventory, CanExportRacks, CanImportAssets, CanManageInventory, CanViewAuditLog, CanViewDashboard, CanViewInventory, CanViewLicenses, IsSystemAdministrator
 from .roles import ROLE_DEFINITIONS, ROLE_NAME_TO_CODE, user_capabilities, user_role_code
+from .reporting import (
+    DashboardScopeError,
+    build_dashboard_payload,
+    build_rack_capacity_rows,
+    rack_effective_used_u,
+    resolve_dashboard_scope,
+)
 
 
 class AuditedModelViewSetMixin:
@@ -521,6 +529,11 @@ class SparePartViewSet(AuditedModelViewSetMixin, viewsets.ModelViewSet):
     search_fields = ["name", "part_type", "part_type_label_search", "brand__name", "model", "specification", "notes"]
     ordering_fields = ["name", "part_type", "created_at", "updated_at"]
 
+    def get_serializer_class(self):
+        if self.action == "retrieve":
+            return SparePartDetailSerializer
+        return super().get_serializer_class()
+
     def get_queryset(self):
         queryset = super().get_queryset()
         # A part can be stored at more than one location. Filter through its
@@ -545,11 +558,15 @@ class SparePartViewSet(AuditedModelViewSetMixin, viewsets.ModelViewSet):
 
     def perform_destroy(self, instance):
         from rest_framework.exceptions import ValidationError as DRFValidationError
-        if instance.stocks.exists():
-            raise DRFValidationError("备件已经建立库存地点，不能删除，请先停用")
         if instance.transactions.exists():
             raise DRFValidationError("备件存在库存流水，不能删除，请先停用")
-        super().perform_destroy(instance)
+        if instance.stocks.filter(quantity__gt=0).exists():
+            raise DRFValidationError("备件仍有库存余额，不能删除，请先出库或报废")
+        with transaction.atomic():
+            # Zero-balance rows are only bookkeeping placeholders. They can be
+            # removed when the part has no immutable transaction history.
+            instance.stocks.all().delete()
+            super().perform_destroy(instance)
 
 
 class SpareStockViewSet(viewsets.ReadOnlyModelViewSet):
@@ -1037,24 +1054,158 @@ class AuditLogViewSet(viewsets.ReadOnlyModelViewSet):
         return super().list(request, *args, **kwargs)
 
 
-@api_view(["POST"])
-@permission_classes([AllowAny])
-def auth_login(request):
-    username = request.data.get("username", "").strip()
-    password = request.data.get("password", "")
-    user = authenticate(request, username=username, password=password)
-    if not user or not user.is_active:
-        return Response({"detail": "用户名或密码错误"}, status=400)
-    login(request, user)
+def _security_profile(user):
+    profile, _ = UserSecurityProfile.objects.get_or_create(
+        user=user,
+        defaults={"must_change_password": False},
+    )
+    return profile
+
+
+def _login_ip(request):
+    # REMOTE_ADDR is the only trusted value unless a deployment explicitly
+    # adds a trusted proxy middleware in front of Django.
+    return (request.META.get("REMOTE_ADDR") or "unknown")[:255]
+
+
+def _login_account_key(username):
+    return (username or "").strip().casefold()
+
+
+def _auth_audit_extra(request, username, **extra):
+    payload = {
+        "username": username,
+        "ip": _login_ip(request),
+        "user_agent": (request.META.get("HTTP_USER_AGENT") or "")[:500],
+    }
+    payload.update(extra)
+    return payload
+
+
+def _throttle_state(scope, key, now):
+    state, _ = AuthThrottleState.objects.select_for_update().get_or_create(
+        scope=scope,
+        key=key,
+    )
+    if state.locked_until and state.locked_until <= now:
+        state.failure_count = 0
+        state.first_failed_at = None
+        state.locked_until = None
+        state.save(update_fields=["failure_count", "first_failed_at", "locked_until", "updated_at"])
+    return state
+
+
+def _login_lock_status(username, ip):
+    now = timezone.now()
+    with transaction.atomic():
+        states = [_throttle_state("account", _login_account_key(username), now), _throttle_state("ip", ip, now)]
+        locked_until = max(
+            (state.locked_until for state in states if state.locked_until and state.locked_until > now),
+            default=None,
+        )
+    if locked_until:
+        return True, max(1, int((locked_until - now).total_seconds()))
+    return False, 0
+
+
+def _register_login_failure(request, username, actor=None):
+    now = timezone.now()
+    ip = _login_ip(request)
+    window = timedelta(seconds=max(1, settings.AUTH_LOGIN_WINDOW_SECONDS))
+    lock_duration = timedelta(seconds=max(1, settings.AUTH_LOGIN_LOCK_SECONDS))
+    max_attempts = max(1, settings.AUTH_LOGIN_MAX_ATTEMPTS)
+    with transaction.atomic():
+        states = [_throttle_state("account", _login_account_key(username), now), _throttle_state("ip", ip, now)]
+        locked_until = None
+        for state in states:
+            if not state.first_failed_at or now - state.first_failed_at > window:
+                state.failure_count = 0
+                state.first_failed_at = now
+            state.failure_count += 1
+            if state.failure_count >= max_attempts:
+                state.locked_until = now + lock_duration
+                locked_until = max(locked_until or now, state.locked_until)
+            state.save(update_fields=["failure_count", "first_failed_at", "locked_until", "updated_at"])
+        is_locked = bool(locked_until)
+        retry_after = max(1, int((locked_until - now).total_seconds())) if locked_until else 0
+        write_audit_log(
+            request,
+            action="login_locked" if is_locked else "login_failure",
+            resource_type="auth_login",
+            resource_id=username,
+            actor=actor,
+            extra=_auth_audit_extra(request, username, reason="invalid_credentials", retry_after=retry_after),
+        )
+    return is_locked, retry_after
+
+
+def _clear_login_throttle(username, ip):
+    with transaction.atomic():
+        AuthThrottleState.objects.select_for_update().filter(
+            scope="account", key=_login_account_key(username),
+        ).update(failure_count=0, first_failed_at=None, locked_until=None)
+        AuthThrottleState.objects.select_for_update().filter(
+            scope="ip", key=ip,
+        ).update(failure_count=0, first_failed_at=None, locked_until=None)
+
+
+def _auth_response(user):
     role_code = user_role_code(user)
-    return Response({
+    return {
         "username": user.username,
         "display_name": user.get_full_name() or user.username,
         "is_staff": role_code == "system_admin",
         "role_code": role_code,
         "role_name": ROLE_DEFINITIONS[role_code]["name"],
         "permissions": user_capabilities(user),
-    })
+        "password_change_required": _security_profile(user).must_change_password,
+    }
+
+
+@api_view(["POST"])
+@permission_classes([AllowAny])
+def auth_login(request):
+    username = str(request.data.get("username", "")).strip()
+    password = request.data.get("password", "")
+    ip = _login_ip(request)
+    locked, retry_after = _login_lock_status(username, ip)
+    matched_user = User.objects.filter(username__iexact=username).first() if username else None
+    if locked:
+        with transaction.atomic():
+            write_audit_log(
+                request,
+                action="login_locked",
+                resource_type="auth_login",
+                resource_id=username or "unknown",
+                actor=matched_user,
+                extra=_auth_audit_extra(request, username, reason="throttle_locked", retry_after=retry_after),
+            )
+        return Response(
+            {"detail": "登录失败次数过多，请稍后再试", "code": "login_locked", "retry_after": retry_after},
+            status=429,
+            headers={"Retry-After": str(retry_after)},
+        )
+    user = authenticate(request, username=username, password=password)
+    if not user or not user.is_active:
+        is_locked, retry_after = _register_login_failure(request, username, matched_user)
+        if is_locked:
+            return Response(
+                {"detail": "登录失败次数过多，请稍后再试", "code": "login_locked", "retry_after": retry_after},
+                status=429,
+                headers={"Retry-After": str(retry_after)},
+            )
+        return Response({"detail": "用户名或密码错误"}, status=400)
+    _clear_login_throttle(username, ip)
+    login(request, user)
+    write_audit_log(
+        request,
+        action="login_success",
+        resource_type="auth_login",
+        resource_id=user.username,
+        actor=user,
+        extra=_auth_audit_extra(request, user.username),
+    )
+    return Response(_auth_response(user))
 
 
 @api_view(["GET"])
@@ -1066,15 +1217,7 @@ def auth_csrf(request):
 @api_view(["GET"])
 @permission_classes([IsAuthenticated])
 def auth_me(request):
-    role_code = user_role_code(request.user)
-    return Response({
-        "username": request.user.username,
-        "display_name": request.user.get_full_name() or request.user.username,
-        "is_staff": role_code == "system_admin",
-        "role_code": role_code,
-        "role_name": ROLE_DEFINITIONS[role_code]["name"],
-        "permissions": user_capabilities(request.user),
-    })
+    return Response(_auth_response(request.user))
 
 
 @api_view(["POST"])
@@ -1089,14 +1232,20 @@ def auth_logout(request):
 def auth_change_password(request):
     old_password = request.data.get("old_password", "")
     new_password = request.data.get("new_password", "")
-    if len(new_password) < 8:
-        return Response({"detail": "新密码至少需要 8 位"}, status=400)
     if not request.user.check_password(old_password):
         return Response({"detail": "原密码错误"}, status=400)
+    try:
+        validate_password(new_password, user=request.user)
+    except DjangoValidationError as exc:
+        return Response({"new_password": list(exc.messages)}, status=400)
     request.user.set_password(new_password)
     request.user.save(update_fields=["password"])
+    profile = _security_profile(request.user)
+    profile.must_change_password = False
+    profile.password_changed_at = timezone.now()
+    profile.save(update_fields=["must_change_password", "password_changed_at", "updated_at"])
     login(request, request.user)
-    return Response({"ok": True})
+    return Response({"ok": True, "password_change_required": False})
 
 
 IMPORT_MAX_FILE_SIZE = 10 * 1024 * 1024
@@ -1516,483 +1665,23 @@ def license_summary(request):
     licenses = SoftwareLicense.objects.all()
     return Response({
         "total": licenses.count(),
-        "within_90_days": licenses.filter(expiry_date__gte=today, expiry_date__lte=expiry_limit).count(),
-        "over_license_risk": licenses.filter(used_count__gt=F("authorized_count")).count(),
+        "within_90_days": licenses.filter(
+            expiry_date__gte=today, expiry_date__lte=expiry_limit
+        ).count(),
+        "over_license_risk": licenses.filter(
+            used_count__gt=F("authorized_count")
+        ).count(),
     })
-
-
-def _rack_effective_used_u(allocations, total_u=None):
-    """Count allocated U plus single-U gaps between adjacent devices.
-
-    A one-U gap between two devices is treated as unavailable. Larger gaps
-    remain available because the system does not reserve general cooling space.
-    """
-    ordered = sorted(allocations, key=lambda allocation: (allocation.start_u, allocation.end_u))
-    used_u = sum(allocation.units for allocation in ordered)
-    for previous, current in zip(ordered, ordered[1:]):
-        if current.start_u - previous.end_u - 1 == 1:
-            used_u += 1
-    return min(used_u, total_u) if total_u is not None else used_u
 
 
 @api_view(["GET"])
 @permission_classes([CanViewDashboard])
 def dashboard_overview(request):
-    """Return the data used by the operations dashboard.
-
-    The endpoint deliberately keeps the original response fields while adding
-    the aggregates used by the Infrix home page.  Filters are applied to every
-    asset-, rack-, fault- and maintenance-based aggregate so a dashboard view
-    never mixes locations from different scopes.
-    """
-    data_center_value = request.query_params.get("data_center", "").strip()
-    server_room_value = (
-        request.query_params.get("server_room", "").strip()
-        or request.query_params.get("room", "").strip()
-    )
-    selected_data_center = None
-    selected_server_room = None
-    if data_center_value:
-        try:
-            selected_data_center = DataCenter.objects.get(
-                pk=int(data_center_value), is_active=True
-            )
-        except (ValueError, DataCenter.DoesNotExist):
-            return Response({"detail": "数据中心筛选无效"}, status=400)
-    if server_room_value:
-        try:
-            selected_server_room = ServerRoom.objects.select_related(
-                "data_center"
-            ).get(pk=int(server_room_value), is_active=True, data_center__is_active=True)
-        except (ValueError, ServerRoom.DoesNotExist):
-            return Response({"detail": "机房筛选无效"}, status=400)
-        if selected_data_center and selected_server_room.data_center_id != selected_data_center.id:
-            return Response({"detail": "所选机房不属于当前数据中心"}, status=400)
-        if not selected_data_center:
-            selected_data_center = selected_server_room.data_center
-
-    assets = Asset.objects.all()
-    if selected_server_room:
-        assets = assets.filter(
-            rack_allocation__rack__room_id=selected_server_room.id,
-            rack_allocation__rack__is_active=True,
-            rack_allocation__rack__room__is_active=True,
-        )
-    elif selected_data_center:
-        assets = assets.filter(
-            Q(
-                rack_allocation__rack__room__data_center_id=selected_data_center.id,
-                rack_allocation__rack__is_active=True,
-                rack_allocation__rack__room__is_active=True,
-            )
-            | Q(rack_allocation__isnull=True, asset_data_center_id=selected_data_center.id)
-        )
-    assets = assets.distinct()
-    asset_rows = list(
-        assets.select_related(
-            "device_type",
-            "asset_data_center",
-            "rack_allocation__rack__room__data_center",
-        ).prefetch_related("network_addresses")
-    )
-    asset_ids = [asset.id for asset in asset_rows]
-    # Capacity and rack metrics describe the currently usable infrastructure.
-    # Data centers, rooms and racks are soft-deleted via ``is_active``; using
-    # the unfiltered relations here would keep retired locations visible on
-    # the dashboard even though they no longer appear in the management lists.
-    rack_queryset = Rack.objects.filter(
-            is_active=True,
-            room__is_active=True,
-            room__data_center__is_active=True,
-        )
-    if selected_data_center:
-        rack_queryset = rack_queryset.filter(room__data_center_id=selected_data_center.id)
-    if selected_server_room:
-        rack_queryset = rack_queryset.filter(room_id=selected_server_room.id)
-    racks = list(
-        rack_queryset.select_related("room__data_center")
-        .prefetch_related("allocations")
-        .order_by("room__data_center__name", "room__name", "code")
-    )
-    room_queryset = ServerRoom.objects.filter(
-        is_active=True, data_center__is_active=True
-    )
-    if selected_data_center:
-        room_queryset = room_queryset.filter(data_center_id=selected_data_center.id)
-    if selected_server_room:
-        room_queryset = room_queryset.filter(pk=selected_server_room.id)
-    rooms = list(
-        room_queryset.select_related("data_center").order_by(
-            "data_center__name", "name"
-        )
-    )
-    used_u = 0
-    device_count = 0
-    room_capacity_map = {
-        room.id: {
-            "room_id": room.id,
-            "data_center": room.data_center.name,
-            "room": room.name,
-            "used_u": 0,
-            "total_u": 0,
-        }
-        for room in rooms
-    }
-    active_data_centers = DataCenter.objects.filter(is_active=True).order_by("name")
-    if selected_data_center:
-        active_data_centers = active_data_centers.filter(pk=selected_data_center.id)
-    data_center_capacity_map = {
-        data_center.id: {
-            "data_center_id": data_center.id,
-            "data_center": data_center.name,
-            "used_u": 0,
-            "total_u": 0,
-        }
-        for data_center in active_data_centers
-    }
-    for rack in racks:
-        allocations = list(rack.allocations.all())
-        rack_used_u = _rack_effective_used_u(allocations, rack.total_u)
-        used_u += rack_used_u
-        device_count += len(allocations)
-        room_capacity = room_capacity_map.setdefault(rack.room_id, {
-            "room_id": rack.room_id,
-            "data_center": rack.room.data_center.name,
-            "room": rack.room.name,
-            "used_u": 0,
-            "total_u": 0,
-        })
-        room_capacity["used_u"] += rack_used_u
-        room_capacity["total_u"] += rack.total_u
-        data_center_capacity = data_center_capacity_map.setdefault(rack.room.data_center_id, {
-            "data_center_id": rack.room.data_center_id,
-            "data_center": rack.room.data_center.name,
-            "used_u": 0,
-            "total_u": 0,
-        })
-        data_center_capacity["used_u"] += rack_used_u
-        data_center_capacity["total_u"] += rack.total_u
-
-    room_capacity = []
-    for item in room_capacity_map.values():
-        total_u = item["total_u"]
-        item["utilization"] = round(item["used_u"] / total_u * 100, 1) if total_u else 0
-        room_capacity.append(item)
-    room_capacity.sort(key=lambda item: (-item["utilization"], item["data_center"], item["room"]))
-
-    data_center_capacity = []
-    for item in data_center_capacity_map.values():
-        total_u = item["total_u"]
-        item["utilization"] = round(item["used_u"] / total_u * 100, 1) if total_u else 0
-        data_center_capacity.append(item)
-    data_center_capacity.sort(key=lambda item: (-item["utilization"], item["data_center"]))
-
-    status_meta = {
-        "in_use": ("使用中", "#16A34A"),
-        "in_stock": ("在库", "#2563EB"),
-        "repair": ("维修中", "#D97706"),
-        "idle": ("闲置", "#8B5CF6"),
-        "retired": ("已报废", "#98A2B3"),
-    }
-    status_counts = dict(
-        assets.values("status")
-        .annotate(count=Count("id"))
-        .values_list("status", "count")
-    )
-    asset_total = sum(status_counts.values())
-    status_distribution = [
-        {"status": status, "label": label, "count": status_counts.get(status, 0), "color": color}
-        for status, (label, color) in status_meta.items()
-    ]
-
-    type_palette = ["#2563EB", "#10B981", "#8B5CF6", "#F59E0B", "#94A3B8", "#06B6D4"]
-    type_counts = defaultdict(int)
-    for asset in asset_rows:
-        type_name = (
-            asset.device_type.name
-            if asset.device_type_id and asset.device_type
-            else (asset.asset_type or "其他设备")
-        )
-        type_counts[type_name] += 1
-    type_distribution = [
-        {
-            "type": name,
-            "label": name,
-            "count": count,
-            "color": type_palette[index % len(type_palette)],
-        }
-        for index, (name, count) in enumerate(
-            sorted(type_counts.items(), key=lambda item: (-item[1], item[0]))
-        )
-    ]
-
-    rack_capacity = []
-    data_center_overview_map = {
-        data_center.id: {
-            "data_center_id": data_center.id,
-            "data_center": data_center.name,
-            "asset_count": 0,
-            "rack_count": 0,
-            "total_u": 0,
-            "used_u": 0,
-            "free_u": 0,
-            "utilization": 0,
-        }
-        for data_center in active_data_centers
-    }
-    for asset in asset_rows:
-        allocation = getattr(asset, "rack_allocation", None)
-        if allocation and not (
-            allocation.rack.is_active
-            and allocation.rack.room.is_active
-            and allocation.rack.room.data_center.is_active
-        ):
-            continue
-        location_data_center_id = (
-            allocation.rack.room.data_center_id
-            if allocation
-            else asset.asset_data_center_id
-        )
-        if location_data_center_id in data_center_overview_map:
-            data_center_overview_map[location_data_center_id]["asset_count"] += 1
-
-    for rack in racks:
-        allocations = list(rack.allocations.all())
-        rack_used_u = _rack_effective_used_u(allocations, rack.total_u)
-        total_u = rack.total_u or 0
-        free_u = max(total_u - rack_used_u, 0)
-        utilization = round(rack_used_u / total_u * 100, 1) if total_u else 0
-        rack_capacity.append(
-            {
-                "id": rack.id,
-                "code": rack.code,
-                "data_center": rack.room.data_center.name,
-                "data_center_id": rack.room.data_center_id,
-                "server_room": rack.room.name,
-                "server_room_id": rack.room_id,
-                "total_u": total_u,
-                "used_u": rack_used_u,
-                "free_u": free_u,
-                "utilization": utilization,
-                "device_count": len(allocations),
-            }
-        )
-        overview = data_center_overview_map.get(rack.room.data_center_id)
-        if overview is not None:
-            overview["rack_count"] += 1
-            overview["total_u"] += total_u
-            overview["used_u"] += rack_used_u
-
-    data_center_overview = []
-    for overview in data_center_overview_map.values():
-        overview["free_u"] = max(overview["total_u"] - overview["used_u"], 0)
-        overview["utilization"] = (
-            round(overview["used_u"] / overview["total_u"] * 100, 1)
-            if overview["total_u"]
-            else 0
-        )
-        data_center_overview.append(overview)
-    rack_capacity.sort(
-        key=lambda item: (-item["utilization"], item["free_u"], item["code"])
-    )
-
-    today = timezone.localdate()
-    expiry_30 = today + timedelta(days=30)
-    expiry_60 = today + timedelta(days=60)
-    expiry_90 = today + timedelta(days=90)
-    contracts = MaintenanceContract.objects.filter(asset_id__in=asset_ids)
-    expiry_counts = {
-        "expired": contracts.filter(expiry_date__lt=today).count(),
-        "within_30_days": contracts.filter(expiry_date__gte=today, expiry_date__lte=expiry_30).count(),
-        "within_60_days": contracts.filter(expiry_date__gte=today, expiry_date__lte=expiry_60).count(),
-        "within_90_days": contracts.filter(expiry_date__gte=today, expiry_date__lte=expiry_90).count(),
-    }
-
-    open_faults = FaultEvent.objects.filter(is_closed=False, asset_id__in=asset_ids)
-    recent_alerts = []
-    for fault in open_faults.select_related("asset").order_by("-occurred_at")[:6]:
-        title = (fault.reason or fault.description or "设备故障").splitlines()[0][:120]
-        recent_alerts.append({
-            "id": fault.id,
-            "asset_id": fault.asset_id,
-            "asset_no": fault.asset.asset_no,
-            "asset_name": fault.asset.name,
-            "title": title,
-            "occurred_at": fault.occurred_at,
-            "level": "warning",
-        })
-
-    expiring_contracts = MaintenanceContract.objects.select_related("asset").filter(
-        asset_id__in=asset_ids,
-        expiry_date__gte=today,
-        expiry_date__lte=expiry_90,
-    ).order_by("expiry_date", "asset__asset_no")
-    upcoming_expirations = []
-    for contract in expiring_contracts[:8]:
-        days_remaining = (contract.expiry_date - today).days
-        upcoming_expirations.append({
-            "asset_id": contract.asset_id,
-            "asset_no": contract.asset.asset_no,
-            "asset_name": contract.asset.name,
-            "expiry_date": contract.expiry_date,
-            "days_remaining": days_remaining,
-            "label": "设备保修",
-        })
-
-    inventory_queryset = InventoryTask.objects.filter(data_center_id=selected_data_center.id if selected_data_center else None)
-    if not selected_data_center:
-        inventory_queryset = InventoryTask.objects.all()
-    if selected_server_room:
-        inventory_queryset = inventory_queryset.filter(server_room_id=selected_server_room.id)
-    latest_inventory = inventory_queryset.select_related("inspector").order_by("-created_at", "-id").first()
-    inventory_summary = None
-    if latest_inventory:
-        inventory_counts = dict(
-            latest_inventory.items.values("status")
-            .annotate(count=Count("id"))
-            .values_list("status", "count")
-        )
-        total_items = sum(inventory_counts.values())
-        checked_items = total_items - inventory_counts.get("pending", 0)
-        inventory_rack_queryset = Rack.objects.filter(
-            is_active=True,
-            room__is_active=True,
-            room__data_center__is_active=True,
-            room__data_center_id=latest_inventory.data_center_id,
-        )
-        if latest_inventory.server_room_id:
-            inventory_rack_queryset = inventory_rack_queryset.filter(
-                room_id=latest_inventory.server_room_id
-            )
-        inventory_scope_rack_ids = set(
-            inventory_rack_queryset.values_list("id", flat=True)
-        )
-        checked_rack_ids = set()
-        checked_item_rows = latest_inventory.items.filter(status__isnull=False).values(
-            "status", "system_snapshot", "actual_rack_id"
-        )
-        for item in checked_item_rows:
-            if item["status"] == "pending":
-                continue
-            rack_id = item.get("actual_rack_id")
-            if rack_id is None:
-                snapshot = item.get("system_snapshot") or {}
-                rack_id = snapshot.get("rack_id")
-                try:
-                    rack_id = int(rack_id) if rack_id is not None else None
-                except (TypeError, ValueError):
-                    rack_id = None
-            if rack_id in inventory_scope_rack_ids:
-                checked_rack_ids.add(rack_id)
-        total_inventory_racks = len(inventory_scope_rack_ids)
-        inventory_summary = {
-            "task_id": latest_inventory.id,
-            "task_name": latest_inventory.name,
-            "status": latest_inventory.status,
-            "total": total_items,
-            "checked": checked_items,
-            "pending": inventory_counts.get("pending", 0),
-            "normal": inventory_counts.get("normal", 0),
-            "abnormal": sum(
-                value
-                for key, value in inventory_counts.items()
-                if key not in {"pending", "normal"}
-            ),
-            "completion_rate": round(checked_items / total_items * 100, 1) if total_items else 0,
-            "checked_racks": len(checked_rack_ids),
-            "total_racks": total_inventory_racks,
-            "latest_date": latest_inventory.completed_at or latest_inventory.updated_at,
-        }
-
-    asset_by_id = {asset.id: asset for asset in asset_rows}
-    recent_changes = []
-    audit_queryset = (
-        AuditLog.objects.filter(
-            resource_type="asset", resource_id__in=[str(asset_id) for asset_id in asset_ids]
-        )
-        .select_related("actor")
-        .order_by("-created_at", "-id")[:40]
-    )
-    action_labels = {
-        "create": "新增",
-        "update": "更新",
-        "delete": "删除",
-        "import": "批量导入",
-    }
-    for log in audit_queryset:
-        try:
-            asset_id = int(log.resource_id)
-        except (TypeError, ValueError):
-            continue
-        asset = asset_by_id.get(asset_id)
-        if asset is None:
-            continue
-        before = (log.payload or {}).get("before") or {}
-        after = (log.payload or {}).get("after") or {}
-        action_label = action_labels.get(log.action, log.action)
-        before_rack = before.get("rack_allocation") if isinstance(before, dict) else None
-        after_rack = after.get("rack_allocation") if isinstance(after, dict) else None
-        if log.action == "update" and before.get("status") != after.get("status"):
-            action_label = "状态变化"
-        elif log.action == "update" and before_rack != after_rack:
-            if not before_rack and after_rack:
-                action_label = "上架"
-            elif before_rack and not after_rack:
-                action_label = "下架"
-            else:
-                action_label = "迁移"
-        allocation = getattr(asset, "rack_allocation", None)
-        location = "未上架"
-        if allocation:
-            location = f"{allocation.rack.room.data_center.name} / {allocation.rack.room.name} / {allocation.rack.code}"
-        elif asset.asset_data_center_id:
-            location = asset.asset_data_center.name
-        recent_changes.append(
-            {
-                "id": log.id,
-                "action": action_label,
-                "asset_id": asset.id,
-                "asset_no": asset.asset_no,
-                "asset_name": asset.name,
-                "location": location,
-                "actor_name": log.actor.get_full_name() or log.actor.username if log.actor_id else "系统",
-                "created_at": log.created_at,
-            }
-        )
-        if len(recent_changes) >= 8:
-            break
-
-    return Response({
-        "assets": {
-            "total": asset_total,
-            "in_use": status_counts.get("in_use", 0),
-            "in_stock": status_counts.get("in_stock", 0),
-            "repair": status_counts.get("repair", 0),
-            "idle": status_counts.get("idle", 0),
-            "retired": status_counts.get("retired", 0),
-        },
-        "racks": {
-            "total": len(racks),
-            "used_u": used_u,
-            "free_u": max(sum(rack.total_u for rack in racks) - used_u, 0),
-            "device_count": device_count,
-        },
-        "alerts": {"open_faults": open_faults.count()},
-        "expiring": expiry_counts,
-        "status_distribution": status_distribution,
-        "type_distribution": type_distribution,
-        "data_center_capacity": data_center_capacity,
-        # Keep the room-level field for older clients while the dashboard UI
-        # uses the new data-center aggregate above.
-        "room_capacity": room_capacity,
-        "recent_alerts": recent_alerts,
-        "upcoming_expirations": upcoming_expirations,
-        "data_centers": {"total": len(data_center_overview)},
-        "data_center_overview": data_center_overview,
-        "rack_capacity": rack_capacity,
-        "inventory_summary": inventory_summary,
-        "recent_changes": recent_changes,
-    })
+    try:
+        scope = resolve_dashboard_scope(request)
+    except DashboardScopeError as exc:
+        return Response({"detail": str(exc)}, status=400)
+    return Response(build_dashboard_payload(scope))
 
 
 @api_view(["GET"])
@@ -2028,29 +1717,10 @@ def facilities_summary(request):
         rooms = rooms.filter(pk=room_pk)
     racks = Rack.objects.filter(room__in=rooms).select_related("room__data_center").prefetch_related("allocations")
     room_ids = list(rooms.values_list("id", flat=True))
-    rack_rows = []
-    totals = {"total_u": 0, "used_u": 0, "device_count": 0}
-    for rack in racks.order_by("room__data_center__name", "room__name", "code"):
-        allocations = list(rack.allocations.all())
-        used_u = _rack_effective_used_u(allocations, rack.total_u)
-        free_u = max((rack.total_u or 0) - used_u, 0)
-        totals["total_u"] += rack.total_u or 0
-        totals["used_u"] += used_u
-        totals["device_count"] += len(allocations)
-        rack_rows.append({
-            "id": rack.id,
-            "code": rack.code,
-            "name": rack.name,
-            "room_id": rack.room_id,
-            "server_room": rack.room.name,
-            "data_center": rack.room.data_center.name,
-            "total_u": rack.total_u,
-            "used_u": used_u,
-            "free_u": free_u,
-            "device_count": len(allocations),
-            "status": rack.status,
-            "status_label": dict(Rack.STATUS).get(rack.status, rack.status),
-        })
+    rack_rows, totals = build_rack_capacity_rows(
+        list(racks.order_by("room__data_center__name", "room__name", "code")),
+        include_status=True,
+    )
     room_rows = []
     for room in rooms.order_by("data_center__name", "name"):
         room_racks = [row for row in rack_rows if row["room_id"] == room.id]
@@ -2177,7 +1847,7 @@ def rack_layout_export(request):
                 header.fill = PatternFill("solid", fgColor="4472C4")
                 header.alignment = Alignment(horizontal="center")
                 sheet.merge_cells(start_row=rack_top + 1, start_column=start_col, end_row=rack_top + 1, end_column=end_col)
-                effective_used_u = _rack_effective_used_u(list(rack.allocations.all()), rack.total_u)
+                effective_used_u = rack_effective_used_u(list(rack.allocations.all()), rack.total_u)
                 meta = sheet.cell(rack_top + 1, start_col, f"{rack.room.name} | {rack.total_u} U | 已用 {effective_used_u} U | 可用 {rack.total_u - effective_used_u} U")
                 meta.font = Font(size=9, color="44546A")
                 meta.alignment = Alignment(horizontal="center")

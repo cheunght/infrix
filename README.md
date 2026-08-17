@@ -1,6 +1,6 @@
 # Infrix
 
-Infrix 是数据中心资产管理平台，后端使用 Python/Django + Django REST Framework，前端使用 Vue 3 + Element Plus。
+Infrix 是 IT 资产管理平台，后端使用 Python/Django + Django REST Framework，前端使用 Vue 3 + Element Plus。
 
 当前仓库是私有开发基线，不包含本地数据库、账号、业务数据、密钥、依赖目录或构建产物。
 

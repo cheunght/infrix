@@ -326,7 +326,6 @@ export type Role = { id: number; code: string; name: string; description: string
 export type ManagedUser = { id: number; username: string; display_name: string; first_name: string; last_name: string; email: string; is_active: boolean; is_staff: boolean; groups: number[]; assigned_role_code: string; assigned_role_name: string; last_login: string | null; date_joined: string };
 export type AuditLog = { id: number; actor_username: string | null; actor_display_name: string; action: string; resource_type: string; resource_id: string; payload: Record<string, unknown>; created_at: string };
 export type SoftwareLicense = { id: number; name: string; vendor: string; license_type: string; authorized_count: number; used_count: number; utilization: number; remaining_count: number; expiry_date: string | null; status: "over_limit" | "expired" | "expiring" | "normal"; status_label: string; days_remaining: number | null; notes: string };
-export type LicenseSummary = { total: number; within_90_days: number; over_license_risk: number };
 export type SparePart = {
   id: number;
   name: string;
@@ -343,6 +342,10 @@ export type SparePart = {
   location_count: number;
   created_at?: string;
   updated_at?: string;
+};
+export type SparePartDetail = SparePart & {
+  stock_locations: SpareStock[];
+  recent_transactions: SpareTransaction[];
 };
 export type SpareStock = {
   id: number;

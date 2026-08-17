@@ -45,6 +45,7 @@ def write_audit_log(
     before=None,
     after=None,
     extra=None,
+    actor=None,
 ):
     payload = {}
     if before is not None:
@@ -54,7 +55,7 @@ def write_audit_log(
     if extra:
         payload["extra"] = json_value(extra)
     return AuditLog.objects.create(
-        actor=request.user if request.user.is_authenticated else None,
+        actor=actor if actor is not None else (request.user if request.user.is_authenticated else None),
         action=action,
         resource_type=resource_type,
         resource_id=str(resource_id),

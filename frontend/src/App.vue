@@ -23,6 +23,7 @@ import {
 } from "@element-plus/icons-vue";
 import {
   apiBase as api,
+  ApiError,
   apiRequest,
   pageItems,
   pageTotal,
@@ -65,7 +66,6 @@ import type {
   ManagedUser,
   AuditLog,
   SoftwareLicense,
-  LicenseSummary,
   SparePart,
   SpareStock,
   SpareTransaction,
@@ -152,12 +152,10 @@ const spareOperationForm = ref({
 });
 const showSpareOperationModal = ref(false);
 const spareOperationSaving = ref(false);
+const spareOperationCurrentQuantity = ref<number | null>(null);
+const spareOperationLocationLabel = ref("");
+const spareOperationLocationLocked = ref(false);
 const spareTransactionFilters = ref({ part: "", operation_type: "" });
-const licenseSummary = ref<LicenseSummary>({
-  total: 0,
-  within_90_days: 0,
-  over_license_risk: 0,
-});
 const assetCount = ref(0);
 const assetPage = ref(1);
 const assetPageSize = ref(50);
@@ -173,6 +171,7 @@ const rackPageSize = ref(50);
 const loading = ref(false);
 const authChecked = ref(false);
 const authenticated = ref(false);
+const passwordChangeRequired = ref(false);
 const isAdmin = ref(false);
 const roleCode = ref("");
 const permissions = ref<string[]>([]);
@@ -474,6 +473,9 @@ function toggleSidebar() {
     "itam.sidebar.collapsed",
     sidebarCollapsed.value ? "1" : "0",
   );
+  if (!sidebarCollapsed.value && settingsMenuExpanded.value) {
+    nextTick(() => sidebarMenu.value?.open("settings"));
+  }
 }
 function toggleSettingsMenu() {
   if (sidebarCollapsed.value) {
@@ -491,15 +493,15 @@ function toggleSettingsMenu() {
 }
 function handleSettingsMenuOpen(index: string) {
   if (index !== "settings") return;
-  if (sidebarCollapsed.value) {
-    sidebarCollapsed.value = false;
-    localStorage.setItem("itam.sidebar.collapsed", "0");
-  }
+  // In collapsed mode Element Plus opens the submenu in an adjacent popper.
+  // Do not expand the whole sidebar in response to that transient event.
+  if (sidebarCollapsed.value) return;
   settingsMenuExpanded.value = true;
   localStorage.setItem("itam.settings.expanded", "1");
 }
 function handleSettingsMenuClose(index: string) {
   if (index !== "settings") return;
+  if (sidebarCollapsed.value) return;
   settingsMenuExpanded.value = false;
   localStorage.setItem("itam.settings.expanded", "0");
 }
@@ -548,12 +550,15 @@ async function checkAuth() {
       is_staff: boolean;
       role_code: string;
       permissions: string[];
+      password_change_required: boolean;
     }>("/auth/me/");
     authenticated.value = true;
     userName.value = user.display_name;
     isAdmin.value = user.is_staff;
     roleCode.value = user.role_code;
     permissions.value = user.permissions;
+    passwordChangeRequired.value = Boolean(user.password_change_required);
+    if (passwordChangeRequired.value) showPasswordModal.value = true;
     if (!isAdmin.value && settingsSection.value === "organization")
       settingsSection.value = "categories";
   } catch {
@@ -561,6 +566,8 @@ async function checkAuth() {
     isAdmin.value = false;
     roleCode.value = "";
     permissions.value = [];
+    passwordChangeRequired.value = false;
+    showPasswordModal.value = false;
   } finally {
     authChecked.value = true;
   }
@@ -637,16 +644,12 @@ async function loadLicenses(version = beginLoad()) {
   if (licenseKeyword.value.trim())
     params.set("search", licenseKeyword.value.trim());
   if (licenseStatus.value) params.set("status", licenseStatus.value);
-  const [listResult, summaryResult] = await Promise.all([
-    request<PageResult<SoftwareLicense> | SoftwareLicense[]>(
-      `/licenses/?${params.toString()}`,
-    ),
-    request<LicenseSummary>("/licenses/summary/"),
-  ]);
+  const listResult = await request<PageResult<SoftwareLicense> | SoftwareLicense[]>(
+    `/licenses/?${params.toString()}`,
+  );
   if (!isCurrentLoad(version)) return;
   licenses.value = pageItems(listResult);
   licenseCount.value = pageTotal(listResult);
-  licenseSummary.value = summaryResult;
 }
 async function loadSpareData(version = beginLoad()) {
   const partParams = new URLSearchParams({
@@ -703,6 +706,12 @@ async function loadSpareData(version = beginLoad()) {
     spareTransactions.value = [];
     spareTransactionCount.value = 0;
   }
+}
+async function refreshSparePart(partId: number) {
+  const detail = await request<SparePart>(`/spare-parts/${partId}/`);
+  const index = spareParts.value.findIndex((part) => part.id === partId);
+  if (index >= 0) spareParts.value.splice(index, 1, detail);
+  if (spareSelectedPart.value?.id === partId) spareSelectedPart.value = detail;
 }
 async function loadOrganization(version = beginLoad()) {
   const [userResult, roleResult] = await Promise.all([
@@ -920,7 +929,7 @@ async function deleteRole(role: Role) {
 async function login() {
   loginError.value = "";
   try {
-    const user = await request<{ display_name: string; is_staff: boolean; role_code: string; permissions: string[] }>(
+    const user = await request<{ display_name: string; is_staff: boolean; role_code: string; permissions: string[]; password_change_required: boolean }>(
       "/auth/login/",
       {
         method: "POST",
@@ -936,19 +945,34 @@ async function login() {
     isAdmin.value = user.is_staff;
     roleCode.value = user.role_code;
     permissions.value = user.permissions;
+    passwordChangeRequired.value = Boolean(user.password_change_required);
     if (!isAdmin.value && settingsSection.value === "organization")
       settingsSection.value = "categories";
     password.value = "";
     await loadCsrf();
+    if (passwordChangeRequired.value) {
+      showPasswordModal.value = true;
+      return;
+    }
+    await bootstrapApplication();
+  } catch (error) {
+    if (error instanceof ApiError && error.status === 429) {
+      const details = error.details as { retry_after?: number } | undefined;
+      const retryAfter = Number(details?.retry_after || 0);
+      const minutes = retryAfter ? Math.ceil(retryAfter / 60) : 0;
+      loginError.value = minutes ? `${error.message}（约 ${minutes} 分钟后重试）` : error.message;
+    } else {
+      loginError.value = error instanceof Error ? error.message : "登录失败";
+    }
+  }
+}
+async function bootstrapApplication() {
     await loadDataCenters();
     await loadCategories();
     await loadDictionaries();
     await loadCustomFields();
     await loadTags();
     await load();
-  } catch (error) {
-    loginError.value = error instanceof Error ? error.message : "登录失败";
-  }
 }
 async function logout() {
   try {
@@ -959,6 +983,8 @@ async function logout() {
     roleCode.value = "";
     permissions.value = [];
     userName.value = "";
+    passwordChangeRequired.value = false;
+    showPasswordModal.value = false;
   }
 }
 async function openAssetEditor(assetId: number, clone = false) {
@@ -1393,14 +1419,17 @@ async function syncAssetDeviceType() {
 }
 async function changePassword() {
   try {
+    const wasRequired = passwordChangeRequired.value;
     await request("/auth/change-password/", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(passwordForm.value),
     });
     showPasswordModal.value = false;
+    passwordChangeRequired.value = false;
     passwordForm.value = { old_password: "", new_password: "" };
     actionMessage.value = "密码已修改，请妥善保存";
+    if (wasRequired) await bootstrapApplication();
   } catch (error) {
     actionMessage.value = error instanceof Error ? error.message : "修改失败";
   }
@@ -2242,23 +2271,52 @@ async function deleteSparePart(part: SparePart) {
     actionMessage.value = error instanceof Error ? error.message : "备件删除失败";
   }
 }
-function openSpareOperation(part: SparePart, operationType = "inbound") {
-  spareSelectedPart.value = part;
+type SpareOperationLocation = {
+  data_center: number;
+  server_room: number | null;
+  quantity: number;
+  label: string;
+};
+
+function openSpareOperation(part: SparePart, operationType = "inbound", location?: SpareOperationLocation) {
   spareOperationType.value = operationType;
+  let remembered: Partial<SpareOperationLocation> | null = null;
+  if (!location) {
+    try {
+      remembered = JSON.parse(localStorage.getItem("itam.spare.last_location") || "null") as Partial<SpareOperationLocation> | null;
+    } catch {
+      remembered = null;
+    }
+  }
+  const rememberedCenter = remembered?.data_center
+    ? dataCenters.value.find((center) => center.is_active && center.id === Number(remembered?.data_center))
+    : null;
+  const rememberedRoom = rememberedCenter && remembered?.server_room
+    ? spareRooms.value.find((room) => room.is_active && room.id === Number(remembered?.server_room) && room.data_center === rememberedCenter.id)
+    : null;
+  const preset = location || (rememberedCenter && (!remembered?.server_room || rememberedRoom) ? {
+    data_center: rememberedCenter.id,
+    server_room: rememberedRoom?.id || null,
+    quantity: 0,
+    label: "最近使用地点",
+  } : undefined);
   spareOperationForm.value = {
     part: String(part.id),
     quantity: "1",
     target_quantity: "",
-    source_data_center: "",
-    source_server_room: "",
-    target_data_center: "",
-    target_server_room: "",
+    source_data_center: preset && ["outbound", "transfer", "scrap"].includes(operationType) ? String(preset.data_center) : "",
+    source_server_room: preset && ["outbound", "transfer", "scrap"].includes(operationType) && preset.server_room ? String(preset.server_room) : "",
+    target_data_center: preset && ["inbound", "transfer", "adjustment"].includes(operationType) ? String(preset.data_center) : "",
+    target_server_room: preset && ["inbound", "transfer", "adjustment"].includes(operationType) && preset.server_room ? String(preset.server_room) : "",
     reference: "",
     notes: "",
   };
+  spareOperationCurrentQuantity.value = location ? location.quantity : null;
+  spareOperationLocationLabel.value = location?.label || "";
+  spareOperationLocationLocked.value = Boolean(location);
   showSpareOperationModal.value = true;
 }
-async function saveSpareOperation() {
+async function saveSpareOperation(): Promise<boolean> {
   spareOperationSaving.value = true;
   try {
     const operation = spareOperationType.value;
@@ -2284,11 +2342,29 @@ async function saveSpareOperation() {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(payload),
     });
+    const locationDataCenter = ["outbound", "transfer", "scrap"].includes(operation)
+      ? form.source_data_center
+      : form.target_data_center;
+    const locationServerRoom = ["outbound", "transfer", "scrap"].includes(operation)
+      ? form.source_server_room
+      : form.target_server_room;
+    if (locationDataCenter) {
+      localStorage.setItem("itam.spare.last_location", JSON.stringify({
+        data_center: Number(locationDataCenter),
+        server_room: locationServerRoom ? Number(locationServerRoom) : null,
+      }));
+    }
     showSpareOperationModal.value = false;
     actionMessage.value = "库存流水已登记";
-    await loadSpareData();
+    try {
+      await refreshSparePart(Number(form.part));
+    } catch {
+      actionMessage.value = "库存流水已登记，但备件余额刷新失败，请重新加载页面";
+    }
+    return true;
   } catch (error) {
     actionMessage.value = error instanceof Error ? error.message : "库存操作失败";
+    return false;
   } finally {
     spareOperationSaving.value = false;
   }
@@ -2355,12 +2431,6 @@ async function deleteLicense(license: SoftwareLicense) {
     actionMessage.value =
       error instanceof Error ? error.message : "许可证删除失败";
   }
-}
-function licenseProgressStyle(license: SoftwareLicense) {
-  return {
-    width: `${Math.min(100, Math.max(0, license.utilization))}%`,
-    background: license.status === "over_limit" ? "#DC2626" : "#D97706",
-  };
 }
 function openCategoryModal(category?: Category) {
   editingCategory.value = category || null;
@@ -2648,14 +2718,7 @@ onMounted(async () => {
   window.addEventListener("resize", updateViewportHeight);
   await loadCsrf();
   await checkAuth();
-  if (authenticated.value) {
-    await loadDataCenters();
-    await loadCategories();
-    await loadDictionaries();
-    await loadCustomFields();
-    await loadTags();
-    await load();
-  }
+  if (authenticated.value && !passwordChangeRequired.value) await bootstrapApplication();
 });
 onBeforeUnmount(() => {
   document.removeEventListener("click", closeMenusOnOutsideClick);
@@ -2666,6 +2729,7 @@ onBeforeUnmount(() => {
 // shell keeps ownership of authentication/navigation while page-specific
 // markup can evolve independently without changing API contracts.
 const pageContext = {
+  request,
   loading, dashboard, assets, inUse, maxDashboardStatusCount,
   dashboardBarPercent, dashboardDate, dashboardDateTime, handleMenuSelect,
   dashboardLoading,
@@ -2682,8 +2746,8 @@ const pageContext = {
   exportRepairs, openFaultModal, repairRows, openRepairModal, formatDateTime,
   repairPage, repairPageSize, repairCount, changeRepairPage,
   changeRepairPageSize,
-  licenseSummary, licenseKeyword, searchLicenses, licenseStatus,
-  openLicenseModal, deleteLicense, licenses, licenseProgressStyle, licensePage,
+  licenseKeyword, searchLicenses, licenseStatus,
+  openLicenseModal, deleteLicense, licenses, licensePage,
   licensePageSize, licenseCount, changeLicensePage, changeLicensePageSize,
   spareParts, spareStocks, spareTransactions, sparePartCount, spareStockCount, spareTransactionCount,
   sparePage, sparePageSize, spareStockPage, spareStockPageSize, spareTransactionPage, spareTransactionPageSize,
@@ -2693,7 +2757,8 @@ const pageContext = {
   deleteSparePart, selectSparePart, searchSpareParts, changeSparePage, changeSparePageSize,
   changeSpareStockPage, changeSpareStockPageSize, changeSpareTransactionPage, changeSpareTransactionPageSize,
   openSpareOperation, spareOperationType, spareOperationForm, showSpareOperationModal,
-  spareOperationSaving, saveSpareOperation, spareOperationLabel,
+  spareOperationSaving, spareOperationCurrentQuantity, spareOperationLocationLabel,
+  spareOperationLocationLocked, saveSpareOperation, spareOperationLabel,
   rackSection, serverRooms, openDataCenterModal, openRoomModal, deleteRoom, racks,
   dataCenters, selectedDataCenter, changeDataCenter, changeRoom,
   facilitySummary,
@@ -2718,7 +2783,7 @@ const pageContext = {
   customFieldForm, showCustomFieldModal, editingCustomField, customFieldOptionForm,
   showCustomFieldOptionModal, editingCustomFieldOption, tags, tagSearch, tagActive,
   loadTags, openTagModal, saveTag, toggleTag, deleteTag, tagForm, showTagModal, editingTag,
-  request, api, brands, deviceTypes,
+  api, brands, deviceTypes,
   showAssetModal, assetModalMode, editingAsset, assetForm, activeDeviceTypes,
   assetCustomFieldSchema,
   syncAssetDeviceType, activeBrands, activeDataCenters, changeAssetDataCenter,
@@ -2733,6 +2798,7 @@ const pageContext = {
     <div class="login-card">
       <div class="login-brand">
         <img class="login-brand-wordmark" :src="infrixWordmark" alt="Infrix" />
+        <div class="login-brand-subtitle">IT Asset Management</div>
       </div>
       <el-form label-position="top" @submit.prevent="login">
         <el-form-item label="用户名" required
@@ -2789,8 +2855,12 @@ const pageContext = {
         class="ep-sidebar-menu"
         :default-active="activeMenu"
         :default-openeds="settingsMenuExpanded ? ['settings'] : []"
+        :unique-opened="true"
         :collapse="sidebarCollapsed"
         :collapse-transition="false"
+        :popper-offset="0"
+        popper-effect="light"
+        popper-class="ep-sidebar-submenu-popper"
         @open="handleSettingsMenuOpen"
         @close="handleSettingsMenuClose"
         @select="handleMenuSelect"
@@ -2799,13 +2869,18 @@ const pageContext = {
           ><el-icon><House /></el-icon
           ><template #title>仪表盘</template></el-menu-item
         >
-        <el-sub-menu index="asset-menu"
+        <el-sub-menu
+          index="asset-menu"
+          popper-class="ep-sidebar-submenu-popper ep-sidebar-submenu-popper--assets"
           ><template #title><el-icon><Monitor /></el-icon><span>资产管理</span></template
           ><el-menu-item index="asset-list">资产列表</el-menu-item
           ><el-menu-item v-if="can('spares.view')" index="spares">备件管理</el-menu-item
         ></el-sub-menu
         >
-        <el-sub-menu index="racks-menu" @title-click="openRackSection('rooms')"
+        <el-sub-menu
+          index="racks-menu"
+          popper-class="ep-sidebar-submenu-popper ep-sidebar-submenu-popper--racks"
+          @title-click="openRackSection('rooms')"
           ><template #title><el-icon><OfficeBuilding /></el-icon><span>机房资源</span></template
           ><el-menu-item v-if="can('racks.manage')" index="racks-rooms">机房管理</el-menu-item
           ><el-menu-item index="racks-view">视图管理</el-menu-item></el-sub-menu
@@ -2822,7 +2897,9 @@ const pageContext = {
           ><el-icon><Warning /></el-icon
           ><template #title>事件中心</template></el-menu-item
         >
-        <el-sub-menu index="settings"
+        <el-sub-menu
+          index="settings"
+          popper-class="ep-sidebar-submenu-popper ep-sidebar-submenu-popper--settings"
           ><template #title
             ><el-icon><Setting /></el-icon><span>系统设置</span></template
           ><el-menu-item index="settings-categories">设备分类</el-menu-item
@@ -3063,9 +3140,12 @@ const pageContext = {
       >
       <el-dialog
         v-model="showPasswordModal"
-        title="修改密码"
+        :title="passwordChangeRequired ? '首次登录请修改密码' : '修改密码'"
         width="420px"
         destroy-on-close
+        :show-close="!passwordChangeRequired"
+        :close-on-click-modal="!passwordChangeRequired"
+        :close-on-press-escape="!passwordChangeRequired"
         ><el-form label-position="top"
           ><el-form-item label="原密码" required
             ><el-input
@@ -3078,9 +3158,9 @@ const pageContext = {
               type="password"
               show-password
           /></el-form-item>
-          <p class="form-hint">新密码至少 8 位。</p></el-form
+          <p class="form-hint">新密码至少 8 位。{{ passwordChangeRequired ? '首次登录必须完成修改后才能进入系统。' : '' }}</p></el-form
         ><template #footer
-          ><el-button @click="showPasswordModal = false">取消</el-button
+          ><el-button v-if="!passwordChangeRequired" @click="showPasswordModal = false">取消</el-button
           ><el-button type="primary" @click="changePassword"
             >保存密码</el-button
           ></template

@@ -73,7 +73,7 @@ function goLedger() {
       正在更新仪表盘数据…
     </div>
 
-    <section class="dashboard-reference-metrics">
+    <section class="dashboard-reference-metrics statistic-card-grid">
       <StatisticCard
         label="设备总数"
         :value="dashboard?.assets.total ?? 0"

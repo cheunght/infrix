@@ -653,11 +653,6 @@ body {
   display: grid;
   gap: 18px;
 }
-.license-summary-grid {
-  display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: 18px;
-}
 .dashboard-metrics,
 .ep-dashboard-metrics {
   display: grid;
@@ -1347,9 +1342,7 @@ body {
 }
 
 .dashboard-reference-metrics {
-  display: grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
-  gap: 14px;
+  min-width: 0;
 }
 
 .dashboard-reference-grid {
@@ -1495,7 +1488,7 @@ body {
 .quick-action-grid small { color: #8794aa; font-size: 11px; }
 
 @media (max-width: 1150px) {
-  .dashboard-reference-metrics { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .dashboard-reference-metrics { min-width: 0; }
   .quick-action-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 }
 
@@ -1509,7 +1502,7 @@ body {
   .dashboard-filter-heading { align-items: flex-start; }
   .dashboard-filter-controls .el-form-item,
   .dashboard-filter-controls .el-select { width: 100%; }
-  .dashboard-reference-metrics { grid-template-columns: 1fr; }
+  .dashboard-reference-metrics { min-width: 0; }
   .dashboard-donut-layout { grid-template-columns: 1fr; }
   .capacity-highlight-grid, .quick-action-grid { grid-template-columns: 1fr; }
   .dashboard-donut { width: 160px; height: 160px; }
@@ -1792,6 +1785,104 @@ body {
   width: 220px;
 }
 
+.spare-toolbar .itam-search-field {
+  min-width: 280px;
+  flex: 1 1 320px;
+}
+
+.spare-location-panel {
+  padding: 12px 20px 14px 54px;
+  background: #f8fafc;
+  border-top: 1px solid #edf1f6;
+}
+
+.spare-location-header {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 8px;
+  color: #273651;
+}
+
+.spare-location-list {
+  display: grid;
+  gap: 6px;
+}
+
+.spare-location-row {
+  display: grid;
+  grid-template-columns: minmax(220px, 1fr) auto auto;
+  align-items: center;
+  gap: 14px;
+  min-height: 48px;
+  padding: 7px 10px;
+  background: #fff;
+  border: 1px solid #e4eaf3;
+  border-radius: 8px;
+}
+
+.spare-location-main {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+}
+
+.spare-location-main strong {
+  overflow: hidden;
+  color: #273651;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.spare-location-quantity {
+  min-width: 74px;
+  justify-content: center;
+}
+
+.spare-location-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  white-space: nowrap;
+}
+
+.spare-location-empty {
+  padding: 10px 0;
+}
+
+.spare-operation-context {
+  margin-bottom: 14px;
+}
+
+.spare-operation-hint {
+  margin-top: 4px;
+  color: #7183a0;
+  font-size: 12px;
+}
+
+.spare-transaction-drawer-title {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  margin-bottom: 14px;
+  color: #273651;
+}
+
+@media (max-width: 760px) {
+  .spare-location-panel {
+    padding-left: 16px;
+  }
+
+  .spare-location-row {
+    grid-template-columns: 1fr;
+    gap: 7px;
+  }
+
+  .spare-location-actions {
+    justify-content: flex-start;
+  }
+}
+
 @media (max-width: 1100px) {
   .ep-main .ep-toolbar {
     flex-wrap: wrap;
@@ -1947,6 +2038,19 @@ body {
   font-weight: 600;
 }
 
+/* Active destinations fill the complete navigation row.  Keeping the same
+   rule for expanded and collapsed menus prevents rounded, inset highlights
+   from appearing when the sidebar changes width. */
+.ep-sidebar-menu > .el-menu-item.is-active,
+.ep-sidebar-menu > .el-menu-item.is-active:hover,
+.ep-sidebar-menu .el-sub-menu .el-menu-item.is-active,
+.ep-sidebar-menu .el-sub-menu .el-menu-item.is-active:hover {
+  width: 100% !important;
+  margin-left: 0 !important;
+  margin-right: 0 !important;
+  border-radius: 0 !important;
+}
+
 .ep-sidebar-menu:not(.el-menu--collapse) > .el-sub-menu > .el-sub-menu__title {
   position: relative !important;
   display: flex !important;
@@ -1985,6 +2089,150 @@ body {
 
 .ep-sidebar-menu.el-menu--collapse .el-sub-menu__icon-arrow {
   display: none !important;
+}
+
+/* Collapsed navigation popups intentionally reuse the same metrics as the
+   first-level sidebar links. The popup is an extension of the sidebar rather
+   than a floating card, while the child list gets only a subtle background
+   separation. */
+.ep-sidebar-submenu-popper.el-popper {
+  width: 216px;
+  min-width: 216px;
+  max-width: 216px;
+  padding: 0 !important;
+  overflow: hidden;
+  border: 0 !important;
+  border-radius: 0 !important;
+  background: var(--itam-sidebar-active) !important;
+  box-shadow: none !important;
+}
+
+.ep-sidebar-submenu-popper.el-menu--popup-container {
+  width: 216px;
+  min-width: 216px;
+  padding: 0;
+  overflow: hidden;
+  border: 0;
+  border-radius: 0;
+  background: var(--itam-sidebar-active);
+}
+
+.ep-sidebar-submenu-popper.el-menu--popup-container::before {
+  display: flex;
+  width: 100%;
+  height: 44px;
+  box-sizing: border-box;
+  align-items: center;
+  margin: 0;
+  padding: 0 16px;
+  border-radius: 0;
+  background: var(--itam-sidebar-active);
+  color: var(--itam-sidebar-text);
+  font-size: 14px;
+  font-weight: 500;
+  line-height: 44px;
+  white-space: nowrap;
+}
+
+.ep-sidebar-submenu-popper--assets.el-menu--popup-container::before {
+  content: "资产管理";
+}
+
+.ep-sidebar-submenu-popper--racks.el-menu--popup-container::before {
+  content: "机房资源";
+}
+
+.ep-sidebar-submenu-popper--settings.el-menu--popup-container::before {
+  content: "系统设置";
+}
+
+.ep-sidebar-submenu-popper.el-menu--popup-container > .el-menu--popup {
+  width: 216px;
+  min-width: 216px;
+  box-sizing: border-box;
+  padding: 4px 0;
+  background: var(--itam-sidebar-hover);
+}
+
+.ep-sidebar-submenu-popper.el-menu--popup-container > .el-menu--popup > .el-menu-item {
+  width: calc(100% - 8px);
+  height: 44px !important;
+  min-height: 44px !important;
+  box-sizing: border-box;
+  margin: 4px;
+  padding: 0 16px !important;
+  border-radius: 8px;
+  color: var(--itam-sidebar-text) !important;
+  font-size: 14px;
+  font-weight: 500;
+  line-height: 44px !important;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.ep-sidebar-submenu-popper.el-menu--popup-container > .el-menu--popup > .el-menu-item:hover,
+.ep-sidebar-submenu-popper.el-menu--popup-container > .el-menu--popup > .el-menu-item.is-active {
+  color: var(--itam-primary-blue) !important;
+  background: var(--itam-sidebar-active) !important;
+}
+
+/* Popup active rows use the same full-width treatment as the sidebar rows. */
+.ep-sidebar-submenu-popper.el-menu--popup-container > .el-menu--popup > .el-menu-item.is-active,
+.ep-sidebar-submenu-popper.el-menu--popup-container > .el-menu--popup > .el-menu-item.is-active:hover {
+  width: 100% !important;
+  margin-left: 0 !important;
+  margin-right: 0 !important;
+  border-radius: 0 !important;
+}
+
+/* A leaf item has no popup menu container. Keep its direct tooltip compact and
+   consistent with the submenu card without adding a second title row. */
+.ep-sidebar-submenu-popper.el-popper:not(:has(.el-menu--popup-container)) {
+  min-width: 0;
+  width: auto;
+  height: 44px;
+  box-sizing: border-box;
+  padding: 0 16px !important;
+  display: flex;
+  align-items: center;
+  margin-left: -12px;
+  background: var(--itam-sidebar-active) !important;
+  color: var(--itam-sidebar-text) !important;
+  font-size: 14px;
+  line-height: 44px;
+  white-space: nowrap;
+}
+
+.ep-sidebar-submenu-popper.el-popper:not(:has(.el-menu--popup-container)) .el-popper__arrow {
+  display: none;
+}
+
+/* Final navigation state normalization.  This intentionally sits after the
+   legacy sidebar rules so every active destination, including nested and
+   collapsed popup items, uses the same full-width, square highlight. */
+.ep-sidebar-menu .el-menu-item.is-active,
+.ep-sidebar-menu .el-menu-item.is-active:hover,
+.ep-sidebar-submenu-popper.el-menu--popup-container .el-menu-item.is-active,
+.ep-sidebar-submenu-popper.el-menu--popup-container .el-menu-item.is-active:hover {
+  width: 100% !important;
+  margin-left: 0 !important;
+  margin-right: 0 !important;
+  border-radius: 0 !important;
+}
+
+/* A popup is visually attached to the sidebar.  Its top title and a leaf
+   tooltip use the sidebar's selected-state color, while the child list keeps
+   its own slightly different surface. */
+.ep-sidebar-submenu-popper.el-popper,
+.ep-sidebar-submenu-popper.el-menu--popup-container,
+.ep-sidebar-submenu-popper.el-menu--popup-container::before,
+.ep-sidebar-submenu-popper.el-popper:not(:has(.el-menu--popup-container)) {
+  background: var(--itam-sidebar-active) !important;
+}
+
+.ep-sidebar-submenu-popper.el-menu--popup-container > .el-menu--popup {
+  background: var(--itam-sidebar-hover) !important;
 }
 
 .ep-collapse-button,
@@ -2033,6 +2281,14 @@ body {
   text-align: center;
 }
 
+.login-brand-subtitle {
+  margin-top: 6px;
+  color: var(--itam-sidebar-icon);
+  font-size: 14px;
+  line-height: 1.4;
+  letter-spacing: 0.04em;
+}
+
 .login-card .el-form {
   margin-top: 0;
 }
@@ -2077,8 +2333,12 @@ body {
 
 .dashboard-host .dashboard-reference-page {
   position: relative;
-  margin-top: -8px;
-  height: calc(100vh - 110px);
+  /* Keep the first KPI row on the same top baseline as the facility page.
+     The previous negative offset made Dashboard appear higher than every
+     other page. Reduce the fixed canvas height by the same amount so the
+     single-viewport layout keeps its original bottom edge. */
+  margin-top: 0;
+  height: calc(100vh - 118px);
   min-height: 0;
   grid-template-rows: var(--itam-stat-card-height, 106px) 218px minmax(118px, 1fr) 142px;
   gap: 10px;
@@ -2251,8 +2511,8 @@ body {
 
 @media (max-height: 820px) and (min-width: 901px) {
   .dashboard-host .dashboard-reference-page {
-    margin-top: -6px;
-    height: calc(100vh - 100px);
+    margin-top: 0;
+    height: calc(100vh - 106px);
     grid-template-rows: var(--itam-stat-card-compact-height, 92px) 190px minmax(104px, 1fr) 136px;
     gap: 8px;
   }
@@ -2304,7 +2564,30 @@ body {
 :root {
   --itam-stat-card-height: 106px;
   --itam-stat-card-compact-height: 92px;
+  --itam-stat-card-gap: 14px;
   --itam-stat-card-radius: 12px;
+}
+
+/* Dashboard and facility management share one KPI grid so their cards have
+   identical dimensions, regardless of the page-specific layout around them. */
+.statistic-card-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  grid-auto-rows: var(--itam-stat-card-height);
+  gap: var(--itam-stat-card-gap);
+  width: 100%;
+  min-width: 0;
+  align-items: stretch;
+}
+
+.statistic-card-grid > .statistic-card {
+  height: 100%;
+  min-height: 0;
+  align-self: stretch;
+}
+
+.facility-stat-grid {
+  margin-bottom: 16px;
 }
 
 .statistic-card {
@@ -2412,29 +2695,29 @@ body {
 }
 
 .facility-stat-grid .statistic-card,
-.license-summary-grid .statistic-card,
 .inventory-summary-grid .statistic-card {
   height: var(--itam-stat-card-height);
 }
 
 @media (max-height: 820px) and (min-width: 901px) {
+  .statistic-card-grid {
+    grid-auto-rows: var(--itam-stat-card-compact-height);
+  }
+
   .dashboard-host .statistic-card,
   .facility-stat-grid .statistic-card,
-  .license-summary-grid .statistic-card,
   .inventory-summary-grid .statistic-card {
     height: var(--itam-stat-card-compact-height);
   }
 
   .dashboard-host .statistic-card > .el-card__body,
   .facility-stat-grid .statistic-card > .el-card__body,
-  .license-summary-grid .statistic-card > .el-card__body,
   .inventory-summary-grid .statistic-card > .el-card__body {
     padding: 14px 16px;
   }
 
   .dashboard-host .statistic-card__icon,
   .facility-stat-grid .statistic-card__icon,
-  .license-summary-grid .statistic-card__icon,
   .inventory-summary-grid .statistic-card__icon {
     width: 44px;
     height: 44px;
@@ -2444,7 +2727,6 @@ body {
 
   .dashboard-host .statistic-card__icon img,
   .facility-stat-grid .statistic-card__icon img,
-  .license-summary-grid .statistic-card__icon img,
   .inventory-summary-grid .statistic-card__icon img {
     width: 34px;
     height: 34px;
@@ -2452,13 +2734,17 @@ body {
 
   .dashboard-host .statistic-card__value strong,
   .facility-stat-grid .statistic-card__value strong,
-  .license-summary-grid .statistic-card__value strong,
   .inventory-summary-grid .statistic-card__value strong {
     font-size: 26px;
   }
 }
 
-@media (max-width: 900px) {
+@media (max-width: 1150px) {
+  .statistic-card-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    grid-auto-rows: var(--itam-stat-card-height);
+  }
+
   .statistic-card {
     height: auto;
     min-height: var(--itam-stat-card-height);
@@ -2466,10 +2752,176 @@ body {
 }
 
 @media (max-width: 560px) {
+  .statistic-card-grid {
+    grid-template-columns: 1fr;
+  }
+
   .statistic-card,
   .facility-stat-grid .statistic-card,
-  .license-summary-grid .statistic-card,
   .inventory-summary-grid .statistic-card {
     min-height: var(--itam-stat-card-height);
   }
+}
+
+/* License list: the summary cards were intentionally removed, so keep the
+   remaining toolbar and table compact, stable and usable at narrow widths. */
+.ep-main .license-list-card {
+  min-width: 0;
+}
+
+.ep-main .license-toolbar {
+  justify-content: space-between;
+  align-items: center;
+}
+
+.ep-main .license-toolbar-filters {
+  display: flex;
+  flex: 1 1 auto;
+  min-width: 0;
+  align-items: center;
+  gap: var(--itam-control-gap);
+}
+
+.ep-main .license-toolbar-filters > .itam-search-field {
+  flex: 0 1 390px;
+  min-width: 220px;
+}
+
+.ep-main .license-status-filter {
+  flex: 0 0 160px;
+  width: 160px;
+}
+
+.ep-main .license-table {
+  width: 100%;
+  table-layout: fixed;
+}
+
+.ep-main .license-table .el-table__cell .cell {
+  min-width: 0;
+}
+
+.license-usage-cell {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+.license-usage-cell .el-progress {
+  flex: 1 1 auto;
+  min-width: 60px;
+}
+
+.license-usage-cell > span {
+  flex: 0 0 52px;
+  color: #64748b;
+  font-size: 12px;
+  text-align: right;
+  white-space: nowrap;
+}
+
+.license-usage-cell > span.is-over-limit {
+  color: var(--el-color-danger);
+  font-weight: 600;
+}
+
+@media (max-width: 900px) {
+  .ep-main .license-toolbar {
+    flex-wrap: wrap;
+  }
+
+  .ep-main .license-toolbar-filters {
+    flex: 1 1 100%;
+  }
+
+  .ep-main .license-toolbar-filters > .itam-search-field {
+    flex: 1 1 auto;
+  }
+}
+
+@media (max-width: 560px) {
+  .ep-main .license-toolbar-filters {
+    flex-wrap: wrap;
+  }
+
+  .ep-main .license-toolbar-filters > .itam-search-field,
+  .ep-main .license-status-filter {
+    flex: 1 1 100%;
+    width: 100%;
+    min-width: 0;
+  }
+
+  .ep-main .license-toolbar-actions {
+    width: 100%;
+  }
+
+  .ep-main .license-toolbar-actions .el-button {
+    width: 100%;
+  }
+}
+
+/* Final sidebar interaction rules. Keep hover and active destinations
+   visually identical and make both states fill the entire menu row. */
+.ep-sidebar-menu .el-menu-item:hover,
+.ep-sidebar-menu .el-menu-item.is-active,
+.ep-sidebar-menu .el-menu-item.is-active:hover,
+.ep-sidebar-menu .el-sub-menu__title:hover,
+.ep-sidebar-menu .el-sub-menu.is-active > .el-sub-menu__title:hover {
+  width: 100% !important;
+  margin-left: 0 !important;
+  margin-right: 0 !important;
+  border-radius: 0 !important;
+  background: var(--itam-sidebar-active) !important;
+  color: var(--itam-primary-blue) !important;
+}
+
+.ep-sidebar-menu .el-menu-item:hover .el-icon,
+.ep-sidebar-menu .el-menu-item.is-active .el-icon,
+.ep-sidebar-menu .el-sub-menu__title:hover > .el-icon,
+.ep-sidebar-menu .el-sub-menu__title:hover .el-sub-menu__icon-arrow,
+.ep-sidebar-menu .el-sub-menu.is-active > .el-sub-menu__title:hover > .el-icon,
+.ep-sidebar-menu .el-sub-menu.is-active > .el-sub-menu__title:hover .el-sub-menu__icon-arrow {
+  color: var(--itam-primary-blue) !important;
+}
+
+/* The popup child surface stays a separate layer, but its hover and active
+   rows use exactly the same full-width highlight as the sidebar. */
+.ep-sidebar-submenu-popper.el-menu--popup-container > .el-menu--popup > .el-menu-item:hover,
+.ep-sidebar-submenu-popper.el-menu--popup-container > .el-menu--popup > .el-menu-item.is-active,
+.ep-sidebar-submenu-popper.el-menu--popup-container > .el-menu--popup > .el-menu-item.is-active:hover {
+  width: 100% !important;
+  margin-left: 0 !important;
+  margin-right: 0 !important;
+  border-radius: 0 !important;
+  background: var(--itam-sidebar-active) !important;
+  color: var(--itam-primary-blue) !important;
+}
+
+/* Match the specificity of the legacy width/margin rules in expanded menus.
+   Without these scoped variants those older selectors can leave nested rows
+   inset even though their background has been normalized above. */
+.ep-sidebar-menu:not(.el-menu--collapse) > .el-menu-item:hover,
+.ep-sidebar-menu:not(.el-menu--collapse) > .el-menu-item.is-active,
+.ep-sidebar-menu:not(.el-menu--collapse) > .el-menu-item.is-active:hover,
+.ep-sidebar-menu:not(.el-menu--collapse) > .el-sub-menu > .el-sub-menu__title:hover,
+.ep-sidebar-menu:not(.el-menu--collapse) .el-sub-menu > .el-menu > .el-menu-item:hover,
+.ep-sidebar-menu:not(.el-menu--collapse) .el-sub-menu > .el-menu > .el-menu-item.is-active,
+.ep-sidebar-menu:not(.el-menu--collapse) .el-sub-menu > .el-menu > .el-menu-item.is-active:hover {
+  width: 100% !important;
+  margin-left: 0 !important;
+  margin-right: 0 !important;
+  border-radius: 0 !important;
+}
+
+/* In collapsed mode 100% resolves to the 64px sidebar row, preserving the
+   centered icon while removing the old rounded inset highlight. */
+.ep-sidebar-menu.el-menu--collapse > .el-menu-item:hover,
+.ep-sidebar-menu.el-menu--collapse > .el-menu-item.is-active,
+.ep-sidebar-menu.el-menu--collapse > .el-menu-item.is-active:hover,
+.ep-sidebar-menu.el-menu--collapse > .el-sub-menu > .el-sub-menu__title:hover {
+  width: 100% !important;
+  margin-left: 0 !important;
+  margin-right: 0 !important;
+  border-radius: 0 !important;
 }

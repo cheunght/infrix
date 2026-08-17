@@ -533,7 +533,6 @@
 
 /* Facility management workspace: spacious three-column layout without page overflow. */
 .facility-management-page { min-width: 0; overflow-x: hidden; }
-.facility-stat-grid { display:grid; grid-template-columns:repeat(4,minmax(0,1fr)); gap:14px; margin-bottom:16px; }
 .facility-three-column { display:grid; grid-template-columns:minmax(190px,20fr) minmax(330px,35fr) minmax(380px,45fr); gap:16px; align-items:start; min-width:0; }
 .facility-panel { min-width:0; border-color:#e7edf5; border-radius:12px; overflow:hidden; }
 .facility-panel .el-card__header { padding:14px 16px; border-bottom-color:#edf1f7; }
@@ -572,12 +571,10 @@
   .facility-three-column { grid-template-columns: minmax(180px,22fr) minmax(300px,38fr) minmax(330px,40fr); }
 }
 @media (max-width: 900px) {
-  .facility-stat-grid { grid-template-columns:repeat(2,minmax(0,1fr)); }
   .facility-three-column { grid-template-columns:1fr; }
   .facility-panel { width:100%; }
 }
 @media (max-width: 520px) {
-  .facility-stat-grid { grid-template-columns:1fr; }
   .facility-detail-grid { grid-template-columns:1fr; }
   .facility-detail-grid > div.full { grid-column:auto; }
 }
