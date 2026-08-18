@@ -42,3 +42,9 @@ frontend/.vite/
 # Deployment/runtime output
 backend/staticfiles/
 deploy/*.pid
+
+# Local deployment script (keep locally, never commit)
+deploy-to-rocky.sh
+
+# Reasonix local tool state (never commit)
+.reasonix/

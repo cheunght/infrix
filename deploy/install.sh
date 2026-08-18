@@ -160,8 +160,9 @@ fi
 
 if [[ ! -f "$ENV_FILE" ]]; then
   log "创建 $ENV_FILE"
-  umask 027
-  cat > "$ENV_FILE" <<EOF
+  (
+    umask 027
+    cat > "$ENV_FILE" <<EOF
 DJANGO_DEBUG=$DJANGO_DEBUG
 DJANGO_SECRET_KEY=$(openssl rand -hex 32)
 DJANGO_ALLOWED_HOSTS=$DJANGO_ALLOWED_HOSTS
@@ -173,6 +174,7 @@ DB_PASSWORD=$DB_PASSWORD
 DB_HOST=$DB_HOST
 DB_PORT=$DB_PORT
 EOF
+  )
 fi
 chmod 640 "$ENV_FILE"
 chown root:"$APP_GROUP" "$ENV_FILE"
@@ -264,6 +266,14 @@ cd "$APP_DIR/frontend"
 npm ci --no-audit --no-fund
 npm run build
 
+frontend_dist="$APP_DIR/frontend/dist"
+[[ -s "$frontend_dist/index.html" ]] || fail "前端构建未生成：$frontend_dist/index.html"
+# npm 会继承当前 umask；安装脚本此前为环境文件设置的 027 可能让
+# dist 目录变成 750、静态文件变成 640，导致 Nginx 用户无法读取首页。
+# 发布目录只提供静态资源，因此统一为目录 755、文件 644。
+chmod 755 "$APP_DIR" "$APP_DIR/frontend"
+find "$frontend_dist" -type d -exec chmod 755 {} +
+find "$frontend_dist" -type f -exec chmod 644 {} +
 chown -R "$APP_USER":"$APP_GROUP" "$APP_DIR"
 chmod 640 "$ENV_FILE"
 chown root:"$APP_GROUP" "$ENV_FILE"
@@ -333,12 +343,17 @@ server {
     }
 
     location / {
-        try_files \$uri \$uri/ /index.html;
+        # SPA 路由可能与 Vite 的静态目录同名（例如 /assets），只服务
+        # 真实文件，目录路径统一回退到 index.html，避免刷新时返回 403。
+        try_files \$uri /index.html;
     }
 }
 EOF
 chmod 644 "$NGINX_CONF_FILE"
 nginx -t
+
+runuser -u nginx -- test -r "$frontend_dist/index.html" \
+  || fail "Nginx 用户无法读取前端首页：$frontend_dist/index.html"
 
 log "启动服务"
 systemctl daemon-reload
@@ -382,6 +397,22 @@ if ! curl --retry 5 --retry-delay 1 -fsS --connect-timeout 5 --max-time 10 \
   systemctl status nginx --no-pager >&2 || true
   journalctl -u nginx -n 50 --no-pager >&2 || true
   fail "Nginx 反向代理健康检查失败。"
+fi
+
+if ! curl --retry 5 --retry-delay 1 -fsS --connect-timeout 5 --max-time 10 \
+  -H "Host: $SERVER_NAME" http://127.0.0.1/ >/dev/null 2>&1; then
+  nginx -t >&2 || true
+  systemctl status nginx --no-pager >&2 || true
+  journalctl -u nginx -n 50 --no-pager >&2 || true
+  fail "Nginx 前端静态资源健康检查失败。"
+fi
+
+if ! curl --retry 5 --retry-delay 1 -fsS --connect-timeout 5 --max-time 10 \
+  -H "Host: $SERVER_NAME" http://127.0.0.1/assets >/dev/null 2>&1; then
+  nginx -t >&2 || true
+  systemctl status nginx --no-pager >&2 || true
+  journalctl -u nginx -n 50 --no-pager >&2 || true
+  fail "Nginx 前端路由刷新检查失败：/assets"
 fi
 
 echo

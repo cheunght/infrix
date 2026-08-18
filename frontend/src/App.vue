@@ -31,21 +31,19 @@ import {
   pageTotal,
   type PageResult,
 } from "./api";
+import { useRoute, useRouter, type RouteLocationRaw } from "vue-router";
 import AssetDetailDrawer from "./components/AssetDetailDrawer.vue";
 import AssetFormDialog from "./components/AssetFormDialog.vue";
 import ApiErrorAlert from "./components/ApiErrorAlert.vue";
-import DashboardPage from "./components/DashboardPage.vue";
-import AssetLedgerPage from "./components/AssetLedgerPage.vue";
-import RackViewPage from "./components/RackViewPage.vue";
-import RepairPage from "./components/RepairPage.vue";
-import LicensePage from "./components/LicensePage.vue";
-import SparePartPage from "./components/SparePartPage.vue";
-import InventoryPage from "./components/InventoryPage.vue";
-import SettingsPage from "./components/SettingsPage.vue";
 import SearchField from "./components/SearchField.vue";
 import infrixMark from "./assets/infrix-mark.png";
 import infrixWordmark from "./assets/infrix-wordmark.png";
 import { hasCapability } from "./permissions";
+import {
+  routeForPage,
+  type RackSection,
+  type SettingsSection,
+} from "./router";
 import type {
   Page,
   DictionaryItem,
@@ -74,8 +72,10 @@ import type {
   CustomFieldOption,
   Tag,
 } from "./types";
-const page = ref<Page>("dashboard");
-const pageTitle = ref("仪表盘");
+const route = useRoute();
+const router = useRouter();
+const page = ref<Page>(route.meta.page || "dashboard");
+const pageTitle = ref(route.meta.title || "仪表盘");
 const assets = ref<Asset[]>([]);
 const selectedAssetIds = ref<number[]>([]);
 const racks = ref<Rack[]>([]);
@@ -455,7 +455,7 @@ const userFormRules: FormRules = {
 const showRoleModal = ref(false);
 const editingRole = ref<Role | null>(null);
 const roleForm = ref({ name: "" });
-const settingsSection = ref<"dictionaries" | "organization" | "audit" | "custom-fields" | "tags">("dictionaries");
+const settingsSection = ref<SettingsSection>("dictionaries");
 const auditLogs = ref<AuditLog[]>([]);
 const auditCount = ref(0);
 const auditPage = ref(1);
@@ -464,7 +464,7 @@ const auditFilters = ref({ search: "", actor: "", resource_type: "", action: "",
 const serverRooms = ref<ServerRoom[]>([]);
 const spareRooms = ref<ServerRoom[]>([]);
 // 机房资源保留机房管理和视图管理两个入口。
-const rackSection = ref<"view" | "rooms">("rooms");
+const rackSection = ref<RackSection>("rooms");
 const facilitySummary = ref<FacilitySummary | null>(null);
 const showDataCenterModal = ref(false);
 const editingDataCenter = ref<DataCenter | null>(null);
@@ -501,6 +501,77 @@ const navItems = [
   },
   { label: "备件管理", icon: "", iconIndex: 0, page: "spares" as Page },
 ];
+
+function closeTransientUi() {
+  closeAssetDetail();
+  showAssetModal.value = false;
+  showFaultModal.value = false;
+  showRepairModal.value = false;
+  showImportPreview.value = false;
+  showImportResult.value = false;
+  showRoomModal.value = false;
+  showLicenseModal.value = false;
+  showSparePartModal.value = false;
+  showSpareOperationModal.value = false;
+}
+
+function syncRouteState() {
+  const routePage = route.meta.page || "dashboard";
+  page.value = routePage;
+  if (routePage === "settings")
+    settingsSection.value = route.meta.settingsSection || "dictionaries";
+  if (routePage === "racks")
+    rackSection.value = route.meta.rackSection || "rooms";
+  pageTitle.value = route.meta.title || "仪表盘";
+}
+
+function routeIsAllowed() {
+  const routePage = route.meta.page || "dashboard";
+  if (routePage === "spares" && !can("spares.view")) return false;
+  if (
+    routePage === "racks" &&
+    route.meta.rackSection === "rooms" &&
+    !can("racks.manage")
+  ) {
+    return false;
+  }
+  if (routePage !== "settings") return true;
+  const section = route.meta.settingsSection || "dictionaries";
+  if (section === "organization" && !isAdmin.value) return false;
+  if (section === "audit" && !can("audit.view")) return false;
+  if (section === "custom-fields" && !can("custom_fields.manage")) return false;
+  if (section === "tags" && !can("tags.manage")) return false;
+  return true;
+}
+
+function ensureRouteAccess() {
+  if (!authenticated.value || routeIsAllowed()) return true;
+  page.value = "dashboard";
+  pageTitle.value = "仪表盘";
+  void router.replace(routeForPage("dashboard"));
+  return false;
+}
+
+function navigateToRoute(location: RouteLocationRaw, reloadIfSame = false) {
+  const target = router.resolve(location);
+  if (target.fullPath === route.fullPath) {
+    syncRouteState();
+    if (reloadIfSame && authenticated.value) void load();
+    return;
+  }
+  void router.push(location);
+}
+
+function resetMainScroll() {
+  nextTick(() => {
+    window.requestAnimationFrame(() => {
+      document.querySelector<HTMLElement>(".ep-main")?.scrollTo({
+        top: 0,
+        left: 0,
+      });
+    });
+  });
+}
 
 function toggleSidebar() {
   sidebarCollapsed.value = !sidebarCollapsed.value;
@@ -593,6 +664,8 @@ async function checkAuth() {
     roleCode.value = user.role_code;
     permissions.value = user.permissions;
     passwordChangeRequired.value = Boolean(user.password_change_required);
+    syncRouteState();
+    ensureRouteAccess();
     if (passwordChangeRequired.value) showPasswordModal.value = true;
     if (!isAdmin.value && settingsSection.value === "organization")
       settingsSection.value = "dictionaries";
@@ -836,11 +909,9 @@ async function deleteRoom(room: ServerRoom) {
   try { await request(`/server-rooms/${room.id}/`, { method: "DELETE" }); await loadRackManagement(); }
   catch (error) { ElMessage.error(error instanceof Error ? error.message : "删除失败"); }
 }
-function openRackSection(section: "view" | "rooms") {
+function openRackSection(section: RackSection) {
   rackSection.value = section;
-  page.value = "racks";
-  pageTitle.value = "机房机柜管理";
-  load();
+  navigateToRoute(routeForPage("racks", { rackSection: section }), true);
 }
 function openUserModal(user?: ManagedUser) {
   editingUser.value = user || null;
@@ -982,6 +1053,8 @@ async function login() {
     roleCode.value = user.role_code;
     permissions.value = user.permissions;
     passwordChangeRequired.value = Boolean(user.password_change_required);
+    syncRouteState();
+    ensureRouteAccess();
     if (!isAdmin.value && settingsSection.value === "organization")
       settingsSection.value = "dictionaries";
     password.value = "";
@@ -1020,6 +1093,7 @@ async function logout() {
     userName.value = "";
     passwordChangeRequired.value = false;
     showPasswordModal.value = false;
+    await router.replace(routeForPage("dashboard"));
   }
 }
 async function openAssetEditor(assetId: number, clone = false) {
@@ -1641,24 +1715,23 @@ async function lookupAsset() {
       await openAssetDetail(matches[0].id);
       return;
     }
-    page.value = "ledger";
-    pageTitle.value = "资产台账";
     assetSearch.value = query;
     assets.value = matches;
     actionMessage.value = matches.length
       ? `找到 ${matches.length} 项资产`
       : `未找到资产标签“${query}”`;
+    navigateToRoute(routeForPage("ledger"));
   } catch (error) {
     actionMessage.value =
       error instanceof Error ? error.message : "资产查询失败";
   }
 }
 async function searchLedger() {
-  if (page.value !== "ledger") {
-    page.value = "ledger";
-    pageTitle.value = "资产台账";
-  }
   assetPage.value = 1;
+  if (page.value !== "ledger") {
+    navigateToRoute(routeForPage("ledger"));
+    return;
+  }
   await load();
 }
 function closeAssetDetail() {
@@ -1775,18 +1848,7 @@ async function load() {
   }
 }
 function navigate(item: (typeof navItems)[number]) {
-  closeAssetDetail();
-  showAssetModal.value = false;
-  showFaultModal.value = false;
-  showRepairModal.value = false;
-  showImportPreview.value = false;
-  showImportResult.value = false;
-  showRoomModal.value = false;
-  showLicenseModal.value = false;
-  showSparePartModal.value = false;
-  showSpareOperationModal.value = false;
-  page.value = item.page;
-  pageTitle.value = item.page === "racks" ? "机房机柜管理" : item.page === "spares" ? "资产管理 / 备件管理" : item.label;
+  closeTransientUi();
   if (item.page === "placeholder") placeholderTitle.value = item.label;
   if (item.page === "ledger") assetPage.value = 1;
   if (item.page === "repairs") repairPage.value = 1;
@@ -1799,34 +1861,30 @@ function navigate(item: (typeof navItems)[number]) {
     settingsSection.value = "dictionaries";
     settingsMenuExpanded.value = true;
     localStorage.setItem("itam.settings.expanded", "1");
-    pageTitle.value = "系统设置 / 数据字典";
     nextTick(() => sidebarMenu.value?.open("settings"));
   }
-  load();
+  navigateToRoute(
+    routeForPage(item.page, {
+      rackSection: rackSection.value,
+      settingsSection: settingsSection.value,
+    }),
+    true,
+  );
 }
 function openSettingsSection(
-  section: "dictionaries" | "organization" | "audit" | "custom-fields" | "tags",
+  section: SettingsSection,
 ) {
   if (section === "organization" && !isAdmin.value) {
     settingsSection.value = "dictionaries";
     return;
   }
   if (section === "audit" && !can("audit.view")) return;
-  showAssetModal.value = false;
-  showFaultModal.value = false;
-  showRepairModal.value = false;
-  showImportPreview.value = false;
-  showImportResult.value = false;
-  showRoomModal.value = false;
-  showLicenseModal.value = false;
-  closeAssetDetail();
+  closeTransientUi();
   settingsSection.value = section;
-  page.value = "settings";
-  pageTitle.value = `系统设置 / ${section === "dictionaries" ? "数据字典" : section === "custom-fields" ? "自定义字段" : section === "tags" ? "标签管理" : section === "organization" ? "组织权限" : "操作日志"}`;
   settingsMenuExpanded.value = true;
   localStorage.setItem("itam.settings.expanded", "1");
   nextTick(() => sidebarMenu.value?.open("settings"));
-  load();
+  navigateToRoute(routeForPage("settings", { settingsSection: section }), true);
 }
 const activeMenu = computed(() =>
   page.value === "settings"
@@ -2682,6 +2740,17 @@ watch(actionMessage, (message) => {
   actionMessage.value = "";
 });
 watch(
+  () => route.fullPath,
+  () => {
+    syncRouteState();
+    closeTransientUi();
+    if (!authenticated.value || !ensureRouteAccess()) return;
+    void load();
+    resetMainScroll();
+  },
+  { immediate: true },
+);
+watch(
   visibleRacks,
   (currentRacks) => {
     if (!currentRacks.some((rack) => rack.id === focusedRackId.value))
@@ -2705,7 +2774,10 @@ onMounted(async () => {
   window.addEventListener("resize", updateViewportHeight);
   await loadCsrf();
   await checkAuth();
-  if (authenticated.value && !passwordChangeRequired.value) await bootstrapApplication();
+  if (authenticated.value && !passwordChangeRequired.value) {
+    resetMainScroll();
+    await bootstrapApplication();
+  }
 });
 onBeforeUnmount(() => {
   document.removeEventListener("click", closeMenusOnOutsideClick);
@@ -2946,24 +3018,9 @@ const pageContext = {
       <div v-if="loading" class="loading">加载中…</div>
       <ApiErrorAlert :message="pageError" />
       <template v-if="!loading">
-      <LicensePage v-if="page === 'licenses'" :context="pageContext" />
-      <DashboardPage v-else-if="page === 'dashboard'" :context="pageContext" />
-      <AssetLedgerPage v-else-if="page === 'ledger'" :context="pageContext" />
-      <RepairPage v-else-if="page === 'repairs'" :context="pageContext" />
-      <SparePartPage v-else-if="page === 'spares'" :context="pageContext" />
-      <InventoryPage v-else-if="page === 'inventory'" :context="pageContext" />
-      <RackViewPage v-else-if="page === 'racks'" :context="pageContext" />
-      <SettingsPage v-else-if="page === 'settings'" :context="pageContext" />
-      <template v-else
-        ><section class="empty-page">
-          <div class="empty-icon">◎</div>
-          <h2>{{ placeholderTitle }}</h2>
-          <p>该模块已接入导航，业务页面正在建设中。</p>
-          <el-button type="primary" @click="navigate(navItems[0])">
-            返回首页
-          </el-button>
-        </section></template
-      >
+        <router-view v-slot="{ Component }">
+          <component :is="Component" :context="pageContext" />
+        </router-view>
       </template>
       <AssetFormDialog :context="pageContext" />
       <el-dialog

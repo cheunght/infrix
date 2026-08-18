@@ -54,6 +54,10 @@ log "检查应用静态资源"
 log "检查 API 和 Nginx 反向代理"
 curl --retry 5 --retry-delay 1 --connect-timeout 3 --max-time 10 -fsS \
   "${BASE_URL%/}/api/v1/auth/csrf/" >/dev/null || fail "API 健康检查失败：${BASE_URL%/}"
+curl --retry 5 --retry-delay 1 --connect-timeout 3 --max-time 10 -fsS \
+  "${BASE_URL%/}/" >/dev/null || fail "前端静态资源健康检查失败：${BASE_URL%/}"
+curl --retry 5 --retry-delay 1 --connect-timeout 3 --max-time 10 -fsS \
+  "${BASE_URL%/}/assets" >/dev/null || fail "前端路由刷新检查失败：${BASE_URL%/}/assets"
 
 log "上线验收通过"
 echo "应用目录：$APP_DIR"

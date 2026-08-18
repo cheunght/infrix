@@ -2307,25 +2307,30 @@ body {
   height: 40px !important;
 }
 
-/* Compact, single-viewport Dashboard layout.  The dashboard host is scoped
-   to the home page so list, rack and settings pages retain their normal
-   scrolling behavior. */
+/* Dashboard layout.  Keep the home page scoped so list, rack and settings
+   pages retain their normal scrolling behavior while dashboard content can
+   grow beyond a single viewport. */
 .dashboard-host {
-  overflow: hidden !important;
+  min-height: 0;
+  overflow-x: hidden !important;
+  overflow-y: auto !important;
+  -webkit-overflow-scrolling: touch;
 }
 
 .dashboard-host .dashboard-reference-page {
   position: relative;
-  /* Keep the first KPI row on the same top baseline as the facility page.
-     The previous negative offset made Dashboard appear higher than every
-     other page. Reduce the fixed canvas height by the same amount so the
-     single-viewport layout keeps its original bottom edge. */
   margin-top: 0;
-  height: calc(100vh - 118px);
-  min-height: 0;
-  grid-template-rows: var(--itam-stat-card-height, 106px) 218px minmax(118px, 1fr) 142px;
+  height: auto;
+  min-height: calc(100vh - 118px);
+  grid-template-rows: none;
+  grid-auto-rows: max-content;
+  /* The page keeps a viewport-sized canvas on wide screens.  Without an
+     explicit start alignment, CSS Grid stretches every auto row to consume
+     that spare height; the primary cards then become a mostly empty wall and
+     push the tables below the fold. */
+  align-content: start;
   gap: 10px;
-  overflow: hidden;
+  overflow: visible;
 }
 
 .dashboard-host .dashboard-inline-loading {
@@ -2347,7 +2352,7 @@ body {
 
 .dashboard-host .dashboard-reference-card {
   min-height: 0;
-  height: 100%;
+  height: auto;
 }
 
 .dashboard-host .dashboard-chart-card,
@@ -2356,7 +2361,7 @@ body {
 .dashboard-host .dashboard-quick-actions {
   display: flex;
   flex-direction: column;
-  overflow: hidden;
+  overflow: visible;
 }
 
 .dashboard-host .dashboard-reference-card > .el-card__header {
@@ -2366,21 +2371,21 @@ body {
 }
 
 .dashboard-host .dashboard-reference-card > .el-card__body {
-  min-height: 0;
+  min-height: auto;
   padding: 10px 14px;
-  overflow: hidden;
+  overflow: visible;
 }
 
 .dashboard-host .dashboard-chart-card > .el-card__body {
   display: flex;
   align-items: center;
-  flex: 1;
+  flex: 0 0 auto;
 }
 
 .dashboard-host .dashboard-primary-grid > .dashboard-reference-card:not(.dashboard-chart-card) > .el-card__body {
   display: flex;
-  flex: 1;
-  min-height: 0;
+  flex: 0 0 auto;
+  min-height: auto;
 }
 
 .dashboard-host .dashboard-donut-layout {
@@ -2411,15 +2416,15 @@ body {
   grid-auto-rows: minmax(0, 1fr);
   gap: 8px;
   min-height: 0;
-  height: 100%;
-  flex: 1;
-  align-content: stretch;
+  height: auto;
+  flex: 0 0 auto;
+  align-content: start;
   align-items: stretch;
-  overflow: hidden;
+  overflow: visible;
 }
 
 .dashboard-host .data-center-overview-item {
-  height: 100%;
+  height: auto;
   box-sizing: border-box;
   gap: 6px;
   min-width: 0;
@@ -2435,14 +2440,15 @@ body {
 
 .dashboard-host .dashboard-table-grid .dashboard-reference-card > .el-card__body {
   display: flex;
-  flex: 1;
-  overflow: hidden;
+  flex: 0 0 auto;
+  min-height: auto;
+  overflow: visible;
 }
 
 .dashboard-host .dashboard-table-scroll {
   min-height: 0;
   width: 100%;
-  overflow: hidden !important;
+  overflow: visible !important;
 }
 
 .dashboard-host .dashboard-reference-table {
@@ -2452,7 +2458,7 @@ body {
 
 .dashboard-host .dashboard-reference-table .el-table__body-wrapper,
 .dashboard-host .dashboard-reference-table .el-table__header-wrapper {
-  overflow: hidden !important;
+  overflow: visible !important;
 }
 
 .dashboard-host .dashboard-reference-table .el-table__cell {
@@ -2474,7 +2480,7 @@ body {
 .dashboard-host .dashboard-quick-actions > .el-card__body {
   display: flex;
   align-items: center;
-  flex: 1;
+  flex: 0 0 auto;
   padding: 5px 14px;
 }
 
@@ -2495,8 +2501,11 @@ body {
 @media (max-height: 820px) and (min-width: 901px) {
   .dashboard-host .dashboard-reference-page {
     margin-top: 0;
-    height: calc(100vh - 106px);
-    grid-template-rows: var(--itam-stat-card-compact-height, 92px) 190px minmax(104px, 1fr) 136px;
+    height: auto;
+    min-height: calc(100vh - 106px);
+    grid-template-rows: none;
+    grid-auto-rows: max-content;
+    align-content: start;
     gap: 8px;
   }
   .dashboard-host .dashboard-donut { width: 112px; height: 112px; }
@@ -2510,12 +2519,18 @@ body {
 }
 
 @media (max-width: 900px) {
-  .dashboard-host { overflow: auto !important; }
+  .dashboard-host {
+    overflow-x: hidden !important;
+    overflow-y: auto !important;
+    -webkit-overflow-scrolling: touch;
+  }
   .dashboard-host .dashboard-reference-page {
     margin-top: 0;
     height: auto;
     min-height: 0;
     grid-template-rows: none;
+    grid-auto-rows: max-content;
+    align-content: start;
     overflow: visible;
   }
   .dashboard-host .dashboard-reference-metrics { grid-template-columns: repeat(2, minmax(0, 1fr)); }
@@ -2530,6 +2545,19 @@ body {
   .dashboard-host .dashboard-table-grid .dashboard-reference-card > .el-card__body,
   .dashboard-host .dashboard-quick-actions > .el-card__body {
     flex: none;
+  }
+}
+
+@media (max-width: 760px) {
+  .dashboard-host .dashboard-table-scroll {
+    overflow-x: auto !important;
+    overflow-y: hidden !important;
+    overscroll-behavior-x: contain;
+    -webkit-overflow-scrolling: touch;
+  }
+
+  .dashboard-host .dashboard-reference-table {
+    min-width: 720px;
   }
 }
 
