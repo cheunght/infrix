@@ -9,10 +9,10 @@ export type Page =
   | "settings"
   | "placeholder";
 
-export type Category = { id: number; name: string; color: string; assets_count?: number };
 export type DictionaryItem = {
   id: number;
   name: string;
+  color?: string;
   is_active: boolean;
   assets_count?: number;
   created_at?: string;
@@ -175,8 +175,6 @@ export type Asset = {
   asset_no: string;
   name: string;
   asset_type: string;
-  category?: number | null;
-  category_name?: string;
   brand?: number | null;
   brand_name?: string;
   device_type?: number | null;
@@ -294,7 +292,7 @@ export type Rack = {
   status_label?: string;
   used_u?: number;
   free_u?: number;
-  allocations: Array<{ asset: number; start_u: number; end_u: number; units: number; asset_no: string; asset_name: string; asset_type: string; category_name: string; category_color: string; brand_model?: string; serial_number?: string | null; status: string }>;
+  allocations: Array<{ asset: number; start_u: number; end_u: number; units: number; asset_no: string; asset_name: string; asset_type: string; device_type_name?: string | null; device_type_color?: string | null; brand_model?: string; serial_number?: string | null; status: string }>;
 };
 export type ServerRoom = { id: number; data_center: number; data_center_name: string; name: string; is_active: boolean; owner_name?: string; contact_phone?: string; notes?: string; racks_count: number; assets_count: number; created_at?: string; updated_at?: string };
 export type FacilitySummary = {

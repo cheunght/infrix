@@ -8,7 +8,7 @@ from django.contrib.auth.password_validation import validate_password
 from django.utils import timezone
 from datetime import timedelta
 import re
-from .models import AuditLog, Asset, AssetCategory, AssetCustomValue, AssetNetworkAddress, AssetTag, Brand, CustomField, CustomFieldOption, DataCenter, DeviceType, FaultEvent, InventoryItem, InventoryTask, MaintenanceContract, ProcurementRecord, Rack, RackUnitAllocation, RepairRecord, ServerRoom, SoftwareLicense, SparePart, SpareStock, SpareStockTransaction, Tag, UserSecurityProfile
+from .models import AuditLog, Asset, AssetCustomValue, AssetNetworkAddress, AssetTag, Brand, CustomField, CustomFieldOption, DataCenter, DeviceType, FaultEvent, InventoryItem, InventoryTask, MaintenanceContract, ProcurementRecord, Rack, RackUnitAllocation, RepairRecord, ServerRoom, SoftwareLicense, SparePart, SpareStock, SpareStockTransaction, Tag, UserSecurityProfile
 from .services import apply_asset_custom_values, apply_asset_tags, apply_spare_stock_transaction, configure_asset
 from .roles import ROLE_AUDITOR, ROLE_DEFINITIONS, ROLE_NAME_TO_CODE, preset_group_for_code, user_role_code
 
@@ -114,19 +114,6 @@ class AssetNetworkAddressSerializer(serializers.ModelSerializer):
         fields = "__all__"
 
 
-class AssetCategorySerializer(serializers.ModelSerializer):
-    assets_count = serializers.IntegerField(read_only=True)
-
-    def validate_color(self, value):
-        if not re.fullmatch(r"#[0-9A-Fa-f]{6}", value or ""):
-            raise serializers.ValidationError("颜色必须是六位十六进制值，例如 #1677EF")
-        return value.upper()
-
-    class Meta:
-        model = AssetCategory
-        fields = ["id", "name", "color", "assets_count", "created_at", "updated_at"]
-
-
 class BaseDictionarySerializer(serializers.ModelSerializer):
     assets_count = serializers.IntegerField(read_only=True)
 
@@ -152,8 +139,14 @@ class BrandSerializer(BaseDictionarySerializer):
 
 
 class DeviceTypeSerializer(BaseDictionarySerializer):
+    def validate_color(self, value):
+        if not re.fullmatch(r"#[0-9A-Fa-f]{6}", value or ""):
+            raise serializers.ValidationError("颜色必须是六位十六进制值，例如 #1677EF")
+        return value.upper()
+
     class Meta(BaseDictionarySerializer.Meta):
         model = DeviceType
+        fields = ["id", "name", "color", "is_active", "assets_count", "created_at", "updated_at"]
 
 
 class CustomFieldOptionSerializer(serializers.ModelSerializer):
@@ -487,22 +480,16 @@ class RackUnitAllocationSerializer(serializers.ModelSerializer):
     model_name = serializers.CharField(source="asset.model", read_only=True)
     serial_number = serializers.CharField(source="asset.serial_number", read_only=True)
     status = serializers.CharField(source="asset.status", read_only=True)
-    category_name = serializers.SerializerMethodField()
-    category_color = serializers.SerializerMethodField()
+    device_type_name = serializers.CharField(source="asset.device_type.name", read_only=True, allow_null=True)
+    device_type_color = serializers.CharField(source="asset.device_type.color", read_only=True, allow_null=True)
     rack_code = serializers.CharField(source="rack.code", read_only=True)
     data_center = serializers.CharField(source="rack.room.data_center.name", read_only=True)
     data_center_id = serializers.IntegerField(source="rack.room.data_center_id", read_only=True)
     server_room = serializers.CharField(source="rack.room.name", read_only=True)
 
-    def get_category_name(self, obj):
-        return obj.asset.category.name if obj.asset.category_id else obj.asset.asset_type
-
-    def get_category_color(self, obj):
-        return obj.asset.category.color if obj.asset.category_id else "#1677EF"
-
     class Meta:
         model = RackUnitAllocation
-        fields = ["id", "asset", "rack", "rack_code", "data_center", "data_center_id", "server_room", "start_u", "end_u", "units", "asset_no", "asset_name", "asset_type", "category_name", "category_color", "brand_name", "model_name", "brand_model", "serial_number", "status"]
+        fields = ["id", "asset", "rack", "rack_code", "data_center", "data_center_id", "server_room", "start_u", "end_u", "units", "asset_no", "asset_name", "asset_type", "device_type_name", "device_type_color", "brand_name", "model_name", "brand_model", "serial_number", "status"]
 
 
 class RackUnitAllocationDetailSerializer(serializers.ModelSerializer):
@@ -579,7 +566,6 @@ def _asset_custom_values(obj):
 
 
 class AssetSerializer(serializers.ModelSerializer):
-    category_name = serializers.CharField(source="category.name", read_only=True, allow_null=True)
     brand_name = serializers.CharField(source="brand.name", read_only=True, allow_null=True)
     device_type_name = serializers.CharField(source="device_type.name", read_only=True, allow_null=True)
     asset_data_center_name = serializers.CharField(source="asset_data_center.name", read_only=True, allow_null=True)
@@ -607,7 +593,6 @@ class AssetListSerializer(serializers.ModelSerializer):
     column into a large nested JSON document.
     """
 
-    category_name = serializers.CharField(source="category.name", read_only=True, allow_null=True)
     brand_name = serializers.CharField(source="brand.name", read_only=True, allow_null=True)
     device_type_name = serializers.CharField(source="device_type.name", read_only=True, allow_null=True)
     asset_data_center_name = serializers.CharField(source="asset_data_center.name", read_only=True, allow_null=True)
@@ -701,7 +686,7 @@ class AssetListSerializer(serializers.ModelSerializer):
         model = Asset
         fields = [
             "id", "created_at", "updated_at", "asset_no", "name", "asset_type",
-            "category", "category_name", "brand", "brand_name", "device_type",
+            "brand", "brand_name", "device_type",
             "device_type_name", "asset_data_center", "asset_data_center_name", "model", "model_name", "brand_model",
             "serial_number", "purpose", "status", "department", "owner_name", "notes",
             "business_ip", "management_ip", "oob_ip", "data_center", "server_room",
@@ -712,7 +697,6 @@ class AssetListSerializer(serializers.ModelSerializer):
 
 
 class AssetDetailSerializer(serializers.ModelSerializer):
-    category_name = serializers.CharField(source="category.name", read_only=True, allow_null=True)
     brand_name = serializers.CharField(source="brand.name", read_only=True, allow_null=True)
     device_type_name = serializers.CharField(source="device_type.name", read_only=True, allow_null=True)
     asset_data_center_name = serializers.CharField(source="asset_data_center.name", read_only=True, allow_null=True)
@@ -744,7 +728,7 @@ class AssetDetailSerializer(serializers.ModelSerializer):
     class Meta:
         model = Asset
         fields = [
-            "id", "created_at", "updated_at", "asset_no", "name", "asset_type", "category", "category_name", "brand", "brand_name", "device_type", "device_type_name", "asset_data_center", "asset_data_center_name", "model", "model_name", "brand_model",
+            "id", "created_at", "updated_at", "asset_no", "name", "asset_type", "brand", "brand_name", "device_type", "device_type_name", "asset_data_center", "asset_data_center_name", "model", "model_name", "brand_model",
             "serial_number", "purpose", "status", "department", "owner_name", "notes",
             "network_addresses", "rack_allocation", "procurement_records", "maintenance_contracts", "inventory_records", "tags", "custom_fields", "custom_values",
         ]
@@ -760,29 +744,26 @@ class AssetWriteSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = Asset
-        fields = ["id", "created_at", "updated_at", "asset_no", "name", "asset_type", "category", "brand", "device_type", "asset_data_center", "model", "brand_model", "serial_number", "purpose", "status", "department", "owner_name", "notes", "configuration", "tags", "custom_values"]
+        fields = ["id", "created_at", "updated_at", "asset_no", "name", "asset_type", "brand", "device_type", "asset_data_center", "model", "brand_model", "serial_number", "purpose", "status", "department", "owner_name", "notes", "configuration", "tags", "custom_values"]
+        read_only_fields = ["id", "created_at", "updated_at", "asset_type"]
 
     def validate(self, attrs):
-        category = attrs.get("category")
+        if "category" in self.initial_data:
+            raise serializers.ValidationError({"category": "设备分类字段已移除，请使用设备类型"})
         brand = attrs.get("brand")
         if brand and not brand.is_active and (not self.instance or self.instance.brand_id != brand.pk):
             raise serializers.ValidationError({"brand": "停用的品牌不能用于新资产或修改资产"})
-        device_type = attrs.get("device_type")
-        if device_type:
-            if not device_type.is_active and (not self.instance or self.instance.device_type_id != device_type.pk):
-                raise serializers.ValidationError({"device_type": "停用的设备类型不能用于新资产或修改资产"})
-            attrs["asset_type"] = device_type.name
-        elif attrs.get("asset_type"):
-            legacy_device_type = DeviceType.objects.filter(name__iexact=attrs["asset_type"], is_active=True).first()
-            if legacy_device_type:
-                attrs["device_type"] = legacy_device_type
+        device_type = attrs.get("device_type", self.instance.device_type if self.instance else None)
+        if not device_type:
+            raise serializers.ValidationError({"device_type": "设备类型不能为空"})
+        if not device_type.is_active and (not self.instance or self.instance.device_type_id != device_type.pk):
+            raise serializers.ValidationError({"device_type": "停用的设备类型不能用于新资产或修改资产"})
+        attrs["device_type"] = device_type
+        attrs["asset_type"] = device_type.name
         asset_data_center = attrs.get("asset_data_center")
         if asset_data_center and not asset_data_center.is_active:
             if not self.instance or self.instance.asset_data_center_id != asset_data_center.pk:
                 raise serializers.ValidationError({"asset_data_center": "停用的数据中心不能用于资产"})
-        if category and self.instance is None and not attrs.get("asset_type"):
-            # Compatibility for old clients that only submitted category.
-            attrs["asset_type"] = category.name
         if "serial_number" in attrs and not attrs["serial_number"]:
             attrs["serial_number"] = None
         return attrs

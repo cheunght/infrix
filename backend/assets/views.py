@@ -25,8 +25,8 @@ from datetime import date, timedelta
 from openpyxl import Workbook
 from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
 from openpyxl.utils import get_column_letter
-from .models import AuthThrottleState, AuditLog, Asset, AssetCategory, AssetCustomValue, AssetNetworkAddress, AssetTag, Brand, CustomField, CustomFieldOption, DataCenter, DeviceType, FaultEvent, InventoryItem, InventoryTask, MaintenanceContract, ProcurementRecord, Rack, RackUnitAllocation, RepairRecord, ServerRoom, SoftwareLicense, SparePart, SpareStock, SpareStockTransaction, Tag, UserSecurityProfile
-from .serializers import AuditLogSerializer, AssetCategorySerializer, AssetDetailSerializer, AssetListSerializer, AssetSerializer, AssetWriteSerializer, BrandSerializer, CustomFieldOptionSerializer, CustomFieldSerializer, DataCenterSerializer, DeviceTypeSerializer, FaultEventSerializer, GroupSerializer, InventoryItemSerializer, InventoryTaskSerializer, RackSerializer, RepairRecordSerializer, ServerRoomSerializer, SoftwareLicenseSerializer, SparePartDetailSerializer, SparePartSerializer, SpareStockSerializer, SpareStockTransactionSerializer, TagSerializer, UserSerializer
+from .models import AuthThrottleState, AuditLog, Asset, AssetCustomValue, AssetNetworkAddress, AssetTag, Brand, CustomField, CustomFieldOption, DataCenter, DeviceType, FaultEvent, InventoryItem, InventoryTask, MaintenanceContract, ProcurementRecord, Rack, RackUnitAllocation, RepairRecord, ServerRoom, SoftwareLicense, SparePart, SpareStock, SpareStockTransaction, Tag, UserSecurityProfile
+from .serializers import AuditLogSerializer, AssetDetailSerializer, AssetListSerializer, AssetSerializer, AssetWriteSerializer, BrandSerializer, CustomFieldOptionSerializer, CustomFieldSerializer, DataCenterSerializer, DeviceTypeSerializer, FaultEventSerializer, GroupSerializer, InventoryItemSerializer, InventoryTaskSerializer, RackSerializer, RepairRecordSerializer, ServerRoomSerializer, SoftwareLicenseSerializer, SparePartDetailSerializer, SparePartSerializer, SpareStockSerializer, SpareStockTransactionSerializer, TagSerializer, UserSerializer
 from .services import apply_spare_stock_transaction, sync_asset_fault_status, sync_repair_completion
 from .audit import model_snapshot, write_audit_log
 from .permissions import BusinessRolePermission, CanExportAssets, CanExportFaults, CanExportInventory, CanExportRacks, CanImportAssets, CanManageInventory, CanViewAuditLog, CanViewDashboard, CanViewInventory, CanViewLicenses, IsSystemAdministrator
@@ -97,7 +97,7 @@ def _date_filter_errors(request, fields):
 
 
 class AssetViewSet(AuditedModelViewSetMixin, viewsets.ModelViewSet):
-    queryset = Asset.objects.select_related("department", "category", "brand", "device_type", "asset_data_center", "rack_allocation__rack__room__data_center").prefetch_related("network_addresses", "procurement_records", "maintenance_contracts", "asset_tags__tag", "custom_values__field__options").order_by("asset_no")
+    queryset = Asset.objects.select_related("department", "brand", "device_type", "asset_data_center", "rack_allocation__rack__room__data_center").prefetch_related("network_addresses", "procurement_records", "maintenance_contracts", "asset_tags__tag", "custom_values__field__options").order_by("asset_no")
     serializer_class = AssetSerializer
     permission_classes = [BusinessRolePermission]
     permission_resource = "assets"
@@ -106,7 +106,7 @@ class AssetViewSet(AuditedModelViewSetMixin, viewsets.ModelViewSet):
     filterset_fields = ["status", "asset_type", "department", "brand", "device_type", "model"]
     search_fields = [
         "asset_no", "name", "asset_type", "brand_model", "serial_number", "purpose", "owner_name", "notes", "status",
-        "category__name", "category__color", "brand__name", "device_type__name", "model", "department__name", "department__code",
+        "brand__name", "device_type__name", "device_type__color", "model", "department__name", "department__code",
         "network_addresses__address", "network_addresses__role", "network_addresses__status", "network_addresses__notes",
         "rack_allocation__rack__code", "rack_allocation__rack__room__name", "rack_allocation__rack__room__data_center__name",
         "rack_allocation__start_u", "rack_allocation__end_u",
@@ -122,7 +122,7 @@ class AssetViewSet(AuditedModelViewSetMixin, viewsets.ModelViewSet):
             queryset = queryset.distinct()
         if self.request.query_params.get("compact", "").lower() in {"1", "true", "yes"}:
             queryset = queryset.select_related(
-                "category", "brand", "device_type", "asset_data_center", "rack_allocation__rack__room__data_center"
+                "brand", "device_type", "asset_data_center", "rack_allocation__rack__room__data_center"
             ).prefetch_related(None).prefetch_related(
                 Prefetch(
                     "network_addresses",
@@ -217,7 +217,7 @@ class AssetViewSet(AuditedModelViewSetMixin, viewsets.ModelViewSet):
 
 class RackViewSet(AuditedModelViewSetMixin, viewsets.ModelViewSet):
     queryset = Rack.objects.select_related("room", "room__data_center").prefetch_related(
-        Prefetch("allocations", queryset=RackUnitAllocation.objects.select_related("asset", "asset__category", "asset__brand", "asset__device_type", "rack__room__data_center"))
+        Prefetch("allocations", queryset=RackUnitAllocation.objects.select_related("asset", "asset__brand", "asset__device_type", "rack__room__data_center"))
     )
     serializer_class = RackSerializer
     permission_classes = [BusinessRolePermission]
@@ -229,9 +229,9 @@ class RackViewSet(AuditedModelViewSetMixin, viewsets.ModelViewSet):
 
     def get_queryset(self):
         queryset = super().get_queryset()
-        category = self.request.query_params.get("category", "").strip()
-        if category:
-            queryset = queryset.filter(Q(allocations__asset__category__name=category) | Q(allocations__asset__category__isnull=True, allocations__asset__asset_type=category)).distinct()
+        device_type = self.request.query_params.get("device_type", "").strip()
+        if device_type:
+            queryset = queryset.filter(allocations__asset__device_type__name=device_type).distinct()
         active = self.request.query_params.get("is_active", "true").strip().lower()
         if self.action in {"retrieve", "update", "partial_update", "destroy"}:
             return queryset.order_by("room__data_center__name", "room__name", "code")
@@ -356,20 +356,6 @@ class DataCenterViewSet(AuditedModelViewSetMixin, viewsets.ModelViewSet):
         self.perform_destroy(instance)
         from rest_framework.response import Response
         return Response(status=204)
-
-
-class AssetCategoryViewSet(AuditedModelViewSetMixin, viewsets.ModelViewSet):
-    queryset = AssetCategory.objects.annotate(assets_count=Count("assets")).order_by("name")
-    serializer_class = AssetCategorySerializer
-    permission_classes = [BusinessRolePermission]
-    permission_resource = "settings"
-    audit_resource = "asset_category"
-
-    def perform_destroy(self, instance):
-        if instance.assets.exists():
-            from rest_framework.exceptions import ValidationError as DRFValidationError
-            raise DRFValidationError("设备分类正在使用，不能删除")
-        super().perform_destroy(instance)
 
 
 class DictionaryViewSet(AuditedModelViewSetMixin, viewsets.ModelViewSet):
@@ -1254,7 +1240,6 @@ IMPORT_FIELD_LABELS = {
     "asset_no": "资产编号",
     "name": "资产名称",
     "asset_type": "资产类型",
-    "category": "设备分类",
     "brand": "品牌",
     "device_type": "设备类型",
     "asset_data_center": "所属数据中心",
@@ -1312,8 +1297,8 @@ def _read_asset_import(upload):
     reader = csv.DictReader(io.StringIO(content))
     headers = set(reader.fieldnames or [])
     required = {"asset_no", "name"}
-    if not required.issubset(headers) or not ({"category", "asset_type", "device_type"} & headers):
-        raise ValueError("CSV 必须包含 asset_no、name，以及 category、asset_type 或 device_type 列")
+    if not required.issubset(headers) or "device_type" not in headers:
+        raise ValueError("CSV 必须包含 asset_no、name、device_type 列")
     rows = []
     for line, row in enumerate(reader, start=2):
         if line > IMPORT_MAX_ROWS + 1:
@@ -1336,10 +1321,6 @@ def _prepare_asset_import_payload(row, headers):
     if not asset_name:
         raise DjangoValidationError({"name": "资产名称不能为空"})
 
-    category_name = (row.get("category") or row.get("asset_type") or "").strip()
-    category = AssetCategory.objects.filter(name__iexact=category_name).first() if category_name else None
-    if (row.get("category") or "").strip() and not category:
-        raise DjangoValidationError({"category": f"未找到设备分类“{category_name}”"})
     brand_name = (row.get("brand") or "").strip()
     brand = Brand.objects.filter(name__iexact=brand_name, is_active=True).first() if brand_name else None
     if brand_name and not brand:
@@ -1353,12 +1334,8 @@ def _prepare_asset_import_payload(row, headers):
     asset_data_center = DataCenter.objects.filter(name__iexact=asset_data_center_name, is_active=True).first() if asset_data_center_name else None
     if asset_data_center_name and not asset_data_center:
         raise DjangoValidationError({"asset_data_center": f"未找到所属数据中心“{asset_data_center_name}”"})
-    legacy_type = (row.get("asset_type") or category_name).strip()
-    if not device_type and legacy_type:
-        device_type = DeviceType.objects.filter(name__iexact=legacy_type, is_active=True).first()
-    asset_type = device_type.name if device_type else (category.name if category else legacy_type)
-    if not asset_type:
-        raise DjangoValidationError({"asset_type": "设备类型不能为空"})
+    if not device_type:
+        raise DjangoValidationError({"device_type": "设备类型不能为空"})
 
     custom_values = {}
     for header in sorted(headers):
@@ -1394,8 +1371,7 @@ def _prepare_asset_import_payload(row, headers):
     return {
         "asset_no": asset_no,
         "name": asset_name,
-        "asset_type": asset_type,
-        "category": category.pk if category else None,
+        "asset_type": device_type.name,
         "brand": brand.pk if brand else None,
         "device_type": device_type.pk if device_type else None,
         "asset_data_center": asset_data_center.pk if asset_data_center else None,
@@ -1424,13 +1400,12 @@ def _preview_asset_changes(asset, payload):
         ("notes", "备注", asset.notes or "", payload.get("notes", "")),
     ]
     relation_fields = [
-        ("category", "设备分类", getattr(asset.category, "name", ""), payload.get("category")),
         ("brand", "品牌", getattr(asset.brand, "name", ""), payload.get("brand")),
         ("device_type", "设备类型", getattr(asset.device_type, "name", ""), payload.get("device_type")),
         ("asset_data_center", "所属数据中心", getattr(asset.asset_data_center, "name", ""), payload.get("asset_data_center")),
     ]
     for field, label, old, new_id in relation_fields:
-        model = {"category": AssetCategory, "brand": Brand, "device_type": DeviceType, "asset_data_center": DataCenter}[field]
+        model = {"brand": Brand, "device_type": DeviceType, "asset_data_center": DataCenter}[field]
         new = model.objects.filter(pk=new_id).values_list("name", flat=True).first() if new_id else ""
         fields.append((field, label, old or "", new or ""))
     changes = []
@@ -1450,7 +1425,7 @@ def _preview_asset_row(line, row, headers, seen_asset_nos):
         return base
     if asset_no:
         seen_asset_nos.add(asset_no)
-    existing = Asset.objects.select_related("category", "brand", "device_type", "asset_data_center").filter(asset_no=asset_no).first() if asset_no else None
+    existing = Asset.objects.select_related("brand", "device_type", "asset_data_center").filter(asset_no=asset_no).first() if asset_no else None
     try:
         payload = _prepare_asset_import_payload(row, headers)
     except Exception as exc:
@@ -1547,7 +1522,7 @@ def asset_import(request):
 @permission_classes([CanExportAssets])
 def asset_export(request):
     ids_param = request.query_params.get("ids", "").strip()
-    queryset = Asset.objects.select_related("category", "brand", "device_type", "asset_data_center", "rack_allocation__rack__room__data_center").prefetch_related(
+    queryset = Asset.objects.select_related("brand", "device_type", "asset_data_center", "rack_allocation__rack__room__data_center").prefetch_related(
         "network_addresses", "procurement_records", "maintenance_contracts", "asset_tags__tag", "custom_values__field__options"
     ).order_by("asset_no")
     if ids_param:
@@ -1564,7 +1539,7 @@ def asset_export(request):
         ).distinct().prefetch_related("options").order_by("device_type__name", "sort_order", "id")
     ) if assets else []
     headers = [
-        "资产编号", "资产名称", "分类", "设备类型", "品牌", "型号", "品牌/型号", "序列号", "用途", "状态", "使用人",
+        "资产编号", "资产名称", "设备类型", "品牌", "型号", "品牌/型号", "序列号", "用途", "状态", "使用人",
         "数据中心", "机房", "机柜编号", "起止 U 位", "业务 IP", "管理 IP", "带外 IP", "采购日期",
         "供应商", "采购单号", "维保厂商", "维保合同号", "维保开始日", "维保到期日", "备注", "标签",
     ]
@@ -1595,7 +1570,7 @@ def asset_export(request):
             custom_by_key[field.key] = value
         tag_text = ";".join(item.tag.name for item in asset.asset_tags.all())
         row_values = [
-            asset.asset_no, asset.name, asset.category.name if asset.category_id else "", asset.device_type.name if asset.device_type_id else asset.asset_type,
+            asset.asset_no, asset.name, asset.device_type.name if asset.device_type_id else "",
             asset.brand.name if asset.brand_id else "", asset.model or "", asset.brand_model, asset.serial_number or "", asset.purpose, status_labels.get(asset.status, asset.status), asset.owner_name,
             rack.rack.room.data_center.name if rack else (asset.asset_data_center.name if asset.asset_data_center_id else ""), rack.rack.room.name if rack else "", rack.rack.code if rack else "",
             f"U{rack.start_u}-U{rack.end_u}" if rack else "", networks.get("business", ""), networks.get("management", ""), networks.get("oob", ""),
@@ -1800,7 +1775,7 @@ def _rack_sort_key(rack):
 @api_view(["GET"])
 @permission_classes([CanExportRacks])
 def rack_layout_export(request):
-    racks = list(Rack.objects.select_related("room__data_center").prefetch_related("allocations__asset").order_by("room__data_center__name", "code"))
+    racks = list(Rack.objects.select_related("room__data_center").prefetch_related("allocations__asset__device_type").order_by("room__data_center__name", "code"))
     book = Workbook()
     book.remove(book.active)
     used_sheet_names = set()
@@ -1884,7 +1859,7 @@ def rack_layout_export(request):
                     top_row = rack_top + 3 + (rack.total_u - allocation.end_u)
                     bottom_row = rack_top + 3 + (rack.total_u - allocation.start_u)
                     asset = allocation.asset
-                    text = "\n".join(filter(None, [asset.asset_no, asset.name, asset.asset_type, asset.brand_model, f"SN: {asset.serial_number}" if asset.serial_number else ""]))
+                    text = "\n".join(filter(None, [asset.asset_no, asset.name, asset.device_type.name if asset.device_type_id else "", asset.brand_model, f"SN: {asset.serial_number}" if asset.serial_number else ""]))
                     for row in range(top_row, bottom_row + 1):
                         for col in range(start_col + 1, end_col):
                             sheet.cell(row, col).fill = status_fills.get(asset.status, PatternFill("solid", fgColor="D9EAF7"))

@@ -150,14 +150,18 @@
   display: flex;
   align-items: flex-start;
   gap: 18px;
-  overflow-x: auto;
+  /* The U-position canvas is sized to the available workspace.  Keep the
+     canvas itself from becoming a second horizontal scrolling surface; the
+     rack cards can still flex within the panel when the viewport narrows. */
+  overflow: hidden;
   min-height: 0;
   padding: 2px 2px 8px;
 }
 
 .rack-u-card {
-  flex: 0 0 210px;
-  min-width: 210px;
+  flex: 1 1 210px;
+  min-width: 0;
+  max-width: 240px;
   padding: 0;
   border: 0;
   border-radius: 8px;
@@ -314,47 +318,14 @@
   }
 }
 
-/* Rack filters keep their own width when the inline asset inspector opens. */
-.rack-filters {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 12px;
-  padding: 9px 12px;
-  margin-bottom: 14px;
-}
-
-.rack-filter-select {
-  flex: 1 1 150px;
-  min-width: 140px;
-  width: auto;
-}
-
-.rack-filter-actions {
-  display: flex;
-  flex: 0 0 auto;
-  align-items: center;
-  gap: 10px;
-  margin-left: auto;
-}
-
-.rack-filter-actions button {
-  white-space: nowrap;
-}
-
-.rack-reset-button {
-  min-width: 68px;
-}
-
-.rack-export-button {
-  min-width: 132px;
-}
-
 /* Rack workspace owns all three columns; no page padding or overlay is used. */
 .rack-view-layout {
   grid-template-columns: 236px minmax(0, 1fr);
   gap: 18px;
-  height: calc(100vh - 218px);
+  /* The filter row now has its own divider and breathing room.  Give the
+     U-position workspace the corresponding extra height so every rack body
+     remains visible after the canvas scrollbar is removed. */
+  height: calc(100vh - 190px);
   min-height: 560px;
 }
 
@@ -437,11 +408,25 @@
   flex: 1 1 auto;
   min-height: 0;
   align-items: flex-start;
+  flex-wrap: nowrap;
 }
 
 .rack-u-scroll.single-rack {
   justify-content: center;
-  overflow-x: hidden;
+}
+
+.rack-u-scroll.single-rack .rack-u-card {
+  flex: 0 0 210px;
+  min-width: 210px;
+}
+
+/* Keep the filter/navigation row visually separate from the U-position
+   workspace below it.  The border is deliberately subtle so it reads as a
+   section divider rather than another card. */
+.rack-view-toolbar {
+  margin-bottom: 16px;
+  padding-bottom: 14px;
+  border-bottom: 1px solid #dfe6f0;
 }
 
 .rack-view-layout > .rack-asset-inspector {
@@ -510,6 +495,23 @@
     min-height: 560px;
   }
 
+  /* On smaller screens the page itself may grow vertically, while the U
+     canvas stays free of its own horizontal/vertical scrollbar. */
+  .rack-u-scroll {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    align-content: start;
+    align-items: start;
+    gap: 18px;
+    overflow: visible;
+  }
+
+  .rack-u-scroll .rack-u-card {
+    width: 100%;
+    max-width: 240px;
+    justify-self: center;
+  }
+
   .rack-asset-inspector {
     height: auto;
     max-height: none;
@@ -520,14 +522,9 @@
   }
 }
 
-@media (max-width: 720px) {
-  .rack-filter-actions {
-    width: 100%;
-    margin-left: 0;
-  }
-
-  .rack-filter-actions button {
-    flex: 1 1 auto;
+@media (max-width: 600px) {
+  .rack-u-scroll {
+    grid-template-columns: minmax(0, 1fr);
   }
 }
 

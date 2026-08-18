@@ -1,7 +1,7 @@
 from django.contrib import admin
 from .models import *
 
-for model in [Department, DataCenter, ServerRoom, Rack, AssetCategory, Brand, DeviceType, CustomField, CustomFieldOption, Tag, SparePart, SpareStock, SpareStockTransaction, SoftwareLicense, Asset, AssetNetworkAddress, AssetCustomValue, AssetTag, RackUnitAllocation, ProcurementRecord, MaintenanceContract, FaultEvent, RepairRecord, AssetRelation, InventoryTask, InventoryItem]:
+for model in [Department, DataCenter, ServerRoom, Rack, Brand, DeviceType, CustomField, CustomFieldOption, Tag, SparePart, SpareStock, SpareStockTransaction, SoftwareLicense, Asset, AssetNetworkAddress, AssetCustomValue, AssetTag, RackUnitAllocation, ProcurementRecord, MaintenanceContract, FaultEvent, RepairRecord, AssetRelation, InventoryTask, InventoryItem]:
     admin.site.register(model)
 
 

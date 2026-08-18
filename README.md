@@ -73,7 +73,14 @@ sudo -E ./deploy/install.sh
 从 macOS 更新虚拟机可使用：
 
 ```bash
-./deploy-to-rocky.sh
+./deploy-to-remote.sh <ssh-target> [remote-source-dir]
+```
+
+例如：
+
+```bash
+./deploy-to-remote.sh root@rocky-host
+./deploy-to-remote.sh deploy@server-host /opt/itam-src
 ```
 
 该脚本只同步源码，不同步数据库、虚拟环境、依赖目录和构建产物。

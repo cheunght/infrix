@@ -5,7 +5,7 @@ const {
   focusedRack,
   displayedRacks,
   rackDetailOpen,
-  categories,
+  deviceTypes,
   rackUtilization,
   rackBodyStyle,
   rackGapUnavailable,
@@ -27,9 +27,9 @@ const {
         <span v-else>请选择机柜查看 U 位</span>
       </div>
       <div class="category-legend rack-legend">
-        <span>设备分类</span>
-        <span v-for="category in categories" :key="category.id">
-          <i :style="{ background: category.color }" />{{ category.name }}
+        <span>设备类型</span>
+        <span v-for="deviceType in deviceTypes" :key="deviceType.id">
+          <i :style="{ background: deviceType.color || '#1677EF' }" />{{ deviceType.name }}
         </span>
         <span><i class="default-color" />未分类</span>
         <span><i class="empty-color" />空闲 U 位</span>

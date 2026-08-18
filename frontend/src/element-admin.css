@@ -558,8 +558,7 @@ body {
   margin-left: 8px;
 }
 .ep-main .ep-toolbar .el-button + .el-button,
-.ep-main .ep-actions .el-button + .el-button,
-.ep-main .rack-filter-actions .el-button + .el-button {
+.ep-main .ep-actions .el-button + .el-button {
   margin-left: 0;
 }
 .ep-main .el-button {
@@ -1513,15 +1512,6 @@ body {
   display: grid;
   gap: 16px;
 }
-.inventory-toolbar {
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 10px;
-}
-.inventory-toolbar .itam-search-field {
-  min-width: 280px;
-  flex: 1 1 360px;
-}
 .inventory-alert {
   margin-bottom: 12px;
 }
@@ -1591,7 +1581,6 @@ body {
 
 .ep-main .ep-toolbar-actions,
 .ep-main .ep-table-actions,
-.ep-main .rack-filter-actions,
 .ep-main .el-dialog__footer {
   display: inline-flex;
   align-items: center;
@@ -1688,7 +1677,6 @@ body {
 
 .ep-main .ep-toolbar-actions .el-button + .el-button,
 .ep-main .ep-table-actions .el-button + .el-button,
-.ep-main .rack-filter-actions .el-button + .el-button,
 .ep-main .el-dialog__footer .el-button + .el-button {
   margin-left: 0;
 }
@@ -1783,11 +1771,6 @@ body {
 
 .spare-detail-filters .el-select {
   width: 220px;
-}
-
-.spare-toolbar .itam-search-field {
-  min-width: 280px;
-  flex: 1 1 320px;
 }
 
 .spare-location-panel {
@@ -2769,29 +2752,6 @@ body {
   min-width: 0;
 }
 
-.ep-main .license-toolbar {
-  justify-content: space-between;
-  align-items: center;
-}
-
-.ep-main .license-toolbar-filters {
-  display: flex;
-  flex: 1 1 auto;
-  min-width: 0;
-  align-items: center;
-  gap: var(--itam-control-gap);
-}
-
-.ep-main .license-toolbar-filters > .itam-search-field {
-  flex: 0 1 390px;
-  min-width: 220px;
-}
-
-.ep-main .license-status-filter {
-  flex: 0 0 160px;
-  width: 160px;
-}
-
 .ep-main .license-table {
   width: 100%;
   table-layout: fixed;
@@ -2824,41 +2784,6 @@ body {
 .license-usage-cell > span.is-over-limit {
   color: var(--el-color-danger);
   font-weight: 600;
-}
-
-@media (max-width: 900px) {
-  .ep-main .license-toolbar {
-    flex-wrap: wrap;
-  }
-
-  .ep-main .license-toolbar-filters {
-    flex: 1 1 100%;
-  }
-
-  .ep-main .license-toolbar-filters > .itam-search-field {
-    flex: 1 1 auto;
-  }
-}
-
-@media (max-width: 560px) {
-  .ep-main .license-toolbar-filters {
-    flex-wrap: wrap;
-  }
-
-  .ep-main .license-toolbar-filters > .itam-search-field,
-  .ep-main .license-status-filter {
-    flex: 1 1 100%;
-    width: 100%;
-    min-width: 0;
-  }
-
-  .ep-main .license-toolbar-actions {
-    width: 100%;
-  }
-
-  .ep-main .license-toolbar-actions .el-button {
-    width: 100%;
-  }
 }
 
 /* Final sidebar interaction rules. Keep hover and active destinations
@@ -3002,10 +2927,75 @@ body {
 @media (min-width: 1101px) {
   /* Keep the compact filter bars on one desktop row.  At narrower widths the
      responsive rule below deliberately allows the controls to wrap. */
-  .ep-main .ep-toolbar,
-  .ep-main .rack-filters {
+  .ep-main .ep-toolbar {
     flex-wrap: nowrap;
     white-space: nowrap;
+  }
+}
+
+/* User account dialog: keep the reference layout (fixed labels on the left,
+   full-width Element Plus controls on the right) without changing the other
+   dialogs in the application. */
+.user-account-dialog {
+  max-width: calc(100vw - 32px);
+}
+
+.user-account-dialog .el-dialog__body {
+  padding: 22px 28px 18px;
+}
+
+.user-account-form .el-form-item {
+  margin-bottom: 18px;
+}
+
+.user-account-form .el-form-item__label {
+  color: #35445c;
+  font-size: 15px;
+  font-weight: 500;
+}
+
+.user-account-form .el-input,
+.user-account-form .el-select,
+.user-account-form .user-account-role {
+  width: 100%;
+}
+
+.user-account-form .el-input__prefix,
+.user-account-form .el-select__prefix {
+  color: #7183a0;
+}
+
+.user-account-status .el-form-item__content {
+  min-height: var(--itam-control-height);
+}
+
+.user-account-divider {
+  margin: 6px 0 20px;
+}
+
+.user-account-dialog .el-dialog__footer {
+  padding-top: 10px;
+}
+
+@media (max-width: 560px) {
+  .user-account-dialog .el-dialog__body {
+    padding: 18px 16px 12px;
+  }
+
+  .user-account-form.el-form--label-left .el-form-item {
+    display: block;
+  }
+
+  .user-account-form.el-form--label-left .el-form-item__label {
+    display: block;
+    width: auto !important;
+    height: auto;
+    margin-bottom: 6px;
+    line-height: 1.4;
+  }
+
+  .user-account-form.el-form--label-left .el-form-item__content {
+    margin-left: 0 !important;
   }
 }
 
@@ -3070,21 +3060,17 @@ body,
 .ep-main > *,
 .ep-main .itam-page,
 .ep-main .el-card,
-.ep-main .ep-toolbar,
-.ep-main .rack-filters {
+.ep-main .ep-toolbar {
   box-sizing: border-box;
   max-width: 100%;
   min-width: 0;
 }
 
-.ep-main .ep-toolbar,
-.ep-main .rack-filters {
+.ep-main .ep-toolbar {
   width: 100%;
 }
 
-.ep-main .ep-toolbar-actions,
-.ep-main .license-toolbar-filters,
-.ep-main .rack-filter-actions {
+.ep-main .ep-toolbar-actions {
   min-width: 0;
   max-width: 100%;
 }
@@ -3112,81 +3098,5 @@ body,
     width: 160px !important;
     min-width: 140px !important;
     max-width: 160px !important;
-  }
-}
-
-/* Asset ledger toolbars contain more actions than the other pages.  Keep the
-   filters and actions inside the card: filters take the flexible left side,
-   while the action group can wrap its own buttons instead of pushing them
-   past the viewport edge. */
-.ep-main .ep-ledger-toolbar {
-  display: flex;
-  flex-wrap: nowrap;
-  align-items: center;
-  gap: 10px;
-  overflow: hidden;
-}
-
-.ep-main .ep-ledger-filters {
-  display: flex;
-  flex: 1 1 560px;
-  min-width: 0;
-  align-items: center;
-  gap: 10px;
-  overflow: hidden;
-}
-
-.ep-main .ep-ledger-filters > .itam-filter-search {
-  flex: 1 1 240px !important;
-  width: auto !important;
-  min-width: 180px !important;
-  max-width: 360px !important;
-}
-
-.ep-main .ep-ledger-filters > .itam-filter-select,
-.ep-main .ep-ledger-filters > .itam-filter-search-value {
-  flex: 0 1 130px !important;
-  width: 130px !important;
-  min-width: 108px !important;
-  max-width: 150px !important;
-}
-
-.ep-main .ep-ledger-filters > .el-popover {
-  flex: 0 0 auto;
-}
-
-.ep-main .ep-ledger-toolbar > .ep-toolbar-actions {
-  display: flex;
-  flex: 1 1 500px;
-  min-width: 0;
-  max-width: 100%;
-  flex-wrap: wrap;
-  justify-content: flex-end;
-  gap: 6px;
-  margin-left: auto;
-  overflow: hidden;
-}
-
-.ep-main .ep-ledger-toolbar > .ep-toolbar-actions .el-button,
-.ep-main .ep-ledger-toolbar > .ep-toolbar-actions .el-upload .el-button {
-  flex: 0 1 auto;
-  padding-right: 10px;
-  padding-left: 10px;
-  font-size: 13px;
-}
-
-@media (max-width: 1100px) {
-  .ep-main .ep-ledger-toolbar {
-    flex-wrap: wrap;
-  }
-
-  .ep-main .ep-ledger-filters,
-  .ep-main .ep-ledger-toolbar > .ep-toolbar-actions {
-    flex: 1 1 100%;
-    width: 100%;
-  }
-
-  .ep-main .ep-ledger-toolbar > .ep-toolbar-actions {
-    justify-content: flex-start;
   }
 }

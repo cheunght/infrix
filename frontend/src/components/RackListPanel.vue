@@ -9,9 +9,7 @@ const {
   rackUsedU,
   rackCount,
   rackPage,
-  rackPageSize,
   changeRackPage,
-  changeRackPageSize,
 } = props.context;
 </script>
 
@@ -20,7 +18,7 @@ const {
     <div class="rack-view-panel-title">
       <div>
         <h2>机柜列表</h2>
-        <span>{{ visibleRacks.length }} 个机柜</span>
+        <span>共 {{ rackCount }} 个机柜</span>
       </div>
     </div>
     <div v-if="visibleRacks.length" class="rack-list">
@@ -53,14 +51,11 @@ const {
     <el-empty v-else class="rack-list-empty" description="暂无符合筛选条件的机柜" />
     <el-pagination
       v-model:current-page="rackPage"
-      v-model:page-size="rackPageSize"
       class="rack-list-pagination"
       small
-      layout="total, sizes, prev, next"
+      layout="total, prev, pager, next"
       :total="rackCount"
-      :page-sizes="[20, 50, 100]"
       @current-change="changeRackPage"
-      @size-change="changeRackPageSize"
     />
   </el-card>
 </template>

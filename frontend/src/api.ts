@@ -19,7 +19,6 @@ const FIELD_LABELS: Record<string, string> = {
   asset_no: "资产编号",
   name: "名称",
   asset_type: "设备类型",
-  category: "设备分类",
   brand: "品牌",
   device_type: "设备类型",
   serial_number: "序列号",

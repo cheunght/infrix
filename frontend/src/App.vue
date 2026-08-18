@@ -7,14 +7,16 @@ import {
   ref,
   watch,
 } from "vue";
-import { ElMessage, ElMessageBox } from "element-plus";
+import { ElMessage, ElMessageBox, type FormInstance, type FormRules } from "element-plus";
 import {
   Checked,
+  Edit,
   Expand,
   Fold,
   House,
   Key,
   Lock,
+  Message,
   Monitor,
   OfficeBuilding,
   Setting,
@@ -46,7 +48,6 @@ import infrixWordmark from "./assets/infrix-wordmark.png";
 import { hasCapability } from "./permissions";
 import type {
   Page,
-  Category,
   DictionaryItem,
   DataCenter,
   DashboardStatus,
@@ -78,7 +79,6 @@ const pageTitle = ref("仪表盘");
 const assets = ref<Asset[]>([]);
 const selectedAssetIds = ref<number[]>([]);
 const racks = ref<Rack[]>([]);
-const categories = ref<Category[]>([]);
 const brands = ref<DictionaryItem[]>([]);
 const deviceTypes = ref<DictionaryItem[]>([]);
 const dataCenters = ref<DataCenter[]>([]);
@@ -166,7 +166,10 @@ const licensePage = ref(1);
 const licensePageSize = ref(50);
 const rackCount = ref(0);
 const rackPage = ref(1);
-const rackPageSize = ref(50);
+// Keep the U-position canvas readable without introducing a horizontal
+// scrolling surface. Five racks fit comfortably on the desktop canvas and
+// the existing server-side pagination lets the user reach the rest.
+const rackPageSize = ref(5);
 const loading = ref(false);
 const authChecked = ref(false);
 const authenticated = ref(false);
@@ -195,7 +198,6 @@ type AssetColumnKey =
   | "asset_no"
   | "name"
   | "asset_type"
-  | "category"
   | "brand"
   | "brand_model"
   | "purpose"
@@ -229,7 +231,6 @@ const assetColumnOptions: Array<{
   { key: "u_range", label: "U 位", defaultVisible: true },
   { key: "status", label: "状态", defaultVisible: true },
   { key: "maintenance_expiry_date", label: "保修到期", defaultVisible: true },
-  { key: "category", label: "分类" },
   { key: "purpose", label: "用途" },
   { key: "serial_number", label: "序列号" },
   { key: "owner_name", label: "使用人" },
@@ -328,7 +329,6 @@ const emptyAssetForm = () => ({
   asset_no: "",
   name: "",
   asset_type: "",
-  category: "",
   brand: "",
   model: "",
   device_type: "",
@@ -396,12 +396,9 @@ const licenseForm = ref({
 const selectedDataCenter = ref("");
 const selectedRoom = ref("");
 const selectedRack = ref("");
-const selectedRackCategory = ref("");
+const selectedRackDeviceType = ref("");
 const focusedRackId = ref<number | null>(null);
 const viewportHeight = ref(window.innerHeight);
-const showCategoryModal = ref(false);
-const editingCategory = ref<Category | null>(null);
-const categoryForm = ref({ name: "", color: "#1677EF" });
 const showUserModal = ref(false);
 const editingUser = ref<ManagedUser | null>(null);
 const userForm = ref({
@@ -410,15 +407,55 @@ const userForm = ref({
   last_name: "",
   email: "",
   password: "",
+  confirm_password: "",
   is_active: true,
   role_code: "auditor",
 });
+const userFormRef = ref<FormInstance>();
+const userFormRules: FormRules = {
+  username: [{ required: true, message: "请输入用户名", trigger: "blur" }],
+  last_name: [{ required: true, message: "请输入姓", trigger: "blur" }],
+  first_name: [{ required: true, message: "请输入名", trigger: "blur" }],
+  email: [{ type: "email", message: "请输入有效邮箱", trigger: ["blur", "change"] }],
+  role_code: [{ required: true, message: "请选择角色", trigger: "change" }],
+  password: [
+    {
+      validator: (_rule, value, callback) => {
+        const passwordValue = String(value || "");
+        if (!editingUser.value && !passwordValue) {
+          callback(new Error("请输入密码"));
+        } else if (passwordValue && passwordValue.length < 8) {
+          callback(new Error("密码至少需要 8 位"));
+        } else {
+          callback();
+        }
+      },
+      trigger: ["blur", "change"],
+    },
+  ],
+  confirm_password: [
+    {
+      validator: (_rule, value, callback) => {
+        const passwordValue = String(userForm.value.password || "");
+        const confirmValue = String(value || "");
+        if (editingUser.value && !passwordValue && !confirmValue) {
+          callback();
+        } else if (!confirmValue) {
+          callback(new Error("请确认密码"));
+        } else if (confirmValue !== passwordValue) {
+          callback(new Error("两次输入的密码不一致"));
+        } else {
+          callback();
+        }
+      },
+      trigger: ["blur", "change"],
+    },
+  ],
+};
 const showRoleModal = ref(false);
 const editingRole = ref<Role | null>(null);
 const roleForm = ref({ name: "" });
-const settingsSection = ref<"categories" | "dictionaries" | "organization" | "audit" | "custom-fields" | "tags">(
-  "categories",
-);
+const settingsSection = ref<"dictionaries" | "organization" | "audit" | "custom-fields" | "tags">("dictionaries");
 const auditLogs = ref<AuditLog[]>([]);
 const auditCount = ref(0);
 const auditPage = ref(1);
@@ -441,7 +478,7 @@ const dictionarySection = ref<"brands" | "device-types" | "data-centers">(
 const dictionarySearch = ref("");
 const showDictionaryModal = ref(false);
 const editingDictionary = ref<DictionaryItem | null>(null);
-const dictionaryForm = ref({ name: "", is_active: true });
+const dictionaryForm = ref({ name: "", color: "#1677EF", is_active: true });
 const navItems = [
   { label: "仪表盘", icon: "⌂", iconIndex: 0, page: "dashboard" as Page },
   { label: "资产管理", icon: "▤", iconIndex: 1, page: "ledger" as Page },
@@ -455,7 +492,6 @@ const navItems = [
     iconIndex: 9,
     page: "settings" as Page,
     children: [
-      { label: "设备分类", section: "categories" as const },
       { label: "数据字典", section: "dictionaries" as const },
       { label: "自定义字段", section: "custom-fields" as const },
       { label: "标签管理", section: "tags" as const },
@@ -559,7 +595,7 @@ async function checkAuth() {
     passwordChangeRequired.value = Boolean(user.password_change_required);
     if (passwordChangeRequired.value) showPasswordModal.value = true;
     if (!isAdmin.value && settingsSection.value === "organization")
-      settingsSection.value = "categories";
+      settingsSection.value = "dictionaries";
   } catch {
     authenticated.value = false;
     isAdmin.value = false;
@@ -570,12 +606,6 @@ async function checkAuth() {
   } finally {
     authChecked.value = true;
   }
-}
-async function loadCategories(version = beginLoad()) {
-  const result = await request<PageResult<Category> | Category[]>(
-    "/categories/?page_size=100",
-  );
-  if (isCurrentLoad(version)) categories.value = pageItems(result);
 }
 async function loadDictionaries(version = beginLoad()) {
   const params = new URLSearchParams({ page_size: "100", is_active: "all" });
@@ -821,6 +851,7 @@ function openUserModal(user?: ManagedUser) {
         last_name: user.last_name,
         email: user.email,
         password: "",
+        confirm_password: "",
         is_active: user.is_active,
         role_code: user.assigned_role_code || "auditor",
       }
@@ -830,22 +861,29 @@ function openUserModal(user?: ManagedUser) {
         last_name: "",
         email: "",
         password: "",
+        confirm_password: "",
         is_active: true,
         role_code: "auditor",
       };
   showUserModal.value = true;
+  nextTick(() => userFormRef.value?.clearValidate());
 }
 async function saveUser() {
+  const isValid = await userFormRef.value?.validate().then(() => true).catch(() => false);
+  if (!isValid) return;
   try {
     const method = editingUser.value ? "PATCH" : "POST";
     const path = editingUser.value
       ? `/users/${editingUser.value.id}/`
       : "/users/";
     const payload = {
-      ...userForm.value,
-      ...(editingUser.value || userForm.value.password
-        ? {}
-        : { password: undefined }),
+      username: userForm.value.username,
+      first_name: userForm.value.first_name,
+      last_name: userForm.value.last_name,
+      email: userForm.value.email,
+      is_active: userForm.value.is_active,
+      role_code: userForm.value.role_code,
+      ...(userForm.value.password ? { password: userForm.value.password } : {}),
     };
     await request(path, {
       method,
@@ -945,7 +983,7 @@ async function login() {
     permissions.value = user.permissions;
     passwordChangeRequired.value = Boolean(user.password_change_required);
     if (!isAdmin.value && settingsSection.value === "organization")
-      settingsSection.value = "categories";
+      settingsSection.value = "dictionaries";
     password.value = "";
     await loadCsrf();
     if (passwordChangeRequired.value) {
@@ -966,7 +1004,6 @@ async function login() {
 }
 async function bootstrapApplication() {
     await loadDataCenters();
-    await loadCategories();
     await loadDictionaries();
     await loadCustomFields();
     await loadTags();
@@ -1001,7 +1038,6 @@ async function openAssetEditor(assetId: number, clone = false) {
       asset_no: detail.asset_no,
       name: detail.name,
       asset_type: detail.asset_type,
-      category: detail.category ? String(detail.category) : "",
       brand: detail.brand ? String(detail.brand) : "",
       model: detail.model_name || detail.brand_model || "",
       device_type: detail.device_type ? String(detail.device_type) : "",
@@ -1113,7 +1149,6 @@ async function saveAsset() {
         ...asset,
         asset_data_center: asset_data_center || null,
         brand_model: model || "",
-        category: asset.category || null,
         brand: asset.brand || null,
         model: model || "",
         device_type: asset.device_type || null,
@@ -1250,7 +1285,6 @@ function assetValue(asset: Asset, key: AssetColumnKey): string {
     asset_no: asset.asset_no,
     name: asset.name,
     asset_type: asset.asset_type,
-    category: asset.category_name || "—",
     brand: asset.brand_name || "—",
     brand_model: asset.model || asset.brand_model || "—",
     purpose: asset.purpose || "—",
@@ -1386,7 +1420,7 @@ function handleElementAssetSelection(rows: Asset[]) {
 }
 function downloadImportTemplate() {
   const csv =
-    "\ufeffasset_no,name,category,device_type,brand,model,asset_type,brand_model,serial_number,purpose,status,owner_name,notes,tags,data_center,server_room,rack_code,rack_total_u,rack_start_u,rack_end_u,business_ip,management_ip,oob_ip,purchase_date,supplier,purchase_order_no,purchase_amount,maintenance_provider,maintenance_contract_no,maintenance_start_date,maintenance_expiry_date\nIT-0001,示例服务器,服务器,服务器,示例品牌,示例型号,,旧型号字段,SN001,业务用途,in_stock,张三,备注,核心业务,上海数据中心,A机房,F-01,45,20,22,10.0.0.10,10.0.1.10,10.0.2.10,2026-01-01,示例供应商,PO-001,10000,示例维保商,MT-001,2026-01-01,2027-01-01\n";
+    "\ufeffasset_no,name,device_type,brand,model,asset_type,brand_model,serial_number,purpose,status,owner_name,notes,tags,data_center,server_room,rack_code,rack_total_u,rack_start_u,rack_end_u,business_ip,management_ip,oob_ip,purchase_date,supplier,purchase_order_no,purchase_amount,maintenance_provider,maintenance_contract_no,maintenance_start_date,maintenance_expiry_date\nIT-0001,示例服务器,服务器,示例品牌,示例型号,,旧型号字段,SN001,业务用途,in_stock,张三,备注,核心业务,上海数据中心,A机房,F-01,45,20,22,10.0.0.10,10.0.1.10,10.0.2.10,2026-01-01,示例供应商,PO-001,10000,示例维保商,MT-001,2026-01-01,2027-01-01\n";
   const url = URL.createObjectURL(
     new Blob([csv], { type: "text/csv;charset=utf-8" }),
   );
@@ -1395,9 +1429,6 @@ function downloadImportTemplate() {
   link.download = "asset-import-template.csv";
   link.click();
   URL.revokeObjectURL(url);
-}
-function syncAssetCategory() {
-  // 设备分类用于机柜颜色，设备类型才是资产类型的唯一字典来源。
 }
 async function syncAssetDeviceType() {
   const deviceType = deviceTypes.value.find(
@@ -1661,12 +1692,6 @@ function statusLabel(status: string) {
 function formatDateTime(value?: string | null) {
   return value ? new Date(value).toLocaleString("zh-CN") : "—";
 }
-function categoryColor(asset: Asset) {
-  return (
-    categories.value.find((category) => category.id === asset.category)
-      ?.color || "#1677EF"
-  );
-}
 async function load() {
   if (!authenticated.value) return;
   const version = beginLoad();
@@ -1714,8 +1739,8 @@ async function load() {
         params.set("room__data_center", selectedDataCenter.value);
       if (selectedRoom.value) params.set("room", selectedRoom.value);
       if (selectedRack.value) params.set("code", selectedRack.value);
-      if (selectedRackCategory.value)
-        params.set("category", selectedRackCategory.value);
+      if (selectedRackDeviceType.value)
+        params.set("device_type", selectedRackDeviceType.value);
       const payload = await request<PageResult<Rack> | Rack[]>(
         `/racks/?${params.toString()}`,
       );
@@ -1737,7 +1762,7 @@ async function load() {
         await loadCustomFields(version);
       else if (settingsSection.value === "tags")
         await loadTags(version);
-      else await loadCategories(version);
+      else await loadDictionaries(version);
     }
   } catch (error) {
     console.error(error);
@@ -1771,19 +1796,19 @@ function navigate(item: (typeof navItems)[number]) {
   if (item.page === "racks") rackPage.value = 1;
   if (item.page === "racks") rackSection.value = "rooms";
   if (item.page === "settings") {
-    settingsSection.value = "categories";
+    settingsSection.value = "dictionaries";
     settingsMenuExpanded.value = true;
     localStorage.setItem("itam.settings.expanded", "1");
-    pageTitle.value = "系统设置 / 设备分类";
+    pageTitle.value = "系统设置 / 数据字典";
     nextTick(() => sidebarMenu.value?.open("settings"));
   }
   load();
 }
 function openSettingsSection(
-  section: "categories" | "dictionaries" | "organization" | "audit" | "custom-fields" | "tags",
+  section: "dictionaries" | "organization" | "audit" | "custom-fields" | "tags",
 ) {
   if (section === "organization" && !isAdmin.value) {
-    settingsSection.value = "categories";
+    settingsSection.value = "dictionaries";
     return;
   }
   if (section === "audit" && !can("audit.view")) return;
@@ -1797,7 +1822,7 @@ function openSettingsSection(
   closeAssetDetail();
   settingsSection.value = section;
   page.value = "settings";
-  pageTitle.value = `系统设置 / ${section === "categories" ? "设备分类" : section === "dictionaries" ? "数据字典" : section === "custom-fields" ? "自定义字段" : section === "tags" ? "标签管理" : section === "organization" ? "组织权限" : "操作日志"}`;
+  pageTitle.value = `系统设置 / ${section === "dictionaries" ? "数据字典" : section === "custom-fields" ? "自定义字段" : section === "tags" ? "标签管理" : section === "organization" ? "组织权限" : "操作日志"}`;
   settingsMenuExpanded.value = true;
   localStorage.setItem("itam.settings.expanded", "1");
   nextTick(() => sidebarMenu.value?.open("settings"));
@@ -1831,7 +1856,7 @@ function handleMenuSelect(index: string) {
   }
   if (index.startsWith("settings-")) {
     openSettingsSection(
-      index.slice(9) as "categories" | "dictionaries" | "organization" | "audit" | "custom-fields" | "tags",
+      index.slice(9) as "dictionaries" | "organization" | "audit" | "custom-fields" | "tags",
     );
     return;
   }
@@ -1865,9 +1890,9 @@ const visibleRacks = computed(() =>
     (rack) =>
       (!selectedRoom.value || String(rack.room) === selectedRoom.value) &&
       (!selectedRack.value || rack.code === selectedRack.value) &&
-      (!selectedRackCategory.value ||
+      (!selectedRackDeviceType.value ||
         rack.allocations.some(
-          (item) => item.category_name === selectedRackCategory.value,
+          (item) => item.device_type_name === selectedRackDeviceType.value,
         )),
   ),
 );
@@ -1948,14 +1973,16 @@ const rackViewStyle = computed(() => {
     ...displayedRacks.value.map((rack) => rack.total_u),
   );
   if (window.innerWidth <= 1000) return { "--rack-unit-height": "14px" };
-  const availableHeight = Math.max(495, viewportHeight.value - 335);
+  // Leave room for the page header, filter divider and panel padding while
+  // allowing the U-position rows to use the taller rack workspace.
+  const availableHeight = Math.max(495, viewportHeight.value - 307);
   return {
     "--rack-unit-height": `${Math.max(11, Math.min(19, Math.floor((availableHeight - 4) / maximumUnits)))}px`,
   };
 });
 function rackUnitHeight(rack: Rack) {
   if (window.innerWidth <= 1000) return 14;
-  const availableHeight = Math.max(495, viewportHeight.value - 335);
+  const availableHeight = Math.max(495, viewportHeight.value - 307);
   return Math.max(
     11,
     Math.min(19, Math.floor((availableHeight - 4) / Math.max(rack.total_u, 1))),
@@ -1978,7 +2005,7 @@ function rackAllocationStyle(
   return {
     top: `${(rack.total_u - allocation.end_u) * unitHeight + 2}px`,
     height: `${Math.max(unitHeight - 3, allocation.units * unitHeight - 3)}px`,
-    background: allocation.category_color || "#1677EF",
+    background: allocation.device_type_color || "#1677EF",
   };
 }
 function rackUsedU(rack: Rack) {
@@ -2088,10 +2115,6 @@ function changeRackPage(pageNumber: number) {
   );
   load();
 }
-function changeRackPageSize() {
-  rackPage.value = 1;
-  load();
-}
 function changeAuditPage(pageNumber: number) {
   auditPage.value = Math.min(
     Math.max(pageNumber, 1),
@@ -2132,7 +2155,7 @@ function resetRackFilters() {
   selectedDataCenter.value = "";
   selectedRoom.value = "";
   selectedRack.value = "";
-  selectedRackCategory.value = "";
+  selectedRackDeviceType.value = "";
   focusedRackId.value = null;
   closeAssetDetail();
   rackPage.value = 1;
@@ -2430,43 +2453,6 @@ async function deleteLicense(license: SoftwareLicense) {
       error instanceof Error ? error.message : "许可证删除失败";
   }
 }
-function openCategoryModal(category?: Category) {
-  editingCategory.value = category || null;
-  categoryForm.value = category
-    ? { name: category.name, color: category.color }
-    : { name: "", color: "#1677EF" };
-  showCategoryModal.value = true;
-}
-async function saveCategory() {
-  try {
-    const method = editingCategory.value ? "PATCH" : "POST";
-    const path = editingCategory.value
-      ? `/categories/${editingCategory.value.id}/`
-      : "/categories/";
-    await request(path, {
-      method,
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(categoryForm.value),
-    });
-    showCategoryModal.value = false;
-    actionMessage.value = "设备分类已保存";
-    await loadCategories();
-  } catch (error) {
-    actionMessage.value =
-      error instanceof Error ? error.message : "分类保存失败";
-  }
-}
-async function deleteCategory(category: Category) {
-  if (!(await confirmAction(`确定删除分类“${category.name}”吗？`))) return;
-  try {
-    await request(`/categories/${category.id}/`, { method: "DELETE" });
-    actionMessage.value = "设备分类已删除";
-    await loadCategories();
-  } catch (error) {
-    actionMessage.value =
-      error instanceof Error ? error.message : "分类删除失败";
-  }
-}
 function openCustomFieldModal(field?: CustomField) {
   editingCustomField.value = field || null;
   customFieldForm.value = field
@@ -2589,8 +2575,8 @@ const activeDataCenters = computed(() => {
 function openDictionaryModal(item?: DictionaryItem) {
   editingDictionary.value = item || null;
   dictionaryForm.value = item
-    ? { name: item.name, is_active: item.is_active }
-    : { name: "", is_active: true };
+    ? { name: item.name, color: item.color || "#1677EF", is_active: item.is_active }
+    : { name: "", color: "#1677EF", is_active: true };
   showDictionaryModal.value = true;
 }
 async function saveDictionary() {
@@ -2605,10 +2591,13 @@ async function saveDictionary() {
     const path = editingDictionary.value
       ? `/${base}/${editingDictionary.value.id}/`
       : `/${base}/`;
+    const payload = dictionarySection.value === "device-types"
+      ? dictionaryForm.value
+      : { name: dictionaryForm.value.name, is_active: dictionaryForm.value.is_active };
     await request(path, {
       method,
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(dictionaryForm.value),
+      body: JSON.stringify(payload),
     });
     showDictionaryModal.value = false;
     actionMessage.value = `${currentDictionaryLabel.value}已保存`;
@@ -2761,14 +2750,14 @@ const pageContext = {
   dataCenters, selectedDataCenter, changeDataCenter, changeRoom,
   facilitySummary,
   changeRackFilter, selectedRoom,
-  roomOptions, selectedRack, rackOptions, selectedRackCategory, categories,
+  roomOptions, selectedRack, rackOptions, selectedRackDeviceType, deviceTypes,
   resetRackFilters, exportRackLayout, rackViewTitle, displayedRacks,
   rackUtilization, rackUtilizationColor, rackUsedU, focusedRackId, focusedRack, visibleRacks, selectRack,
   rackViewStyle, rackBodyStyle, rackBodyHeight, rackUnitHeight,
   rackAllocationStyle, rackGapUnavailable, openRackAssetDetail,
   rackDetailOpen, detailAsset, detailLoading, detailError, closeAssetDetail,
-  rackCount, rackPage, rackPageSize, changeRackPage, changeRackPageSize,
-  settingsSection, openCategoryModal, deleteCategory, dictionarySection,
+  rackCount, rackPage, changeRackPage,
+  settingsSection, dictionarySection,
   dictionarySearch, loadDictionaries, currentDictionaryLabel,
   openDictionaryModal, currentDictionaryItems, toggleDictionary,
   dictionaryItemUsed, deleteDictionary, isAdmin, users, openUserModal,
@@ -2781,7 +2770,7 @@ const pageContext = {
   customFieldForm, showCustomFieldModal, editingCustomField, customFieldOptionForm,
   showCustomFieldOptionModal, editingCustomFieldOption, tags, tagSearch, tagActive,
   loadTags, openTagModal, saveTag, toggleTag, deleteTag, tagForm, showTagModal, editingTag,
-  api, brands, deviceTypes,
+  api, brands,
   showAssetModal, assetModalMode, editingAsset, assetForm, activeDeviceTypes,
   assetCustomFieldSchema,
   syncAssetDeviceType, activeBrands, activeDataCenters, changeAssetDataCenter,
@@ -2900,7 +2889,6 @@ const pageContext = {
           popper-class="ep-sidebar-submenu-popper ep-sidebar-submenu-popper--settings"
           ><template #title
             ><el-icon><Setting /></el-icon><span>系统设置</span></template
-          ><el-menu-item index="settings-categories">设备分类</el-menu-item
           ><el-menu-item index="settings-dictionaries"
             >数据字典</el-menu-item
           ><el-menu-item v-if="can('custom_fields.manage')" index="settings-custom-fields"
@@ -2981,39 +2969,88 @@ const pageContext = {
       <el-dialog
         v-model="showUserModal"
         :title="editingUser ? '编辑用户' : '新增用户'"
-        width="520px"
+        class="user-account-dialog"
+        width="660px"
         destroy-on-close
-        ><el-form label-position="top" @submit.prevent="saveUser"
-          ><div class="form-grid">
-            <el-form-item label="用户名" required
-              ><el-input
-                v-model="userForm.username"
-                :disabled="!!editingUser" /></el-form-item
-            ><el-form-item label="邮箱"
-              ><el-input v-model="userForm.email" type="email" /></el-form-item
-            ><el-form-item label="姓"
-              ><el-input v-model="userForm.last_name" /></el-form-item
-            ><el-form-item label="名"
-              ><el-input v-model="userForm.first_name" /></el-form-item
-            ><el-form-item
-              class="full-width"
-              :label="editingUser ? '重置密码（留空不修改）' : '初始密码'"
-              ><el-input
-                v-model="userForm.password"
-                type="password"
-                show-password /></el-form-item
-            ><el-form-item label="角色" class="full-width"
-              ><el-select
-                v-model="userForm.role_code"
-                placeholder="请选择角色"
-                ><el-option
-                  v-for="role in roles"
-                  :key="role.id"
-                  :label="role.name"
-                  :value="role.code" /></el-select
-            ></el-form-item>
-          </div>
-          <el-checkbox v-model="userForm.is_active">启用账号</el-checkbox>
+        ><el-form
+          ref="userFormRef"
+          class="user-account-form"
+          :model="userForm"
+          :rules="userFormRules"
+          :validate-on-rule-change="false"
+          label-position="left"
+          label-width="88px"
+          @submit.prevent="saveUser"
+          ><el-form-item label="用户名" prop="username" required
+            ><el-input
+              v-model="userForm.username"
+              :disabled="!!editingUser"
+              autocomplete="username"
+              :validate-event="false"
+              :prefix-icon="Edit"
+              placeholder="请输入用户名" /></el-form-item
+          ><el-form-item label="姓" prop="last_name" required
+            ><el-input
+              v-model="userForm.last_name"
+              autocomplete="family-name"
+              :validate-event="false"
+              :prefix-icon="Edit"
+              placeholder="请输入姓" /></el-form-item
+          ><el-form-item label="名" prop="first_name" required
+            ><el-input
+              v-model="userForm.first_name"
+              autocomplete="given-name"
+              :validate-event="false"
+              :prefix-icon="Edit"
+              placeholder="请输入名" /></el-form-item
+          ><el-form-item label="邮箱" prop="email"
+            ><el-input
+              v-model="userForm.email"
+              type="email"
+              autocomplete="email"
+              :validate-event="false"
+              :prefix-icon="Message"
+              placeholder="请输入邮箱（可选）" /></el-form-item
+          ><el-form-item label="角色" prop="role_code" required
+            ><el-select
+              v-model="userForm.role_code"
+              class="user-account-role"
+              placeholder="请选择角色"
+              :validate-event="false"
+              ><template #prefix><el-icon><User /></el-icon></template
+              ><el-option
+                v-for="role in roles"
+                :key="role.id"
+                :label="role.name"
+                :value="role.code" /></el-select
+          ></el-form-item>
+          <el-form-item label="账号状态" class="user-account-status"
+            ><el-switch
+              v-model="userForm.is_active"
+              active-text="启用"
+              inactive-text="停用" /></el-form-item
+          ><el-divider class="user-account-divider" />
+          <el-form-item
+            :label="editingUser ? '重置密码' : '密码'"
+            prop="password"
+            :required="!editingUser"
+            ><el-input
+              v-model="userForm.password"
+              type="password"
+              show-password
+              autocomplete="new-password"
+              :validate-event="false"
+              :prefix-icon="Lock"
+              :placeholder="editingUser ? '留空表示不修改密码' : '请输入密码（至少 8 位）'" /></el-form-item
+          ><el-form-item label="确认密码" prop="confirm_password" :required="!editingUser"
+            ><el-input
+              v-model="userForm.confirm_password"
+              type="password"
+              show-password
+              autocomplete="new-password"
+              :validate-event="false"
+              :prefix-icon="Lock"
+              placeholder="请再次输入密码" /></el-form-item>
           <p class="form-hint">
             每个账号只分配一个预设角色，权限由服务端强制校验。
           </p></el-form
@@ -3044,30 +3081,6 @@ const pageContext = {
         ></el-dialog
       >
       <el-dialog
-        v-model="showCategoryModal"
-        :title="editingCategory ? '编辑设备分类' : '新增设备分类'"
-        width="420px"
-        destroy-on-close
-        ><el-form label-position="top"
-          ><el-form-item label="分类名称" required
-            ><el-input
-              v-model="categoryForm.name"
-              maxlength="80" /></el-form-item
-          ><el-form-item label="分类颜色"
-            ><div class="color-input">
-              <el-color-picker v-model="categoryForm.color" /><el-input
-                v-model="categoryForm.color"
-              /></div
-          ></el-form-item>
-          <p class="form-hint">请输入六位十六进制颜色值。</p></el-form
-        ><template #footer
-          ><el-button @click="showCategoryModal = false">取消</el-button
-          ><el-button type="primary" @click="saveCategory"
-            >保存分类</el-button
-          ></template
-        ></el-dialog
-      >
-      <el-dialog
         v-model="showDictionaryModal"
         :title="`${editingDictionary ? '编辑' : '新增'}${currentDictionaryLabel}`"
         width="420px"
@@ -3077,6 +3090,8 @@ const pageContext = {
             ><el-input
               v-model="dictionaryForm.name"
               maxlength="120" /></el-form-item
+          ><el-form-item v-if="dictionarySection === 'device-types'" label="类型颜色"
+            ><div class="color-input"><el-color-picker v-model="dictionaryForm.color" /><el-input v-model="dictionaryForm.color" /></div></el-form-item
           ><el-checkbox v-model="dictionaryForm.is_active">启用</el-checkbox>
           <p class="form-hint">
             已被资产使用的字典项不能删除，只能停用。

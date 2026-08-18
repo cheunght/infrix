@@ -64,14 +64,6 @@ class Rack(Timestamped):
         return self.code
 
 
-class AssetCategory(Timestamped):
-    name = models.CharField(max_length=80, unique=True)
-    color = models.CharField(max_length=7, default="#1677EF")
-
-    def __str__(self):
-        return self.name
-
-
 class Brand(Timestamped):
     name = models.CharField(max_length=120, unique=True)
     is_active = models.BooleanField(default=True)
@@ -82,6 +74,7 @@ class Brand(Timestamped):
 
 class DeviceType(Timestamped):
     name = models.CharField(max_length=80, unique=True)
+    color = models.CharField(max_length=7, default="#1677EF")
     is_active = models.BooleanField(default=True)
 
     def __str__(self):
@@ -284,7 +277,6 @@ class Asset(Timestamped):
     serial_number = models.CharField(max_length=160, blank=True, unique=True, null=True)
     purpose = models.CharField(max_length=255, blank=True)
     status = models.CharField(max_length=20, choices=STATUS, default="in_stock")
-    category = models.ForeignKey(AssetCategory, null=True, blank=True, on_delete=models.SET_NULL, related_name="assets")
     brand = models.ForeignKey(Brand, null=True, blank=True, on_delete=models.SET_NULL, related_name="assets")
     device_type = models.ForeignKey(DeviceType, null=True, blank=True, on_delete=models.SET_NULL, related_name="assets")
     asset_data_center = models.ForeignKey(

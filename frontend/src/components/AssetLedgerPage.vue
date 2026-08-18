@@ -1,5 +1,4 @@
 <script setup lang="ts">
-import { computed } from "vue";
 import { CopyDocument, Delete, Download, Edit, Operation, Plus, Upload, Warning } from "@element-plus/icons-vue";
 import type { Asset } from "../types";
 import PagedTable from "./PagedTable.vue";
@@ -11,9 +10,6 @@ const {
   assetSearch,
   searchLedger,
   assetTagFilter,
-  assetCustomFilterField,
-  assetCustomFilterValue,
-  customFields,
   tags,
   assetColumnOptions,
   visibleAssetColumns,
@@ -41,18 +37,12 @@ const {
   changeAssetPage,
   changeAssetPageSize,
 } = props.context;
-function selectCustomField() {
-  assetCustomFilterValue.value = "";
-  searchLedger();
-}
-const selectedCustomField = computed(() => customFields.value.find((field: any) => field.key === assetCustomFilterField.value));
 </script>
 
 <template>
   <div class="itam-page ledger-page">
           <el-card shadow="never">
-          <div class="ep-toolbar ep-ledger-toolbar">
-            <div class="ep-ledger-filters">
+          <div class="ep-toolbar">
               <SearchField
                 class="itam-filter-search"
                 v-model="assetSearch"
@@ -61,9 +51,6 @@ const selectedCustomField = computed(() => customFields.value.find((field: any) 
                 @search="searchLedger"
               />
               <el-select class="itam-filter-select" v-model="assetTagFilter" clearable filterable placeholder="标签" @change="searchLedger"><el-option v-for="tag in tags.filter((item: any) => item.is_active)" :key="tag.id" :label="tag.name" :value="tag.name" /></el-select>
-              <el-select class="itam-filter-select" v-model="assetCustomFilterField" clearable filterable placeholder="自定义字段" @change="selectCustomField"><el-option v-for="field in customFields.filter((item: any) => item.is_active)" :key="field.id" :label="field.name" :value="field.key" /></el-select>
-              <el-select class="itam-filter-select" v-if="selectedCustomField && ['select','multiselect','boolean'].includes(selectedCustomField.field_type)" v-model="assetCustomFilterValue" clearable placeholder="字段值" @change="searchLedger"><el-option v-if="selectedCustomField.field_type === 'boolean'" label="是" value="true" /><el-option v-if="selectedCustomField.field_type === 'boolean'" label="否" value="false" /><el-option v-for="option in (selectedCustomField.options || []).filter((item: any) => item.is_active)" v-else :key="option.id" :label="option.label" :value="option.value" /></el-select>
-              <el-input class="itam-filter-search-value" v-else-if="assetCustomFilterField" v-model="assetCustomFilterValue" placeholder="字段值" @keyup.enter="searchLedger"><template #append><el-button @click="searchLedger">查询</el-button></template></el-input>
               <el-popover placement="bottom" :width="240" trigger="click"
                 ><template #reference
                   ><el-button :icon="Operation">显示列</el-button></template
@@ -78,9 +65,9 @@ const selectedCustomField = computed(() => customFields.value.find((field: any) 
                   ><el-button link type="primary" @click="resetAssetColumns"
                     >恢复默认</el-button
                   >
-                </div></el-popover
+              </div></el-popover
               >
-            </div>
+            <span class="ep-toolbar-spacer" />
             <div class="ep-toolbar-actions">
             <el-button v-if="can('assets.manage')" type="primary" :icon="Plus" @click="openNewAssetModal"
               >新增资产</el-button

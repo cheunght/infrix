@@ -99,7 +99,7 @@ Nginx 将请求转到默认站点。备份文件可以在需要时手工恢复�
 
 ```bash
 export SKIP_MARIADB=1
-export DB_HOST=192.168.1.20
+export DB_HOST=db.example.internal
 export DB_PORT=3306
 export DB_NAME=itam
 export DB_USER=itam

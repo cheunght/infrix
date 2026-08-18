@@ -23,29 +23,28 @@ const {
 <template>
   <div class="itam-page license-page">
     <el-card shadow="never" class="license-list-card">
-      <div class="ep-toolbar license-toolbar">
-        <div class="license-toolbar-filters">
-          <SearchField
-            class="itam-filter-search"
-            v-model="licenseKeyword"
-            placeholder="搜索软件名称、厂商或许可类型"
-            aria-label="搜索许可证"
-            @search="searchLicenses"
-          />
-          <el-select
-            v-model="licenseStatus"
-            class="license-status-filter itam-filter-select"
-            placeholder="全部状态"
-            clearable
-            @change="searchLicenses"
-          >
-            <el-option label="正常" value="normal" />
-            <el-option label="即将到期" value="expiring" />
-            <el-option label="已过期" value="expired" />
-            <el-option label="超授权" value="over_limit" />
-          </el-select>
-        </div>
-        <div v-if="can('licenses.manage')" class="ep-toolbar-actions license-toolbar-actions">
+      <div class="ep-toolbar">
+        <SearchField
+          class="itam-filter-search"
+          v-model="licenseKeyword"
+          placeholder="搜索软件名称、厂商或许可类型"
+          aria-label="搜索许可证"
+          @search="searchLicenses"
+        />
+        <el-select
+          v-model="licenseStatus"
+          class="itam-filter-select"
+          placeholder="全部状态"
+          clearable
+          @change="searchLicenses"
+        >
+          <el-option label="正常" value="normal" />
+          <el-option label="即将到期" value="expiring" />
+          <el-option label="已过期" value="expired" />
+          <el-option label="超授权" value="over_limit" />
+        </el-select>
+        <span class="ep-toolbar-spacer" />
+        <div v-if="can('licenses.manage')" class="ep-toolbar-actions">
           <el-button type="primary" @click="openLicenseModal()">新增许可证</el-button>
         </div>
       </div>

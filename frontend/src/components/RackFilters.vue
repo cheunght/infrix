@@ -10,18 +10,18 @@ const {
   selectedRack,
   changeRackFilter,
   rackOptions,
-  selectedRackCategory,
-  categories,
+  selectedRackDeviceType,
+  deviceTypes,
   resetRackFilters,
   exportRackLayout,
 } = props.context;
 </script>
 
 <template>
-  <section class="filters rack-filters">
+  <section class="ep-toolbar rack-view-toolbar">
     <el-select
       v-model="selectedDataCenter"
-      class="rack-filter-select itam-filter-select"
+      class="itam-filter-select"
       aria-label="数据中心"
       placeholder="全部数据中心"
       clearable
@@ -37,7 +37,7 @@ const {
     </el-select>
     <el-select
       v-model="selectedRoom"
-      class="rack-filter-select itam-filter-select"
+      class="itam-filter-select"
       aria-label="机房"
       placeholder="全部机房"
       clearable
@@ -53,7 +53,7 @@ const {
     </el-select>
     <el-select
       v-model="selectedRack"
-      class="rack-filter-select itam-filter-select"
+      class="itam-filter-select"
       aria-label="机柜编号"
       placeholder="全部机柜"
       clearable
@@ -63,24 +63,25 @@ const {
       <el-option v-for="code in rackOptions" :key="code" :label="code" :value="code" />
     </el-select>
     <el-select
-      v-model="selectedRackCategory"
-      class="rack-filter-select itam-filter-select"
-      aria-label="设备分类"
-      placeholder="全部分类"
+      v-model="selectedRackDeviceType"
+      class="itam-filter-select"
+      aria-label="设备类型"
+      placeholder="全部设备类型"
       clearable
       @change="changeRackFilter"
     >
-      <el-option label="全部分类" value="" />
+      <el-option label="全部设备类型" value="" />
       <el-option
-        v-for="category in categories"
-        :key="category.id"
-        :label="category.name"
-        :value="category.name"
+        v-for="deviceType in deviceTypes"
+        :key="deviceType.id"
+        :label="deviceType.name"
+        :value="deviceType.name"
       />
     </el-select>
-    <div class="rack-filter-actions">
-      <el-button class="rack-reset-button" @click="resetRackFilters">重置</el-button>
-      <el-button class="rack-export-button" @click="exportRackLayout">导出机柜放置图</el-button>
+    <span class="ep-toolbar-spacer" />
+    <div class="ep-toolbar-actions">
+      <el-button @click="resetRackFilters">重置</el-button>
+      <el-button @click="exportRackLayout">导出机柜放置图</el-button>
     </div>
   </section>
 </template>

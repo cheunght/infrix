@@ -127,7 +127,7 @@ watch(showSpareOperationModal, (open, wasOpen) => { if (!open && wasOpen) refres
 <template>
   <div class="itam-page spare-page">
     <el-card shadow="never">
-      <div class="ep-toolbar spare-toolbar">
+      <div class="ep-toolbar">
         <SearchField class="itam-filter-search" v-model="spareSearch" placeholder="搜索备件名称、类型、品牌或型号" aria-label="搜索备件" @search="searchSpareParts" />
         <el-select class="itam-filter-select" v-model="spareType" placeholder="全部类型" clearable @change="searchSpareParts"><el-option v-for="item in partTypes" :key="item.value" :label="item.label" :value="item.value" /></el-select>
         <el-select class="itam-filter-select" v-model="spareActive" placeholder="全部状态" @change="searchSpareParts"><el-option label="启用" value="true" /><el-option label="停用" value="false" /><el-option label="全部" value="all" /></el-select>

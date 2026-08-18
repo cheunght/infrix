@@ -349,8 +349,7 @@ onMounted(async () => {
 <template>
   <div class="itam-page inventory-page">
     <el-card v-if="!activeTask" shadow="never">
-      <template #header>
-        <div class="ep-toolbar inventory-toolbar">
+      <div class="ep-toolbar">
           <SearchField class="itam-filter-search" v-model="taskSearch" placeholder="搜索盘点任务、数据中心或盘点人" aria-label="搜索盘点任务" @search="() => { taskPage = 1; loadTasks(); }" />
           <el-select class="itam-filter-select" v-model="taskStatus" placeholder="全部状态" clearable @change="() => { taskPage = 1; loadTasks(); }">
             <el-option v-for="item in taskStatusOptions" :key="item.value" :label="item.label" :value="item.value" />
@@ -364,8 +363,7 @@ onMounted(async () => {
           <el-button :icon="Refresh" @click="resetTaskFilters">重置</el-button>
           <span class="ep-toolbar-spacer"></span>
           <el-button v-if="can('inventory.manage')" type="primary" :icon="Plus" @click="openNewTask">新建盘点任务</el-button>
-        </div>
-      </template>
+      </div>
       <el-alert v-if="taskError" :title="taskError" type="error" show-icon :closable="false" class="inventory-alert" />
       <el-table v-loading="loading" :data="tasks" empty-text="暂无盘点任务" @row-click="openTask">
         <el-table-column prop="name" label="盘点名称" min-width="220" />
@@ -394,7 +392,7 @@ onMounted(async () => {
         <StatisticCard label="完成率" :value="`${activeTask.summary.completion_rate}%`" tone="purple" :icon="DataAnalysis" />
       </section>
       <el-card shadow="never">
-        <div class="ep-toolbar inventory-toolbar">
+        <div class="ep-toolbar">
           <SearchField class="itam-filter-search" v-model="itemSearch" placeholder="搜索资产编号、SN、IP或名称" aria-label="搜索盘点设备" @search="() => { itemPage = 1; loadItems(); }" />
           <el-select class="itam-filter-select" v-model="itemStatus" placeholder="全部盘点结果" clearable @change="() => { itemPage = 1; loadItems(); }"><el-option v-for="item in itemStatusOptions" :key="item.value" :label="item.label" :value="item.value" /></el-select>
           <el-button :icon="Refresh" @click="resetItemFilters">重置</el-button>

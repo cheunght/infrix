@@ -84,11 +84,7 @@ def _build_asset_distributions(scope):
 
     type_counts = defaultdict(int)
     for asset in scope.asset_rows:
-        type_name = (
-            asset.device_type.name
-            if asset.device_type_id and asset.device_type
-            else (asset.asset_type or "其他设备")
-        )
+        type_name = asset.device_type.name if asset.device_type_id and asset.device_type else "其他设备"
         type_counts[type_name] += 1
     type_distribution = [
         {

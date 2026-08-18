@@ -1,13 +1,12 @@
 from rest_framework.routers import DefaultRouter
 from django.urls import path
-from .views import AuditLogViewSet, AssetCategoryViewSet, AssetViewSet, BrandViewSet, CustomFieldOptionViewSet, CustomFieldViewSet, DataCenterViewSet, DeviceTypeViewSet, GroupViewSet, InventoryItemViewSet, InventoryTaskViewSet, FaultEventViewSet, RepairRecordViewSet, RackViewSet, ServerRoomViewSet, SoftwareLicenseViewSet, SparePartViewSet, SpareStockViewSet, SpareStockTransactionViewSet, TagViewSet, UserViewSet, asset_inventory_records, dashboard_overview, facilities_summary, inventory_inspectors, license_summary, repair_record_export, rack_layout_export, auth_login, auth_me, auth_logout, auth_csrf, auth_change_password, asset_import, asset_import_preview, asset_export
+from .views import AuditLogViewSet, AssetViewSet, BrandViewSet, CustomFieldOptionViewSet, CustomFieldViewSet, DataCenterViewSet, DeviceTypeViewSet, GroupViewSet, InventoryItemViewSet, InventoryTaskViewSet, FaultEventViewSet, RepairRecordViewSet, RackViewSet, ServerRoomViewSet, SoftwareLicenseViewSet, SparePartViewSet, SpareStockViewSet, SpareStockTransactionViewSet, TagViewSet, UserViewSet, asset_inventory_records, dashboard_overview, facilities_summary, inventory_inspectors, license_summary, repair_record_export, rack_layout_export, auth_login, auth_me, auth_logout, auth_csrf, auth_change_password, asset_import, asset_import_preview, asset_export
 
 router = DefaultRouter()
 router.register("assets", AssetViewSet)
 router.register("racks", RackViewSet)
 router.register("server-rooms", ServerRoomViewSet, basename="server-room")
 router.register("data-centers", DataCenterViewSet, basename="data-center")
-router.register("categories", AssetCategoryViewSet, basename="category")
 router.register("brands", BrandViewSet, basename="brand")
 router.register("device-types", DeviceTypeViewSet, basename="device-type")
 router.register("custom-fields", CustomFieldViewSet, basename="custom-field")
