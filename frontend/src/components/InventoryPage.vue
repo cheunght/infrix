@@ -351,14 +351,14 @@ onMounted(async () => {
     <el-card v-if="!activeTask" shadow="never">
       <template #header>
         <div class="ep-toolbar inventory-toolbar">
-          <SearchField v-model="taskSearch" placeholder="搜索盘点任务、数据中心或盘点人" aria-label="搜索盘点任务" @search="() => { taskPage = 1; loadTasks(); }" />
-          <el-select v-model="taskStatus" placeholder="全部状态" clearable @change="() => { taskPage = 1; loadTasks(); }">
+          <SearchField class="itam-filter-search" v-model="taskSearch" placeholder="搜索盘点任务、数据中心或盘点人" aria-label="搜索盘点任务" @search="() => { taskPage = 1; loadTasks(); }" />
+          <el-select class="itam-filter-select" v-model="taskStatus" placeholder="全部状态" clearable @change="() => { taskPage = 1; loadTasks(); }">
             <el-option v-for="item in taskStatusOptions" :key="item.value" :label="item.label" :value="item.value" />
           </el-select>
-          <el-select v-model="taskDataCenter" placeholder="全部数据中心" clearable @change="() => { taskRoom = ''; taskPage = 1; loadTasks(); }">
+          <el-select class="itam-filter-select" v-model="taskDataCenter" placeholder="全部数据中心" clearable @change="() => { taskRoom = ''; taskPage = 1; loadTasks(); }">
             <el-option v-for="center in activeDataCenters" :key="center.id" :label="center.name" :value="String(center.id)" />
           </el-select>
-          <el-select v-model="taskRoom" placeholder="全部机房" clearable @change="() => { taskPage = 1; loadTasks(); }">
+          <el-select class="itam-filter-select" v-model="taskRoom" placeholder="全部机房" clearable @change="() => { taskPage = 1; loadTasks(); }">
             <el-option v-for="room in taskFilterRooms" :key="room.id" :label="room.name" :value="String(room.id)" />
           </el-select>
           <el-button :icon="Refresh" @click="resetTaskFilters">重置</el-button>
@@ -395,8 +395,8 @@ onMounted(async () => {
       </section>
       <el-card shadow="never">
         <div class="ep-toolbar inventory-toolbar">
-          <SearchField v-model="itemSearch" placeholder="搜索资产编号、SN、IP或名称" aria-label="搜索盘点设备" @search="() => { itemPage = 1; loadItems(); }" />
-          <el-select v-model="itemStatus" placeholder="全部盘点结果" clearable @change="() => { itemPage = 1; loadItems(); }"><el-option v-for="item in itemStatusOptions" :key="item.value" :label="item.label" :value="item.value" /></el-select>
+          <SearchField class="itam-filter-search" v-model="itemSearch" placeholder="搜索资产编号、SN、IP或名称" aria-label="搜索盘点设备" @search="() => { itemPage = 1; loadItems(); }" />
+          <el-select class="itam-filter-select" v-model="itemStatus" placeholder="全部盘点结果" clearable @change="() => { itemPage = 1; loadItems(); }"><el-option v-for="item in itemStatusOptions" :key="item.value" :label="item.label" :value="item.value" /></el-select>
           <el-button :icon="Refresh" @click="resetItemFilters">重置</el-button>
         </div>
         <el-alert v-if="taskError" :title="taskError" type="error" show-icon :closable="false" class="inventory-alert" />

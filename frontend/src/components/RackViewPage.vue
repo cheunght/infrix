@@ -139,16 +139,16 @@ function openRackFromRoom(rack: Rack) {
       <section class="facility-three-column">
         <el-card shadow="never" class="facility-panel facility-center-panel">
           <template #header><div class="facility-panel-header"><strong>数据中心列表</strong><el-button v-if="can('racks.manage')" type="primary" size="small" @click="openDataCenterModal()">新增数据中心</el-button></div></template>
-          <SearchField v-model="dataCenterSearch" placeholder="搜索数据中心" aria-label="搜索数据中心" />
+          <SearchField class="itam-filter-search" v-model="dataCenterSearch" placeholder="搜索数据中心" aria-label="搜索数据中心" />
           <div class="facility-list"><div v-for="center in filteredCenters" :key="center.id" class="facility-list-item" role="button" tabindex="0" :class="{ active: selectedCenter?.id === center.id }" @click="selectCenter(center)" @keydown.enter="selectCenter(center)" @keydown.space.prevent="selectCenter(center)"><span>{{ center.name }}</span><div class="facility-list-meta"><em>{{ center.rooms_count || 0 }}</em><el-button v-if="can('racks.manage')" link type="primary" @click.stop="openDataCenterModal(center)">编辑</el-button></div></div><el-empty v-if="!filteredCenters.length" description="暂无数据中心" /></div>
         </el-card>
         <el-card shadow="never" class="facility-panel facility-room-panel">
           <template #header><div class="facility-panel-header"><strong>机房列表<span v-if="selectedCenter">（{{ selectedCenter.name }}）</span></strong><el-button v-if="can('racks.manage')" type="primary" size="small" @click="openRoomModal()">新增机房</el-button></div></template>
-          <SearchField v-model="roomSearch" placeholder="搜索机房名称" aria-label="搜索机房名称" />
+          <SearchField class="itam-filter-search" v-model="roomSearch" placeholder="搜索机房名称" aria-label="搜索机房名称" />
           <el-table :data="pagedRooms" table-layout="fixed" class="facility-table" highlight-current-row @row-click="selectRoom">
             <el-table-column prop="name" label="机房名称" min-width="130" show-overflow-tooltip /><el-table-column prop="data_center_name" label="数据中心" min-width="120" show-overflow-tooltip /><el-table-column prop="racks_count" label="机柜" width="62" /><el-table-column prop="assets_count" label="设备" width="62" /><el-table-column label="状态" width="80"><template #default="{ row }"><el-tag :type="row.is_active ? 'success' : 'info'" size="small">{{ row.is_active ? '使用中' : '停用' }}</el-tag></template></el-table-column><el-table-column v-if="can('racks.manage')" label="操作" width="122" fixed="right"><template #default="{ row }"><div class="ep-table-actions"><el-button link type="primary" @click.stop="openRoomModal(row)">编辑</el-button><el-button link type="danger" @click.stop="context.deleteRoom(row)">删除</el-button></div></template></el-table-column>
           </el-table>
-          <el-pagination v-model:current-page="roomPage" small layout="total, prev, next" :total="filteredRooms.length" />
+          <el-pagination v-model:current-page="roomPage" size="small" layout="total, prev, next" :total="filteredRooms.length" />
         </el-card>
         <el-card shadow="never" class="facility-panel facility-detail-panel">
           <template #header><div class="facility-panel-header"><strong>机房详情</strong><el-button v-if="selectedRoom && can('racks.manage')" link type="primary" @click="openRoomModal(selectedRoom)">编辑</el-button></div></template>

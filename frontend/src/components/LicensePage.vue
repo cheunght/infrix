@@ -26,6 +26,7 @@ const {
       <div class="ep-toolbar license-toolbar">
         <div class="license-toolbar-filters">
           <SearchField
+            class="itam-filter-search"
             v-model="licenseKeyword"
             placeholder="搜索软件名称、厂商或许可类型"
             aria-label="搜索许可证"
@@ -33,7 +34,7 @@ const {
           />
           <el-select
             v-model="licenseStatus"
-            class="license-status-filter"
+            class="license-status-filter itam-filter-select"
             placeholder="全部状态"
             clearable
             @change="searchLicenses"

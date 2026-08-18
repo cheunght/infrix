@@ -85,7 +85,6 @@ const dataCenters = ref<DataCenter[]>([]);
 const customFields = ref<CustomField[]>([]);
 const customFieldOptions = ref<CustomFieldOption[]>([]);
 const tags = ref<Tag[]>([]);
-const customFieldSearch = ref("");
 const customFieldDeviceType = ref("");
 const customFieldActive = ref("all");
 const tagSearch = ref("");
@@ -601,7 +600,6 @@ async function loadDictionaries(version = beginLoad()) {
 }
 async function loadCustomFields(version = beginLoad()) {
   const params = new URLSearchParams({ page_size: "100", is_active: customFieldActive.value });
-  if (customFieldSearch.value.trim()) params.set("search", customFieldSearch.value.trim());
   if (customFieldDeviceType.value) params.set("device_type", customFieldDeviceType.value);
   const result = await request<PageResult<CustomField> | CustomField[]>(`/custom-fields/?${params}`);
   if (isCurrentLoad(version)) customFields.value = pageItems(result);
@@ -2777,7 +2775,7 @@ const pageContext = {
   toggleUser, deleteUser, roles, openRoleModal, deleteRole, auditFilters,
   loadAuditLogs, searchAuditLogs, auditLogs, auditPage, auditPageSize, auditCount,
   changeAuditPage, changeAuditPageSize,
-  customFieldSearch, customFieldDeviceType, customFieldActive, loadCustomFields,
+  customFieldDeviceType, customFieldActive, loadCustomFields,
   openCustomFieldModal, saveCustomField, toggleCustomField, deleteCustomField,
   openCustomFieldOptionModal, saveCustomFieldOption, deleteCustomFieldOption,
   customFieldForm, showCustomFieldModal, editingCustomField, customFieldOptionForm,
@@ -2933,9 +2931,9 @@ const pageContext = {
         </div>
         <div class="header-tools">
           <SearchField
+            class="ep-global-search itam-filter-search"
             v-model="assetLookup"
             placeholder="搜索资产编号 / SN / 名称"
-            class="ep-global-search"
             aria-label="搜索资产"
             @search="lookupAsset"
           />
@@ -3175,6 +3173,7 @@ const pageContext = {
           ><el-form-item label="搜索资产"
             ><div class="fault-asset-search">
               <SearchField
+                class="itam-filter-search"
                 v-model="faultAssetSearch"
                 placeholder="输入资产编号、名称或序列号"
                 aria-label="搜索故障资产"

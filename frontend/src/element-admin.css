@@ -2925,3 +2925,268 @@ body {
   margin-right: 0 !important;
   border-radius: 0 !important;
 }
+
+/* Unified business-page search and filter controls.  Page-specific toolbars
+   can still decide their grouping, but the controls themselves share one
+   predictable desktop size and one responsive collapse rule. */
+:root {
+  --itam-filter-search-width: 360px;
+  --itam-filter-select-width: 160px;
+  --itam-filter-date-width: 180px;
+}
+
+.ep-main .itam-filter-search,
+.ep-main .ep-global-search {
+  box-sizing: border-box;
+  flex: 0 1 var(--itam-filter-search-width) !important;
+  width: var(--itam-filter-search-width) !important;
+  max-width: var(--itam-filter-search-width) !important;
+  min-width: 220px !important;
+}
+
+.ep-main .itam-filter-select {
+  box-sizing: border-box;
+  flex: 0 0 var(--itam-filter-select-width) !important;
+  width: var(--itam-filter-select-width) !important;
+  min-width: var(--itam-filter-select-width) !important;
+  max-width: var(--itam-filter-select-width) !important;
+}
+
+.ep-main .itam-filter-date {
+  box-sizing: border-box;
+  flex: 0 0 var(--itam-filter-date-width) !important;
+  width: var(--itam-filter-date-width) !important;
+  min-width: var(--itam-filter-date-width) !important;
+  max-width: var(--itam-filter-date-width) !important;
+}
+
+.ep-main .itam-filter-search-value {
+  box-sizing: border-box;
+  flex: 0 0 var(--itam-filter-select-width) !important;
+  width: var(--itam-filter-select-width) !important;
+  min-width: var(--itam-filter-select-width) !important;
+  max-width: var(--itam-filter-select-width) !important;
+}
+
+.ep-main .facility-panel .itam-filter-search {
+  flex: 1 1 auto !important;
+  width: 100% !important;
+  max-width: 100% !important;
+  min-width: 0 !important;
+}
+
+.ep-main .itam-filter-search .el-input__wrapper,
+.ep-main .itam-filter-search .el-input-group__append,
+.ep-main .itam-filter-search .itam-search-button,
+.ep-main .ep-global-search .el-input__wrapper,
+.ep-main .ep-global-search .el-input-group__append,
+.ep-main .ep-global-search .itam-search-button {
+  height: var(--itam-control-height);
+  min-height: var(--itam-control-height);
+  box-sizing: border-box;
+}
+
+.ep-main .ep-toolbar {
+  /* Keep desktop toolbars on one line.  Dense pages can still opt into
+     wrapping at the responsive breakpoint below. */
+  flex-wrap: nowrap;
+  align-items: center;
+  column-gap: var(--itam-control-gap);
+  row-gap: var(--itam-control-gap);
+}
+
+.ep-main .ep-toolbar-actions {
+  margin-left: auto;
+}
+
+@media (min-width: 1101px) {
+  /* Keep the compact filter bars on one desktop row.  At narrower widths the
+     responsive rule below deliberately allows the controls to wrap. */
+  .ep-main .ep-toolbar,
+  .ep-main .rack-filters {
+    flex-wrap: nowrap;
+    white-space: nowrap;
+  }
+}
+
+@media (max-width: 1100px) {
+  .ep-main .ep-toolbar {
+    flex-wrap: wrap;
+  }
+}
+
+@media (max-width: 900px) {
+  .ep-main .itam-filter-search,
+  .ep-main .ep-global-search {
+    flex: 1 1 100% !important;
+    width: 100% !important;
+    max-width: none !important;
+    min-width: 0 !important;
+  }
+
+  .ep-main .ep-toolbar-spacer {
+    display: none;
+  }
+}
+
+@media (max-width: 760px) {
+  .ep-main .itam-filter-select,
+  .ep-main .itam-filter-date,
+  .ep-main .itam-filter-search-value {
+    flex: 1 1 160px !important;
+    width: auto !important;
+    max-width: none !important;
+    min-width: 0 !important;
+  }
+}
+
+@media (max-width: 560px) {
+  .ep-main .itam-filter-select,
+  .ep-main .itam-filter-date,
+  .ep-main .itam-filter-search-value {
+    flex: 1 1 100% !important;
+    width: 100% !important;
+  }
+
+  .ep-main .ep-toolbar-actions {
+    width: 100%;
+    margin-left: 0;
+  }
+}
+
+/* Keep the application viewport itself from acquiring a second horizontal
+   scrollbar when a card, table or filter group has long content.  Individual
+   data tables retain their own responsive behavior; the page shell never
+   grows wider than the available content column. */
+html,
+body,
+.shell,
+.ep-main {
+  max-width: 100%;
+  min-width: 0;
+  overflow-x: hidden;
+}
+
+.ep-main > *,
+.ep-main .itam-page,
+.ep-main .el-card,
+.ep-main .ep-toolbar,
+.ep-main .rack-filters {
+  box-sizing: border-box;
+  max-width: 100%;
+  min-width: 0;
+}
+
+.ep-main .ep-toolbar,
+.ep-main .rack-filters {
+  width: 100%;
+}
+
+.ep-main .ep-toolbar-actions,
+.ep-main .license-toolbar-filters,
+.ep-main .rack-filter-actions {
+  min-width: 0;
+  max-width: 100%;
+}
+
+/* The audit toolbar has six controls plus a heading.  Use the same compact
+   widths as the other desktop filters so it stays on one row without
+   exceeding the page column. */
+@media (min-width: 1101px) {
+  .ep-main .audit-toolbar > .itam-filter-search {
+    flex-basis: 300px !important;
+    width: 300px !important;
+    min-width: 180px !important;
+    max-width: 300px !important;
+  }
+
+  .ep-main .audit-toolbar > .itam-filter-select {
+    flex-basis: 140px !important;
+    width: 140px !important;
+    min-width: 120px !important;
+    max-width: 140px !important;
+  }
+
+  .ep-main .audit-toolbar > .itam-filter-date {
+    flex-basis: 160px !important;
+    width: 160px !important;
+    min-width: 140px !important;
+    max-width: 160px !important;
+  }
+}
+
+/* Asset ledger toolbars contain more actions than the other pages.  Keep the
+   filters and actions inside the card: filters take the flexible left side,
+   while the action group can wrap its own buttons instead of pushing them
+   past the viewport edge. */
+.ep-main .ep-ledger-toolbar {
+  display: flex;
+  flex-wrap: nowrap;
+  align-items: center;
+  gap: 10px;
+  overflow: hidden;
+}
+
+.ep-main .ep-ledger-filters {
+  display: flex;
+  flex: 1 1 560px;
+  min-width: 0;
+  align-items: center;
+  gap: 10px;
+  overflow: hidden;
+}
+
+.ep-main .ep-ledger-filters > .itam-filter-search {
+  flex: 1 1 240px !important;
+  width: auto !important;
+  min-width: 180px !important;
+  max-width: 360px !important;
+}
+
+.ep-main .ep-ledger-filters > .itam-filter-select,
+.ep-main .ep-ledger-filters > .itam-filter-search-value {
+  flex: 0 1 130px !important;
+  width: 130px !important;
+  min-width: 108px !important;
+  max-width: 150px !important;
+}
+
+.ep-main .ep-ledger-filters > .el-popover {
+  flex: 0 0 auto;
+}
+
+.ep-main .ep-ledger-toolbar > .ep-toolbar-actions {
+  display: flex;
+  flex: 1 1 500px;
+  min-width: 0;
+  max-width: 100%;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 6px;
+  margin-left: auto;
+  overflow: hidden;
+}
+
+.ep-main .ep-ledger-toolbar > .ep-toolbar-actions .el-button,
+.ep-main .ep-ledger-toolbar > .ep-toolbar-actions .el-upload .el-button {
+  flex: 0 1 auto;
+  padding-right: 10px;
+  padding-left: 10px;
+  font-size: 13px;
+}
+
+@media (max-width: 1100px) {
+  .ep-main .ep-ledger-toolbar {
+    flex-wrap: wrap;
+  }
+
+  .ep-main .ep-ledger-filters,
+  .ep-main .ep-ledger-toolbar > .ep-toolbar-actions {
+    flex: 1 1 100%;
+    width: 100%;
+  }
+
+  .ep-main .ep-ledger-toolbar > .ep-toolbar-actions {
+    justify-content: flex-start;
+  }
+}

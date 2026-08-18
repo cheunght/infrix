@@ -128,11 +128,11 @@ watch(showSpareOperationModal, (open, wasOpen) => { if (!open && wasOpen) refres
   <div class="itam-page spare-page">
     <el-card shadow="never">
       <div class="ep-toolbar spare-toolbar">
-        <SearchField v-model="spareSearch" placeholder="搜索备件名称、类型、品牌或型号" aria-label="搜索备件" @search="searchSpareParts" />
-        <el-select v-model="spareType" placeholder="全部类型" clearable @change="searchSpareParts"><el-option v-for="item in partTypes" :key="item.value" :label="item.label" :value="item.value" /></el-select>
-        <el-select v-model="spareActive" placeholder="全部状态" @change="searchSpareParts"><el-option label="启用" value="true" /><el-option label="停用" value="false" /><el-option label="全部" value="all" /></el-select>
-        <el-select v-model="spareListDataCenter" placeholder="全部数据中心" clearable @change="onSpareListDataCenterChange"><el-option v-for="center in activeDataCenters" :key="center.id" :label="center.name" :value="String(center.id)" /></el-select>
-        <el-select v-model="spareListRoom" placeholder="全部机房" clearable @change="searchSpareParts"><el-option v-for="room in roomsFor(spareListDataCenter)" :key="room.id" :label="room.name" :value="String(room.id)" /></el-select>
+        <SearchField class="itam-filter-search" v-model="spareSearch" placeholder="搜索备件名称、类型、品牌或型号" aria-label="搜索备件" @search="searchSpareParts" />
+        <el-select class="itam-filter-select" v-model="spareType" placeholder="全部类型" clearable @change="searchSpareParts"><el-option v-for="item in partTypes" :key="item.value" :label="item.label" :value="item.value" /></el-select>
+        <el-select class="itam-filter-select" v-model="spareActive" placeholder="全部状态" @change="searchSpareParts"><el-option label="启用" value="true" /><el-option label="停用" value="false" /><el-option label="全部" value="all" /></el-select>
+        <el-select class="itam-filter-select" v-model="spareListDataCenter" placeholder="全部数据中心" clearable @change="onSpareListDataCenterChange"><el-option v-for="center in activeDataCenters" :key="center.id" :label="center.name" :value="String(center.id)" /></el-select>
+        <el-select class="itam-filter-select" v-model="spareListRoom" placeholder="全部机房" clearable @change="searchSpareParts"><el-option v-for="room in roomsFor(spareListDataCenter)" :key="room.id" :label="room.name" :value="String(room.id)" /></el-select>
         <span class="ep-toolbar-spacer" />
         <div class="ep-toolbar-actions"><el-button v-if="can('spares.manage')" type="primary" :icon="Plus" @click="openSparePartModal()">新增备件</el-button></div>
       </div>

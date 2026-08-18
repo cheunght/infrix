@@ -1723,7 +1723,9 @@ def facilities_summary(request):
     )
     room_rows = []
     for room in rooms.order_by("data_center__name", "name"):
-        room_racks = [row for row in rack_rows if row["room_id"] == room.id]
+        room_racks = [
+            row for row in rack_rows if row["server_room_id"] == room.id
+        ]
         room_rows.append({
             "id": room.id,
             "name": room.name,

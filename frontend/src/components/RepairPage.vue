@@ -30,21 +30,22 @@ const {
           <el-card shadow="never">
           <div class="ep-toolbar">
             <SearchField
+              class="itam-filter-search"
               v-model="repairKeyword"
               placeholder="搜索资产编号、名称、故障原因"
               aria-label="搜索故障"
               @search="searchRepairs"
             />
-            <el-select v-model="repairStatus" placeholder="全部状态" clearable
+            <el-select class="itam-filter-select" v-model="repairStatus" placeholder="全部状态" clearable
               ><el-option label="未关闭" value="false" /><el-option
                 label="已关闭"
                 value="true" /></el-select
-            ><el-date-picker
+            ><el-date-picker class="itam-filter-date"
               v-model="repairStart"
               type="date"
               value-format="YYYY-MM-DD"
               placeholder="开始日期"
-            /><el-date-picker
+            /><el-date-picker class="itam-filter-date"
               v-model="repairEnd"
               type="date"
               value-format="YYYY-MM-DD"

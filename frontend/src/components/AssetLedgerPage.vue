@@ -52,34 +52,36 @@ const selectedCustomField = computed(() => customFields.value.find((field: any) 
   <div class="itam-page ledger-page">
           <el-card shadow="never">
           <div class="ep-toolbar ep-ledger-toolbar">
-            <SearchField
-              v-model="assetSearch"
-              placeholder="搜索资产编号、名称、IP、机柜、供应商等"
-              aria-label="搜索资产"
-              @search="searchLedger"
-            />
-            <el-select v-model="assetTagFilter" clearable filterable placeholder="标签" style="width: 150px" @change="searchLedger"><el-option v-for="tag in tags.filter((item: any) => item.is_active)" :key="tag.id" :label="tag.name" :value="tag.name" /></el-select>
-            <el-select v-model="assetCustomFilterField" clearable filterable placeholder="自定义字段" style="width: 160px" @change="selectCustomField"><el-option v-for="field in customFields.filter((item: any) => item.is_active)" :key="field.id" :label="field.name" :value="field.key" /></el-select>
-            <el-select v-if="selectedCustomField && ['select','multiselect','boolean'].includes(selectedCustomField.field_type)" v-model="assetCustomFilterValue" clearable placeholder="字段值" style="width: 150px" @change="searchLedger"><el-option v-if="selectedCustomField.field_type === 'boolean'" label="是" value="true" /><el-option v-if="selectedCustomField.field_type === 'boolean'" label="否" value="false" /><el-option v-for="option in (selectedCustomField.options || []).filter((item: any) => item.is_active)" v-else :key="option.id" :label="option.label" :value="option.value" /></el-select>
-            <el-input v-else-if="assetCustomFilterField" v-model="assetCustomFilterValue" placeholder="字段值" style="width: 150px" @keyup.enter="searchLedger"><template #append><el-button @click="searchLedger">查询</el-button></template></el-input>
-            <el-popover placement="bottom" :width="240" trigger="click"
-              ><template #reference
-                ><el-button :icon="Operation">显示列</el-button></template
-              >
-              <div class="ep-column-list">
-                <el-checkbox
-                  v-for="column in assetColumnOptions"
-                  :key="column.key"
-                  :model-value="visibleAssetColumns.includes(column.key)"
-                  @change="toggleAssetColumn(column.key)"
-                  >{{ column.label }}</el-checkbox
-                ><el-button link type="primary" @click="resetAssetColumns"
-                  >恢复默认</el-button
+            <div class="ep-ledger-filters">
+              <SearchField
+                class="itam-filter-search"
+                v-model="assetSearch"
+                placeholder="搜索资产编号、名称、IP、机柜、供应商等"
+                aria-label="搜索资产"
+                @search="searchLedger"
+              />
+              <el-select class="itam-filter-select" v-model="assetTagFilter" clearable filterable placeholder="标签" @change="searchLedger"><el-option v-for="tag in tags.filter((item: any) => item.is_active)" :key="tag.id" :label="tag.name" :value="tag.name" /></el-select>
+              <el-select class="itam-filter-select" v-model="assetCustomFilterField" clearable filterable placeholder="自定义字段" @change="selectCustomField"><el-option v-for="field in customFields.filter((item: any) => item.is_active)" :key="field.id" :label="field.name" :value="field.key" /></el-select>
+              <el-select class="itam-filter-select" v-if="selectedCustomField && ['select','multiselect','boolean'].includes(selectedCustomField.field_type)" v-model="assetCustomFilterValue" clearable placeholder="字段值" @change="searchLedger"><el-option v-if="selectedCustomField.field_type === 'boolean'" label="是" value="true" /><el-option v-if="selectedCustomField.field_type === 'boolean'" label="否" value="false" /><el-option v-for="option in (selectedCustomField.options || []).filter((item: any) => item.is_active)" v-else :key="option.id" :label="option.label" :value="option.value" /></el-select>
+              <el-input class="itam-filter-search-value" v-else-if="assetCustomFilterField" v-model="assetCustomFilterValue" placeholder="字段值" @keyup.enter="searchLedger"><template #append><el-button @click="searchLedger">查询</el-button></template></el-input>
+              <el-popover placement="bottom" :width="240" trigger="click"
+                ><template #reference
+                  ><el-button :icon="Operation">显示列</el-button></template
                 >
-              </div></el-popover
-            >
-            <span class="ep-toolbar-spacer"></span
-            ><div class="ep-toolbar-actions">
+                <div class="ep-column-list">
+                  <el-checkbox
+                    v-for="column in assetColumnOptions"
+                    :key="column.key"
+                    :model-value="visibleAssetColumns.includes(column.key)"
+                    @change="toggleAssetColumn(column.key)"
+                    >{{ column.label }}</el-checkbox
+                  ><el-button link type="primary" @click="resetAssetColumns"
+                    >恢复默认</el-button
+                  >
+                </div></el-popover
+              >
+            </div>
+            <div class="ep-toolbar-actions">
             <el-button v-if="can('assets.manage')" type="primary" :icon="Plus" @click="openNewAssetModal"
               >新增资产</el-button
             ><el-button

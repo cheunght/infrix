@@ -1,6 +1,5 @@
 <script setup lang="ts">
 import { proxyRefs } from "vue";
-import SearchField from "./SearchField.vue";
 const props = defineProps<{ context: Record<string, any> }>();
 const c = proxyRefs(props.context);
 </script>
@@ -10,11 +9,10 @@ const c = proxyRefs(props.context);
     <template #header>
       <div class="ep-toolbar settings-toolbar">
         <strong>自定义字段</strong>
-        <el-select v-model="c.customFieldDeviceType" placeholder="全部设备类型" clearable @change="c.loadCustomFields()" style="width: 180px">
+        <el-select class="itam-filter-select" v-model="c.customFieldDeviceType" placeholder="全部设备类型" clearable @change="c.loadCustomFields()">
           <el-option v-for="item in c.deviceTypes" :key="item.id" :label="item.name" :value="String(item.id)" />
         </el-select>
-        <SearchField v-model="c.customFieldSearch" placeholder="搜索字段名称或编码" aria-label="搜索自定义字段" @search="c.loadCustomFields()" />
-        <el-select v-model="c.customFieldActive" placeholder="状态" style="width: 120px" @change="c.loadCustomFields()">
+        <el-select class="itam-filter-select" v-model="c.customFieldActive" placeholder="状态" @change="c.loadCustomFields()">
           <el-option label="全部状态" value="all" /><el-option label="启用" value="true" /><el-option label="停用" value="false" />
         </el-select>
         <span class="ep-toolbar-spacer"></span>

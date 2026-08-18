@@ -21,7 +21,7 @@ const {
   <section class="filters rack-filters">
     <el-select
       v-model="selectedDataCenter"
-      class="rack-filter-select"
+      class="rack-filter-select itam-filter-select"
       aria-label="数据中心"
       placeholder="全部数据中心"
       clearable
@@ -37,7 +37,7 @@ const {
     </el-select>
     <el-select
       v-model="selectedRoom"
-      class="rack-filter-select"
+      class="rack-filter-select itam-filter-select"
       aria-label="机房"
       placeholder="全部机房"
       clearable
@@ -53,7 +53,7 @@ const {
     </el-select>
     <el-select
       v-model="selectedRack"
-      class="rack-filter-select"
+      class="rack-filter-select itam-filter-select"
       aria-label="机柜编号"
       placeholder="全部机柜"
       clearable
@@ -64,7 +64,7 @@ const {
     </el-select>
     <el-select
       v-model="selectedRackCategory"
-      class="rack-filter-select"
+      class="rack-filter-select itam-filter-select"
       aria-label="设备分类"
       placeholder="全部分类"
       clearable
