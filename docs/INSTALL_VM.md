@@ -283,4 +283,6 @@ journalctl -u itam -n 50 --no-pager
 - 生产环境保持 `DJANGO_DEBUG=0`。
 - 数据库密码不要提交到 Git 或聊天记录。
 - SELinux 和防火墙由现场策略管理，本脚本不会修改它们。
-- 正式上线前请补充 HTTPS、账号最小权限、定期备份和恢复演练。
+- `deploy/verify-release.sh` 会检查 `DJANGO_DEBUG=0`、随机 `DJANGO_SECRET_KEY`、限定
+  `DJANGO_ALLOWED_HOSTS` 和 HTTPS 配置，并以风险提示形式输出，不会因提示自动阻断验收。
+- 正式上线前请在 Nginx 或上游网关启用 HTTPS、安全 Cookie、HSTS 和 `X-Frame-Options`，并完成账号最小权限、定期备份和恢复演练。

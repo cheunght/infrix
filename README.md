@@ -70,6 +70,10 @@ sudo -E ./deploy/install.sh
 
 脚本会在迁移前备份 MySQL/MariaDB、执行 Django 检查、构建前端、启动 Gunicorn，并检查 API 和 Nginx 健康状态。
 
+上线验收脚本还会以“仅提示、不阻断”的方式检查生产安全配置：`DJANGO_DEBUG=0`、随机且足够长度的
+`DJANGO_SECRET_KEY`、限定的 `DJANGO_ALLOWED_HOSTS`，以及 HTTPS、安全 Cookie、HSTS 和
+`X-Frame-Options`。提示项需要在正式网关和环境文件中人工确认，不会改变本地开发启动行为。
+
 从 macOS 更新虚拟机可使用：
 
 ```bash

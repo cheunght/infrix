@@ -18,6 +18,8 @@ from rest_framework.decorators import action, api_view, permission_classes, pars
 from rest_framework.parsers import MultiPartParser, FormParser
 from rest_framework.permissions import AllowAny, IsAdminUser, IsAuthenticated
 from rest_framework.response import Response
+from drf_spectacular.types import OpenApiTypes
+from drf_spectacular.utils import extend_schema
 from django.http import HttpResponse
 from django.shortcuts import get_object_or_404
 from django.utils import timezone
@@ -26,7 +28,7 @@ from openpyxl import Workbook
 from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
 from openpyxl.utils import get_column_letter
 from .models import AuthThrottleState, AuditLog, Asset, AssetCustomValue, AssetNetworkAddress, AssetTag, Brand, CustomField, CustomFieldOption, DataCenter, DeviceType, FaultEvent, InventoryItem, InventoryTask, MaintenanceContract, ProcurementRecord, Rack, RackUnitAllocation, RepairRecord, ServerRoom, SoftwareLicense, SparePart, SpareStock, SpareStockTransaction, Tag, UserSecurityProfile
-from .serializers import AuditLogSerializer, AssetDetailSerializer, AssetListSerializer, AssetSerializer, AssetWriteSerializer, BrandSerializer, CustomFieldOptionSerializer, CustomFieldSerializer, DataCenterSerializer, DeviceTypeSerializer, FaultEventSerializer, GroupSerializer, InventoryItemSerializer, InventoryTaskSerializer, RackSerializer, RepairRecordSerializer, ServerRoomSerializer, SoftwareLicenseSerializer, SparePartDetailSerializer, SparePartSerializer, SpareStockSerializer, SpareStockTransactionSerializer, TagSerializer, UserSerializer
+from .serializers import AuditLogSerializer, AssetDetailSerializer, AssetListSerializer, AssetSerializer, AssetWriteSerializer, BrandSerializer, CustomFieldOptionSerializer, CustomFieldSerializer, DataCenterSerializer, DeviceTypeSerializer, FaultEventSerializer, GroupSerializer, InventoryInspectorSerializer, InventoryItemSerializer, InventoryTaskSerializer, RackSerializer, RepairRecordSerializer, ServerRoomSerializer, SoftwareLicenseSerializer, SparePartDetailSerializer, SparePartSerializer, SpareStockSerializer, SpareStockTransactionSerializer, TagSerializer, UserSerializer
 from .services import apply_spare_stock_transaction, sync_asset_fault_status, sync_repair_completion
 from .audit import model_snapshot, write_audit_log
 from .permissions import BusinessRolePermission, CanExportAssets, CanExportFaults, CanExportInventory, CanExportRacks, CanImportAssets, CanManageInventory, CanViewAuditLog, CanViewDashboard, CanViewInventory, CanViewLicenses, IsSystemAdministrator
@@ -103,9 +105,9 @@ class AssetViewSet(AuditedModelViewSetMixin, viewsets.ModelViewSet):
     permission_resource = "assets"
     audit_resource = "asset"
     filter_backends = [DjangoFilterBackend, SearchFilter]
-    filterset_fields = ["status", "asset_type", "department", "brand", "device_type", "model"]
+    filterset_fields = ["status", "department", "brand", "device_type", "model"]
     search_fields = [
-        "asset_no", "name", "asset_type", "brand_model", "serial_number", "purpose", "owner_name", "notes", "status",
+        "asset_no", "name", "brand_model", "serial_number", "purpose", "owner_name", "notes", "status",
         "brand__name", "device_type__name", "device_type__color", "model", "department__name", "department__code",
         "network_addresses__address", "network_addresses__role", "network_addresses__status", "network_addresses__notes",
         "rack_allocation__rack__code", "rack_allocation__rack__room__name", "rack_allocation__rack__room__data_center__name",
@@ -984,6 +986,7 @@ class InventoryItemViewSet(viewsets.ModelViewSet):
         )
 
 
+@extend_schema(responses=InventoryItemSerializer(many=True))
 @api_view(["GET"])
 @permission_classes([CanViewInventory])
 def asset_inventory_records(request, pk):
@@ -996,6 +999,7 @@ def asset_inventory_records(request, pk):
     return Response(InventoryItemSerializer(records, many=True).data)
 
 
+@extend_schema(responses=InventoryInspectorSerializer(many=True))
 @api_view(["GET"])
 @permission_classes([CanManageInventory])
 def inventory_inspectors(request):
@@ -1148,6 +1152,7 @@ def _auth_response(user):
     }
 
 
+@extend_schema(request=OpenApiTypes.OBJECT, responses=OpenApiTypes.OBJECT)
 @api_view(["POST"])
 @permission_classes([AllowAny])
 def auth_login(request):
@@ -1194,18 +1199,21 @@ def auth_login(request):
     return Response(_auth_response(user))
 
 
+@extend_schema(responses=OpenApiTypes.OBJECT)
 @api_view(["GET"])
 @permission_classes([AllowAny])
 def auth_csrf(request):
     return Response({"csrfToken": get_token(request)})
 
 
+@extend_schema(responses=OpenApiTypes.OBJECT)
 @api_view(["GET"])
 @permission_classes([IsAuthenticated])
 def auth_me(request):
     return Response(_auth_response(request.user))
 
 
+@extend_schema(request=OpenApiTypes.OBJECT, responses=OpenApiTypes.OBJECT)
 @api_view(["POST"])
 @permission_classes([IsAuthenticated])
 def auth_logout(request):
@@ -1213,6 +1221,7 @@ def auth_logout(request):
     return Response({"ok": True})
 
 
+@extend_schema(request=OpenApiTypes.OBJECT, responses=OpenApiTypes.OBJECT)
 @api_view(["POST"])
 @permission_classes([IsAuthenticated])
 def auth_change_password(request):
@@ -1297,6 +1306,10 @@ def _read_asset_import(upload):
     reader = csv.DictReader(io.StringIO(content))
     headers = set(reader.fieldnames or [])
     required = {"asset_no", "name"}
+    legacy_headers = headers.intersection({"asset_type", "category"})
+    if legacy_headers:
+        legacy = "、".join(sorted(legacy_headers))
+        raise ValueError(f"CSV 不再支持 {legacy} 列，请使用 device_type")
     if not required.issubset(headers) or "device_type" not in headers:
         raise ValueError("CSV 必须包含 asset_no、name、device_type 列")
     rows = []
@@ -1371,7 +1384,6 @@ def _prepare_asset_import_payload(row, headers):
     return {
         "asset_no": asset_no,
         "name": asset_name,
-        "asset_type": device_type.name,
         "brand": brand.pk if brand else None,
         "device_type": device_type.pk if device_type else None,
         "asset_data_center": asset_data_center.pk if asset_data_center else None,
@@ -1391,7 +1403,6 @@ def _prepare_asset_import_payload(row, headers):
 def _preview_asset_changes(asset, payload):
     fields = [
         ("name", "资产名称", asset.name, payload.get("name", "")),
-        ("asset_type", "资产类型", asset.asset_type, payload.get("asset_type", "")),
         ("model", "型号", asset.model or "", payload.get("model", "")),
         ("serial_number", "序列号", asset.serial_number or "", payload.get("serial_number") or ""),
         ("purpose", "用途", asset.purpose or "", payload.get("purpose", "")),
@@ -1450,6 +1461,7 @@ def _preview_asset_row(line, row, headers, seen_asset_nos):
     return base
 
 
+@extend_schema(request=OpenApiTypes.OBJECT, responses=OpenApiTypes.OBJECT)
 @api_view(["POST"])
 @permission_classes([CanImportAssets])
 @parser_classes([MultiPartParser, FormParser])
@@ -1471,6 +1483,7 @@ def asset_import_preview(request):
     })
 
 
+@extend_schema(request=OpenApiTypes.OBJECT, responses=OpenApiTypes.OBJECT)
 @api_view(["POST"])
 @permission_classes([CanImportAssets])
 @parser_classes([MultiPartParser, FormParser])
@@ -1518,6 +1531,7 @@ def asset_import(request):
     return Response({"created": created, "errors": errors})
 
 
+@extend_schema(responses=OpenApiTypes.BINARY)
 @api_view(["GET"])
 @permission_classes([CanExportAssets])
 def asset_export(request):
@@ -1606,6 +1620,7 @@ def _repair_queryset(request):
     return queryset
 
 
+@extend_schema(responses=OpenApiTypes.BINARY)
 @api_view(["GET"])
 @permission_classes([CanExportFaults])
 def repair_record_export(request):
@@ -1632,6 +1647,7 @@ def repair_record_export(request):
     return response
 
 
+@extend_schema(responses=OpenApiTypes.OBJECT)
 @api_view(["GET"])
 @permission_classes([CanViewLicenses])
 def license_summary(request):
@@ -1649,6 +1665,7 @@ def license_summary(request):
     })
 
 
+@extend_schema(responses=OpenApiTypes.OBJECT)
 @api_view(["GET"])
 @permission_classes([CanViewDashboard])
 def dashboard_overview(request):
@@ -1659,6 +1676,7 @@ def dashboard_overview(request):
     return Response(build_dashboard_payload(scope))
 
 
+@extend_schema(responses=OpenApiTypes.OBJECT)
 @api_view(["GET"])
 @permission_classes([CanViewDashboard])
 def facilities_summary(request):
@@ -1685,12 +1703,20 @@ def facilities_summary(request):
         if data_center_pk is not None and selected_room.data_center_id != data_center_pk:
             return Response({"detail": "所选机房不属于当前数据中心"}, status=400)
 
+    # Keep all rooms/racks for status totals, but use only active locations for
+    # capacity and device aggregates. This prevents disabled infrastructure
+    # from inflating U totals while preserving maintenance-page counts.
     rooms = ServerRoom.objects.filter(data_center__is_active=True).select_related("data_center")
     if data_center_pk is not None:
         rooms = rooms.filter(data_center_id=data_center_pk)
     if room_pk is not None:
         rooms = rooms.filter(pk=room_pk)
-    racks = Rack.objects.filter(room__in=rooms).select_related("room__data_center").prefetch_related("allocations")
+    all_racks = Rack.objects.filter(room__in=rooms)
+    racks = all_racks.filter(
+        is_active=True,
+        room__is_active=True,
+        room__data_center__is_active=True,
+    ).select_related("room__data_center").prefetch_related("allocations")
     room_ids = list(rooms.values_list("id", flat=True))
     rack_rows, totals = build_rack_capacity_rows(
         list(racks.order_by("room__data_center__name", "room__name", "code")),
@@ -1740,8 +1766,13 @@ def facilities_summary(request):
         "rooms_total": len(room_ids),
         "rooms_in_use": sum(1 for room in room_rows if room["is_active"]),
         "rooms_disabled": ServerRoom.objects.filter(pk__in=room_ids, is_active=False).count(),
-        "racks_total": len(rack_rows),
-        "racks_in_use": sum(1 for row in rack_rows if row["status"] == "in_use"),
+        "racks_total": all_racks.count(),
+        "racks_in_use": all_racks.filter(
+            is_active=True,
+            status="in_use",
+            room__is_active=True,
+            room__data_center__is_active=True,
+        ).count(),
         "total_u": totals["total_u"],
         "used_u": totals["used_u"],
         "free_u": max(totals["total_u"] - totals["used_u"], 0),
@@ -1772,6 +1803,7 @@ def _rack_sort_key(rack):
     return (int(match.group(1)) if match else 0, rack.code or "")
 
 
+@extend_schema(responses=OpenApiTypes.BINARY)
 @api_view(["GET"])
 @permission_classes([CanExportRacks])
 def rack_layout_export(request):

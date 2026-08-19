@@ -6,7 +6,8 @@ from rest_framework import serializers
 from django.contrib.auth.models import Group, User
 from django.contrib.auth.password_validation import validate_password
 from django.utils import timezone
-from datetime import timedelta
+from datetime import date, timedelta
+from typing import Any
 import re
 from .models import AuditLog, Asset, AssetCustomValue, AssetNetworkAddress, AssetTag, Brand, CustomField, CustomFieldOption, DataCenter, DeviceType, FaultEvent, InventoryItem, InventoryTask, MaintenanceContract, ProcurementRecord, Rack, RackUnitAllocation, RepairRecord, ServerRoom, SoftwareLicense, SparePart, SpareStock, SpareStockTransaction, Tag, UserSecurityProfile
 from .services import apply_asset_custom_values, apply_asset_tags, apply_spare_stock_transaction, configure_asset
@@ -19,10 +20,10 @@ class GroupSerializer(serializers.ModelSerializer):
     description = serializers.SerializerMethodField()
     system_managed = serializers.BooleanField(read_only=True, default=True)
 
-    def get_code(self, obj):
+    def get_code(self, obj) -> str | None:
         return ROLE_NAME_TO_CODE.get(obj.name)
 
-    def get_description(self, obj):
+    def get_description(self, obj) -> str:
         code = ROLE_NAME_TO_CODE.get(obj.name)
         return ROLE_DEFINITIONS.get(code, {}).get("description", "")
 
@@ -46,13 +47,13 @@ class UserSerializer(serializers.ModelSerializer):
     assigned_role_code = serializers.SerializerMethodField()
     assigned_role_name = serializers.SerializerMethodField()
 
-    def get_display_name(self, obj):
+    def get_display_name(self, obj) -> str:
         return obj.get_full_name() or obj.username
 
-    def get_assigned_role_code(self, obj):
+    def get_assigned_role_code(self, obj) -> str | None:
         return user_role_code(obj)
 
-    def get_assigned_role_name(self, obj):
+    def get_assigned_role_name(self, obj) -> str:
         code = user_role_code(obj)
         return ROLE_DEFINITIONS.get(code, {}).get("name", "只读审计员")
 
@@ -106,6 +107,14 @@ class UserSerializer(serializers.ModelSerializer):
         model = User
         fields = ["id", "username", "display_name", "first_name", "last_name", "email", "is_active", "is_staff", "groups", "role_code", "assigned_role_code", "assigned_role_name", "password", "last_login", "date_joined"]
         read_only_fields = ["id", "display_name", "is_staff", "groups", "assigned_role_code", "assigned_role_name", "last_login", "date_joined"]
+
+
+class InventoryInspectorSerializer(serializers.Serializer):
+    """Schema-only representation for users who can perform an inventory."""
+
+    id = serializers.IntegerField()
+    username = serializers.CharField()
+    display_name = serializers.CharField()
 
 
 class AssetNetworkAddressSerializer(serializers.ModelSerializer):
@@ -181,7 +190,7 @@ class CustomFieldSerializer(serializers.ModelSerializer):
     device_type_name = serializers.CharField(source="device_type.name", read_only=True)
     field_type_label = serializers.SerializerMethodField()
 
-    def get_field_type_label(self, obj):
+    def get_field_type_label(self, obj) -> str:
         return dict(CustomField.FIELD_TYPES).get(obj.field_type, obj.field_type)
 
     def validate_key(self, value):
@@ -240,7 +249,7 @@ class SparePartSerializer(serializers.ModelSerializer):
     location_count = serializers.IntegerField(read_only=True)
     part_type_label = serializers.SerializerMethodField()
 
-    def get_part_type_label(self, obj):
+    def get_part_type_label(self, obj) -> str:
         return dict(SparePart.PART_TYPES).get(obj.part_type, obj.part_type)
 
     def validate_name(self, value):
@@ -271,7 +280,7 @@ class SpareStockSerializer(serializers.ModelSerializer):
     data_center_name = serializers.CharField(source="data_center.name", read_only=True)
     server_room_name = serializers.CharField(source="server_room.name", read_only=True, allow_null=True)
 
-    def get_part_type_label(self, obj):
+    def get_part_type_label(self, obj) -> str:
         return dict(SparePart.PART_TYPES).get(obj.part.part_type, obj.part.part_type)
 
     class Meta:
@@ -294,10 +303,10 @@ class SpareStockTransactionSerializer(serializers.ModelSerializer):
     operator_name = serializers.SerializerMethodField()
     target_quantity = serializers.IntegerField(write_only=True, required=False, min_value=0)
 
-    def get_operation_type_label(self, obj):
+    def get_operation_type_label(self, obj) -> str:
         return dict(SpareStockTransaction.OPERATION_TYPES).get(obj.operation_type, obj.operation_type)
 
-    def get_operator_name(self, obj):
+    def get_operator_name(self, obj) -> str:
         return (obj.operator.get_full_name() or obj.operator.username) if obj.operator else "已删除账号"
 
     def validate(self, attrs):
@@ -337,13 +346,13 @@ class SparePartDetailSerializer(SparePartSerializer):
     stock_locations = serializers.SerializerMethodField()
     recent_transactions = serializers.SerializerMethodField()
 
-    def get_stock_locations(self, obj):
+    def get_stock_locations(self, obj) -> list[dict[str, Any]]:
         stocks = obj.stocks.select_related("data_center", "server_room").order_by(
             "data_center__name", "server_room__name", "id"
         )
         return SpareStockSerializer(stocks, many=True).data
 
-    def get_recent_transactions(self, obj):
+    def get_recent_transactions(self, obj) -> list[dict[str, Any]]:
         transactions = obj.transactions.select_related(
             "operator", "source_data_center", "source_server_room",
             "target_data_center", "target_server_room",
@@ -374,21 +383,21 @@ class SoftwareLicenseSerializer(serializers.ModelSerializer):
             return "expiring"
         return "normal"
 
-    def get_utilization(self, obj):
+    def get_utilization(self, obj) -> float:
         if not obj.authorized_count:
             return 0
         return round(obj.used_count / obj.authorized_count * 100, 1)
 
-    def get_remaining_count(self, obj):
+    def get_remaining_count(self, obj) -> int:
         return obj.authorized_count - obj.used_count
 
-    def get_status(self, obj):
+    def get_status(self, obj) -> str:
         return self._status(obj)
 
-    def get_status_label(self, obj):
+    def get_status_label(self, obj) -> str:
         return {"over_limit": "超授权", "expired": "已过期", "expiring": "即将到期", "normal": "正常"}[self._status(obj)]
 
-    def get_days_remaining(self, obj):
+    def get_days_remaining(self, obj) -> int | None:
         return (obj.expiry_date - timezone.localdate()).days if obj.expiry_date else None
 
     def validate(self, attrs):
@@ -576,7 +585,7 @@ class AssetSerializer(serializers.ModelSerializer):
     maintenance_contracts = MaintenanceContractSerializer(many=True, read_only=True)
     tag_names = serializers.SerializerMethodField()
 
-    def get_tag_names(self, obj):
+    def get_tag_names(self, obj) -> list[str]:
         return [item.tag.name for item in obj.asset_tags.select_related("tag").all()]
 
     class Meta:
@@ -632,54 +641,54 @@ class AssetListSerializer(serializers.ModelSerializer):
             return records[0] if records else None
         return obj.maintenance_contracts.order_by("-updated_at", "-id").first()
 
-    def get_business_ip(self, obj):
+    def get_business_ip(self, obj) -> str:
         return self._network(obj, "business")
 
-    def get_management_ip(self, obj):
+    def get_management_ip(self, obj) -> str:
         return self._network(obj, "management")
 
-    def get_oob_ip(self, obj):
+    def get_oob_ip(self, obj) -> str:
         return self._network(obj, "oob")
 
-    def get_data_center(self, obj):
+    def get_data_center(self, obj) -> str:
         allocation = self._allocation(obj)
         if allocation:
             return allocation.rack.room.data_center.name
         return obj.asset_data_center.name if obj.asset_data_center_id else ""
 
-    def get_server_room(self, obj):
+    def get_server_room(self, obj) -> str:
         allocation = self._allocation(obj)
         return allocation.rack.room.name if allocation else ""
 
-    def get_rack_code(self, obj):
+    def get_rack_code(self, obj) -> str:
         allocation = self._allocation(obj)
         return allocation.rack.code if allocation else ""
 
-    def get_u_range(self, obj):
+    def get_u_range(self, obj) -> str:
         allocation = self._allocation(obj)
         return f"U{allocation.start_u}–U{allocation.end_u}" if allocation else ""
 
-    def get_purchase_date(self, obj):
+    def get_purchase_date(self, obj) -> date | None:
         record = self._procurement(obj)
         return record.purchase_date if record else None
 
-    def get_supplier(self, obj):
+    def get_supplier(self, obj) -> str:
         record = self._procurement(obj)
         return record.supplier if record else ""
 
-    def get_purchase_order_no(self, obj):
+    def get_purchase_order_no(self, obj) -> str:
         record = self._procurement(obj)
         return record.order_no if record else ""
 
-    def get_maintenance_provider(self, obj):
+    def get_maintenance_provider(self, obj) -> str:
         record = self._maintenance(obj)
         return record.provider if record else ""
 
-    def get_maintenance_expiry_date(self, obj):
+    def get_maintenance_expiry_date(self, obj) -> date | None:
         record = self._maintenance(obj)
         return record.expiry_date if record else None
 
-    def get_tag_names(self, obj):
+    def get_tag_names(self, obj) -> list[str]:
         return [item.tag.name for item in obj.asset_tags.select_related("tag").all()]
 
     class Meta:
@@ -710,19 +719,19 @@ class AssetDetailSerializer(serializers.ModelSerializer):
     custom_fields = serializers.SerializerMethodField()
     custom_values = serializers.SerializerMethodField()
 
-    def get_inventory_records(self, obj):
+    def get_inventory_records(self, obj) -> list[dict[str, Any]]:
         return InventoryItemSerializer(
             obj.inventory_items.select_related("asset", "task", "task__data_center", "task__server_room", "checked_by", "actual_rack__room__data_center"),
             many=True,
         ).data
 
-    def get_tags(self, obj):
+    def get_tags(self, obj) -> list[dict[str, Any]]:
         return [{"id": item.tag_id, "name": item.tag.name, "is_active": item.tag.is_active} for item in obj.asset_tags.select_related("tag").all()]
 
-    def get_custom_fields(self, obj):
+    def get_custom_fields(self, obj) -> list[dict[str, Any]]:
         return _asset_custom_fields(obj)
 
-    def get_custom_values(self, obj):
+    def get_custom_values(self, obj) -> dict[str, Any]:
         return _asset_custom_values(obj)
 
     class Meta:
@@ -750,6 +759,8 @@ class AssetWriteSerializer(serializers.ModelSerializer):
     def validate(self, attrs):
         if "category" in self.initial_data:
             raise serializers.ValidationError({"category": "设备分类字段已移除，请使用设备类型"})
+        if "asset_type" in self.initial_data:
+            raise serializers.ValidationError({"asset_type": "资产类型字段仅用于展示，请使用设备类型"})
         brand = attrs.get("brand")
         if brand and not brand.is_active and (not self.instance or self.instance.brand_id != brand.pk):
             raise serializers.ValidationError({"brand": "停用的品牌不能用于新资产或修改资产"})
@@ -832,28 +843,28 @@ class InventoryItemSerializer(serializers.ModelSerializer):
     actual_server_room = serializers.CharField(source="actual_rack.room.name", read_only=True, allow_null=True)
     actual_rack_code = serializers.CharField(source="actual_rack.code", read_only=True, allow_null=True)
 
-    def get_status_label(self, obj):
+    def get_status_label(self, obj) -> str:
         return INVENTORY_STATUS_LABELS.get(obj.status, obj.status)
 
-    def get_checked_by_name(self, obj):
+    def get_checked_by_name(self, obj) -> str:
         return (obj.checked_by.get_full_name() or obj.checked_by.username) if obj.checked_by else ""
 
     def _snapshot(self, obj):
         return obj.system_snapshot or {}
 
-    def get_system_data_center(self, obj):
+    def get_system_data_center(self, obj) -> str:
         return self._snapshot(obj).get("data_center", "")
 
-    def get_system_server_room(self, obj):
+    def get_system_server_room(self, obj) -> str:
         return self._snapshot(obj).get("server_room", "")
 
-    def get_system_rack_code(self, obj):
+    def get_system_rack_code(self, obj) -> str:
         return self._snapshot(obj).get("rack_code", "")
 
-    def get_system_start_u(self, obj):
+    def get_system_start_u(self, obj) -> int | None:
         return self._snapshot(obj).get("start_u")
 
-    def get_system_end_u(self, obj):
+    def get_system_end_u(self, obj) -> int | None:
         return self._snapshot(obj).get("end_u")
 
     def validate(self, attrs):
@@ -922,10 +933,10 @@ class InventoryTaskSerializer(serializers.ModelSerializer):
     inspector_name = serializers.SerializerMethodField()
     summary = serializers.SerializerMethodField()
 
-    def get_inspector_name(self, obj):
+    def get_inspector_name(self, obj) -> str:
         return obj.inspector.get_full_name() or obj.inspector.username
 
-    def get_summary(self, obj):
+    def get_summary(self, obj) -> dict[str, Any]:
         prefetched = getattr(obj, "_prefetched_objects_cache", {}).get("items")
         if prefetched is not None:
             counts = Counter(item.status for item in prefetched)
@@ -986,10 +997,10 @@ class RackSerializer(serializers.ModelSerializer):
     free_u = serializers.SerializerMethodField()
     status_label = serializers.SerializerMethodField()
 
-    def get_assets_count(self, obj):
+    def get_assets_count(self, obj) -> int:
         return len(obj.allocations.all())
 
-    def get_used_u(self, obj):
+    def get_used_u(self, obj) -> int:
         """Return effective occupied U, including a single-U gap between devices.
 
         The gap rule is shared by the placement service, dashboard aggregates,
@@ -1006,10 +1017,10 @@ class RackSerializer(serializers.ModelSerializer):
                 occupied += 1
         return min(occupied, obj.total_u or 0)
 
-    def get_free_u(self, obj):
+    def get_free_u(self, obj) -> int:
         return max((obj.total_u or 0) - self.get_used_u(obj), 0)
 
-    def get_status_label(self, obj):
+    def get_status_label(self, obj) -> str:
         return dict(Rack.STATUS).get(obj.status, obj.status)
 
     class Meta:
@@ -1062,7 +1073,7 @@ class AuditLogSerializer(serializers.ModelSerializer):
     actor_username = serializers.CharField(source="actor.username", read_only=True, allow_null=True)
     actor_display_name = serializers.SerializerMethodField()
 
-    def get_actor_display_name(self, obj):
+    def get_actor_display_name(self, obj) -> str:
         return (obj.actor.get_full_name() or obj.actor.username) if obj.actor else "已删除账号"
 
     class Meta:
@@ -1079,7 +1090,7 @@ class FaultEventSerializer(serializers.ModelSerializer):
     asset_name = serializers.CharField(source="asset.name", read_only=True)
     repair = serializers.SerializerMethodField()
 
-    def get_repair(self, obj):
+    def get_repair(self, obj) -> dict[str, Any] | None:
         repair = getattr(obj, "repair", None)
         return RepairRecordSerializer(repair).data if repair else None
 

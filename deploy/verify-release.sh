@@ -26,6 +26,46 @@ run_app() {
   runuser -u "$APP_USER" -- "$APP_DIR/backend/run.sh" "$@"
 }
 
+env_value() {
+  local key="$1"
+  awk -F= -v key="$key" '$1 == key { sub(/^[^=]*=/, ""); print; exit }' "$ENV_FILE"
+}
+
+production_security_hints() {
+  local debug_value secret_value hosts_value risk_count=0
+  debug_value="$(env_value DJANGO_DEBUG)"
+  secret_value="$(env_value DJANGO_SECRET_KEY)"
+  hosts_value="$(env_value DJANGO_ALLOWED_HOSTS)"
+
+  log "检查生产安全配置（仅提示，不阻断验收）"
+  if [[ "$debug_value" != "0" ]]; then
+    echo "安全提示 [高]：DJANGO_DEBUG 未设置为 0。生产环境应关闭调试模式。" >&2
+    risk_count=$((risk_count + 1))
+  fi
+  if [[ -z "$secret_value" || "$secret_value" == "dev-only-change-me" || ${#secret_value} -lt 32 ]]; then
+    echo "安全提示 [高]：DJANGO_SECRET_KEY 缺失或过短，请使用随机且仅生产环境可读的密钥。" >&2
+    risk_count=$((risk_count + 1))
+  fi
+  if [[ -z "$hosts_value" || "$hosts_value" == "*" ]]; then
+    echo "安全提示 [中]：DJANGO_ALLOWED_HOSTS 过宽，请限制为实际域名或 IP。" >&2
+    risk_count=$((risk_count + 1))
+  fi
+  case "${BASE_URL,,}" in
+    https://*) ;;
+    *)
+      echo "安全提示 [中]：当前 BASE_URL 未使用 HTTPS；正式入口应启用 HTTPS、安全 Cookie、HSTS 和 X-Frame-Options。" >&2
+      risk_count=$((risk_count + 1))
+      ;;
+  esac
+  if [[ "$risk_count" -eq 0 ]]; then
+    log "生产安全配置提示：未发现明显风险（仍需由网关确认 HTTPS 和安全响应头）。"
+  else
+    log "生产安全配置提示：发现 $risk_count 项建议，未阻断本次验收。"
+  fi
+}
+
+production_security_hints
+
 log "检查 systemd 服务"
 systemctl is-active --quiet itam || fail "itam.service 未运行。"
 systemctl is-active --quiet nginx || fail "nginx 未运行。"

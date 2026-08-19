@@ -82,4 +82,20 @@ REST_FRAMEWORK = {
     "DEFAULT_PAGINATION_CLASS": "assets.pagination.StandardPagination",
     "PAGE_SIZE": 50,
 }
-SPECTACULAR_SETTINGS = {"TITLE": "Infrix API", "VERSION": "1.0.0", "SERVE_INCLUDE_SCHEMA": False}
+SPECTACULAR_SETTINGS = {
+    "TITLE": "Infrix API",
+    "VERSION": "1.0.0",
+    "SERVE_INCLUDE_SCHEMA": False,
+    # Keep generated enum component names stable when several models expose a
+    # field named ``status`` with different choice sets.
+    "ENUM_NAME_OVERRIDES": {
+        "AssetStatusEnum": "assets.models.Asset.STATUS",
+        "RackStatusEnum": "assets.models.Rack.STATUS",
+        "InventoryItemStatusEnum": "assets.models.InventoryItem.STATUS",
+        "InventoryTaskStatusEnum": "assets.models.InventoryTask.STATUS",
+        "PartTypeEnum": "assets.models.SparePart.PART_TYPES",
+        "OperationTypeEnum": "assets.models.SpareStockTransaction.OPERATION_TYPES",
+        "RoleEnum": "assets.models.AssetNetworkAddress.ROLE",
+        "FieldTypeEnum": "assets.models.CustomField.FIELD_TYPES",
+    },
+}
