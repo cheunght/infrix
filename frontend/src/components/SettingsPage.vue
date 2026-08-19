@@ -4,8 +4,15 @@ import PagedTable from "./PagedTable.vue";
 import SearchField from "./SearchField.vue";
 import CustomFieldSettingsPage from "./CustomFieldSettingsPage.vue";
 import TagSettingsPage from "./TagSettingsPage.vue";
+import PageContainer from "./page/PageContainer.vue";
+import PageContent from "./page/PageContent.vue";
+import PageHeader from "./page/PageHeader.vue";
+import PageTabs, { type PageTabItem } from "./page/PageTabs.vue";
+import PageToolbar from "./page/PageToolbar.vue";
+import type { SettingsContext } from "../types/page-context";
 
-const props = defineProps<{ context: Record<string, any> }>();
+const props = defineProps<{ context: SettingsContext }>();
+const context = props.context;
 const {
   loading,
   settingsSection,
@@ -37,22 +44,33 @@ const {
   auditCount,
   changeAuditPage,
   changeAuditPageSize,
-} = props.context;
+} = context;
 
 const organizationTab = ref<"users" | "roles">("users");
+const dictionaryTabs: PageTabItem[] = [
+  { label: "品牌", value: "brands" },
+  { label: "设备类型", value: "device-types" },
+  { label: "数据中心", value: "data-centers" },
+];
 </script>
 
 <template>
   <div class="itam-page settings-page">
         <CustomFieldSettingsPage v-if="settingsSection === 'custom-fields'" :context="props.context" />
         <TagSettingsPage v-else-if="settingsSection === 'tags'" :context="props.context" />
-        <el-card v-else-if="settingsSection === 'dictionaries'" shadow="never"
-          ><template #header><el-tabs v-model="dictionarySection" @tab-change="() => loadDictionaries()">
-            <el-tab-pane label="品牌" name="brands" />
-            <el-tab-pane label="设备类型" name="device-types" />
-            <el-tab-pane label="数据中心" name="data-centers" />
-          </el-tabs></template>
-          <div class="ep-toolbar">
+        <PageContainer v-else-if="settingsSection === 'dictionaries'">
+          <template #header>
+            <PageHeader description="维护品牌、设备类型和数据中心基础资料" />
+          </template>
+          <template #subnav>
+            <PageTabs
+              v-model="dictionarySection"
+              :items="dictionaryTabs"
+              @update:model-value="() => loadDictionaries()"
+            />
+          </template>
+          <template #toolbar>
+            <PageToolbar>
               <SearchField
                 class="itam-filter-search"
                 v-model="dictionarySearch"
@@ -60,57 +78,75 @@ const organizationTab = ref<"users" | "roles">("users");
                 :aria-label="`搜索${currentDictionaryLabel}`"
                 @search="() => loadDictionaries()"
               />
-              <span class="ep-toolbar-spacer"></span
-              ><div class="ep-toolbar-actions"><el-button
-                type="primary"
-                :disabled="!can('settings.manage')"
-                @click="openDictionaryModal()"
-                >新增{{ currentDictionaryLabel }}</el-button></div
-              >
-            </div>
-          <el-table
-            :data="currentDictionaryItems"
-            :empty-text="`暂无${currentDictionaryLabel}`"
-            ><el-table-column
-              prop="name"
-              :label="currentDictionaryLabel"
-            /><el-table-column v-if="dictionarySection === 'device-types'" label="颜色" width="150"
-              ><template #default="{ row }"><span class="color-chip" :style="{ background: row.color || '#1677EF' }" />{{ row.color || '#1677EF' }}</template
-            ></el-table-column
-            /><el-table-column label="状态" width="100"
-              ><template #default="{ row }"
-                ><el-tag :type="row.is_active ? 'success' : 'info'">{{
-                  row.is_active ? "启用" : "停用"
-                }}</el-tag></template
-              ></el-table-column
-            ><el-table-column
-              prop="assets_count"
-              label="资产数量"
-              width="110"
-            /><el-table-column label="操作" width="210"
-              ><template #default="{ row }"
-                ><div class="ep-table-actions"><el-button
-                  link
+              <template #actions>
+                <el-button
                   type="primary"
                   :disabled="!can('settings.manage')"
-                  @click="openDictionaryModal(row)"
-                  >编辑</el-button
-                ><el-button
-                  link
-                  :disabled="!can('settings.manage')"
-                  @click="toggleDictionary(row)"
-                  >{{ row.is_active ? "停用" : "启用" }}</el-button
-                ><el-button
-                  link
-                  type="danger"
-                  :disabled="!can('settings.manage') || dictionaryItemUsed(row)"
-                  @click="deleteDictionary(row)"
-                  >删除</el-button></div
-                ></template
-              ></el-table-column
-            ></el-table
-          ></el-card
-        >
+                  @click="openDictionaryModal()"
+                >
+                  新增{{ currentDictionaryLabel }}
+                </el-button>
+              </template>
+            </PageToolbar>
+          </template>
+          <PageContent surface>
+            <el-table
+              :data="currentDictionaryItems"
+              :empty-text="`暂无${currentDictionaryLabel}`"
+              table-layout="fixed"
+            >
+              <el-table-column
+                prop="name"
+                :label="currentDictionaryLabel"
+                min-width="220"
+                show-overflow-tooltip
+              />
+              <el-table-column v-if="dictionarySection === 'device-types'" label="颜色" width="150">
+                <template #default="{ row }">
+                  <span class="color-chip" :style="{ background: row.color || '#1677EF' }" />
+                  {{ row.color || "#1677EF" }}
+                </template>
+              </el-table-column>
+              <el-table-column label="状态" width="100">
+                <template #default="{ row }">
+                  <el-tag :type="row.is_active ? 'success' : 'info'">
+                    {{ row.is_active ? "启用" : "停用" }}
+                  </el-tag>
+                </template>
+              </el-table-column>
+              <el-table-column prop="assets_count" label="资产数量" width="110" />
+              <el-table-column label="操作" width="210" fixed="right">
+                <template #default="{ row }">
+                  <div class="ep-table-actions">
+                    <el-button
+                      link
+                      type="primary"
+                      :disabled="!can('settings.manage')"
+                      @click="openDictionaryModal(row)"
+                    >
+                      编辑
+                    </el-button>
+                    <el-button
+                      link
+                      :disabled="!can('settings.manage')"
+                      @click="toggleDictionary(row)"
+                    >
+                      {{ row.is_active ? "停用" : "启用" }}
+                    </el-button>
+                    <el-button
+                      link
+                      type="danger"
+                      :disabled="!can('settings.manage') || dictionaryItemUsed(row)"
+                      @click="deleteDictionary(row)"
+                    >
+                      删除
+                    </el-button>
+                  </div>
+                </template>
+              </el-table-column>
+            </el-table>
+          </PageContent>
+        </PageContainer>
         <section v-else-if="settingsSection === 'organization' && isAdmin">
           <el-tabs v-model="organizationTab" class="organization-tabs">
             <el-tab-pane label="用户账号" name="users">

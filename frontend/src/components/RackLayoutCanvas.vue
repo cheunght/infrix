@@ -1,5 +1,7 @@
 <script setup lang="ts">
-const props = defineProps<{ context: Record<string, any> }>();
+import type { RackCanvasContext } from "../types/page-context";
+const props = defineProps<{ context: RackCanvasContext }>();
+const context = props.context;
 const {
   rackViewTitle,
   focusedRack,
@@ -13,7 +15,7 @@ const {
   focusedRackId,
   openRackAssetDetail,
   detailAsset,
-} = props.context;
+} = context;
 </script>
 
 <template>

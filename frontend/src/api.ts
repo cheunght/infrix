@@ -7,11 +7,13 @@ export type PageResult<T> = {
   results: T[];
 };
 
-export function pageItems<T>(payload: PageResult<T> | T[]): T[] {
+export function pageItems<T>(payload: PageResult<T> | T[] | null | undefined): T[] {
+  if (!payload) return [];
   return Array.isArray(payload) ? payload : payload.results;
 }
 
-export function pageTotal<T>(payload: PageResult<T> | T[]): number {
+export function pageTotal<T>(payload: PageResult<T> | T[] | null | undefined): number {
+  if (!payload) return 0;
   return Array.isArray(payload) ? payload.length : payload.count;
 }
 
@@ -60,6 +62,68 @@ export class ApiError extends Error {
     this.status = status;
     this.details = details;
   }
+}
+
+export type DownloadOptions = RequestInit & {
+  filename?: string;
+  onUnauthorized?: () => void;
+};
+
+/** Download an authenticated file without navigating away from the SPA. */
+export async function downloadFile(path: string, options: DownloadOptions = {}): Promise<void> {
+  const { filename, onUnauthorized, ...requestOptions } = options;
+  const response = await fetch(`${apiBase}${path}`, {
+    ...requestOptions,
+    credentials: "include",
+  });
+  if (!response.ok) {
+    if (response.status === 401) onUnauthorized?.();
+    const text = await response.text();
+    let details: unknown = text;
+    let message = statusMessage(response.status);
+    try {
+      const payload = JSON.parse(text);
+      details = payload;
+      message = flattenError(payload.detail ?? payload) || message;
+    } catch {
+      // Never expose raw HTML error pages to users.
+    }
+    throw new ApiError(response.status, message, details);
+  }
+  const blob = await response.blob();
+  const disposition = response.headers.get("Content-Disposition") || "";
+  const encodedName = disposition.match(/filename\*=UTF-8''([^;]+)/i)?.[1];
+  const plainName = disposition.match(/filename="?([^";]+)"?/i)?.[1];
+  const resolvedName = filename || (encodedName ? decodeURIComponent(encodedName) : plainName) || "download";
+  const url = URL.createObjectURL(blob);
+  const anchor = document.createElement("a");
+  anchor.href = url;
+  anchor.download = resolvedName;
+  anchor.style.display = "none";
+  document.body.appendChild(anchor);
+  anchor.click();
+  anchor.remove();
+  URL.revokeObjectURL(url);
+}
+
+export function createRequestCoordinator() {
+  const controllers = new Map<string, AbortController>();
+  return {
+    next(key: string) {
+      controllers.get(key)?.abort();
+      const controller = new AbortController();
+      controllers.set(key, controller);
+      return controller;
+    },
+    cancel(key: string) {
+      controllers.get(key)?.abort();
+      controllers.delete(key);
+    },
+    cancelAll() {
+      controllers.forEach((controller) => controller.abort());
+      controllers.clear();
+    },
+  };
 }
 
 function statusMessage(status: number): string {

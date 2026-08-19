@@ -1,14 +1,6 @@
 import { defineComponent, h, type Component } from "vue";
 import { createWebHistory, createRouter, type RouteLocationRaw, type RouteRecordRaw } from "vue-router";
 import type { Page } from "./types";
-import DashboardPage from "./components/DashboardPage.vue";
-import AssetLedgerPage from "./components/AssetLedgerPage.vue";
-import RackViewPage from "./components/RackViewPage.vue";
-import RepairPage from "./components/RepairPage.vue";
-import LicensePage from "./components/LicensePage.vue";
-import SparePartPage from "./components/SparePartPage.vue";
-import InventoryPage from "./components/InventoryPage.vue";
-import SettingsPage from "./components/SettingsPage.vue";
 
 export type SettingsSection =
   | "dictionaries"
@@ -28,15 +20,15 @@ const RoutePlaceholder = defineComponent({
   },
 });
 
-const pageComponents: Partial<Record<Page, Component>> = {
-  dashboard: DashboardPage,
-  ledger: AssetLedgerPage,
-  racks: RackViewPage,
-  repairs: RepairPage,
-  licenses: LicensePage,
-  spares: SparePartPage,
-  inventory: InventoryPage,
-  settings: SettingsPage,
+const pageComponents: Partial<Record<Page, () => Promise<Component>>> = {
+  dashboard: () => import("./components/DashboardPage.vue"),
+  ledger: () => import("./components/AssetLedgerPage.vue"),
+  racks: () => import("./components/RackViewPage.vue"),
+  repairs: () => import("./components/RepairPage.vue"),
+  licenses: () => import("./components/LicensePage.vue"),
+  spares: () => import("./components/SparePartPage.vue"),
+  inventory: () => import("./components/InventoryPage.vue"),
+  settings: () => import("./components/SettingsPage.vue"),
 };
 
 declare module "vue-router" {

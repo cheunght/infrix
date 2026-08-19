@@ -1,7 +1,8 @@
 <script setup lang="ts">
 import { proxyRefs } from "vue";
 import SearchField from "./SearchField.vue";
-const props = defineProps<{ context: Record<string, any> }>();
+import type { TagContext } from "../types/page-context";
+const props = defineProps<{ context: TagContext }>();
 const c = proxyRefs(props.context);
 </script>
 

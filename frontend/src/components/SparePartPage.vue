@@ -3,20 +3,23 @@ import { computed, ref, watch } from "vue";
 import { Delete, Edit, List, MoreFilled, Plus } from "@element-plus/icons-vue";
 import PagedTable from "./PagedTable.vue";
 import SearchField from "./SearchField.vue";
-import { pageItems, pageTotal, type PageResult } from "../api";
 import type { DataCenter, DictionaryItem, ServerRoom, SparePart, SpareStock, SpareTransaction } from "../types";
+import type { SpareContext } from "../types/page-context";
 
-const props = defineProps<{ context: Record<string, any> }>();
+const props = defineProps<{ context: SpareContext }>();
+const context = props.context;
 const {
   loading, can, spareParts, sparePartCount, sparePage, sparePageSize, spareSearch, spareType, spareActive,
   spareListDataCenter, spareListRoom, spareRooms, sparePartForm, editingSparePart, showSparePartModal,
   openSparePartModal, saveSparePart, toggleSparePart, deleteSparePart, searchSpareParts, changeSparePage,
   changeSparePageSize, openSpareOperation, spareOperationType, spareOperationForm, showSpareOperationModal,
   spareOperationSaving, spareOperationCurrentQuantity, spareOperationLocationLabel, spareOperationLocationLocked,
-  saveSpareOperation, spareOperationLabel, dataCenters, brands, request: contextRequest,
-} = props.context;
-
-const request = contextRequest as <T>(path: string, options?: RequestInit) => Promise<T>;
+  saveSpareOperation, spareOperationLabel, dataCenters, brands,
+  stockLocations, stockLoading, loadStockLocations: loadStockLocationsInContext, transactionRows, transactionCount,
+  transactionPage, transactionPageSize, transactionLoading, transactionError, loadTransactions: loadTransactionsInContext,
+  changeTransactionPage: changeTransactionPageInContext,
+  changeTransactionPageSize: changeTransactionPageSizeInContext,
+} = context;
 
 const partTypes = [
   { value: "hard_disk", label: "备用硬盘" }, { value: "memory", label: "内存" },
@@ -27,17 +30,8 @@ const partTypes = [
 const activeBrands = computed(() => (brands.value as DictionaryItem[]).filter((item) => item.is_active));
 const activeDataCenters = computed(() => (dataCenters.value as DataCenter[]).filter((item) => item.is_active));
 const expandedRows = ref<number[]>([]);
-const stockLocations = ref<Record<number, SpareStock[]>>({});
-const stockLoading = ref<Record<number, boolean>>({});
-const stockRequestSerial = ref(0);
 const transactionDrawerOpen = ref(false);
 const transactionPart = ref<SparePart | null>(null);
-const transactionRows = ref<SpareTransaction[]>([]);
-const transactionCount = ref(0);
-const transactionPage = ref(1);
-const transactionPageSize = ref(20);
-const transactionLoading = ref(false);
-const transactionError = ref("");
 
 const selectedOperation = computed(() => String(spareOperationType.value || "inbound"));
 const selectedPart = computed(() => transactionPart.value);
@@ -56,7 +50,7 @@ const operationMax = computed(() => {
 const operationCannotOperate = computed(() => {
   if (["outbound", "transfer", "scrap"].includes(selectedOperation.value)) return operationMax.value === 0;
   if (selectedOperation.value === "adjustment" && spareOperationCurrentQuantity.value !== null) {
-    return Number(spareOperationForm.target_quantity || 0) === Number(spareOperationCurrentQuantity.value);
+    return Number(spareOperationForm.value.target_quantity || 0) === Number(spareOperationCurrentQuantity.value);
   }
   return false;
 });
@@ -76,17 +70,7 @@ function transactionLocation(row: SpareTransaction) {
   return label(row.source_data_center_name, row.source_server_room_name);
 }
 async function loadStockLocations(partId: number) {
-  const serial = ++stockRequestSerial.value;
-  stockLoading.value = { ...stockLoading.value, [partId]: true };
-  try {
-    const result = await request<PageResult<SpareStock> | SpareStock[]>(`/spare-stocks/?part=${partId}&page_size=100`);
-    if (serial !== stockRequestSerial.value) return;
-    stockLocations.value = { ...stockLocations.value, [partId]: pageItems(result) };
-  } catch {
-    if (serial === stockRequestSerial.value) stockLocations.value = { ...stockLocations.value, [partId]: [] };
-  } finally {
-    if (serial === stockRequestSerial.value) stockLoading.value = { ...stockLoading.value, [partId]: false };
-  }
+  await loadStockLocationsInContext(partId);
 }
 function stocksFor(part: SparePart) { return stockLocations.value[part.id] || []; }
 async function handleExpandChange(row: SparePart, rows: SparePart[]) {
@@ -100,26 +84,21 @@ function handleLocationCommand(command: { part: SparePart; stock: SpareStock; op
   openLocationOperation(command.part, command.operation, command.stock);
 }
 function onSpareListDataCenterChange() { spareListRoom.value = ""; searchSpareParts(); }
-function onOperationSourceCenterChange() { spareOperationForm.source_server_room = ""; }
-function onOperationTargetCenterChange() { spareOperationForm.target_server_room = ""; }
+function onOperationSourceCenterChange() { spareOperationForm.value.source_server_room = ""; }
+function onOperationTargetCenterChange() { spareOperationForm.value.target_server_room = ""; }
 async function loadTransactions() {
-  if (!transactionPart.value) return;
-  transactionLoading.value = true; transactionError.value = "";
-  try {
-    const params = new URLSearchParams({ part: String(transactionPart.value.id), page: String(transactionPage.value), page_size: String(transactionPageSize.value) });
-    const result = await request<PageResult<SpareTransaction> | SpareTransaction[]>(`/spare-transactions/?${params.toString()}`);
-    transactionRows.value = pageItems(result); transactionCount.value = pageTotal(result);
-  } catch (error) {
-    transactionError.value = error instanceof Error ? error.message : "库存流水加载失败";
-    transactionRows.value = []; transactionCount.value = 0;
-  } finally { transactionLoading.value = false; }
+  if (transactionPart.value) await loadTransactionsInContext(transactionPart.value.id);
 }
-function openTransactionDrawer(part: SparePart) { transactionPart.value = part; transactionPage.value = 1; transactionDrawerOpen.value = true; loadTransactions(); }
-function changeTransactionPage(page: number) { transactionPage.value = page; loadTransactions(); }
-function changeTransactionPageSize(size: number) { transactionPageSize.value = size; transactionPage.value = 1; loadTransactions(); }
+function openTransactionDrawer(part: SparePart) { transactionPart.value = part; transactionPage.value = 1; transactionDrawerOpen.value = true; void loadTransactions(); }
+function changeTransactionPage(page: number) {
+  if (transactionPart.value) changeTransactionPageInContext(page, transactionPart.value.id);
+}
+function changeTransactionPageSize(size: number) {
+  if (transactionPart.value) changeTransactionPageSizeInContext(size, transactionPart.value.id);
+}
 function refreshExpandedPart() {
   expandedRows.value.forEach((partId) => loadStockLocations(partId));
-  if (transactionDrawerOpen.value) loadTransactions();
+  if (transactionDrawerOpen.value) void loadTransactions();
 }
 watch(showSpareOperationModal, (open, wasOpen) => { if (!open && wasOpen) refreshExpandedPart(); });
 </script>

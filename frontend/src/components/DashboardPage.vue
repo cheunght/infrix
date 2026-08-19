@@ -18,8 +18,9 @@ import type {
   DashboardRecentChange,
   DashboardStatus,
 } from "../types";
+import type { DashboardContext } from "../types/page-context";
 
-const props = defineProps<{ context: Record<string, any> }>();
+const props = defineProps<{ context: DashboardContext }>();
 const {
   dashboard,
   dashboardLoading,

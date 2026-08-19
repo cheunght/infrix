@@ -2,8 +2,10 @@
 import { Download, Warning } from "@element-plus/icons-vue";
 import PagedTable from "./PagedTable.vue";
 import SearchField from "./SearchField.vue";
+import type { RepairContext } from "../types/page-context";
 
-const props = defineProps<{ context: Record<string, any> }>();
+const props = defineProps<{ context: RepairContext }>();
+const context = props.context;
 const {
   loading,
   repairKeyword,
@@ -22,7 +24,7 @@ const {
   repairCount,
   changeRepairPage,
   changeRepairPageSize,
-} = props.context;
+} = context;
 </script>
 
 <template>

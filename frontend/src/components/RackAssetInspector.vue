@@ -1,8 +1,9 @@
 <script setup lang="ts">
 import { Close } from "@element-plus/icons-vue";
 import AssetDetailContent from "./AssetDetailContent.vue";
+import type { RackInspectorContext } from "../types/page-context";
 
-const props = defineProps<{ context: Record<string, any> }>();
+const props = defineProps<{ context: RackInspectorContext }>();
 const { rackDetailOpen, detailAsset, detailLoading, detailError, closeAssetDetail } = props.context;
 </script>
 

@@ -3,8 +3,10 @@ import { CopyDocument, Delete, Download, Edit, Operation, Plus, Upload, Warning 
 import type { Asset } from "../types";
 import PagedTable from "./PagedTable.vue";
 import SearchField from "./SearchField.vue";
+import type { AssetLedgerContext } from "../types/page-context";
 
-const props = defineProps<{ context: Record<string, any> }>();
+const props = defineProps<{ context: AssetLedgerContext }>();
+const context = props.context;
 const {
   loading,
   assetSearch,
@@ -36,7 +38,7 @@ const {
   assetCount,
   changeAssetPage,
   changeAssetPageSize,
-} = props.context;
+} = context;
 </script>
 
 <template>
@@ -50,7 +52,7 @@ const {
                 aria-label="搜索资产"
                 @search="searchLedger"
               />
-              <el-select class="itam-filter-select" v-model="assetTagFilter" clearable filterable placeholder="标签" @change="searchLedger"><el-option v-for="tag in tags.filter((item: any) => item.is_active)" :key="tag.id" :label="tag.name" :value="tag.name" /></el-select>
+              <el-select class="itam-filter-select" v-model="assetTagFilter" clearable filterable placeholder="标签" @change="searchLedger"><el-option v-for="tag in tags.filter((item) => item.is_active)" :key="tag.id" :label="tag.name" :value="tag.name" /></el-select>
               <el-popover placement="bottom" :width="240" trigger="click"
                 ><template #reference
                   ><el-button :icon="Operation">显示列</el-button></template

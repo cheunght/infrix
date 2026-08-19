@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { proxyRefs } from "vue";
-const props = defineProps<{ context: Record<string, any> }>();
+import type { CustomFieldContext } from "../types/page-context";
+const props = defineProps<{ context: CustomFieldContext }>();
 const c = proxyRefs(props.context);
 </script>
 

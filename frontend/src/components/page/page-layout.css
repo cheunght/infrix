@@ -1,0 +1,237 @@
+:root {
+  --page-padding-x: 24px;
+  --page-padding-y: 20px;
+  --space-xs: 4px;
+  --space-sm: 8px;
+  --space-md: 12px;
+  --space-lg: 16px;
+  --space-xl: 24px;
+  --space-2xl: 32px;
+  --page-header-min-height: 48px;
+  --page-tabs-height: 44px;
+  --page-toolbar-min-height: 56px;
+  --content-radius: 8px;
+}
+
+.page-container {
+  display: flex;
+  min-width: 0;
+  width: 100%;
+  flex-direction: column;
+  margin: 0;
+  padding: 0;
+}
+
+.page-container__header,
+.page-container__subnav,
+.page-container__toolbar {
+  min-width: 0;
+  margin: 0 0 var(--space-lg);
+}
+
+.page-container__body {
+  min-width: 0;
+  width: 100%;
+}
+
+/* When a page has both secondary navigation and filters, keep them in the
+   same control band as a no-tab page.  This gives every list page the same
+   header-to-content baseline without inserting an empty placeholder row. */
+.page-container--compact-controls {
+  display: grid;
+  grid-template-columns: max-content minmax(0, 1fr);
+  column-gap: var(--space-lg);
+  row-gap: var(--space-lg);
+  align-items: end;
+}
+
+.page-container--compact-controls > .page-container__header,
+.page-container--compact-controls > .page-container__body {
+  grid-column: 1 / -1;
+}
+
+.page-container--compact-controls > .page-container__subnav,
+.page-container--compact-controls > .page-container__toolbar {
+  min-width: 0;
+  margin: 0;
+}
+
+.page-container--compact-controls > .page-container__subnav {
+  align-self: end;
+}
+
+.page-container--compact-controls > .page-container__toolbar {
+  width: 100%;
+}
+
+/* The legacy stylesheet contains a naked `header { margin-bottom: 28px; }`
+   rule.  Keep the new page header completely scoped so it cannot introduce
+   an unexpected vertical gap when it is mounted inside a routed page. */
+header.page-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-lg);
+  box-sizing: border-box;
+  min-height: var(--page-header-min-height);
+  margin: 0 !important;
+  padding: 0 !important;
+}
+
+.page-header__copy {
+  min-width: 0;
+}
+
+.page-header__leading {
+  display: flex;
+  align-items: center;
+  gap: var(--space-sm);
+  min-width: 0;
+}
+
+.page-header__leading-action {
+  flex: 0 0 auto;
+}
+
+.page-header__title {
+  margin: 0;
+  color: var(--itam-sidebar-text, #24324a);
+  font-size: 20px;
+  font-weight: 600;
+  line-height: 24px;
+}
+
+.page-header__description {
+  margin: 0;
+  color: var(--itam-sidebar-muted, #7183a0);
+  font-size: 13px;
+  line-height: 18px;
+}
+
+.page-header__actions,
+.page-toolbar__actions {
+  display: flex;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: var(--space-sm);
+  min-width: 0;
+}
+
+.page-tabs {
+  height: var(--page-tabs-height);
+  margin: 0;
+  border-bottom: 1px solid var(--el-border-color-lighter);
+}
+
+.page-tabs .el-tabs__header {
+  margin: 0;
+}
+
+.page-tabs .el-tabs__nav-wrap::after {
+  background-color: transparent;
+}
+
+.page-tabs .el-tabs__item {
+  height: var(--page-tabs-height);
+  line-height: var(--page-tabs-height);
+  padding: 0 var(--space-lg);
+  color: var(--el-text-color-secondary);
+}
+
+.page-tabs .el-tabs__item.is-active {
+  color: var(--itam-primary-blue, #2563eb);
+}
+
+.page-tabs .el-tabs__active-bar {
+  height: 2px;
+  background-color: var(--itam-primary-blue, #2563eb);
+}
+
+.page-toolbar {
+  min-height: var(--page-toolbar-min-height);
+  margin: 0;
+  flex-wrap: nowrap;
+}
+
+.page-toolbar > .ep-toolbar-spacer {
+  flex: 1 1 auto;
+}
+
+.page-toolbar > .ep-toolbar-actions {
+  display: flex;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: var(--space-sm);
+  min-width: 0;
+  margin-left: auto;
+}
+
+.page-content {
+  box-sizing: border-box;
+  min-width: 0;
+  min-height: var(--page-content-min-height, 480px);
+}
+
+.page-content--surface {
+  padding: var(--space-lg);
+  background: var(--el-bg-color, #fff);
+  border: 1px solid var(--el-border-color-lighter);
+  border-radius: var(--content-radius);
+}
+
+@media (max-width: 1100px) {
+  .page-container--compact-controls {
+    display: flex;
+    flex-direction: column;
+    gap: 0;
+  }
+
+  .page-container--compact-controls > .page-container__subnav,
+  .page-container--compact-controls > .page-container__toolbar {
+    width: 100%;
+    margin-bottom: var(--space-lg);
+  }
+
+  .page-toolbar {
+    flex-wrap: wrap;
+  }
+
+  .page-toolbar > .ep-toolbar-spacer {
+    display: none;
+  }
+
+  .page-toolbar > .ep-toolbar-actions {
+    width: auto;
+    margin-left: auto;
+  }
+}
+
+@media (max-width: 760px) {
+  .page-header {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .page-header__actions,
+  .page-toolbar > .ep-toolbar-actions {
+    width: 100%;
+  }
+
+  .page-toolbar > .ep-toolbar-actions {
+    justify-content: flex-end;
+  }
+
+  .page-tabs .el-tabs__item {
+    padding-inline: var(--space-md);
+  }
+}
+
+@media (max-width: 560px) {
+  .page-content--surface {
+    padding: var(--space-md);
+  }
+
+  .page-toolbar > .ep-toolbar-actions {
+    justify-content: flex-start;
+  }
+}

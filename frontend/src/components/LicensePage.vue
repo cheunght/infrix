@@ -1,8 +1,14 @@
 <script setup lang="ts">
 import PagedTable from "./PagedTable.vue";
 import SearchField from "./SearchField.vue";
+import type { LicenseContext } from "../types/page-context";
+import PageContainer from "./page/PageContainer.vue";
+import PageContent from "./page/PageContent.vue";
+import PageHeader from "./page/PageHeader.vue";
+import PageToolbar from "./page/PageToolbar.vue";
 
-const props = defineProps<{ context: Record<string, any> }>();
+const props = defineProps<{ context: LicenseContext }>();
+const context = props.context;
 const {
   loading,
   licenseKeyword,
@@ -17,13 +23,24 @@ const {
   licenseCount,
   changeLicensePage,
   changeLicensePageSize,
-} = props.context;
+} = context;
 </script>
 
 <template>
   <div class="itam-page license-page">
-    <el-card shadow="never" class="license-list-card">
-      <div class="ep-toolbar">
+    <PageContainer>
+      <template #header>
+        <PageHeader description="维护软件许可、授权数量和到期状态">
+          <template #actions>
+            <el-button v-if="can('licenses.manage')" type="primary" @click="openLicenseModal()">
+              新增许可证
+            </el-button>
+          </template>
+        </PageHeader>
+      </template>
+
+      <template #toolbar>
+        <PageToolbar>
         <SearchField
           class="itam-filter-search"
           v-model="licenseKeyword"
@@ -43,26 +60,24 @@ const {
           <el-option label="已过期" value="expired" />
           <el-option label="超授权" value="over_limit" />
         </el-select>
-        <span class="ep-toolbar-spacer" />
-        <div v-if="can('licenses.manage')" class="ep-toolbar-actions">
-          <el-button type="primary" @click="openLicenseModal()">新增许可证</el-button>
-        </div>
-      </div>
+        </PageToolbar>
+      </template>
 
-      <PagedTable
-        v-model:current-page="licensePage"
-        v-model:page-size="licensePageSize"
-        :total="licenseCount"
-        :loading="loading"
-        @update:current-page="changeLicensePage"
-        @update:page-size="changeLicensePageSize"
-      >
-        <el-table
-          class="license-table"
-          :data="licenses"
-          table-layout="fixed"
-          empty-text="暂无许可证记录"
+      <PageContent surface class="license-list-card">
+        <PagedTable
+          v-model:current-page="licensePage"
+          v-model:page-size="licensePageSize"
+          :total="licenseCount"
+          :loading="loading"
+          @update:current-page="changeLicensePage"
+          @update:page-size="changeLicensePageSize"
         >
+          <el-table
+            class="license-table"
+            :data="licenses"
+            table-layout="fixed"
+            empty-text="暂无许可证记录"
+          >
           <el-table-column
             prop="name"
             label="软件名称"
@@ -126,8 +141,9 @@ const {
               </div>
             </template>
           </el-table-column>
-        </el-table>
-      </PagedTable>
-    </el-card>
+          </el-table>
+        </PagedTable>
+      </PageContent>
+    </PageContainer>
   </div>
 </template>

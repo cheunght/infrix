@@ -1,5 +1,7 @@
 <script setup lang="ts">
-const props = defineProps<{ context: Record<string, any> }>();
+import type { RackListContext } from "../types/page-context";
+const props = defineProps<{ context: RackListContext }>();
+const context = props.context;
 const {
   visibleRacks,
   focusedRack,
@@ -10,7 +12,7 @@ const {
   rackCount,
   rackPage,
   changeRackPage,
-} = props.context;
+} = context;
 </script>
 
 <template>

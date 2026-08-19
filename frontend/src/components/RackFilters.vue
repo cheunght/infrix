@@ -1,5 +1,7 @@
 <script setup lang="ts">
-const props = defineProps<{ context: Record<string, any> }>();
+import type { RackFiltersContext } from "../types/page-context";
+const props = defineProps<{ context: RackFiltersContext }>();
+const context = props.context;
 const {
   dataCenters,
   selectedDataCenter,
@@ -14,7 +16,7 @@ const {
   deviceTypes,
   resetRackFilters,
   exportRackLayout,
-} = props.context;
+} = context;
 </script>
 
 <template>

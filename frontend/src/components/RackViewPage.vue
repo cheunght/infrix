@@ -8,8 +8,9 @@ import RackListPanel from "./RackListPanel.vue";
 import SearchField from "./SearchField.vue";
 import StatisticCard from "./StatisticCard.vue";
 import type { DataCenter, Rack, ServerRoom } from "../types";
+import type { RackSharedContext } from "../types/page-context";
 
-const props = defineProps<{ context: Record<string, any> }>();
+const props = defineProps<{ context: RackSharedContext }>();
 const context = props.context;
 const rackSection = context.rackSection;
 const dataCenters = context.dataCenters;
