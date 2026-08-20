@@ -6,6 +6,7 @@ import PageContainer from "./page/PageContainer.vue";
 import PageContent from "./page/PageContent.vue";
 import PageHeader from "./page/PageHeader.vue";
 import PageToolbar from "./page/PageToolbar.vue";
+import StatusTag from "./StatusTag.vue";
 
 const props = defineProps<{ context: LicenseContext }>();
 const context = props.context;
@@ -27,7 +28,7 @@ const {
 </script>
 
 <template>
-  <div class="itam-page license-page">
+  <div class="itam-page">
     <PageContainer>
       <template #header>
         <PageHeader description="维护软件许可、授权数量和到期状态">
@@ -117,15 +118,10 @@ const {
           </el-table-column>
           <el-table-column label="状态" width="110">
             <template #default="{ row }">
-              <el-tag
-                :type="
-                  row.status === 'normal'
-                    ? 'success'
-                    : row.status === 'expiring'
-                      ? 'warning'
-                      : 'danger'
-                "
-              >{{ row.status_label }}</el-tag>
+              <StatusTag
+                :status="row.status"
+                :label="row.status_label"
+              />
             </template>
           </el-table-column>
           <el-table-column

@@ -7,6 +7,10 @@ import RackLayoutCanvas from "./RackLayoutCanvas.vue";
 import RackListPanel from "./RackListPanel.vue";
 import SearchField from "./SearchField.vue";
 import StatisticCard from "./StatisticCard.vue";
+import PageContainer from "./page/PageContainer.vue";
+import PageContent from "./page/PageContent.vue";
+import PageHeader from "./page/PageHeader.vue";
+import StatusTag from "./StatusTag.vue";
 import type { DataCenter, Rack, ServerRoom } from "../types";
 import type { RackSharedContext } from "../types/page-context";
 
@@ -99,14 +103,22 @@ function openRackFromRoom(rack: Rack) {
 <template>
   <div class="itam-page racks-page facility-management-page">
     <template v-if="rackSection === 'view'">
-      <RackFilters :context="context" />
-      <section class="rack-view-layout" :class="{ 'has-inspector': rackDetailOpen }" :style="rackViewStyle">
-        <RackListPanel :context="context" /><RackLayoutCanvas :context="context" /><RackAssetInspector :context="context" />
-      </section>
+      <PageContainer>
+        <template #header><PageHeader description="按数据中心、机房和机柜查看设备 U 位占用" /></template>
+        <PageContent>
+          <RackFilters :context="context" />
+          <section class="rack-view-layout" :class="{ 'has-inspector': rackDetailOpen }" :style="rackViewStyle">
+            <RackListPanel :context="context" /><RackLayoutCanvas :context="context" /><RackAssetInspector :context="context" />
+          </section>
+        </PageContent>
+      </PageContainer>
     </template>
 
     <template v-else-if="rackSection === 'rooms'">
-      <section class="facility-stat-grid statistic-card-grid">
+      <PageContainer>
+        <template #header><PageHeader description="维护数据中心、机房和机柜基础资源" /></template>
+        <PageContent>
+        <section class="facility-stat-grid statistic-card-grid">
         <StatisticCard
           label="机房总数"
           :value="summary.rooms_total"
@@ -136,8 +148,8 @@ function openRackFromRoom(rack: Rack) {
           tone="orange"
           :icon="CircleCheck"
         />
-      </section>
-      <section class="facility-three-column">
+        </section>
+        <section class="facility-three-column">
         <el-card shadow="never" class="facility-panel facility-center-panel">
           <template #header><div class="facility-panel-header"><strong>数据中心列表</strong><el-button v-if="can('racks.manage')" type="primary" size="small" @click="openDataCenterModal()">新增数据中心</el-button></div></template>
           <SearchField class="itam-filter-search" v-model="dataCenterSearch" placeholder="搜索数据中心" aria-label="搜索数据中心" />
@@ -147,18 +159,20 @@ function openRackFromRoom(rack: Rack) {
           <template #header><div class="facility-panel-header"><strong>机房列表<span v-if="selectedCenter">（{{ selectedCenter.name }}）</span></strong><el-button v-if="can('racks.manage')" type="primary" size="small" @click="openRoomModal()">新增机房</el-button></div></template>
           <SearchField class="itam-filter-search" v-model="roomSearch" placeholder="搜索机房名称" aria-label="搜索机房名称" />
           <el-table :data="pagedRooms" table-layout="fixed" class="facility-table" highlight-current-row @row-click="selectRoom">
-            <el-table-column prop="name" label="机房名称" min-width="130" show-overflow-tooltip /><el-table-column prop="data_center_name" label="数据中心" min-width="120" show-overflow-tooltip /><el-table-column prop="racks_count" label="机柜" width="62" /><el-table-column prop="assets_count" label="设备" width="62" /><el-table-column label="状态" width="80"><template #default="{ row }"><el-tag :type="row.is_active ? 'success' : 'info'" size="small">{{ row.is_active ? '使用中' : '停用' }}</el-tag></template></el-table-column><el-table-column v-if="can('racks.manage')" label="操作" width="122" fixed="right"><template #default="{ row }"><div class="ep-table-actions"><el-button link type="primary" @click.stop="openRoomModal(row)">编辑</el-button><el-button link type="danger" @click.stop="context.deleteRoom(row)">删除</el-button></div></template></el-table-column>
+            <el-table-column prop="name" label="机房名称" min-width="130" show-overflow-tooltip /><el-table-column prop="data_center_name" label="数据中心" min-width="120" show-overflow-tooltip /><el-table-column prop="racks_count" label="机柜" width="62" /><el-table-column prop="assets_count" label="设备" width="62" /><el-table-column label="状态" width="80"><template #default="{ row }"><StatusTag :type="row.is_active ? 'success' : 'info'" :label="row.is_active ? '使用中' : '停用'" /></template></el-table-column><el-table-column v-if="can('racks.manage')" label="操作" width="122" fixed="right"><template #default="{ row }"><div class="ep-table-actions"><el-button link type="primary" @click.stop="openRoomModal(row)">编辑</el-button><el-button link type="danger" @click.stop="context.deleteRoom(row)">删除</el-button></div></template></el-table-column>
           </el-table>
           <el-pagination v-model:current-page="roomPage" size="small" layout="total, prev, next" :total="filteredRooms.length" />
         </el-card>
         <el-card shadow="never" class="facility-panel facility-detail-panel">
           <template #header><div class="facility-panel-header"><strong>机房详情</strong><el-button v-if="selectedRoom && can('racks.manage')" link type="primary" @click="openRoomModal(selectedRoom)">编辑</el-button></div></template>
           <template v-if="selectedRoom">
-            <div class="facility-detail-grid"><div><span>机房名称</span><strong>{{ selectedRoom.name }}</strong></div><div><span>所属数据中心</span><strong>{{ selectedRoom.data_center_name }}</strong></div><div><span>机柜数量</span><strong>{{ selectedRoom.racks_count || 0 }}</strong></div><div><span>设备数量</span><strong>{{ selectedRoom.assets_count || 0 }}</strong></div><div><span>状态</span><el-tag :type="selectedRoom.is_active ? 'success' : 'info'">{{ selectedRoom.is_active ? '使用中' : '停用' }}</el-tag></div><div><span>创建时间</span><strong>{{ selectedRoom.created_at ? new Date(selectedRoom.created_at).toLocaleDateString('zh-CN') : '—' }}</strong></div><div><span>负责人</span><strong>{{ selectedRoom.owner_name || '—' }}</strong></div><div><span>联系电话</span><strong>{{ selectedRoom.contact_phone || '—' }}</strong></div><div class="full"><span>备注</span><strong>{{ selectedRoom.notes || '—' }}</strong></div></div>
+            <div class="facility-detail-grid"><div><span>机房名称</span><strong>{{ selectedRoom.name }}</strong></div><div><span>所属数据中心</span><strong>{{ selectedRoom.data_center_name }}</strong></div><div><span>机柜数量</span><strong>{{ selectedRoom.racks_count || 0 }}</strong></div><div><span>设备数量</span><strong>{{ selectedRoom.assets_count || 0 }}</strong></div><div><span>状态</span><StatusTag :type="selectedRoom.is_active ? 'success' : 'info'" :label="selectedRoom.is_active ? '使用中' : '停用'" /></div><div><span>创建时间</span><strong>{{ selectedRoom.created_at ? new Date(selectedRoom.created_at).toLocaleDateString('zh-CN') : '—' }}</strong></div><div><span>负责人</span><strong>{{ selectedRoom.owner_name || '—' }}</strong></div><div><span>联系电话</span><strong>{{ selectedRoom.contact_phone || '—' }}</strong></div><div class="full"><span>备注</span><strong>{{ selectedRoom.notes || '—' }}</strong></div></div>
             <div class="facility-subtitle">机柜布局图</div><div class="room-rack-layout"><button v-for="rack in roomRacks" :key="rack.id" class="room-rack-card" :class="`status-${rack.status || 'in_use'}`" :title="`${rack.code} · 已用 ${rackUsed(rack)} U / ${rack.total_u} U · ${rack.allocations?.length || 0} 台设备`" @click="openRackFromRoom(rack)"><strong>{{ rack.code }}</strong><small>{{ rackUsed(rack) }}/{{ rack.total_u }} U · {{ rack.allocations?.length || 0 }} 台</small></button><el-empty v-if="!roomRacks.length" description="该机房暂无机柜" /></div>
           </template><el-empty v-else description="请选择机房查看详情" />
         </el-card>
-      </section>
+        </section>
+        </PageContent>
+      </PageContainer>
     </template>
 
   </div>

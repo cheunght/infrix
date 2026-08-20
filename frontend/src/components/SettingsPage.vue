@@ -9,6 +9,7 @@ import PageContent from "./page/PageContent.vue";
 import PageHeader from "./page/PageHeader.vue";
 import PageTabs, { type PageTabItem } from "./page/PageTabs.vue";
 import PageToolbar from "./page/PageToolbar.vue";
+import StatusTag from "./StatusTag.vue";
 import type { SettingsContext } from "../types/page-context";
 
 const props = defineProps<{ context: SettingsContext }>();
@@ -60,7 +61,17 @@ const dictionaryTabs: PageTabItem[] = [
         <TagSettingsPage v-else-if="settingsSection === 'tags'" :context="props.context" />
         <PageContainer v-else-if="settingsSection === 'dictionaries'">
           <template #header>
-            <PageHeader description="维护品牌、设备类型和数据中心基础资料" />
+            <PageHeader description="维护品牌、设备类型和数据中心基础资料">
+              <template #actions>
+                <el-button
+                  type="primary"
+                  :disabled="!can('settings.manage')"
+                  @click="openDictionaryModal()"
+                >
+                  新增{{ currentDictionaryLabel }}
+                </el-button>
+              </template>
+            </PageHeader>
           </template>
           <template #subnav>
             <PageTabs
@@ -78,19 +89,11 @@ const dictionaryTabs: PageTabItem[] = [
                 :aria-label="`搜索${currentDictionaryLabel}`"
                 @search="() => loadDictionaries()"
               />
-              <template #actions>
-                <el-button
-                  type="primary"
-                  :disabled="!can('settings.manage')"
-                  @click="openDictionaryModal()"
-                >
-                  新增{{ currentDictionaryLabel }}
-                </el-button>
-              </template>
             </PageToolbar>
           </template>
           <PageContent surface>
             <el-table
+              v-loading="loading"
               :data="currentDictionaryItems"
               :empty-text="`暂无${currentDictionaryLabel}`"
               table-layout="fixed"
@@ -109,9 +112,7 @@ const dictionaryTabs: PageTabItem[] = [
               </el-table-column>
               <el-table-column label="状态" width="100">
                 <template #default="{ row }">
-                  <el-tag :type="row.is_active ? 'success' : 'info'">
-                    {{ row.is_active ? "启用" : "停用" }}
-                  </el-tag>
+                  <StatusTag :type="row.is_active ? 'success' : 'info'" :label="row.is_active ? '启用' : '停用'" />
                 </template>
               </el-table-column>
               <el-table-column prop="assets_count" label="资产数量" width="110" />
@@ -147,7 +148,9 @@ const dictionaryTabs: PageTabItem[] = [
             </el-table>
           </PageContent>
         </PageContainer>
-        <section v-else-if="settingsSection === 'organization' && isAdmin">
+        <PageContainer v-else-if="settingsSection === 'organization' && isAdmin">
+          <template #header><PageHeader description="管理用户账号、角色和访问范围" /></template>
+          <PageContent>
           <el-tabs v-model="organizationTab" class="organization-tabs">
             <el-tab-pane label="用户账号" name="users">
               <el-card shadow="never">
@@ -159,13 +162,13 @@ const dictionaryTabs: PageTabItem[] = [
                     </div>
                   </div>
                 </template>
-                <el-table :data="users" empty-text="暂无用户账号">
+                <el-table v-loading="loading" :data="users" empty-text="暂无用户账号">
                   <el-table-column prop="username" label="用户名" />
                   <el-table-column prop="display_name" label="姓名" />
                   <el-table-column prop="email" label="邮箱" />
                   <el-table-column label="状态">
                     <template #default="{ row }">
-                      <el-tag :type="row.is_active ? 'success' : 'info'">{{ row.is_active ? "启用" : "停用" }}</el-tag>
+                      <StatusTag :type="row.is_active ? 'success' : 'info'" :label="row.is_active ? '启用' : '停用'" />
                     </template>
                   </el-table-column>
                   <el-table-column label="操作" width="190">
@@ -182,7 +185,7 @@ const dictionaryTabs: PageTabItem[] = [
             </el-tab-pane>
             <el-tab-pane label="预设角色" name="roles">
               <el-card shadow="never">
-                <el-table :data="roles" empty-text="暂无角色">
+                <el-table v-loading="loading" :data="roles" empty-text="暂无角色">
                   <el-table-column prop="name" label="角色名称" />
                   <el-table-column prop="description" label="权限范围" min-width="240" />
                   <el-table-column prop="user_count" label="用户数" />
@@ -191,11 +194,23 @@ const dictionaryTabs: PageTabItem[] = [
               </el-card>
             </el-tab-pane>
           </el-tabs>
-        </section>
-        <el-card v-else-if="settingsSection === 'audit' && can('audit.view')" shadow="never">
-          <template #header><div class="ep-toolbar audit-toolbar"><strong>操作日志</strong><SearchField class="itam-filter-search" v-model="auditFilters.search" placeholder="操作者、资源或编号" aria-label="搜索操作日志" @search="searchAuditLogs"/><el-select class="itam-filter-select" v-model="auditFilters.resource_type" placeholder="全部资源" clearable @change="searchAuditLogs"><el-option label="资产" value="asset"/><el-option label="数据中心" value="data_center"/><el-option label="机房" value="server_room"/><el-option label="机柜" value="rack"/><el-option label="故障" value="fault_event"/><el-option label="维修" value="repair_record"/><el-option label="许可证" value="software_license"/><el-option label="备件" value="spare_part"/><el-option label="库存流水" value="spare_stock_transaction"/><el-option label="登录认证" value="auth_login"/></el-select><el-select class="itam-filter-select" v-model="auditFilters.action" placeholder="全部动作" clearable @change="searchAuditLogs"><el-option label="新增" value="create"/><el-option label="修改" value="update"/><el-option label="删除" value="delete"/><el-option label="导入" value="import"/><el-option label="登录成功" value="login_success"/><el-option label="登录失败" value="login_failure"/><el-option label="账号锁定" value="login_locked"/></el-select><el-date-picker class="itam-filter-date" v-model="auditFilters.start" type="date" value-format="YYYY-MM-DD" placeholder="开始日期" @change="searchAuditLogs"/><el-date-picker class="itam-filter-date" v-model="auditFilters.end" type="date" value-format="YYYY-MM-DD" placeholder="结束日期" @change="searchAuditLogs"/></div></template>
-          <el-table :data="auditLogs" empty-text="暂无操作日志"><el-table-column prop="created_at" label="时间" width="180"><template #default="{ row }">{{ formatDateTime(row.created_at) }}</template></el-table-column><el-table-column prop="actor_display_name" label="操作者" width="130"/><el-table-column prop="resource_type" label="资源" width="130"/><el-table-column prop="action" label="动作" width="90"/><el-table-column prop="resource_id" label="资源编号" width="120"/><el-table-column label="变更内容" min-width="320"><template #default="{ row }"><el-popover placement="left" :width="520" trigger="click"><pre class="audit-payload">{{ JSON.stringify(row.payload, null, 2) }}</pre><template #reference><el-button link type="primary">查看变更</el-button></template></el-popover></template></el-table-column></el-table>
-          <PagedTable v-model:current-page="auditPage" v-model:page-size="auditPageSize" :total="auditCount" :page-sizes="[20, 50, 100]" :loading="loading" @update:current-page="changeAuditPage" @update:page-size="changeAuditPageSize"/>
-        </el-card>
+          </PageContent>
+        </PageContainer>
+        <PageContainer v-else-if="settingsSection === 'audit' && can('audit.view')">
+          <template #header><PageHeader description="查看系统操作、登录和数据变更审计记录" /></template>
+          <template #toolbar>
+            <PageToolbar>
+              <SearchField class="itam-filter-search" v-model="auditFilters.search" placeholder="操作者、资源或编号" aria-label="搜索操作日志" @search="searchAuditLogs" />
+              <el-select class="itam-filter-select" v-model="auditFilters.resource_type" placeholder="全部资源" clearable @change="searchAuditLogs"><el-option label="资产" value="asset"/><el-option label="数据中心" value="data_center"/><el-option label="机房" value="server_room"/><el-option label="机柜" value="rack"/><el-option label="故障" value="fault_event"/><el-option label="维修" value="repair_record"/><el-option label="许可证" value="software_license"/><el-option label="备件" value="spare_part"/><el-option label="库存流水" value="spare_stock_transaction"/><el-option label="登录认证" value="auth_login"/></el-select>
+              <el-select class="itam-filter-select" v-model="auditFilters.action" placeholder="全部动作" clearable @change="searchAuditLogs"><el-option label="新增" value="create"/><el-option label="修改" value="update"/><el-option label="删除" value="delete"/><el-option label="导入" value="import"/><el-option label="登录成功" value="login_success"/><el-option label="登录失败" value="login_failure"/><el-option label="账号锁定" value="login_locked"/></el-select>
+              <el-date-picker class="itam-filter-date" v-model="auditFilters.start" type="date" value-format="YYYY-MM-DD" placeholder="开始日期" @change="searchAuditLogs"/>
+              <el-date-picker class="itam-filter-date" v-model="auditFilters.end" type="date" value-format="YYYY-MM-DD" placeholder="结束日期" @change="searchAuditLogs"/>
+            </PageToolbar>
+          </template>
+          <PageContent surface>
+            <el-table v-loading="loading" :data="auditLogs" empty-text="暂无操作日志"><el-table-column prop="created_at" label="时间" width="180"><template #default="{ row }">{{ formatDateTime(row.created_at) }}</template></el-table-column><el-table-column prop="actor_display_name" label="操作者" width="130"/><el-table-column prop="resource_type" label="资源" width="130"/><el-table-column prop="action" label="动作" width="90"/><el-table-column prop="resource_id" label="资源编号" width="120"/><el-table-column label="变更内容" min-width="320"><template #default="{ row }"><el-popover placement="left" :width="520" trigger="click"><pre class="audit-payload">{{ JSON.stringify(row.payload, null, 2) }}</pre><template #reference><el-button link type="primary">查看变更</el-button></template></el-popover></template></el-table-column></el-table>
+            <PagedTable v-model:current-page="auditPage" v-model:page-size="auditPageSize" :total="auditCount" :page-sizes="[20, 50, 100]" :loading="loading" @update:current-page="changeAuditPage" @update:page-size="changeAuditPageSize"/>
+          </PageContent>
+        </PageContainer>
   </div>
 </template>

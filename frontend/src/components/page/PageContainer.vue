@@ -7,11 +7,13 @@ const props = withDefaults(
     title?: string;
     description?: string;
     contentClass?: string;
+    compactControls?: boolean;
   }>(),
   {
     title: "",
     description: "",
     contentClass: "",
+    compactControls: false,
   },
 );
 
@@ -27,7 +29,7 @@ const hasToolbar = computed(() => Boolean(slots.toolbar));
     :class="{
       'page-container--with-subnav': hasSubnav,
       'page-container--with-toolbar': hasToolbar,
-      'page-container--compact-controls': hasSubnav && hasToolbar,
+      'page-container--compact-controls': props.compactControls && hasSubnav && hasToolbar,
     }"
   >
     <div v-if="hasHeader" class="page-container__header">

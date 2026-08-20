@@ -16,6 +16,8 @@ import PageContainer from "./page/PageContainer.vue";
 import PageContent from "./page/PageContent.vue";
 import PageHeader from "./page/PageHeader.vue";
 import PageToolbar from "./page/PageToolbar.vue";
+import PageSection from "./page/PageSection.vue";
+import StatusTag from "./StatusTag.vue";
 import type { InventoryContext } from "../types/page-context";
 import { useInventory } from "../composables/useInventory";
 
@@ -41,7 +43,7 @@ onMounted(async () => {
 </script>
 
 <template>
-  <div class="itam-page inventory-page">
+  <div class="itam-page">
     <PageContainer v-if="!activeTask">
       <template #header>
         <PageHeader description="创建盘点任务并跟踪现场核对进度">
@@ -76,7 +78,7 @@ onMounted(async () => {
         <el-table-column label="时间范围" min-width="300"><template #default="{ row }">{{ formatDateTime(row.start_at) }} - {{ formatDateTime(row.end_at) }}</template></el-table-column>
         <el-table-column label="完成率" width="150"><template #default="{ row }"><el-progress :percentage="row.summary.completion_rate" :stroke-width="8" /></template></el-table-column>
         <el-table-column label="异常" width="90"><template #default="{ row }">{{ row.summary.total - row.summary.pending - row.summary.normal }}</template></el-table-column>
-        <el-table-column label="状态" width="100"><template #default="{ row }"><el-tag :type="row.status === 'completed' ? 'success' : 'warning'">{{ taskStatusLabel(row.status) }}</el-tag></template></el-table-column>
+        <el-table-column label="状态" width="100"><template #default="{ row }"><StatusTag :status="row.status" :label="taskStatusLabel(row.status)" /></template></el-table-column>
         <el-table-column label="操作" fixed="right" width="150"><template #default="{ row }"><el-button link type="primary" @click.stop="openTask(row)">查看</el-button><el-button v-if="can('inventory.export')" link :icon="Download" @click.stop="exportTask(row)">导出</el-button></template></el-table-column>
         </el-table>
         <PagedTable v-model:current-page="taskPage" v-model:page-size="taskPageSize" :total="taskCount" :page-sizes="[20, 50, 100]" :loading="loading" @update:current-page="changeTaskPage" @update:page-size="changeTaskPageSize" />
@@ -114,33 +116,36 @@ onMounted(async () => {
         </PageHeader>
       </template>
       <PageContent>
-        <section class="inventory-summary-grid">
-        <StatisticCard label="总设备" :value="activeTask.summary.total" tone="blue" :icon="DataAnalysis" />
-        <StatisticCard label="已盘点" :value="activeTask.summary.checked" tone="green" :icon="CircleCheck" />
-        <StatisticCard label="未盘点" :value="activeTask.summary.pending" tone="gray" :icon="Clock" />
-        <StatisticCard label="正常" :value="activeTask.summary.normal" tone="green" :icon="CircleCheck" />
-        <StatisticCard label="异常" :value="activeTask.summary.total - activeTask.summary.pending - activeTask.summary.normal" tone="red" :icon="Warning" />
-        <StatisticCard label="完成率" :value="`${activeTask.summary.completion_rate}%`" tone="purple" :icon="DataAnalysis" />
-        </section>
-        <el-card shadow="never">
+        <PageSection title="盘点进度">
+          <section class="inventory-summary-grid">
+            <StatisticCard label="总设备" :value="activeTask.summary.total" tone="blue" :icon="DataAnalysis" />
+            <StatisticCard label="已盘点" :value="activeTask.summary.checked" tone="green" :icon="CircleCheck" />
+            <StatisticCard label="未盘点" :value="activeTask.summary.pending" tone="gray" :icon="Clock" />
+            <StatisticCard label="正常" :value="activeTask.summary.normal" tone="green" :icon="CircleCheck" />
+            <StatisticCard label="异常" :value="activeTask.summary.total - activeTask.summary.pending - activeTask.summary.normal" tone="red" :icon="Warning" />
+            <StatisticCard label="完成率" :value="`${activeTask.summary.completion_rate}%`" tone="purple" :icon="DataAnalysis" />
+          </section>
+        </PageSection>
+        <PageSection title="盘点设备">
           <PageToolbar>
             <SearchField class="itam-filter-search" v-model="itemSearch" placeholder="搜索资产编号、SN、IP或名称" aria-label="搜索盘点设备" @search="() => { itemPage = 1; loadItems(); }" />
             <el-select class="itam-filter-select" v-model="itemStatus" placeholder="全部盘点结果" clearable @change="() => { itemPage = 1; loadItems(); }"><el-option v-for="item in itemStatusOptions" :key="item.value" :label="item.label" :value="item.value" /></el-select>
             <el-button :icon="Refresh" @click="resetItemFilters">重置</el-button>
           </PageToolbar>
           <el-alert v-if="taskError" :title="taskError" type="error" show-icon :closable="false" class="inventory-alert" />
-          <el-table v-loading="loading" :data="items" empty-text="暂无盘点设备">
+          <PagedTable v-model:current-page="itemPage" v-model:page-size="itemPageSize" :total="itemCount" :page-sizes="[20, 50, 100]" :loading="loading" @update:current-page="changeItemPage" @update:page-size="changeItemPageSize">
+            <el-table v-loading="loading" :data="items" empty-text="暂无盘点设备">
           <el-table-column label="资产编号" min-width="150"><template #default="{ row }"><el-button link type="primary" @click.stop="openAssetDetail(row.asset)">{{ row.asset_no }}</el-button></template></el-table-column>
           <el-table-column prop="asset_name" label="设备名称" min-width="180" />
           <el-table-column prop="serial_number" label="序列号" min-width="150"><template #default="{ row }">{{ row.serial_number || "—" }}</template></el-table-column>
           <el-table-column label="系统位置" min-width="250"><template #default="{ row }">{{ locationText(row) }}</template></el-table-column>
-          <el-table-column label="盘点结果" width="130"><template #default="{ row }"><el-tag :type="statusTagType(row.status)">{{ row.status_label }}</el-tag></template></el-table-column>
+          <el-table-column label="盘点结果" width="130"><template #default="{ row }"><StatusTag :status="row.status" :type="statusTagType(row.status)" :label="row.status_label" /></template></el-table-column>
           <el-table-column label="实际位置" min-width="250"><template #default="{ row }">{{ row.status === 'pending' ? '—' : locationText(row, true) }}</template></el-table-column>
           <el-table-column label="盘点时间" width="170"><template #default="{ row }">{{ formatDateTime(row.checked_at) }}</template></el-table-column>
           <el-table-column label="操作" fixed="right" width="120"><template #default="{ row }"><el-button v-if="can('inventory.manage') && activeTask.status === 'in_progress'" link type="primary" @click="openItem(row)">{{ row.status === 'pending' ? '确认盘点' : '修改结果' }}</el-button><span v-else>—</span></template></el-table-column>
-          </el-table>
-          <PagedTable v-model:current-page="itemPage" v-model:page-size="itemPageSize" :total="itemCount" :page-sizes="[20, 50, 100]" :loading="loading" @update:current-page="changeItemPage" @update:page-size="changeItemPageSize" />
-        </el-card>
+            </el-table>
+          </PagedTable>
+        </PageSection>
       </PageContent>
     </PageContainer>
 

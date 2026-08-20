@@ -16,6 +16,67 @@
   --itam-sidebar-hover: #f6f7f9;
   --itam-sidebar-active: #eef0f2;
   --itam-page-bg: #f5f7fa;
+
+  /* Phase 2 design tokens. Keep the existing ITAM variables above as
+     compatibility aliases while new shared components use semantic names. */
+  --color-brand-primary: var(--itam-primary-blue);
+  --color-brand-primary-hover: #1d4ed8;
+  --color-brand-primary-soft: #eef4ff;
+  --color-page-bg: var(--itam-page-bg);
+  --color-surface: #ffffff;
+  --color-border: #e4e7ed;
+  --color-border-soft: #edf1f6;
+  --color-text-primary: #172033;
+  --color-text-secondary: #536481;
+  --color-text-muted: #7183a0;
+  --color-success: #16a34a;
+  --color-warning: #d97706;
+  --color-danger: #dc2626;
+  --color-info: #718096;
+
+  --sidebar-width: 216px;
+  --sidebar-width-collapsed: 64px;
+  --header-height: 64px;
+  --page-padding-inline: 24px;
+  --page-padding-block: 20px;
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --space-5: 24px;
+  --space-6: 32px;
+  --control-height: 36px;
+  --page-title-size: 20px;
+  --page-description-size: 13px;
+  --section-title-size: 16px;
+  --body-size: 14px;
+  --caption-size: 12px;
+  --radius-sm: 6px;
+  --radius-md: 8px;
+  --radius-lg: 12px;
+  --shadow-card: 0 1px 2px rgba(23, 32, 51, 0.04);
+  --shadow-overlay: 0 12px 32px rgba(23, 32, 51, 0.16);
+
+  /* Element Plus theme variables. Components still render through Element
+     Plus; these values only establish the shared visual language. */
+  --el-color-primary: var(--color-brand-primary);
+  --el-color-primary-light-9: var(--color-brand-primary-soft);
+  --el-color-primary-dark-2: var(--color-brand-primary-hover);
+  --el-text-color-primary: var(--color-text-primary);
+  --el-text-color-regular: var(--color-text-secondary);
+  --el-text-color-secondary: var(--color-text-muted);
+  --el-bg-color: var(--color-surface);
+  --el-bg-color-page: var(--color-page-bg);
+  --el-border-color: var(--color-border);
+  --el-border-color-light: var(--color-border-soft);
+  --el-border-color-lighter: #f0f2f5;
+  --el-fill-color-light: #f7f9fc;
+  --el-component-size: var(--control-height);
+  --el-border-radius-base: var(--radius-md);
+  --el-border-radius-small: var(--radius-sm);
+  --el-border-radius-round: 999px;
+  --el-font-size-base: var(--body-size);
+  --el-box-shadow-light: var(--shadow-card);
 }
 
 body {
@@ -31,25 +92,25 @@ body {
   border-right: 1px solid var(--itam-sidebar-border);
   background: var(--itam-sidebar-bg);
   min-width: 0;
-  flex: 0 0 216px;
+  flex: 0 0 var(--sidebar-width);
   transition: width 0.2s ease, flex-basis 0.2s ease, padding 0.2s ease;
 }
 /* The legacy .sidebar rules set flex-basis: 216px. Scope the final layout
    rules to the Element Plus shell so the actual flex item shrinks with the
    bound el-aside width instead of only hiding its labels. */
 .shell:not(.sidebar-collapsed) > .ep-sidebar {
-  width: 216px !important;
-  flex: 0 0 216px;
+  width: var(--sidebar-width) !important;
+  flex: 0 0 var(--sidebar-width);
 }
 .shell.sidebar-collapsed > .ep-sidebar {
-  width: 64px !important;
-  flex: 0 0 64px;
+  width: var(--sidebar-width-collapsed) !important;
+  flex: 0 0 var(--sidebar-width-collapsed);
   padding-right: 0;
   padding-left: 0;
 }
 .shell.sidebar-collapsed > .ep-sidebar .sidebar-brand {
   box-sizing: border-box;
-  width: 64px;
+  width: var(--sidebar-width-collapsed);
   justify-content: center;
   margin-right: 0;
   margin-left: 0;
@@ -58,7 +119,7 @@ body {
 }
 .shell.sidebar-collapsed > .ep-sidebar .ep-collapse-button {
   box-sizing: border-box;
-  width: 64px;
+  width: var(--sidebar-width-collapsed);
   margin-right: 0;
   margin-left: 0;
   padding-right: 0;
@@ -69,7 +130,7 @@ body {
   display: flex;
   align-items: center;
   gap: 10px;
-  height: 64px;
+  height: var(--header-height);
   padding: 0 18px;
   color: var(--itam-sidebar-text);
   font-weight: 600;
@@ -96,13 +157,13 @@ body {
   background: var(--itam-sidebar-bg);
 }
 .ep-sidebar-menu.el-menu--collapse {
-  width: 64px;
+  width: var(--sidebar-width-collapsed);
 }
 .ep-sidebar-menu.el-menu--collapse > .el-menu-item,
 .ep-sidebar-menu.el-menu--collapse > .el-sub-menu > .el-sub-menu__title {
   box-sizing: border-box;
-  width: 64px;
-  min-width: 64px;
+  width: var(--sidebar-width-collapsed);
+  min-width: var(--sidebar-width-collapsed);
   margin: 4px 0;
   padding: 0 !important;
   justify-content: center;
@@ -191,21 +252,22 @@ body {
 }
 .ep-main {
   min-width: 0;
-  padding: 0 24px 24px;
+  padding: 0 var(--page-padding-inline) var(--page-padding-block);
   background: var(--itam-page-bg);
+  scrollbar-gutter: stable;
 }
 .app-header {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  height: 64px;
+  height: var(--header-height);
   padding: 0;
   margin-bottom: 18px;
   background: transparent;
 }
 .app-header h1 {
   margin: 0;
-  font-size: 20px;
+  font-size: var(--page-title-size);
 }
 .header-tools {
   display: flex;
@@ -245,13 +307,6 @@ body {
   gap: 10px;
 }
 .color-input .el-input {
-  flex: 1;
-}
-.fault-asset-search {
-  display: flex;
-  gap: 8px;
-}
-.fault-asset-search .el-input {
   flex: 1;
 }
 .login-card .el-form {
@@ -647,10 +702,6 @@ body {
 }
 .ep-page-card {
   margin-bottom: 16px;
-}
-.license-page {
-  display: grid;
-  gap: 18px;
 }
 .dashboard-metrics,
 .ep-dashboard-metrics {
@@ -1233,50 +1284,6 @@ body {
   margin-top: 14px;
 }
 
-/* Keep the audit filters on one row on normal desktop widths.  Element Plus
-   gives date pickers a 100% width by default, which otherwise forces the end
-   date onto a second line even when the card still has room. */
-.ep-main .audit-toolbar {
-  flex-wrap: nowrap;
-  gap: 10px;
-}
-
-.ep-main .audit-toolbar > strong {
-  flex: 0 0 auto;
-  white-space: nowrap;
-}
-
-.ep-main .audit-toolbar > .itam-search-field {
-  flex: 1 1 300px;
-  width: 300px;
-  min-width: 220px;
-  max-width: 320px;
-}
-
-.ep-main .audit-toolbar > .el-select {
-  flex: 0 1 150px;
-  width: 150px;
-  max-width: 150px;
-}
-
-.ep-main .audit-toolbar > .el-date-editor.el-input,
-.ep-main .audit-toolbar > .el-date-editor.el-input__wrapper {
-  flex: 0 1 180px;
-  width: 180px;
-  max-width: 180px;
-}
-
-@media (max-width: 1100px) {
-  .ep-main .audit-toolbar {
-    flex-wrap: wrap;
-  }
-
-  .ep-main .audit-toolbar > .itam-search-field {
-    flex: 1 1 240px;
-    max-width: 320px;
-  }
-}
-
 /* Infrix dashboard reference layout.  These styles are scoped to the home
    page so the compact business tables and rack canvas keep their existing
    spacing. */
@@ -1508,10 +1515,6 @@ body {
 }
 
 /* Inventory center */
-.inventory-page {
-  display: grid;
-  gap: 16px;
-}
 .inventory-alert {
   margin-bottom: 12px;
 }
@@ -1742,10 +1745,6 @@ body {
   opacity: 0.5;
 }
 
-.spare-page {
-  display: grid;
-  gap: 16px;
-}
 
 .spare-detail-card h3 {
   margin: 18px 0 10px;
@@ -2961,6 +2960,157 @@ body {
   }
 }
 
+/* -------------------------------------------------------------------------
+   Shared Element Plus theme foundation
+   -------------------------------------------------------------------------
+   Keep component behavior in Element Plus and express the visual contract
+   through stable component classes and the semantic tokens at the top of
+   this file. Feature pages can still opt into their own layout classes
+   without redefining control colors, radius, or focus treatment. */
+.el-button {
+  font-weight: 500;
+  border-radius: var(--radius-md);
+  transition: color 0.15s ease, background-color 0.15s ease,
+    border-color 0.15s ease, box-shadow 0.15s ease;
+}
+
+.el-button:not(.is-link):not(.is-text):not(.is-circle):not(.is-round) {
+  min-height: var(--control-height);
+}
+
+.el-button.is-link,
+.el-button.is-text {
+  border-radius: var(--radius-sm);
+}
+
+.el-button:focus-visible,
+.el-textarea__inner:focus-visible {
+  outline: 2px solid color-mix(in srgb, var(--color-brand-primary) 35%, transparent);
+  outline-offset: 1px;
+}
+
+/* Element Plus already provides the focused control treatment through the
+   wrapper's inset box-shadow.  Do not add a second outer focus ring when a
+   user clicks into a text/select control; keep the visible keyboard focus
+   treatment on the native textarea itself below. */
+.el-input__wrapper:focus-within,
+.el-select__wrapper:focus-within,
+.el-input-number .el-input__wrapper:focus-within {
+  outline: none;
+}
+
+.el-textarea__inner:focus {
+  outline: none;
+}
+
+.el-input__wrapper,
+.el-select__wrapper,
+.el-date-editor.el-input,
+.el-date-editor.el-input__wrapper,
+.el-input-number .el-input__wrapper {
+  border-radius: var(--radius-md);
+  box-shadow: 0 0 0 1px var(--color-border) inset;
+  transition: box-shadow 0.15s ease, background-color 0.15s ease;
+}
+
+.el-input__wrapper:hover,
+.el-select__wrapper:hover,
+.el-date-editor.el-input:hover,
+.el-date-editor.el-input__wrapper:hover,
+.el-input-number .el-input__wrapper:hover {
+  box-shadow: 0 0 0 1px var(--color-brand-primary) inset;
+}
+
+.el-input__wrapper.is-focus,
+.el-select__wrapper.is-focused,
+.el-input-number .el-input__wrapper.is-focus {
+  box-shadow: 0 0 0 1px var(--color-brand-primary) inset;
+}
+
+.el-textarea__inner {
+  border-radius: var(--radius-md);
+  border-color: var(--color-border);
+}
+
+.el-card {
+  border-color: var(--color-border);
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-card);
+}
+
+.el-card__header {
+  border-bottom-color: var(--color-border-soft);
+}
+
+.el-table {
+  --el-table-border-color: var(--color-border-soft);
+  --el-table-header-bg-color: #f7f9fc;
+  --el-table-row-hover-bg-color: #f8fbff;
+  color: var(--color-text-secondary);
+}
+
+.el-table th.el-table__cell {
+  color: var(--color-text-muted);
+  font-weight: 600;
+}
+
+.el-pagination {
+  min-height: 40px;
+  color: var(--color-text-secondary);
+}
+
+.el-tabs__header {
+  margin-bottom: 0;
+}
+
+.el-tabs__item {
+  color: var(--color-text-secondary);
+  font-size: var(--body-size);
+}
+
+.el-tabs__item.is-active {
+  color: var(--color-brand-primary);
+}
+
+.el-tag {
+  border-radius: 999px;
+  font-weight: 500;
+}
+
+.el-dialog {
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-overlay);
+}
+
+.el-dialog__header {
+  border-bottom: 1px solid var(--color-border-soft);
+  margin-right: 0;
+  padding: var(--space-5) var(--space-5) var(--space-4);
+}
+
+.el-dialog__body {
+  padding: var(--space-5);
+}
+
+.el-dialog__footer {
+  border-top: 1px solid var(--color-border-soft);
+  padding: var(--space-4) var(--space-5);
+}
+
+.el-drawer {
+  box-shadow: var(--shadow-overlay);
+}
+
+.el-form-item {
+  margin-bottom: var(--space-4);
+}
+
+.el-form-item__label {
+  color: var(--color-text-secondary);
+  font-size: var(--body-size);
+  line-height: var(--control-height);
+}
+
 /* User account dialog: keep the reference layout (fixed labels on the left,
    full-width Element Plus controls on the right) without changing the other
    dialogs in the application. */
@@ -3103,28 +3253,37 @@ body,
   max-width: 100%;
 }
 
-/* The audit toolbar has six controls plus a heading.  Use the same compact
-   widths as the other desktop filters so it stays on one row without
-   exceeding the page column. */
-@media (min-width: 1101px) {
-  .ep-main .audit-toolbar > .itam-filter-search {
-    flex-basis: 300px !important;
-    width: 300px !important;
-    min-width: 180px !important;
-    max-width: 300px !important;
-  }
+/* Dialogs and drawers are teleported to document.body, so the page-scoped
+   control rules above cannot reach them.  Keep their controls on the same
+   height and footer rhythm as the routed pages without changing component
+   behavior or relying on a page-specific wrapper. */
+.el-dialog .el-input__wrapper,
+.el-dialog .el-select__wrapper,
+.el-dialog .el-date-editor.el-input,
+.el-dialog .el-date-editor.el-input__wrapper,
+.el-dialog .el-input-number,
+.el-dialog .el-input-number .el-input__wrapper,
+.el-dialog .el-button:not(.is-circle):not(.is-link):not(.is-text) {
+  min-height: var(--itam-control-height);
+  height: var(--itam-control-height);
+  box-sizing: border-box;
+  border-radius: var(--itam-control-radius);
+}
 
-  .ep-main .audit-toolbar > .itam-filter-select {
-    flex-basis: 140px !important;
-    width: 140px !important;
-    min-width: 120px !important;
-    max-width: 140px !important;
-  }
+.el-dialog textarea.el-textarea__inner {
+  min-height: 82px;
+  height: auto;
+}
 
-  .ep-main .audit-toolbar > .itam-filter-date {
-    flex-basis: 160px !important;
-    width: 160px !important;
-    min-width: 140px !important;
-    max-width: 160px !important;
-  }
+.el-dialog__footer,
+.el-drawer__footer {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: var(--space-2);
+}
+
+.el-dialog__footer .el-button + .el-button,
+.el-drawer__footer .el-button + .el-button {
+  margin-left: 0;
 }

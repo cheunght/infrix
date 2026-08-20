@@ -15,6 +15,7 @@ import quickImportIcon from "../assets/dashboard/quick-import.png";
 import inventoryCheckIcon from "../assets/dashboard/inventory-check.png";
 import type {
   DashboardDataCenterOverview,
+  DashboardExpiration,
   DashboardRecentChange,
   DashboardStatus,
 } from "../types";
@@ -142,7 +143,7 @@ function goLedger() {
       <el-card shadow="never" class="dashboard-reference-card">
         <template #header><div class="dashboard-card-heading"><strong>即将过保设备</strong><el-button text type="primary" @click="goLedger">查看全部 <el-icon><ArrowRight /></el-icon></el-button></div></template>
         <div class="dashboard-table-scroll">
-          <el-table :data="dashboard?.upcoming_expirations || []" empty-text="暂无即将过保设备" class="dashboard-reference-table" @row-click="(row: any) => openAssetDetail(row.asset_id)">
+          <el-table :data="dashboard?.upcoming_expirations || []" empty-text="暂无即将过保设备" class="dashboard-reference-table" @row-click="(row: DashboardExpiration) => openAssetDetail(row.asset_id)">
             <el-table-column prop="asset_name" label="资产名称" min-width="150" />
             <el-table-column prop="asset_no" label="资产编号" min-width="120" />
             <el-table-column label="到期日期" width="108"><template #default="{ row }">{{ dashboardDate(row.expiry_date) }}</template></el-table-column>

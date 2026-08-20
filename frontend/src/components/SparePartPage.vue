@@ -3,6 +3,11 @@ import { computed, ref, watch } from "vue";
 import { Delete, Edit, List, MoreFilled, Plus } from "@element-plus/icons-vue";
 import PagedTable from "./PagedTable.vue";
 import SearchField from "./SearchField.vue";
+import PageContainer from "./page/PageContainer.vue";
+import PageContent from "./page/PageContent.vue";
+import PageHeader from "./page/PageHeader.vue";
+import PageToolbar from "./page/PageToolbar.vue";
+import StatusTag from "./StatusTag.vue";
 import type { DataCenter, DictionaryItem, ServerRoom, SparePart, SpareStock, SpareTransaction } from "../types";
 import type { SpareContext } from "../types/page-context";
 
@@ -104,18 +109,27 @@ watch(showSpareOperationModal, (open, wasOpen) => { if (!open && wasOpen) refres
 </script>
 
 <template>
-  <div class="itam-page spare-page">
-    <el-card shadow="never">
-      <div class="ep-toolbar">
+  <div class="itam-page">
+    <PageContainer>
+      <template #header>
+        <PageHeader description="按数量管理备件库存、地点和库存流水">
+          <template #actions>
+            <el-button v-if="can('spares.manage')" type="primary" :icon="Plus" @click="openSparePartModal()">新增备件</el-button>
+          </template>
+        </PageHeader>
+      </template>
+      <template #toolbar>
+        <PageToolbar>
         <SearchField class="itam-filter-search" v-model="spareSearch" placeholder="搜索备件名称、类型、品牌或型号" aria-label="搜索备件" @search="searchSpareParts" />
         <el-select class="itam-filter-select" v-model="spareType" placeholder="全部类型" clearable @change="searchSpareParts"><el-option v-for="item in partTypes" :key="item.value" :label="item.label" :value="item.value" /></el-select>
         <el-select class="itam-filter-select" v-model="spareActive" placeholder="全部状态" @change="searchSpareParts"><el-option label="启用" value="true" /><el-option label="停用" value="false" /><el-option label="全部" value="all" /></el-select>
         <el-select class="itam-filter-select" v-model="spareListDataCenter" placeholder="全部数据中心" clearable @change="onSpareListDataCenterChange"><el-option v-for="center in activeDataCenters" :key="center.id" :label="center.name" :value="String(center.id)" /></el-select>
         <el-select class="itam-filter-select" v-model="spareListRoom" placeholder="全部机房" clearable @change="searchSpareParts"><el-option v-for="room in roomsFor(spareListDataCenter)" :key="room.id" :label="room.name" :value="String(room.id)" /></el-select>
-        <span class="ep-toolbar-spacer" />
-        <div class="ep-toolbar-actions"><el-button v-if="can('spares.manage')" type="primary" :icon="Plus" @click="openSparePartModal()">新增备件</el-button></div>
-      </div>
-      <el-table :data="spareParts" row-key="id" empty-text="暂无备件" @expand-change="handleExpandChange">
+        </PageToolbar>
+      </template>
+      <PageContent surface>
+      <PagedTable v-model:current-page="sparePage" v-model:page-size="sparePageSize" :total="sparePartCount" :loading="loading" @update:current-page="changeSparePage" @update:page-size="changeSparePageSize">
+      <el-table v-loading="loading" :data="spareParts" row-key="id" empty-text="暂无备件" @expand-change="handleExpandChange">
         <el-table-column type="expand" width="46">
           <template #default="{ row }">
             <div class="spare-location-panel">
@@ -141,11 +155,12 @@ watch(showSpareOperationModal, (open, wasOpen) => { if (!open && wasOpen) refres
         </el-table-column>
         <el-table-column prop="name" label="备件名称" min-width="170" show-overflow-tooltip /><el-table-column prop="part_type_label" label="类型" width="110" /><el-table-column prop="brand_name" label="品牌" min-width="110" show-overflow-tooltip /><el-table-column prop="model" label="型号" min-width="130" show-overflow-tooltip /><el-table-column prop="specification" label="规格" min-width="160" show-overflow-tooltip />
         <el-table-column label="总库存" width="100"><template #default="{ row }">{{ row.total_quantity || 0 }} {{ row.unit }}</template></el-table-column><el-table-column prop="location_count" label="地点数" width="84" />
-        <el-table-column label="状态" width="90"><template #default="{ row }"><el-tag :type="row.is_active ? 'success' : 'info'">{{ row.is_active ? "启用" : "停用" }}</el-tag></template></el-table-column>
+        <el-table-column label="状态" width="90"><template #default="{ row }"><StatusTag :type="row.is_active ? 'success' : 'info'" :label="row.is_active ? '启用' : '停用'" /></template></el-table-column>
         <el-table-column label="操作" fixed="right" width="250"><template #default="{ row }"><div class="ep-table-actions"><el-button v-if="can('spares.manage')" link type="primary" @click.stop="openSpareOperation(row, 'inbound')">入库</el-button><el-button link type="primary" :icon="List" aria-label="查看库存流水" title="查看库存流水" @click.stop="openTransactionDrawer(row)" /><el-button v-if="can('spares.manage')" link type="primary" :icon="Edit" aria-label="编辑备件" title="编辑备件" @click.stop="openSparePartModal(row)" /><el-button v-if="can('spares.manage')" link @click.stop="toggleSparePart(row)">{{ row.is_active ? "停用" : "启用" }}</el-button><el-button v-if="can('spares.manage')" link type="danger" :icon="Delete" aria-label="删除备件" title="删除备件" @click.stop="deleteSparePart(row)" /></div></template></el-table-column>
       </el-table>
-      <PagedTable v-model:current-page="sparePage" v-model:page-size="sparePageSize" :total="sparePartCount" :loading="loading" @update:current-page="changeSparePage" @update:page-size="changeSparePageSize" />
-    </el-card>
+      </PagedTable>
+      </PageContent>
+    </PageContainer>
 
     <el-dialog v-model="showSparePartModal" :title="editingSparePart ? '编辑备件' : '新增备件'" width="620px" destroy-on-close>
       <el-form label-position="top" @submit.prevent="saveSparePart"><div class="form-grid"><el-form-item label="备件名称" required><el-input v-model="sparePartForm.name" /></el-form-item><el-form-item label="备件类型" required><el-select v-model="sparePartForm.part_type"><el-option v-for="item in partTypes" :key="item.value" :label="item.label" :value="item.value" /></el-select></el-form-item><el-form-item label="品牌"><el-select v-model="sparePartForm.brand" clearable placeholder="未关联品牌"><el-option v-for="brand in activeBrands" :key="brand.id" :label="brand.name" :value="String(brand.id)" /></el-select></el-form-item><el-form-item label="型号"><el-input v-model="sparePartForm.model" /></el-form-item><el-form-item label="规格"><el-input v-model="sparePartForm.specification" /></el-form-item><el-form-item label="计量单位"><el-input v-model="sparePartForm.unit" /></el-form-item><el-form-item label="备注" class="full-width"><el-input v-model="sparePartForm.notes" type="textarea" :rows="2" /></el-form-item></div><el-checkbox v-model="sparePartForm.is_active">启用</el-checkbox></el-form>

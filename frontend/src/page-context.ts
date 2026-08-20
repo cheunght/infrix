@@ -352,6 +352,7 @@ export interface SettingsContext extends CustomFieldContext, TagContext {
 }
 
 export interface CustomFieldContext {
+  loading: Ref<boolean>;
   customFieldDeviceType: Ref<string>;
   customFieldActive: Ref<string>;
   loadCustomFields: () => void | Promise<void>;
@@ -374,6 +375,7 @@ export interface CustomFieldContext {
 }
 
 export interface TagContext {
+  loading: Ref<boolean>;
   tagSearch: Ref<string>;
   tagActive: Ref<string>;
   loadTags: () => void | Promise<void>;
