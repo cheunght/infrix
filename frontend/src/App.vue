@@ -1099,13 +1099,12 @@ const overlayAssetDetail = {
           >
         </div></el-header
       >
-      <div v-if="loading" class="loading">加载中…</div>
       <ApiErrorAlert :message="pageError" />
-      <template v-if="!loading">
+      <div class="app-route-shell" v-loading="loading" :aria-busy="loading ? 'true' : 'false'">
         <router-view v-slot="{ Component }">
           <component :is="Component" :context="pageContext" />
         </router-view>
-      </template>
+      </div>
       <GlobalOverlayHost
         :asset-context="pageContext"
         :asset-detail="overlayAssetDetail"

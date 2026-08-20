@@ -1,0 +1,594 @@
+/* Dashboard layout only. Global Element Plus theme and shared KPI tokens stay
+   in element-admin.css; this file owns the home page skeleton. */
+.dashboard-shell {
+  min-width: 0;
+  width: 100%;
+}
+
+.dashboard-shell > .page-container__header {
+  margin-bottom: var(--space-lg);
+}
+
+.dashboard-body {
+  position: relative;
+  display: grid;
+  grid-template-rows: auto auto auto auto;
+  gap: var(--space-lg);
+  min-width: 0;
+  width: 100%;
+}
+
+.dashboard-inline-loading {
+  position: absolute;
+  top: -4px;
+  right: 0;
+  z-index: 2;
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-sm);
+  padding: 3px 8px;
+  border-radius: var(--radius-sm);
+  background: rgba(255, 255, 255, 0.94);
+  color: var(--color-text-muted);
+  font-size: var(--caption-size);
+}
+
+.dashboard-kpi-row {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: var(--space-lg);
+  min-width: 0;
+}
+
+.dashboard-kpi-row > .statistic-card {
+  min-width: 0;
+  height: 94px !important;
+}
+
+.dashboard-kpi-row .statistic-card__value strong {
+  font-size: 28px;
+}
+
+.dashboard-overview-row,
+.dashboard-summary-row {
+  display: grid;
+  gap: var(--space-lg);
+  min-width: 0;
+  align-items: stretch;
+}
+
+.dashboard-overview-row {
+  grid-template-columns: minmax(360px, 4fr) minmax(0, 6fr);
+}
+
+.dashboard-summary-row {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.dashboard-panel {
+  min-width: 0;
+  height: auto;
+  border: 1px solid var(--color-border-soft);
+  border-radius: var(--radius-lg);
+  background: var(--color-surface);
+  box-shadow: var(--shadow-card);
+  overflow: hidden;
+}
+
+.dashboard-panel > .el-card__header {
+  display: flex;
+  align-items: center;
+  min-height: 46px;
+  padding: 0 var(--space-lg);
+  border-bottom: 1px solid var(--color-border-soft);
+  color: var(--color-text-primary);
+}
+
+.dashboard-panel > .el-card__body {
+  min-width: 0;
+  padding: var(--space-lg);
+}
+
+.dashboard-card-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-md);
+  width: 100%;
+}
+
+.dashboard-card-heading strong,
+.dashboard-panel--actions > .el-card__header strong {
+  color: var(--color-text-primary);
+  font-size: var(--section-title-size);
+  font-weight: 600;
+}
+
+.dashboard-card-heading .el-button {
+  flex: 0 0 auto;
+  padding: 4px 0;
+}
+
+/* Device status panel. The donut component keeps its existing SVG/data
+   contract; only the page-level placement is defined here. */
+.dashboard-panel--status > .el-card__body {
+  display: flex;
+  align-items: center;
+}
+
+.dashboard-donut-layout {
+  display: grid;
+  grid-template-columns: 180px minmax(0, 1fr);
+  align-items: center;
+  gap: var(--space-lg);
+  min-width: 0;
+  width: 100%;
+}
+
+.dashboard-donut {
+  position: relative;
+  width: 168px;
+  height: 168px;
+  margin: 0 auto;
+}
+
+.dashboard-donut svg {
+  width: 100%;
+  height: 100%;
+  transform: rotate(-90deg);
+}
+
+.dashboard-donut-track,
+.dashboard-donut-segment {
+  fill: none;
+  stroke-width: 13;
+}
+
+.dashboard-donut-track {
+  stroke: var(--color-border-soft);
+}
+
+.dashboard-donut-segment {
+  stroke-linecap: butt;
+  transition: stroke-dasharray 0.25s ease;
+}
+
+.dashboard-donut-center {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-direction: column;
+  color: var(--color-text-primary);
+}
+
+.dashboard-donut-center strong {
+  font-size: 24px;
+  line-height: 1.1;
+}
+
+.dashboard-donut-center span {
+  margin-top: 5px;
+  color: var(--color-text-muted);
+  font-size: var(--caption-size);
+}
+
+.dashboard-donut-legend {
+  display: grid;
+  align-content: center;
+  gap: var(--space-1);
+  min-width: 0;
+}
+
+.dashboard-legend-header,
+.dashboard-legend-item {
+  display: grid;
+  grid-template-columns: 10px minmax(0, 1fr) 44px 56px;
+  align-items: center;
+  gap: var(--space-sm);
+  width: 100%;
+  margin: 0;
+}
+
+.dashboard-legend-header {
+  min-height: var(--space-lg);
+  padding-block: var(--space-1);
+  color: var(--color-text-muted);
+  font-size: 11px;
+  line-height: 1;
+}
+
+.dashboard-legend-header span:nth-child(n + 3) {
+  text-align: right;
+}
+
+.dashboard-legend-item {
+  min-height: calc(var(--space-5) + var(--space-1));
+  padding-block: var(--space-1);
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--color-text-secondary);
+  cursor: pointer;
+  font: inherit;
+  text-align: left;
+}
+
+.dashboard-legend-item:hover,
+.dashboard-legend-item:focus-visible {
+  color: var(--color-brand-primary);
+}
+
+.dashboard-legend-item i {
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+}
+
+.dashboard-legend-item strong,
+.dashboard-legend-item small {
+  text-align: right;
+  white-space: nowrap;
+}
+
+.dashboard-legend-item strong {
+  color: var(--color-text-primary);
+}
+
+.dashboard-legend-item small {
+  color: var(--color-text-muted);
+}
+
+/* Data-center panel. Items are lightweight information blocks, not cards. */
+.dashboard-data-center-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(240px, 1fr));
+  gap: var(--space-sm);
+  min-width: 0;
+}
+
+.dashboard-data-center-item {
+  display: grid;
+  grid-template-rows: auto auto auto auto;
+  align-content: center;
+  row-gap: var(--space-1);
+  width: 100%;
+  min-width: 0;
+  margin: 0;
+  padding: var(--space-md);
+  border: 1px solid var(--color-border-soft);
+  border-radius: var(--radius-md);
+  background: var(--el-fill-color-light);
+  color: var(--color-text-secondary);
+  cursor: pointer;
+  font: inherit;
+  text-align: left;
+  white-space: normal;
+}
+
+.dashboard-data-center-item:hover,
+.dashboard-data-center-item:focus-visible {
+  border-color: var(--el-color-primary-light-5);
+  background: var(--color-brand-primary-soft);
+}
+
+.dashboard-data-center-title {
+  display: flex;
+  align-items: center;
+  gap: var(--space-sm);
+  min-width: 0;
+  color: var(--color-text-primary);
+}
+
+.dashboard-data-center-title strong {
+  flex: 1;
+  min-width: 0;
+  overflow-wrap: anywhere;
+  white-space: normal;
+  font-size: 14px;
+  line-height: 1.35;
+}
+
+.dashboard-data-center-icon {
+  display: grid;
+  flex: 0 0 28px;
+  place-items: center;
+  width: 28px;
+  height: 28px;
+  border-radius: var(--radius-sm);
+  background: var(--color-brand-primary-soft);
+  color: var(--color-brand-primary);
+}
+
+.dashboard-data-center-stats {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-md);
+  margin-top: 0;
+  font-size: var(--caption-size);
+}
+
+.dashboard-data-center-stats b {
+  margin-inline-end: var(--space-1);
+  color: var(--color-text-primary);
+  font-size: 15px;
+}
+
+.dashboard-data-center-capacity {
+  display: flex;
+  justify-content: space-between;
+  gap: var(--space-sm);
+  margin-top: 0;
+  color: var(--color-text-muted);
+  font-size: var(--caption-size);
+}
+
+.dashboard-data-center-item .el-progress {
+  margin-top: 0;
+}
+
+/* Activity and expiry summaries. Full business tables stay on their source
+   pages; the Dashboard only exposes a short, clickable summary. */
+.dashboard-activity-list,
+.dashboard-expiring-list {
+  display: grid;
+  min-width: 0;
+}
+
+.dashboard-activity-item,
+.dashboard-expiring-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  width: 100%;
+  min-width: 0;
+  min-height: 48px;
+  margin: 0;
+  padding: var(--space-sm) 0;
+  border: 0;
+  border-bottom: 1px solid var(--color-border-soft);
+  border-radius: 0;
+  background: transparent;
+  color: var(--color-text-primary);
+  text-align: left;
+}
+
+.dashboard-activity-item:last-child,
+.dashboard-expiring-item:last-child {
+  border-bottom: 0;
+}
+
+.dashboard-activity-item:hover,
+.dashboard-activity-item:focus-visible,
+.dashboard-expiring-item:hover,
+.dashboard-expiring-item:focus-visible {
+  color: var(--color-text-primary);
+  background: var(--color-brand-primary-soft);
+}
+
+.dashboard-activity-main,
+.dashboard-expiring-main {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 3px;
+  overflow: hidden;
+}
+
+.dashboard-activity-main strong,
+.dashboard-expiring-main strong {
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.dashboard-activity-main small,
+.dashboard-expiring-main small {
+  max-width: 100%;
+  overflow: hidden;
+  color: var(--color-text-muted);
+  font-size: 11px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.dashboard-activity-meta,
+.dashboard-expiring-meta {
+  display: flex;
+  flex: 0 0 auto;
+  align-items: center;
+  justify-content: flex-end;
+  gap: var(--space-sm);
+  min-width: 0;
+  margin-left: var(--space-md);
+}
+
+.dashboard-expiring-meta {
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 3px;
+}
+
+.dashboard-activity-meta time,
+.dashboard-expiring-meta time {
+  color: var(--color-text-muted);
+  font-size: 11px;
+  white-space: nowrap;
+}
+
+.dashboard-compact-empty {
+  display: grid;
+  min-height: calc(var(--space-5) + var(--space-4));
+  place-items: center;
+  color: var(--color-text-muted);
+  font-size: var(--caption-size);
+}
+
+.dashboard-panel.is-empty > .el-card__body {
+  padding-block: var(--space-sm);
+}
+
+/* Quick actions are the lowest visual level: one horizontal item per action,
+   with no nested card treatment. */
+.dashboard-panel--actions > .el-card__header {
+  min-height: 38px;
+}
+
+.dashboard-panel--actions > .el-card__body {
+  padding: 6px var(--space-md);
+}
+
+.dashboard-action-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: var(--space-md);
+  min-width: 0;
+}
+
+.dashboard-quick-action {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  column-gap: var(--space-sm);
+  width: 100%;
+  min-width: 0;
+  min-height: 64px;
+  margin: 0;
+  padding: var(--space-sm);
+  border: 1px solid transparent;
+  border-radius: var(--radius-md);
+  background: transparent;
+  color: var(--color-text-primary);
+  cursor: pointer;
+  font: inherit;
+  text-align: left;
+}
+
+.dashboard-quick-action:hover,
+.dashboard-quick-action:focus-visible {
+  background: var(--color-brand-primary-soft);
+}
+
+.dashboard-quick-action:focus-visible {
+  outline: 2px solid var(--el-color-primary-light-5);
+  outline-offset: -2px;
+}
+
+.dashboard-quick-action__icon {
+  display: grid;
+  place-items: center;
+  width: 34px;
+  height: 34px;
+}
+
+.dashboard-quick-action__icon img {
+  display: block;
+  width: 34px;
+  height: 34px;
+  object-fit: contain;
+}
+
+.dashboard-quick-action__content {
+  display: grid;
+  align-content: center;
+  min-width: 0;
+  gap: var(--space-1);
+}
+
+.dashboard-quick-action__title,
+.dashboard-quick-action__description {
+  display: block;
+}
+
+.dashboard-quick-action__title {
+  overflow: hidden;
+  font-size: 13px;
+  font-weight: 600;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.dashboard-quick-action__description {
+  overflow: hidden;
+  color: var(--color-text-muted);
+  font-size: var(--caption-size);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.dashboard-quick-action__chevron {
+  display: grid;
+  place-items: center;
+  color: var(--color-text-muted);
+}
+
+@media (min-width: 1051px) {
+  .dashboard-quick-action + .dashboard-quick-action {
+    border-inline-start-color: var(--color-border-soft);
+    border-radius: 0;
+  }
+}
+
+@media (min-width: 1900px) {
+  .dashboard-data-center-grid {
+    grid-template-columns: repeat(3, minmax(240px, 1fr));
+  }
+}
+
+@media (max-width: 1050px) {
+  .dashboard-kpi-row {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .dashboard-overview-row,
+  .dashboard-summary-row {
+    grid-template-columns: 1fr;
+  }
+
+  .dashboard-action-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+@media (max-width: 720px) {
+  .dashboard-data-center-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+@media (max-width: 640px) {
+  .dashboard-kpi-row,
+  .dashboard-data-center-grid,
+  .dashboard-action-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .dashboard-donut-layout {
+    grid-template-columns: 1fr;
+  }
+
+  .dashboard-donut {
+    width: 148px;
+    height: 148px;
+  }
+}
+
+@media (max-height: 820px) and (min-width: 1051px) {
+  .dashboard-kpi-row > .statistic-card {
+    height: 90px !important;
+  }
+
+  .dashboard-donut {
+    width: 148px;
+    height: 148px;
+  }
+
+  .dashboard-quick-action {
+    min-height: 60px;
+  }
+}

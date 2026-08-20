@@ -58,6 +58,12 @@ const segments = computed(() => {
       </div>
     </div>
     <div class="dashboard-donut-legend">
+      <div class="dashboard-legend-header" aria-hidden="true">
+        <span></span>
+        <span>状态</span>
+        <span>数量</span>
+        <span>占比</span>
+      </div>
       <button
         v-for="item in items"
         :key="item.key || item.label"
