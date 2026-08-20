@@ -1067,6 +1067,25 @@ body {
   min-width: 0;
 }
 
+.asset-drawer-identity {
+  min-width: 0;
+}
+
+.asset-drawer-title-row {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px 10px;
+  min-width: 0;
+}
+
+.asset-drawer-actions {
+  display: inline-flex;
+  align-items: center;
+  flex: 0 0 auto;
+  gap: 4px;
+}
+
 .asset-drawer-kicker {
   display: block;
   color: var(--el-text-color-secondary);
@@ -1152,6 +1171,100 @@ body {
   padding: 0 18px 24px;
 }
 
+.asset-detail-content {
+  min-height: 100%;
+  overflow-x: hidden;
+}
+
+.asset-detail-state {
+  display: flex;
+  min-height: 220px;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  text-align: center;
+}
+
+.asset-detail-state .el-skeleton {
+  width: min(100%, 460px);
+}
+
+.asset-detail-state > span {
+  color: var(--el-text-color-secondary);
+  max-width: 460px;
+  overflow-wrap: anywhere;
+}
+
+.asset-detail-state .el-button {
+  margin-top: 4px;
+}
+
+.asset-detail-section {
+  padding: 18px 0;
+  border-bottom: 1px solid var(--el-border-color-lighter);
+}
+
+.asset-detail-section:first-child {
+  padding-top: 18px;
+}
+
+.asset-detail-section h3 {
+  margin: 0 0 12px;
+  color: var(--el-text-color-primary);
+  font-size: 14px;
+  font-weight: 600;
+  line-height: 20px;
+}
+
+.asset-detail-fields {
+  display: grid;
+  grid-template-columns: 92px minmax(0, 1fr);
+  gap: 9px 14px;
+  margin: 0;
+  font-size: 13px;
+  line-height: 20px;
+}
+
+.asset-detail-fields dt {
+  color: var(--el-text-color-secondary);
+}
+
+.asset-detail-fields dd {
+  min-width: 0;
+  margin: 0;
+  color: var(--el-text-color-primary);
+  overflow-wrap: anywhere;
+  word-break: break-word;
+}
+
+.asset-detail-fields small {
+  color: var(--el-text-color-secondary);
+  font-size: 11px;
+}
+
+.asset-detail-technical {
+  font-variant-numeric: tabular-nums;
+}
+
+.asset-detail-tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.asset-detail-custom-fields {
+  margin-top: 12px;
+}
+
+.asset-detail-section .detail-notes {
+  margin: 0;
+  color: var(--el-text-color-regular);
+  line-height: 1.65;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
 .asset-detail-drawer .detail-section {
   padding: 16px 0;
 }
@@ -1171,6 +1284,21 @@ body {
 @media (max-width: 560px) {
   .asset-detail-summary {
     grid-template-columns: 1fr;
+  }
+
+  .asset-drawer-heading {
+    gap: 10px;
+  }
+
+  .asset-drawer-title-row {
+    align-items: flex-start;
+    flex-direction: column;
+    gap: 4px;
+  }
+
+  .asset-detail-fields {
+    grid-template-columns: 84px minmax(0, 1fr);
+    gap: 8px 10px;
   }
 }
 
@@ -1204,6 +1332,30 @@ body {
 /* Inventory center */
 .inventory-alert {
   margin-bottom: 12px;
+}
+
+/* Repair list states stay compact without replacing the table shell. */
+.repair-list-alert {
+  margin-bottom: 12px;
+}
+
+.repair-list-empty {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-wrap: wrap;
+  gap: 6px 10px;
+  min-height: 72px;
+  color: var(--el-text-color-secondary);
+}
+
+.repair-list-empty small {
+  flex-basis: 100%;
+  color: var(--el-text-color-secondary);
+}
+
+.repair-list-empty--error {
+  color: var(--el-color-danger);
 }
 .inventory-detail-heading {
   display: flex;
@@ -2719,4 +2871,413 @@ body,
 .el-dialog__footer .el-button + .el-button,
 .el-drawer__footer .el-button + .el-button {
   margin-left: 0;
+}
+
+/* Asset ledger toolbar: keep filtering and asset actions in explicit groups.
+   This is intentionally page-scoped so the shared toolbar contract remains
+   unchanged for the other list pages. */
+.ep-main .asset-ledger-toolbar {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: var(--space-sm, 8px);
+  min-width: 0;
+  flex-wrap: initial;
+}
+
+.asset-toolbar-filters,
+.asset-toolbar-actions,
+.asset-toolbar-table-actions {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: var(--space-sm, 8px);
+}
+
+.asset-toolbar-filters {
+  flex: 1 1 auto;
+  flex-wrap: nowrap;
+}
+
+.asset-toolbar-actions {
+  justify-content: flex-end;
+  flex-wrap: nowrap;
+}
+
+.asset-toolbar-table-actions {
+  flex-wrap: nowrap;
+}
+
+.ep-main .asset-toolbar-search {
+  flex: 0 1 280px;
+  width: 280px;
+  min-width: 220px;
+  max-width: 300px;
+}
+
+.ep-main .asset-toolbar-filter {
+  flex: 0 1 150px;
+  width: 150px;
+  min-width: 130px;
+  max-width: 180px;
+}
+
+.asset-toolbar-more {
+  flex: 0 0 auto;
+}
+
+.asset-ledger-advanced-filters {
+  padding: 2px 2px 0;
+}
+
+.asset-ledger-advanced-filters .el-form-item {
+  margin-bottom: var(--space-md, 12px);
+}
+
+.asset-ledger-advanced-filters .el-select,
+.asset-ledger-advanced-filters .el-input {
+  width: 100%;
+}
+
+.asset-ledger-error {
+  display: flex;
+  min-height: 180px;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-lg, 16px);
+  padding: var(--space-xl, 24px);
+  color: var(--el-text-color-secondary);
+  text-align: left;
+}
+
+.asset-ledger-error__copy {
+  display: grid;
+  gap: var(--space-xs, 4px);
+  min-width: 0;
+}
+
+.asset-ledger-error__copy strong {
+  color: var(--el-text-color-primary);
+  font-weight: 600;
+}
+
+.asset-ledger-error__copy span {
+  max-width: 560px;
+  overflow: hidden;
+  color: var(--el-text-color-secondary);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.asset-ledger-empty {
+  display: flex;
+  min-height: 120px;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-sm, 8px);
+  padding: var(--space-lg, 16px);
+  color: var(--el-text-color-secondary);
+}
+
+.asset-ledger-empty strong {
+  color: var(--el-text-color-secondary);
+  font-weight: 500;
+}
+
+@media (max-width: 1100px) {
+  .ep-main .asset-ledger-toolbar {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .asset-toolbar-actions {
+    justify-content: flex-end;
+  }
+}
+
+@media (max-width: 900px) {
+  .asset-toolbar-filters,
+  .asset-toolbar-actions {
+    width: 100%;
+  }
+
+  .asset-toolbar-actions {
+    justify-content: flex-start;
+    flex-wrap: wrap;
+  }
+
+  .asset-toolbar-filters {
+    flex-wrap: wrap;
+  }
+
+  .ep-main .asset-toolbar-search {
+    flex: 1 1 100%;
+    width: 100%;
+    max-width: none;
+  }
+}
+
+@media (max-width: 640px) {
+  .ep-main .asset-toolbar-filter,
+  .asset-toolbar-more {
+    flex: 1 1 100%;
+    width: 100%;
+    max-width: none;
+  }
+
+  .asset-toolbar-table-actions {
+    width: 100%;
+    flex-wrap: wrap;
+  }
+
+  .asset-toolbar-table-actions .el-button,
+  .asset-toolbar-table-actions .el-upload {
+    flex: 1 1 auto;
+  }
+
+  .asset-ledger-error {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .asset-ledger-error__copy span {
+    max-width: 100%;
+    white-space: normal;
+  }
+}
+
+.asset-table-header-filter {
+  display: inline-flex;
+  align-items: center;
+  min-width: 0;
+  gap: 2px;
+}
+
+.asset-table-header-filter__label {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.asset-table-header-filter__trigger {
+  width: 22px;
+  height: 22px;
+  padding: 2px;
+  color: var(--el-text-color-secondary);
+}
+
+.asset-table-header-filter__trigger.is-active {
+  color: var(--el-color-primary);
+}
+
+.asset-table-filter-select {
+  width: 100%;
+}
+
+/* Asset ledger table: keep the identity, location and row actions legible
+   without adding a second table pattern to the shared PagedTable component. */
+.ep-main .asset-ledger-table .el-table__row {
+  cursor: pointer;
+}
+
+.ep-main .asset-ledger-table .el-table__row > td {
+  padding-top: 8px;
+  padding-bottom: 8px;
+}
+
+.asset-ledger-column-fixed {
+  color: var(--el-text-color-secondary);
+  font-size: 11px;
+  font-weight: 400;
+}
+
+.asset-identity-cell,
+.asset-location-cell {
+  display: block;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.asset-identity-cell {
+  width: 100%;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.asset-identity-cell:hover .asset-identity-cell__name,
+.asset-identity-cell:focus-visible .asset-identity-cell__name {
+  color: var(--el-color-primary);
+}
+
+.asset-identity-cell__name,
+.asset-identity-cell__number {
+  display: block;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.asset-identity-cell__name {
+  color: var(--el-text-color-primary);
+  font-weight: 500;
+}
+
+.asset-identity-cell__number {
+  margin-top: 2px;
+  color: var(--el-text-color-secondary);
+  font-size: 12px;
+}
+
+.asset-location-cell {
+  display: grid;
+  gap: 2px;
+  line-height: 1.35;
+  white-space: normal;
+}
+
+.asset-location-cell__primary,
+.asset-location-cell__secondary {
+  display: block;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.asset-location-cell__primary {
+  color: var(--el-text-color-primary);
+}
+
+.asset-location-cell__secondary {
+  color: var(--el-text-color-secondary);
+  font-size: 12px;
+}
+
+.asset-row-actions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 4px;
+  min-width: 0;
+  white-space: nowrap;
+}
+
+.asset-row-actions .el-button {
+  flex: 0 0 auto;
+  padding: 4px 2px;
+}
+
+.asset-row-actions .el-dropdown {
+  display: inline-flex;
+  flex: 0 0 auto;
+}
+
+.asset-row-actions .el-dropdown .el-button {
+  min-width: 28px;
+}
+
+.el-dropdown-menu__item.asset-row-danger {
+  color: var(--el-color-danger);
+}
+
+@media (max-width: 900px) {
+  .asset-row-actions {
+    justify-content: flex-start;
+  }
+}
+
+/* Asset editor: keep the dialog shell stable while the form body scrolls. */
+.asset-form-dialog .el-dialog__body {
+  max-height: min(calc(88vh - 140px), 680px);
+  overflow-y: auto;
+  overflow-x: hidden;
+  padding: 8px 24px 24px;
+}
+
+.asset-form-dialog .el-dialog__footer {
+  position: sticky;
+  bottom: 0;
+  z-index: 1;
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  margin: 0;
+  padding: 14px 24px 18px;
+  background: var(--el-bg-color-overlay);
+  border-top: 1px solid var(--el-border-color-lighter);
+}
+
+.asset-form-dialog .asset-form-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 4px 16px;
+}
+
+.asset-form-dialog .asset-form-grid > .el-form-item,
+.asset-form-dialog .asset-form-full {
+  min-width: 0;
+}
+
+.asset-form-dialog .asset-form-full {
+  grid-column: 1 / -1;
+}
+
+.asset-form-dialog .asset-form-grid .el-input,
+.asset-form-dialog .asset-form-grid .el-select,
+.asset-form-dialog .asset-form-grid .el-date-editor,
+.asset-form-dialog .asset-form-grid .el-input-number,
+.asset-form-dialog .asset-form-full .el-input,
+.asset-form-dialog .asset-form-full .el-select,
+.asset-form-dialog .asset-form-full .el-date-editor {
+  width: 100%;
+}
+
+.asset-form-dialog .el-divider {
+  margin: 18px 0 14px;
+}
+
+.asset-form-dialog .el-divider:first-child {
+  margin-top: 4px;
+}
+
+.asset-form-loading {
+  min-height: 420px;
+  padding: 12px 4px;
+}
+
+.asset-form-load-error {
+  display: grid;
+  min-height: 260px;
+  place-content: center;
+  gap: 18px;
+}
+
+.asset-form-load-error .el-button {
+  justify-self: center;
+}
+
+@media (max-width: 760px) {
+  .asset-form-dialog .el-dialog__body {
+    max-height: 66vh;
+    padding: 6px 16px 20px;
+  }
+
+  .asset-form-dialog .el-dialog__footer {
+    padding: 12px 16px 14px;
+  }
+
+  .asset-form-dialog .asset-form-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .asset-form-dialog .asset-form-full {
+    grid-column: auto;
+  }
 }

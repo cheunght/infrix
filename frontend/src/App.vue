@@ -323,6 +323,9 @@ const {
   assetPage,
   assetPageSize,
   assetSearch,
+  assetFilters,
+  assetListLoading,
+  assetListError,
   assetTagFilter,
   assetCustomFilterField,
   assetCustomFilterValue,
@@ -336,6 +339,12 @@ const {
   editingAsset,
   assetModalMode,
   assetForm,
+  assetFormLoading,
+  assetFormLoadError,
+  assetFormSaving,
+  assetFormFieldErrors,
+  retryAssetFormLoad,
+  clearAssetFormErrors,
   assetCustomFieldSchema,
   activeBrands,
   activeDeviceTypes,
@@ -364,6 +373,7 @@ const {
   confirmImportPreview,
   importErrorText,
   searchLedger,
+  resetAssetFilters,
   changeAssetPage,
   changeAssetPageSize,
   lookupAsset,
@@ -408,8 +418,11 @@ const repairs = useRepairs({
   assets,
   selectedAssetIds,
   actionMessage,
+  refreshOpenAssetDetail: assetsApi.refreshOpenAssetDetail,
 });
 const {
+  repairListLoading,
+  repairListError,
   repairRows,
   repairCount,
   repairPage,
@@ -432,6 +445,10 @@ const {
   openRepairModal,
   loadRepairs,
   searchRepairs,
+  onRepairStatusChange,
+  onRepairDateChange,
+  resetRepairFilters,
+  retryRepairList,
   createFault,
   saveRepair,
   exportRepairs,
@@ -515,7 +532,7 @@ const navItems = [
   { label: "机房资源", icon: "▦", iconIndex: 2, page: "racks" as Page },
   { label: "软件许可", icon: "▣", iconIndex: 6, page: "licenses" as Page },
   { label: "盘点中心", icon: "✓", iconIndex: 5, page: "inventory" as Page },
-  { label: "事件中心", icon: "⚒", iconIndex: 4, page: "repairs" as Page },
+  { label: "故障维修", icon: "⚒", iconIndex: 4, page: "repairs" as Page },
   {
     label: "系统设置",
     icon: "⚙",
@@ -869,6 +886,7 @@ const pageContext = {
   dashboardLoading,
   openAssetDetail, openRackSection,
   assetSearch, searchLedger, assetColumnOptions, visibleAssetColumns,
+  assetFilters, assetListLoading, assetListError, resetAssetFilters,
   assetTagFilter, tags,
   toggleAssetColumn, resetAssetColumns, visibleAssetColumnOptions, can,
   openNewAssetModal, selectedAssetIds, deleteSelectedAssets, exportAssets,
@@ -876,7 +894,9 @@ const pageContext = {
   handleElementAssetSelection, assetValue, openAssetClone, openAssetEditor,
   deleteAsset, assetPage, assetPageSize, assetCount, changeAssetPage,
   changeAssetPageSize,
+  repairListLoading, repairListError,
   repairKeyword, searchRepairs, repairStatus, repairStart, repairEnd,
+  onRepairStatusChange, onRepairDateChange, resetRepairFilters, retryRepairList,
   exportRepairs, openFaultModal, repairRows, openRepairModal, formatDateTime,
   repairPage, repairPageSize, repairCount, changeRepairPage,
   changeRepairPageSize,
@@ -921,6 +941,8 @@ const pageContext = {
   loadTags, openTagModal, saveTag, toggleTag, deleteTag, tagForm, showTagModal, editingTag,
   brands,
   showAssetModal, assetModalMode, editingAsset, assetForm, activeDeviceTypes,
+  assetFormLoading, assetFormLoadError, assetFormSaving, assetFormFieldErrors,
+  retryAssetFormLoad, clearAssetFormErrors,
   assetCustomFieldSchema,
   syncAssetDeviceType, activeBrands, activeDataCenters, changeAssetDataCenter,
   assetRoomOptions, changeAssetRoom, assetRackOptions, changeAssetRack, setAssetRackMounted,
@@ -1036,9 +1058,9 @@ const overlayAssetDetail = {
           ><el-icon><Checked /></el-icon
           ><template #title>盘点中心</template></el-menu-item
         >
-        <el-menu-item index="repairs" title="事件中心"
+        <el-menu-item index="repairs" title="故障维修"
           ><el-icon><Warning /></el-icon
-          ><template #title>事件中心</template></el-menu-item
+          ><template #title>故障维修</template></el-menu-item
         >
         <el-sub-menu
           index="settings"

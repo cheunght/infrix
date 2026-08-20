@@ -1,3 +1,4 @@
+<!-- UX Reference: standard dashboard hierarchy. Reuse interaction patterns, not asset-specific fields. -->
 <script setup lang="ts">
 import { computed } from "vue";
 import {

@@ -79,17 +79,31 @@ export interface DashboardContext {
   dashboardDateTime: (value: string) => string;
 }
 
+export interface AssetFilters {
+  status: string;
+  deviceType: string;
+  tag: string;
+  brand: string;
+  model: string;
+}
+
 export interface AssetLedgerContext {
   loading: Ref<boolean>;
+  assetListLoading: Ref<boolean>;
+  assetListError: Ref<string>;
   assetSearch: Ref<string>;
   searchLedger: () => void | Promise<void>;
+  assetFilters: AssetFilters;
+  resetAssetFilters: () => void | Promise<void>;
   assetTagFilter: Ref<string>;
+  brands: Ref<DictionaryItem[]>;
+  deviceTypes: Ref<DictionaryItem[]>;
   tags: Ref<Tag[]>;
-  assetColumnOptions: Array<{ key: string; label: string }>;
+  assetColumnOptions: Array<{ key: string; label: string; required?: boolean }>;
   visibleAssetColumns: Ref<string[]>;
   toggleAssetColumn: (key: string) => void;
   resetAssetColumns: () => void;
-  visibleAssetColumnOptions: ComputedRef<Array<{ key: string; label: string }>>;
+  visibleAssetColumnOptions: ComputedRef<Array<{ key: string; label: string; required?: boolean }>>;
   can: CapabilityFn;
   openNewAssetModal: () => void | Promise<void>;
   selectedAssetIds: Ref<number[]>;
@@ -117,6 +131,12 @@ export interface AssetFormContext {
   assetModalMode: Ref<string>;
   editingAsset: Ref<Asset | null>;
   assetForm: Ref<AssetFormState>;
+  assetFormLoading: Ref<boolean>;
+  assetFormLoadError: Ref<string>;
+  assetFormSaving: Ref<boolean>;
+  assetFormFieldErrors: Ref<Record<string, string>>;
+  retryAssetFormLoad: () => void | Promise<void>;
+  clearAssetFormErrors: () => void;
   activeDeviceTypes: ComputedRef<DictionaryItem[]>;
   syncAssetDeviceType: () => void | Promise<void>;
   activeBrands: ComputedRef<DictionaryItem[]>;
@@ -236,12 +256,17 @@ export interface LicenseContext {
 }
 
 export interface RepairContext {
-  loading: Ref<boolean>;
+  repairListLoading: Ref<boolean>;
+  repairListError: Ref<string>;
   repairKeyword: Ref<string>;
   searchRepairs: () => void | Promise<void>;
   repairStatus: Ref<string>;
   repairStart: Ref<string>;
   repairEnd: Ref<string>;
+  onRepairStatusChange: () => void | Promise<void>;
+  onRepairDateChange: () => void | Promise<void>;
+  resetRepairFilters: () => void | Promise<void>;
+  retryRepairList: () => void | Promise<void>;
   exportRepairs: () => void | Promise<void>;
   can: CapabilityFn;
   openFaultModal: () => void | Promise<void>;

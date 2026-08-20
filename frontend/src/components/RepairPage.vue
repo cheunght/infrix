@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { computed } from "vue";
 import { Download, Warning } from "@element-plus/icons-vue";
 import PagedTable from "./PagedTable.vue";
 import SearchField from "./SearchField.vue";
@@ -12,12 +13,17 @@ import type { RepairContext } from "../types/page-context";
 const props = defineProps<{ context: RepairContext }>();
 const context = props.context;
 const {
-  loading,
+  repairListLoading,
+  repairListError,
   repairKeyword,
   searchRepairs,
   repairStatus,
   repairStart,
   repairEnd,
+  onRepairStatusChange,
+  onRepairDateChange,
+  resetRepairFilters,
+  retryRepairList,
   exportRepairs,
   can,
   openFaultModal,
@@ -30,6 +36,10 @@ const {
   changeRepairPage,
   changeRepairPageSize,
 } = context;
+
+const hasRepairFilters = computed(() => Boolean(
+  repairKeyword.value.trim() || repairStatus.value || repairStart.value || repairEnd.value,
+));
 </script>
 
 <template>
@@ -45,13 +55,14 @@ const {
       <template #toolbar>
         <PageToolbar>
           <SearchField class="itam-filter-search" v-model="repairKeyword" placeholder="搜索资产编号、名称、故障原因" aria-label="搜索故障" @search="searchRepairs" />
-          <el-select class="itam-filter-select" v-model="repairStatus" placeholder="全部状态" clearable>
+          <el-select class="itam-filter-select" v-model="repairStatus" placeholder="全部状态" clearable @change="onRepairStatusChange">
             <el-option label="未关闭" value="false" />
             <el-option label="已关闭" value="true" />
           </el-select>
-          <el-date-picker class="itam-filter-date" v-model="repairStart" type="date" value-format="YYYY-MM-DD" placeholder="开始日期" />
-          <el-date-picker class="itam-filter-date" v-model="repairEnd" type="date" value-format="YYYY-MM-DD" placeholder="结束日期" />
+          <el-date-picker class="itam-filter-date" v-model="repairStart" type="date" value-format="YYYY-MM-DD" placeholder="开始日期" @change="onRepairDateChange" />
+          <el-date-picker class="itam-filter-date" v-model="repairEnd" type="date" value-format="YYYY-MM-DD" placeholder="结束日期" @change="onRepairDateChange" />
           <template #actions>
+            <el-button @click="resetRepairFilters">重置</el-button>
             <el-button v-if="can('faults.export')" :icon="Download" @click="exportRepairs">导出维修记录</el-button>
           </template>
         </PageToolbar>
@@ -61,12 +72,36 @@ const {
           v-model:current-page="repairPage"
           v-model:page-size="repairPageSize"
           :total="repairCount"
-          :loading="loading"
+          :loading="repairListLoading"
           @update:current-page="changeRepairPage"
           @update:page-size="changeRepairPageSize"
         >
-          <el-table v-loading="loading" :data="repairRows" empty-text="暂无故障记录">
-            <el-table-column label="资产" min-width="160">
+          <el-alert
+            v-if="repairListError && repairRows.length"
+            class="repair-list-alert"
+            type="error"
+            :closable="false"
+            title="故障数据加载失败"
+          >
+            <template #default>
+              <span>{{ repairListError }}</span>
+              <el-button link type="danger" @click="retryRepairList">重新加载</el-button>
+            </template>
+          </el-alert>
+          <el-table v-loading="repairListLoading" :data="repairRows">
+            <template #empty>
+              <div v-if="repairListError" class="repair-list-empty repair-list-empty--error">
+                <span>故障数据加载失败</span>
+                <small>{{ repairListError }}</small>
+                <el-button link type="primary" @click="retryRepairList">重新加载</el-button>
+              </div>
+              <div v-else-if="hasRepairFilters" class="repair-list-empty">
+                <span>没有符合当前筛选条件的故障</span>
+                <el-button link type="primary" @click="resetRepairFilters">清除筛选</el-button>
+              </div>
+              <span v-else>暂无故障记录</span>
+            </template>
+            <el-table-column label="资产" min-width="180" show-overflow-tooltip>
               <template #default="{ row }">
                 <el-button link type="primary" @click="openAssetDetail(row.asset)">
                   {{ row.asset_no }} · {{ row.asset_name }}
@@ -76,7 +111,7 @@ const {
             <el-table-column label="发生时间" min-width="170">
               <template #default="{ row }">{{ new Date(row.occurred_at).toLocaleString("zh-CN") }}</template>
             </el-table-column>
-            <el-table-column prop="reason" label="故障原因" min-width="130" />
+            <el-table-column prop="reason" label="故障原因" min-width="150" show-overflow-tooltip />
             <el-table-column prop="description" label="故障描述" min-width="180" show-overflow-tooltip />
             <el-table-column label="维修完成时间" min-width="170">
               <template #default="{ row }">{{ row.repair?.finished_at ? new Date(row.repair.finished_at).toLocaleString("zh-CN") : "—" }}</template>

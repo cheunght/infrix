@@ -1,5 +1,7 @@
 <script setup lang="ts">
+import { computed, ref } from "vue";
 import { Edit, Lock, Message, User } from "@element-plus/icons-vue";
+import type { FormInstance, FormRules } from "element-plus";
 import type { Ref } from "vue";
 import type { useAssets } from "../../composables/useAssets";
 import type { useFacilities } from "../../composables/useFacilities";
@@ -59,6 +61,8 @@ const {
   importPreview,
   cancelImportPreview,
   confirmImportPreview,
+  openAssetEditor,
+  retryAssetDetail,
 } = props.assets;
 
 const {
@@ -87,12 +91,33 @@ const {
   searchFaultAssets,
   faultAssetOptions,
   faultForm,
+  faultSaving,
   createFault,
   showRepairModal,
   selectedFault,
   repairForm,
+  repairSaving,
   saveRepair,
 } = props.repairs;
+
+const faultFormRef = ref<FormInstance>();
+const repairFormRef = ref<FormInstance>();
+const faultFormRules: FormRules = {
+  asset: [{ required: true, message: "请选择故障资产", trigger: "change" }],
+  occurred_at: [{ required: true, message: "请选择故障发生时间", trigger: "change" }],
+};
+
+async function submitFault() {
+  const valid = await faultFormRef.value?.validate().catch(() => false);
+  if (valid !== true) return;
+  await createFault();
+}
+
+async function submitRepair() {
+  const valid = await repairFormRef.value?.validate().catch(() => false);
+  if (valid !== true) return;
+  await saveRepair();
+}
 
 const {
   showUserModal,
@@ -120,6 +145,13 @@ const {
   passwordForm,
   changePassword,
 } = props.auth;
+
+const canEditAsset = computed(() => props.assetContext.can("assets.manage"));
+
+function editCurrentAsset() {
+  const assetId = detailAsset.value?.id;
+  if (assetId) void openAssetEditor(assetId);
+}
 </script>
 
 <template>
@@ -325,8 +357,8 @@ const {
     </template>
   </el-dialog>
 
-  <el-dialog v-model="showFaultModal" title="登记故障" width="560px" destroy-on-close>
-    <el-form label-position="top">
+  <el-dialog v-model="showFaultModal" title="登记故障" width="560px" destroy-on-close :close-on-click-modal="!faultSaving" :close-on-press-escape="!faultSaving">
+    <el-form ref="faultFormRef" :model="faultForm" :rules="faultFormRules" label-position="top" :validate-on-rule-change="false">
       <el-form-item label="搜索资产">
         <SearchField
           class="itam-filter-search"
@@ -337,7 +369,7 @@ const {
           @search="searchFaultAssets"
         />
       </el-form-item>
-      <el-form-item label="资产" required>
+      <el-form-item label="资产" prop="asset" required :validate-event="false">
         <el-select v-model="faultForm.asset" placeholder="请选择搜索结果">
           <el-option
             v-for="asset in faultAssetOptions"
@@ -347,13 +379,13 @@ const {
           />
         </el-select>
       </el-form-item>
-      <el-form-item label="发生时间" required><el-date-picker v-model="faultForm.occurred_at" type="datetime" value-format="YYYY-MM-DDTHH:mm" /></el-form-item>
+      <el-form-item label="发生时间" prop="occurred_at" required :validate-event="false"><el-date-picker v-model="faultForm.occurred_at" type="datetime" value-format="YYYY-MM-DDTHH:mm" /></el-form-item>
       <el-form-item label="故障原因"><el-input v-model="faultForm.reason" placeholder="如：设备宕机、磁盘故障" /></el-form-item>
       <el-form-item label="故障描述"><el-input v-model="faultForm.description" type="textarea" :rows="4" placeholder="描述故障现象和影响" /></el-form-item>
     </el-form>
     <template #footer>
       <el-button @click="showFaultModal = false">取消</el-button>
-      <el-button type="primary" @click="createFault">保存故障</el-button>
+      <el-button type="primary" :loading="faultSaving" :disabled="faultSaving" @click="submitFault">保存故障</el-button>
     </template>
   </el-dialog>
 
@@ -363,7 +395,7 @@ const {
     width="420px"
     destroy-on-close
   >
-    <el-form label-position="top">
+    <el-form ref="repairFormRef" :model="repairForm" label-position="top" :validate-on-rule-change="false">
       <el-alert
         :title="`${selectedFault?.asset_no || ''} · ${selectedFault?.asset_name || ''}`"
         type="info"
@@ -374,7 +406,7 @@ const {
     </el-form>
     <template #footer>
       <el-button @click="showRepairModal = false">取消</el-button>
-      <el-button type="primary" @click="saveRepair">保存维修记录</el-button>
+      <el-button type="primary" :loading="repairSaving" :disabled="repairSaving" @click="submitRepair">保存维修记录</el-button>
     </template>
   </el-dialog>
 
@@ -492,6 +524,9 @@ const {
     :asset="detailAsset"
     :loading="detailLoading"
     :error="detailError"
+    :can-edit="canEditAsset"
+    :retry="retryAssetDetail"
+    @edit="editCurrentAsset"
     @closed="detailAsset = null"
   />
 </template>

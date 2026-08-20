@@ -81,7 +81,7 @@ export const routes: RouteRecordRaw[] = [
   ),
   pageRoute("/licenses", "licenses", "licenses", "软件许可"),
   pageRoute("/inventory", "inventory", "inventory", "盘点中心"),
-  pageRoute("/repairs", "repairs", "repairs", "事件中心"),
+pageRoute("/repairs", "repairs", "repairs", "故障维修"),
   pageRoute("/spares", "spares", "spares", "资产管理 / 备件管理"),
   {
     path: "/settings",
