@@ -4,7 +4,7 @@ import AssetDetailContent from "./AssetDetailContent.vue";
 import type { RackInspectorContext } from "../types/page-context";
 
 const props = defineProps<{ context: RackInspectorContext }>();
-const { rackDetailOpen, detailAsset, detailLoading, detailError, closeAssetDetail } = props.context;
+const { rackDetailOpen, detailAsset, detailLoading, detailError, retryAssetDetail, closeAssetDetail } = props.context;
 </script>
 
 <template>
@@ -28,6 +28,7 @@ const { rackDetailOpen, detailAsset, detailLoading, detailError, closeAssetDetai
       :asset="detailAsset"
       :loading="detailLoading"
       :error="detailError"
+      :retry="retryAssetDetail"
     />
   </el-card>
 </template>

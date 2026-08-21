@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { computed } from "vue";
 import PagedTable from "./PagedTable.vue";
 import SearchField from "./SearchField.vue";
 import type { LicenseContext } from "../types/page-context";
@@ -11,13 +12,17 @@ import StatusTag from "./StatusTag.vue";
 const props = defineProps<{ context: LicenseContext }>();
 const context = props.context;
 const {
-  loading,
+  licenseListLoading,
+  licenseListError,
   licenseKeyword,
   searchLicenses,
   licenseStatus,
+  resetLicenseFilters,
+  retryLicenseList,
   can,
   openLicenseModal,
   deleteLicense,
+  deletingLicenseId,
   licenses,
   licensePage,
   licensePageSize,
@@ -25,6 +30,10 @@ const {
   changeLicensePage,
   changeLicensePageSize,
 } = context;
+
+const licenseHasFilters = computed(
+  () => Boolean(licenseKeyword.value.trim() || licenseStatus.value),
+);
 </script>
 
 <template>
@@ -47,6 +56,7 @@ const {
           v-model="licenseKeyword"
           placeholder="搜索软件名称、厂商或许可类型"
           aria-label="搜索许可证"
+          :loading="licenseListLoading"
           @search="searchLicenses"
         />
         <el-select
@@ -61,15 +71,25 @@ const {
           <el-option label="已过期" value="expired" />
           <el-option label="超授权" value="over_limit" />
         </el-select>
+        <template #actions>
+          <el-button :disabled="licenseListLoading" @click="resetLicenseFilters">重置</el-button>
+        </template>
         </PageToolbar>
       </template>
 
       <PageContent surface class="license-list-card">
+        <div v-if="licenseListError" class="license-list-error" role="alert">
+          <div class="license-list-error__copy">
+            <strong>许可证数据加载失败</strong>
+            <span>{{ licenseListError }}</span>
+          </div>
+          <el-button link type="primary" @click="retryLicenseList">重新加载</el-button>
+        </div>
         <PagedTable
           v-model:current-page="licensePage"
           v-model:page-size="licensePageSize"
           :total="licenseCount"
-          :loading="loading"
+          :loading="licenseListLoading"
           @update:current-page="changeLicensePage"
           @update:page-size="changeLicensePageSize"
         >
@@ -97,23 +117,27 @@ const {
             min-width="120"
             show-overflow-tooltip
           />
-          <el-table-column prop="authorized_count" label="授权数" width="90" />
-          <el-table-column prop="used_count" label="已用" width="80" />
-          <el-table-column label="使用率" min-width="170">
+          <el-table-column label="授权使用" min-width="190">
             <template #default="{ row }">
-              <div class="license-usage-cell">
-                <el-progress
-                  :percentage="Math.min(Math.max(row.utilization, 0), 100)"
-                  :show-text="false"
-                  :status="row.status === 'over_limit' ? 'exception' : undefined"
-                />
-                <span :class="{ 'is-over-limit': row.status === 'over_limit' }">
-                  {{ Number(row.utilization || 0).toFixed(1) }}%
-                </span>
+              <div class="license-capacity-cell">
+                <div class="license-capacity-values">
+                  <strong>{{ row.used_count }} / {{ row.authorized_count }}</strong>
+                  <span>剩余 {{ row.remaining_count }}</span>
+                </div>
+                <div class="license-capacity-progress">
+                  <el-progress
+                    :percentage="Math.min(Math.max(row.utilization, 0), 100)"
+                    :show-text="false"
+                    :status="row.status === 'over_limit' ? 'exception' : undefined"
+                  />
+                  <span :class="{ 'is-over-limit': row.status === 'over_limit' }">
+                    {{ Number(row.utilization || 0).toFixed(1) }}%
+                  </span>
+                </div>
               </div>
             </template>
           </el-table-column>
-          <el-table-column label="到期日期" width="120">
+          <el-table-column label="到期日期" width="135">
             <template #default="{ row }">{{ row.expiry_date || "长期有效" }}</template>
           </el-table-column>
           <el-table-column label="状态" width="110">
@@ -128,15 +152,29 @@ const {
             v-if="can('licenses.manage')"
             label="操作"
             fixed="right"
-            width="140"
+            width="120"
           >
             <template #default="{ row }">
               <div class="ep-table-actions">
                 <el-button link type="primary" @click="openLicenseModal(row)">编辑</el-button>
-                <el-button link type="danger" @click="deleteLicense(row)">删除</el-button>
+                <el-button
+                  link
+                  type="danger"
+                  :loading="deletingLicenseId === row.id"
+                  :disabled="deletingLicenseId !== null && deletingLicenseId !== row.id"
+                  @click="deleteLicense(row)"
+                >删除</el-button>
               </div>
             </template>
           </el-table-column>
+          <template #empty>
+            <div v-if="licenseListError" class="license-table-empty-placeholder" aria-hidden="true" />
+            <div v-else-if="licenseHasFilters" class="license-table-empty">
+              <span>没有符合当前筛选条件的许可证</span>
+              <el-button link type="primary" @click="resetLicenseFilters">清除筛选</el-button>
+            </div>
+            <div v-else class="license-table-empty">暂无许可证记录</div>
+          </template>
           </el-table>
         </PagedTable>
       </PageContent>

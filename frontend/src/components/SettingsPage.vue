@@ -53,6 +53,10 @@ const dictionaryTabs: PageTabItem[] = [
   { label: "设备类型", value: "device-types" },
   { label: "数据中心", value: "data-centers" },
 ];
+const organizationTabs: PageTabItem[] = [
+  { label: "用户账号", value: "users" },
+  { label: "预设角色", value: "roles" },
+];
 </script>
 
 <template>
@@ -149,51 +153,50 @@ const dictionaryTabs: PageTabItem[] = [
           </PageContent>
         </PageContainer>
         <PageContainer v-else-if="settingsSection === 'organization' && isAdmin">
-          <template #header><PageHeader description="管理用户账号、角色和访问范围" /></template>
-          <PageContent>
-          <el-tabs v-model="organizationTab" class="organization-tabs">
-            <el-tab-pane label="用户账号" name="users">
-              <el-card shadow="never">
-                <template #header>
-                  <div class="ep-toolbar">
-                    <span class="ep-toolbar-spacer"></span>
-                    <div class="ep-toolbar-actions">
-                      <el-button type="primary" @click="openUserModal()">新增用户</el-button>
-                    </div>
+          <template #header>
+            <PageHeader description="管理用户账号、角色和访问范围">
+              <template v-if="organizationTab === 'users'" #actions>
+                <el-button type="primary" @click="openUserModal()">新增用户</el-button>
+              </template>
+            </PageHeader>
+          </template>
+          <template #subnav>
+            <PageTabs v-model="organizationTab" :items="organizationTabs" />
+          </template>
+          <PageContent surface>
+            <el-table
+              v-if="organizationTab === 'users'"
+              v-loading="loading"
+              :data="users"
+              empty-text="暂无用户账号"
+              table-layout="fixed"
+            >
+              <el-table-column prop="username" label="用户名" min-width="180" show-overflow-tooltip />
+              <el-table-column prop="display_name" label="姓名" min-width="180" show-overflow-tooltip />
+              <el-table-column prop="email" label="邮箱" min-width="220" show-overflow-tooltip />
+              <el-table-column label="状态" width="120">
+                <template #default="{ row }">
+                  <StatusTag :type="row.is_active ? 'success' : 'info'" :label="row.is_active ? '启用' : '停用'" />
+                </template>
+              </el-table-column>
+              <el-table-column label="操作" width="190" fixed="right">
+                <template #default="{ row }">
+                  <div class="ep-table-actions">
+                    <el-button link type="primary" @click="openUserModal(row)">编辑</el-button>
+                    <el-button link @click="toggleUser(row)">{{ row.is_active ? "停用" : "启用" }}</el-button>
+                    <el-button link type="danger" @click="deleteUser(row)">删除</el-button>
                   </div>
                 </template>
-                <el-table v-loading="loading" :data="users" empty-text="暂无用户账号">
-                  <el-table-column prop="username" label="用户名" />
-                  <el-table-column prop="display_name" label="姓名" />
-                  <el-table-column prop="email" label="邮箱" />
-                  <el-table-column label="状态">
-                    <template #default="{ row }">
-                      <StatusTag :type="row.is_active ? 'success' : 'info'" :label="row.is_active ? '启用' : '停用'" />
-                    </template>
-                  </el-table-column>
-                  <el-table-column label="操作" width="190">
-                    <template #default="{ row }">
-                      <div class="ep-table-actions">
-                        <el-button link type="primary" @click="openUserModal(row)">编辑</el-button>
-                        <el-button link @click="toggleUser(row)">{{ row.is_active ? "停用" : "启用" }}</el-button>
-                        <el-button link type="danger" @click="deleteUser(row)">删除</el-button>
-                      </div>
-                    </template>
-                  </el-table-column>
-                </el-table>
-              </el-card>
-            </el-tab-pane>
-            <el-tab-pane label="预设角色" name="roles">
-              <el-card shadow="never">
-                <el-table v-loading="loading" :data="roles" empty-text="暂无角色">
-                  <el-table-column prop="name" label="角色名称" />
-                  <el-table-column prop="description" label="权限范围" min-width="240" />
-                  <el-table-column prop="user_count" label="用户数" />
-                </el-table>
-                <p class="form-hint">预设角色不可重命名或删除，每个账号只能分配一个业务角色。</p>
-              </el-card>
-            </el-tab-pane>
-          </el-tabs>
+              </el-table-column>
+            </el-table>
+            <template v-else>
+              <el-table v-loading="loading" :data="roles" empty-text="暂无角色" table-layout="fixed">
+                <el-table-column prop="name" label="角色名称" min-width="220" show-overflow-tooltip />
+                <el-table-column prop="description" label="权限范围" min-width="320" show-overflow-tooltip />
+                <el-table-column prop="user_count" label="用户数" width="120" />
+              </el-table>
+              <p class="form-hint">预设角色不可重命名或删除，每个账号只能分配一个业务角色。</p>
+            </template>
           </PageContent>
         </PageContainer>
         <PageContainer v-else-if="settingsSection === 'audit' && can('audit.view')">

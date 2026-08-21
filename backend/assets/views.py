@@ -28,8 +28,9 @@ from openpyxl import Workbook
 from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
 from openpyxl.utils import get_column_letter
 from .models import AuthThrottleState, AuditLog, Asset, AssetCustomValue, AssetNetworkAddress, AssetTag, Brand, CustomField, CustomFieldOption, DataCenter, DeviceType, FaultEvent, InventoryItem, InventoryTask, MaintenanceContract, ProcurementRecord, Rack, RackUnitAllocation, RepairRecord, ServerRoom, SoftwareLicense, SparePart, SpareStock, SpareStockTransaction, Tag, UserSecurityProfile
-from .serializers import AuditLogSerializer, AssetDetailSerializer, AssetListSerializer, AssetSerializer, AssetWriteSerializer, BrandSerializer, CustomFieldOptionSerializer, CustomFieldSerializer, DataCenterSerializer, DeviceTypeSerializer, FaultEventSerializer, GroupSerializer, InventoryInspectorSerializer, InventoryItemSerializer, InventoryTaskSerializer, RackSerializer, RepairRecordSerializer, ServerRoomSerializer, SoftwareLicenseSerializer, SparePartDetailSerializer, SparePartSerializer, SpareStockSerializer, SpareStockTransactionSerializer, TagSerializer, UserSerializer
+from .serializers import AuditLogSerializer, AssetDetailSerializer, AssetListSerializer, AssetSerializer, AssetWriteSerializer, BrandSerializer, CustomFieldOptionSerializer, CustomFieldSerializer, DataCenterSerializer, DeviceTypeSerializer, FaultEventSerializer, GroupSerializer, InventoryInspectorSerializer, InventoryItemSerializer, InventoryScopePreviewQuerySerializer, InventoryScopePreviewSerializer, InventoryTaskSerializer, RackSerializer, RepairRecordSerializer, ServerRoomSerializer, SoftwareLicenseSerializer, SparePartDetailSerializer, SparePartSerializer, SpareStockSerializer, SpareStockTransactionSerializer, TagSerializer, UserSerializer
 from .services import apply_spare_stock_transaction, sync_asset_fault_status, sync_repair_completion
+from .inventory import get_inventory_scope_assets
 from .audit import model_snapshot, write_audit_log
 from .permissions import BusinessRolePermission, CanExportAssets, CanExportFaults, CanExportInventory, CanExportRacks, CanImportAssets, CanManageInventory, CanViewAuditLog, CanViewDashboard, CanViewInventory, CanViewLicenses, IsSystemAdministrator
 from .roles import ROLE_DEFINITIONS, ROLE_NAME_TO_CODE, user_capabilities, user_role_code
@@ -274,6 +275,15 @@ class ServerRoomViewSet(AuditedModelViewSetMixin, viewsets.ModelViewSet):
             queryset = queryset.filter(is_active=active == "true")
         return queryset
 
+    @transaction.atomic
+    def perform_update(self, serializer):
+        if serializer.validated_data.get("is_active") is False:
+            locked_room = ServerRoom.objects.select_for_update().get(pk=serializer.instance.pk)
+            if locked_room.is_active and locked_room.spare_stocks.filter(quantity__gt=0).exists():
+                from rest_framework.exceptions import ValidationError as DRFValidationError
+                raise DRFValidationError("机房仍有备件库存，无法停用，请先调出、出库或报废库存")
+        super().perform_update(serializer)
+
     def perform_destroy(self, instance):
         if instance.racks.exists():
             from rest_framework.exceptions import ValidationError as DRFValidationError
@@ -325,6 +335,15 @@ class DataCenterViewSet(AuditedModelViewSetMixin, viewsets.ModelViewSet):
         if search:
             queryset = queryset.filter(Q(name__icontains=search) | Q(address__icontains=search))
         return queryset
+
+    @transaction.atomic
+    def perform_update(self, serializer):
+        if serializer.validated_data.get("is_active") is False:
+            locked_data_center = DataCenter.objects.select_for_update().get(pk=serializer.instance.pk)
+            if locked_data_center.is_active and locked_data_center.spare_stocks.filter(quantity__gt=0).exists():
+                from rest_framework.exceptions import ValidationError as DRFValidationError
+                raise DRFValidationError("数据中心仍有备件库存，无法停用，请先调出、出库或报废库存")
+        super().perform_update(serializer)
 
     def perform_destroy(self, instance):
         if instance.rooms.exists():
@@ -544,17 +563,23 @@ class SparePartViewSet(AuditedModelViewSetMixin, viewsets.ModelViewSet):
             queryset = queryset.filter(is_active=active == "true")
         return queryset
 
+    @transaction.atomic
     def perform_destroy(self, instance):
         from rest_framework.exceptions import ValidationError as DRFValidationError
-        if instance.transactions.exists():
+        # Keep the delete lock order identical to apply_spare_stock_transaction:
+        # part first, then related stock/ledger rows.
+        try:
+            locked_part = SparePart.objects.select_for_update().get(pk=instance.pk)
+        except SparePart.DoesNotExist as exc:
+            raise DRFValidationError("备件不存在") from exc
+        if locked_part.transactions.exists():
             raise DRFValidationError("备件存在库存流水，不能删除，请先停用")
-        if instance.stocks.filter(quantity__gt=0).exists():
+        if locked_part.stocks.filter(quantity__gt=0).exists():
             raise DRFValidationError("备件仍有库存余额，不能删除，请先出库或报废")
-        with transaction.atomic():
-            # Zero-balance rows are only bookkeeping placeholders. They can be
-            # removed when the part has no immutable transaction history.
-            instance.stocks.all().delete()
-            super().perform_destroy(instance)
+        # Zero-balance rows are only bookkeeping placeholders. They can be
+        # removed when the part has no immutable transaction history.
+        locked_part.stocks.all().delete()
+        super().perform_destroy(locked_part)
 
 
 class SpareStockViewSet(viewsets.ReadOnlyModelViewSet):
@@ -778,27 +803,6 @@ def _inventory_snapshot(asset):
     }
 
 
-def _inventory_scope_assets(task):
-    queryset = Asset.objects.select_related(
-        "asset_data_center",
-        "rack_allocation__rack__room__data_center",
-    ).prefetch_related("network_addresses")
-    if task.server_room_id:
-        return queryset.filter(
-            rack_allocation__rack__room_id=task.server_room_id,
-            rack_allocation__rack__is_active=True,
-            rack_allocation__rack__room__is_active=True,
-        ).order_by("asset_no")
-    return queryset.filter(
-        Q(
-            rack_allocation__rack__room__data_center_id=task.data_center_id,
-            rack_allocation__rack__is_active=True,
-            rack_allocation__rack__room__is_active=True,
-        )
-        | Q(rack_allocation__isnull=True, asset_data_center_id=task.data_center_id)
-    ).distinct().order_by("asset_no")
-
-
 class InventoryTaskViewSet(AuditedModelViewSetMixin, viewsets.ModelViewSet):
     queryset = InventoryTask.objects.select_related(
         "data_center", "server_room", "inspector"
@@ -814,6 +818,8 @@ class InventoryTaskViewSet(AuditedModelViewSetMixin, viewsets.ModelViewSet):
     ordering = ["-created_at", "-id"]
 
     def get_permissions(self):
+        if self.action == "scope_preview":
+            return [CanManageInventory()]
         if self.action == "export":
             return [CanExportInventory()]
         if self.action in {"complete", "reopen"}:
@@ -823,7 +829,7 @@ class InventoryTaskViewSet(AuditedModelViewSetMixin, viewsets.ModelViewSet):
     @transaction.atomic
     def perform_create(self, serializer):
         task = serializer.save(inspector=serializer.validated_data.get("inspector") or self.request.user)
-        assets = _inventory_scope_assets(task)
+        assets = get_inventory_scope_assets(task.data_center, task.server_room)
         InventoryItem.objects.bulk_create([
             InventoryItem(task=task, asset=asset, system_snapshot=_inventory_snapshot(asset))
             for asset in assets
@@ -835,6 +841,54 @@ class InventoryTaskViewSet(AuditedModelViewSetMixin, viewsets.ModelViewSet):
             resource_id=task.pk,
             after={"task": model_snapshot(task), "items_created": len(assets)},
         )
+
+    @extend_schema(
+        parameters=[InventoryScopePreviewQuerySerializer],
+        responses=InventoryScopePreviewSerializer,
+        description="预览创建盘点任务时将生成的资产范围，不创建任务或盘点明细。",
+    )
+    @action(detail=False, methods=["get"], url_path="scope-preview")
+    def scope_preview(self, request):
+        query_params = {
+            "data_center": request.query_params.get("data_center"),
+            "server_room": request.query_params.get("server_room") or None,
+        }
+        serializer = InventoryScopePreviewQuerySerializer(data=query_params)
+        serializer.is_valid(raise_exception=True)
+        data_center = serializer.validated_data["data_center"]
+        server_room = serializer.validated_data.get("server_room")
+        assets = get_inventory_scope_assets(data_center, server_room)
+
+        total = assets.count()
+        racked = assets.filter(rack_allocation__isnull=False).count()
+        unracked = assets.filter(rack_allocation__isnull=True).count()
+        retired = assets.filter(status="retired").count()
+        warnings = []
+        if unracked:
+            warnings.append(f"当前范围包含 {unracked} 台未上架资产")
+        if retired:
+            warnings.append(f"当前范围包含 {retired} 台已报废资产")
+
+        payload = {
+            "data_center": {"id": data_center.id, "name": data_center.name},
+            "server_room": (
+                {"id": server_room.id, "name": server_room.name}
+                if server_room is not None
+                else None
+            ),
+            "scope_label": (
+                f"{data_center.name} / {server_room.name}"
+                if server_room is not None
+                else f"{data_center.name} / 整个数据中心"
+            ),
+            "total": total,
+            "racked": racked,
+            "unracked": unracked,
+            "retired": retired,
+            "includes_unracked": server_room is None,
+            "warnings": warnings,
+        }
+        return Response(InventoryScopePreviewSerializer(payload).data)
 
     @action(detail=True, methods=["get"], url_path="items")
     def items(self, request, pk=None):

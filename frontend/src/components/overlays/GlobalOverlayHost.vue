@@ -81,6 +81,7 @@ const {
   showLicenseModal,
   editingLicense,
   licenseForm,
+  licenseSaving,
   saveLicense,
 } = props.licenses;
 
@@ -106,6 +107,53 @@ const faultFormRules: FormRules = {
   asset: [{ required: true, message: "请选择故障资产", trigger: "change" }],
   occurred_at: [{ required: true, message: "请选择故障发生时间", trigger: "change" }],
 };
+
+const licenseFormRef = ref<FormInstance>();
+const licenseFormRules: FormRules = {
+  name: [{ required: true, message: "请输入软件名称", trigger: "blur" }],
+  authorized_count: [
+    { required: true, message: "请输入授权数", trigger: "blur" },
+    {
+      validator: (_rule, value, callback) => {
+        if (!/^\d+$/.test(String(value ?? "").trim())) {
+          callback(new Error("授权数必须是大于等于 0 的整数"));
+          return;
+        }
+        callback();
+      },
+      trigger: "blur",
+    },
+  ],
+  used_count: [
+    { required: true, message: "请输入已用数", trigger: "blur" },
+    {
+      validator: (_rule, value, callback) => {
+        const used = String(value ?? "").trim();
+        const authorized = String(licenseForm.value.authorized_count ?? "").trim();
+        if (!/^\d+$/.test(used)) {
+          callback(new Error("已用数必须是大于等于 0 的整数"));
+          return;
+        }
+        if (/^\d+$/.test(authorized) && Number(used) > Number(authorized)) {
+          callback(new Error("已用数不能超过授权数"));
+          return;
+        }
+        callback();
+      },
+      trigger: "blur",
+    },
+  ],
+};
+
+async function submitLicense() {
+  const valid = await licenseFormRef.value?.validate().catch(() => false);
+  if (valid !== true) return;
+  await saveLicense();
+}
+
+function clearLicenseValidation() {
+  licenseFormRef.value?.clearValidate();
+}
 
 async function submitFault() {
   const valid = await faultFormRef.value?.validate().catch(() => false);
@@ -318,22 +366,47 @@ function editCurrentAsset() {
     :title="editingLicense ? '编辑许可证' : '新增许可证'"
     width="520px"
     destroy-on-close
+    :show-close="!licenseSaving"
+    :close-on-click-modal="!licenseSaving"
+    :close-on-press-escape="!licenseSaving"
+    @open="clearLicenseValidation"
   >
-    <el-form label-position="top">
-      <el-form-item label="软件名称" required><el-input v-model="licenseForm.name" maxlength="160" /></el-form-item>
-      <el-form-item label="厂商"><el-input v-model="licenseForm.vendor" maxlength="120" /></el-form-item>
-      <el-form-item label="许可类型"><el-input v-model="licenseForm.license_type" maxlength="80" placeholder="如：按核心、按用户" /></el-form-item>
+    <el-form
+      ref="licenseFormRef"
+      :model="licenseForm"
+      :rules="licenseFormRules"
+      label-position="top"
+      :validate-on-rule-change="false"
+      @submit.prevent="submitLicense"
+    >
+      <el-form-item label="软件名称" prop="name" required>
+        <el-input v-model="licenseForm.name" maxlength="160" :validate-event="false" />
+      </el-form-item>
+      <el-form-item label="厂商" prop="vendor">
+        <el-input v-model="licenseForm.vendor" maxlength="120" :validate-event="false" />
+      </el-form-item>
+      <el-form-item label="许可类型" prop="license_type">
+        <el-input v-model="licenseForm.license_type" maxlength="80" placeholder="如：按核心、按用户" :validate-event="false" />
+      </el-form-item>
       <div class="form-grid license-form-grid">
-        <el-form-item label="授权数" required><el-input v-model="licenseForm.authorized_count" type="number" min="0" /></el-form-item>
-        <el-form-item label="已用数" required><el-input v-model="licenseForm.used_count" type="number" min="0" /></el-form-item>
+        <el-form-item label="授权数" prop="authorized_count" required>
+          <el-input v-model="licenseForm.authorized_count" type="number" min="0" :validate-event="false" />
+        </el-form-item>
+        <el-form-item label="已用数" prop="used_count" required>
+          <el-input v-model="licenseForm.used_count" type="number" min="0" :validate-event="false" />
+        </el-form-item>
       </div>
-      <el-form-item label="到期日期"><el-date-picker v-model="licenseForm.expiry_date" type="date" value-format="YYYY-MM-DD" /></el-form-item>
-      <el-form-item label="备注"><el-input v-model="licenseForm.notes" type="textarea" :rows="3" /></el-form-item>
+      <el-form-item label="到期日期" prop="expiry_date">
+        <el-date-picker v-model="licenseForm.expiry_date" type="date" value-format="YYYY-MM-DD" :validate-event="false" />
+      </el-form-item>
+      <el-form-item label="备注" prop="notes">
+        <el-input v-model="licenseForm.notes" type="textarea" :rows="3" :validate-event="false" />
+      </el-form-item>
       <p class="form-hint">已用授权数不能超过授权数；不填写到期日期表示长期有效。</p>
     </el-form>
     <template #footer>
-      <el-button @click="showLicenseModal = false">取消</el-button>
-      <el-button type="primary" @click="saveLicense">保存许可证</el-button>
+      <el-button :disabled="licenseSaving" @click="showLicenseModal = false">取消</el-button>
+      <el-button type="primary" :loading="licenseSaving" :disabled="licenseSaving" @click="submitLicense">保存许可证</el-button>
     </template>
   </el-dialog>
 

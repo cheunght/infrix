@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import type { Rack } from "../types";
 import type { RackCanvasContext } from "../types/page-context";
 const props = defineProps<{ context: RackCanvasContext }>();
 const context = props.context;
@@ -15,7 +16,16 @@ const {
   focusedRackId,
   openRackAssetDetail,
   detailAsset,
+  rackCanvasLoading,
+  rackCanvasError,
+  hasRackFilters,
+  resetRackFilters,
+  retryRackView,
 } = context;
+
+function rackStatus(rack: Rack) {
+  return rack.status || (rack.is_active === false ? "disabled" : "in_use");
+}
 </script>
 
 <template>
@@ -37,8 +47,16 @@ const {
         <span><i class="empty-color" />空闲 U 位</span>
       </div>
     </div>
+    <div v-if="rackCanvasLoading" class="rack-panel-state" role="status" aria-live="polite">
+      <el-skeleton :rows="8" animated />
+    </div>
+    <div v-else-if="rackCanvasError" class="rack-panel-state rack-panel-error" role="alert">
+      <strong>机柜 U 位数据加载失败</strong>
+      <span>{{ rackCanvasError }}</span>
+      <el-button type="primary" plain @click="retryRackView">重新加载</el-button>
+    </div>
     <div
-      v-if="displayedRacks.length"
+      v-else-if="displayedRacks.length"
       class="rack-u-scroll"
       :class="{ 'single-rack': rackDetailOpen }"
     >
@@ -49,7 +67,7 @@ const {
         class="rack-u-card"
         :class="[
           { active: focusedRack?.id === rack.id },
-          `rack-status-${rack.status || (rack.is_active === false ? 'disabled' : 'in_use')}`,
+          `rack-status-${rackStatus(rack)}`,
         ]"
         @click="focusedRackId = rack.id"
       >
@@ -66,9 +84,10 @@ const {
             :class="{
               'rack-row-unavailable': rackGapUnavailable(rack, rack.total_u - u + 1),
             }"
-          >
+            >
             <b>{{ rack.total_u - u + 1 }}</b><span /><b>{{ rack.total_u - u + 1 }}</b>
           </div>
+          <div v-if="!rack.allocations.length" class="rack-empty-hint">当前机柜暂无设备</div>
           <button
             v-for="allocation in rack.allocations"
             :key="allocation.asset"
@@ -76,6 +95,8 @@ const {
             class="device"
             :class="{ 'device-selected': detailAsset?.id === allocation.asset }"
             :style="rackAllocationStyle(rack, allocation)"
+            :aria-label="`${allocation.asset_name || allocation.asset_no}，资产编号 ${allocation.asset_no}，U${allocation.start_u} 至 U${allocation.end_u}`"
+            :title="`${allocation.asset_name || allocation.asset_no} · ${allocation.asset_no} · U${allocation.start_u}–U${allocation.end_u}`"
             @click.stop="openRackAssetDetail(allocation.asset, rack.id)"
           >
             {{ allocation.asset_no }}
@@ -86,6 +107,9 @@ const {
         </div>
       </article>
     </div>
-    <el-empty v-else description="暂无符合筛选条件的机柜" />
+    <div v-else class="rack-panel-empty">
+      <el-empty :description="hasRackFilters ? '没有符合筛选条件的机柜' : '暂无机柜'" />
+      <el-button v-if="hasRackFilters" link type="primary" @click="resetRackFilters">清除筛选</el-button>
+    </div>
   </el-card>
 </template>

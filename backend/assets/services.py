@@ -331,6 +331,19 @@ def _locked_spare_stock(part, data_center, room):
     )
 
 
+def _validate_locked_spare_location(data_center, room, *, role):
+    """Re-check a location after its rows have been locked.
+
+    The initial validation happens before the location locks are acquired. A
+    concurrent deactivation can therefore race with that read; validating the
+    locked rows closes that window before a balance is changed.
+    """
+    if not data_center.is_active:
+        raise ValidationError({role: "数据中心不存在或已停用"})
+    if room and (not room.is_active or room.data_center_id != data_center.id):
+        raise ValidationError({role: "机房不存在、已停用或不属于所选数据中心"})
+
+
 @transaction.atomic
 def apply_spare_stock_transaction(validated_data, operator):
     """Apply one immutable stock movement and return its ledger row.
@@ -339,7 +352,9 @@ def apply_spare_stock_transaction(validated_data, operator):
     concurrent transfers cannot create negative or lost inventory.
     """
     operation_type = validated_data["operation_type"]
-    part = SparePart.objects.select_for_update().get(pk=validated_data["part"].pk)
+    part = SparePart.objects.select_for_update().filter(pk=validated_data["part"].pk).first()
+    if part is None:
+        raise ValidationError({"part": "备件不存在"})
     if not part.is_active:
         raise ValidationError({"part": "停用的备件不能进行库存操作"})
 
@@ -387,6 +402,21 @@ def apply_spare_stock_transaction(validated_data, operator):
         source_dc = locked_centers[source_dc.id]
     if target_dc:
         target_dc = locked_centers[target_dc.id]
+
+    # Lock rooms after data centers, matching the stable center -> room order.
+    # This also serializes location deactivation with stock mutations.
+    locked_rooms = {}
+    for room_id in sorted({room.id for _, room in locations if room}):
+        locked_rooms[room_id] = ServerRoom.objects.select_for_update().get(pk=room_id)
+    if source_room:
+        source_room = locked_rooms[source_room.id]
+    if target_room:
+        target_room = locked_rooms[target_room.id]
+
+    if source_dc:
+        _validate_locked_spare_location(source_dc, source_room, role="source_data_center")
+    if target_dc:
+        _validate_locked_spare_location(target_dc, target_room, role="target_data_center")
 
     source_stock = _locked_spare_stock(part, source_dc, source_room) if source_dc else None
     target_stock = _locked_spare_stock(part, target_dc, target_room) if target_dc else None

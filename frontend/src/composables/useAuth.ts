@@ -26,6 +26,7 @@ export interface AuthDeps {
 }
 
 type AuthPayload = {
+  username: string;
   display_name: string;
   is_staff: boolean;
   role_code: string;
@@ -38,6 +39,7 @@ export function useAuth(deps: AuthDeps) {
     try {
       const user = await deps.request<AuthPayload & { username: string }>("/auth/me/");
       deps.authenticated.value = true;
+      deps.username.value = user.username;
       deps.userName.value = user.display_name;
       deps.isAdmin.value = user.is_staff;
       deps.roleCode.value = user.role_code;
@@ -70,6 +72,7 @@ export function useAuth(deps: AuthDeps) {
         body: JSON.stringify({ username: deps.username.value, password: deps.password.value }),
       });
       deps.authenticated.value = true;
+      deps.username.value = user.username;
       deps.userName.value = user.display_name;
       deps.isAdmin.value = user.is_staff;
       deps.roleCode.value = user.role_code;
@@ -110,6 +113,7 @@ export function useAuth(deps: AuthDeps) {
       deps.roleCode.value = "";
       deps.permissions.value = [];
       deps.userName.value = "";
+      deps.username.value = "";
       deps.passwordChangeRequired.value = false;
       deps.showPasswordModal.value = false;
       await deps.routerReplace("/");

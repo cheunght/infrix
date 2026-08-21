@@ -16,6 +16,8 @@ import type {
   InventoryTask,
   ManagedUser,
   Rack,
+  RackFormState,
+  RackStatus,
   Role,
   ServerRoom,
   SoftwareLicense,
@@ -152,12 +154,31 @@ export interface AssetFormContext {
   saveAsset: () => void | Promise<void>;
 }
 
-export interface RackSharedContext extends RackFiltersContext, RackListContext, RackCanvasContext, RackInspectorContext {
+export interface RackManagementContext {
+  serverRooms: Ref<ServerRoom[]>;
+  showRackModal: Ref<boolean>;
+  editingRack: Ref<Rack | null>;
+  rackForm: Ref<RackFormState>;
+  rackFormFieldErrors: Ref<Record<string, string>>;
+  rackSaving: Ref<boolean>;
+  deletingRackId: Ref<number | null>;
+  updatingRackId: Ref<number | null>;
+  openRackModal: (rack?: Rack, room?: ServerRoom) => void;
+  saveRack: () => void | Promise<void>;
+  deleteRack: (rack: Rack) => void | Promise<void>;
+  updateRackStatus: (rack: Rack, status: RackStatus) => void | Promise<void>;
+  clearRackFormErrors: () => void;
+}
+
+export interface RackSharedContext extends RackFiltersContext, RackListContext, RackCanvasContext, RackInspectorContext, RackManagementContext {
   rackSection: Ref<RackSection>;
   dataCenters: Ref<DataCenter[]>;
-  serverRooms: Ref<ServerRoom[]>;
   racks: Ref<Rack[]>;
   facilitySummary: Ref<FacilitySummary | null>;
+  rackListLoading: Ref<boolean>;
+  rackCanvasLoading: Ref<boolean>;
+  rackListError: Ref<string>;
+  rackCanvasError: Ref<string>;
   can: CapabilityFn;
   openDataCenterModal: (center?: DataCenter) => void | Promise<void>;
   openRoomModal: (room?: ServerRoom) => void | Promise<void>;
@@ -168,6 +189,7 @@ export interface RackSharedContext extends RackFiltersContext, RackListContext, 
   detailAsset: Ref<AssetDetail | null>;
   detailLoading: Ref<boolean>;
   detailError: Ref<string>;
+  retryAssetDetail: () => void | Promise<void>;
   closeAssetDetail: () => void;
   deleteRoom: (room: ServerRoom) => void | Promise<void>;
   rackUsedU: (rack: Rack) => number;
@@ -186,6 +208,8 @@ export interface RackSharedContext extends RackFiltersContext, RackListContext, 
   rackCount: Ref<number>;
   rackPage: Ref<number>;
   changeRackPage: (page: number) => void | Promise<void>;
+  retryRackView: () => void | Promise<void>;
+  hasRackFilters: ComputedRef<boolean>;
 }
 
 export interface RackFiltersContext {
@@ -214,6 +238,11 @@ export interface RackListContext {
   rackCount: Ref<number>;
   rackPage: Ref<number>;
   changeRackPage: (page: number) => void | Promise<void>;
+  rackListLoading: Ref<boolean>;
+  rackListError: Ref<string>;
+  hasRackFilters: ComputedRef<boolean>;
+  resetRackFilters: () => void | Promise<void>;
+  retryRackView: () => void | Promise<void>;
 }
 
 export interface RackCanvasContext {
@@ -229,6 +258,11 @@ export interface RackCanvasContext {
   focusedRackId: Ref<number | null>;
   openRackAssetDetail: (assetId: number, rackId: number) => void | Promise<void>;
   detailAsset: Ref<AssetDetail | null>;
+  rackCanvasLoading: Ref<boolean>;
+  rackCanvasError: Ref<string>;
+  hasRackFilters: ComputedRef<boolean>;
+  resetRackFilters: () => void | Promise<void>;
+  retryRackView: () => void | Promise<void>;
 }
 
 export interface RackInspectorContext {
@@ -236,17 +270,23 @@ export interface RackInspectorContext {
   detailAsset: Ref<AssetDetail | null>;
   detailLoading: Ref<boolean>;
   detailError: Ref<string>;
+  retryAssetDetail: () => void | Promise<void>;
   closeAssetDetail: () => void;
 }
 
 export interface LicenseContext {
   loading: Ref<boolean>;
+  licenseListLoading: Ref<boolean>;
+  licenseListError: Ref<string>;
   licenseKeyword: Ref<string>;
   searchLicenses: () => void | Promise<void>;
   licenseStatus: Ref<string>;
+  resetLicenseFilters: () => void | Promise<void>;
+  retryLicenseList: () => void | Promise<void>;
   can: CapabilityFn;
   openLicenseModal: (license?: SoftwareLicense) => void | Promise<void>;
   deleteLicense: (license: SoftwareLicense) => void | Promise<void>;
+  deletingLicenseId: Ref<number | null>;
   licenses: Ref<SoftwareLicense[]>;
   licensePage: Ref<number>;
   licensePageSize: Ref<number>;
@@ -296,13 +336,20 @@ export interface SpareContext {
   sparePartForm: Ref<Record<string, string | number | boolean>>;
   editingSparePart: Ref<SparePart | null>;
   showSparePartModal: Ref<boolean>;
+  spareSaving: Ref<boolean>;
+  deletingSparePartId: Ref<number | null>;
+  updatingSparePartId: Ref<number | null>;
+  spareListLoading: Ref<boolean>;
+  spareListError: Ref<string>;
   openSparePartModal: (part?: SparePart) => void;
-  saveSparePart: () => void | Promise<void>;
+  saveSparePart: () => void | Promise<boolean>;
   toggleSparePart: (part: SparePart) => void | Promise<void>;
   deleteSparePart: (part: SparePart) => void | Promise<void>;
   searchSpareParts: () => void | Promise<void>;
   changeSparePage: (page: number) => void | Promise<void>;
   changeSparePageSize: (size: number) => void | Promise<void>;
+  resetSpareFilters: () => void | Promise<void>;
+  retrySpareList: () => void | Promise<void>;
   openSpareOperation: (part: SparePart, type?: string, location?: { data_center: number; server_room: number | null; quantity: number; label: string }) => void;
   spareOperationType: Ref<string>;
   spareOperationForm: Ref<Record<string, string>>;
@@ -322,6 +369,10 @@ export interface SpareContext {
   spareTransactionCount: Ref<number>;
   stockLocations: Ref<Record<number, SpareStock[]>>;
   stockLoading: Ref<Record<number, boolean>>;
+  stockLocationLoadingByPart: Ref<Record<number, boolean>>;
+  stockLocationErrorByPart: Ref<Record<number, string>>;
+  stockLocationTotalsByPart: Ref<Record<number, number>>;
+  stockLocationLoadedByPart: Ref<Record<number, boolean>>;
   loadStockLocations: (partId: number) => void | Promise<void>;
   transactionRows: Ref<SpareTransaction[]>;
   transactionCount: Ref<number>;
@@ -338,6 +389,7 @@ export interface InventoryContext {
   request: RequestFn;
   downloadFile: (path: string, filename?: string) => Promise<void>;
   can: CapabilityFn;
+  currentUsername: Ref<string>;
   openAssetDetail: (assetId: number) => void | Promise<void>;
   dataCenters: Ref<DataCenter[]>;
   serverRooms: Ref<ServerRoom[]>;

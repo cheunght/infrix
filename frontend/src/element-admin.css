@@ -1334,6 +1334,114 @@ body {
   margin-bottom: 12px;
 }
 
+.inventory-retry-row {
+  display: flex;
+  justify-content: flex-start;
+  margin: -4px 0 10px;
+}
+
+.inventory-list-empty {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-wrap: wrap;
+  gap: 6px 10px;
+  min-height: 72px;
+  color: var(--el-text-color-secondary);
+}
+
+.inventory-list-empty .el-button {
+  padding: 0;
+}
+
+.inventory-list-empty--error {
+  color: var(--el-color-danger);
+}
+
+.inventory-scope-preview {
+  margin: 4px 0 16px;
+  padding: 12px 14px;
+  border: 1px solid var(--el-border-color-lighter);
+  border-radius: var(--el-border-radius-base);
+  background: var(--el-fill-color-light);
+}
+
+.inventory-scope-preview__header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  color: var(--el-text-color-primary);
+}
+
+.inventory-scope-preview__scope {
+  margin-top: 6px;
+  color: var(--el-text-color-secondary);
+  font-size: 13px;
+}
+
+.inventory-scope-preview__total {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  margin-top: 8px;
+  color: var(--el-text-color-primary);
+}
+
+.inventory-scope-preview__total strong {
+  font-size: 24px;
+  line-height: 1;
+}
+
+.inventory-scope-preview__stats {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 18px;
+  margin-top: 10px;
+  color: var(--el-text-color-secondary);
+  font-size: 13px;
+}
+
+.inventory-scope-preview__stats strong {
+  margin-left: 4px;
+  color: var(--el-text-color-primary);
+  font-weight: 600;
+}
+
+.inventory-scope-preview__state {
+  padding: 10px 0 2px;
+  color: var(--el-text-color-secondary);
+  font-size: 13px;
+}
+
+.inventory-scope-preview__state--error {
+  color: var(--el-color-danger);
+}
+
+.inventory-scope-preview__state--warning {
+  color: var(--el-color-warning-dark-2);
+}
+
+.inventory-scope-preview__warnings {
+  margin: 10px 0 0;
+  padding: 8px 10px 8px 26px;
+  border-radius: var(--el-border-radius-small);
+  background: var(--el-color-warning-light-9);
+  color: var(--el-color-warning-dark-2);
+  font-size: 12px;
+}
+
+.inventory-scope-preview__warnings li + li {
+  margin-top: 4px;
+}
+
+.inventory-scope-preview__help {
+  margin: 8px 0 0;
+  color: var(--el-text-color-secondary);
+  font-size: 12px;
+  line-height: 1.5;
+}
+
 /* Repair list states stay compact without replacing the table shell. */
 .repair-list-alert {
   margin-bottom: 12px;
@@ -2344,8 +2452,8 @@ body {
   }
 }
 
-/* License list: the summary cards were intentionally removed, so keep the
-   remaining toolbar and table compact, stable and usable at narrow widths. */
+/* License list: keep the page local loading/error states and capacity details
+   compact without changing the shared page tokens. */
 .ep-main .license-list-card {
   min-width: 0;
 }
@@ -2359,29 +2467,98 @@ body {
   min-width: 0;
 }
 
-.license-usage-cell {
+.license-list-error {
   display: flex;
   align-items: center;
-  gap: 8px;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 12px;
+  padding: 10px 12px;
+  border: 1px solid color-mix(in srgb, var(--el-color-danger) 28%, var(--color-border));
+  border-radius: var(--radius-sm);
+  background: color-mix(in srgb, var(--el-color-danger) 5%, var(--color-surface));
+  color: var(--color-text-primary);
+}
+
+.license-list-error__copy {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 4px 10px;
   min-width: 0;
 }
 
-.license-usage-cell .el-progress {
-  flex: 1 1 auto;
-  min-width: 60px;
+.license-list-error__copy span {
+  color: var(--color-text-secondary);
+  font-size: 13px;
 }
 
-.license-usage-cell > span {
+.license-table-empty,
+.license-table-empty-placeholder {
+  min-height: 100px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  color: var(--color-text-secondary);
+}
+
+.license-table-empty-placeholder {
+  visibility: hidden;
+}
+
+.license-capacity-cell {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  min-width: 0;
+}
+
+.license-capacity-values,
+.license-capacity-progress {
+  display: flex;
+  align-items: center;
+  min-width: 0;
+}
+
+.license-capacity-values {
+  justify-content: space-between;
+  gap: 8px;
+  color: var(--color-text-primary);
+  white-space: nowrap;
+}
+
+.license-capacity-values span {
+  color: var(--color-text-secondary);
+  font-size: 12px;
+}
+
+.license-capacity-progress {
+  gap: 8px;
+}
+
+.license-capacity-progress .el-progress {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.license-capacity-progress > span {
   flex: 0 0 52px;
-  color: #64748b;
+  color: var(--color-text-secondary);
   font-size: 12px;
   text-align: right;
   white-space: nowrap;
 }
 
-.license-usage-cell > span.is-over-limit {
+.license-capacity-progress > span.is-over-limit {
   color: var(--el-color-danger);
   font-weight: 600;
+}
+
+@media (max-width: 760px) {
+  .license-list-error {
+    align-items: flex-start;
+  }
 }
 
 /* Final sidebar interaction rules. Keep hover and active destinations

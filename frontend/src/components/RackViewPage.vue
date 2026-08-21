@@ -1,8 +1,9 @@
 <script setup lang="ts">
 import { computed, ref, watch } from "vue";
-import { CircleCheck, Grid, Histogram, OfficeBuilding } from "@element-plus/icons-vue";
+import { CircleCheck, Grid, Histogram, MoreFilled, OfficeBuilding } from "@element-plus/icons-vue";
 import RackAssetInspector from "./RackAssetInspector.vue";
 import RackFilters from "./RackFilters.vue";
+import RackFormDialog from "./RackFormDialog.vue";
 import RackLayoutCanvas from "./RackLayoutCanvas.vue";
 import RackListPanel from "./RackListPanel.vue";
 import SearchField from "./SearchField.vue";
@@ -11,7 +12,7 @@ import PageContainer from "./page/PageContainer.vue";
 import PageContent from "./page/PageContent.vue";
 import PageHeader from "./page/PageHeader.vue";
 import StatusTag from "./StatusTag.vue";
-import type { DataCenter, Rack, ServerRoom } from "../types";
+import type { DataCenter, Rack, RackStatus, ServerRoom } from "../types";
 import type { RackSharedContext } from "../types/page-context";
 
 const props = defineProps<{ context: RackSharedContext }>();
@@ -32,6 +33,8 @@ const detailAsset = context.detailAsset;
 const detailLoading = context.detailLoading;
 const detailError = context.detailError;
 const closeAssetDetail = context.closeAssetDetail;
+const deletingRackId = context.deletingRackId;
+const updatingRackId = context.updatingRackId;
 
 const dataCenterSearch = ref("");
 const roomSearch = ref("");
@@ -97,6 +100,20 @@ function openRackFromRoom(rack: Rack) {
   selectedRoomId.value = rack.room;
   focusViewRack?.(rack);
   openRackSection("view");
+}
+
+function rackStatusCode(rack: Rack): RackStatus {
+  return rack.status === "reserved" || rack.status === "disabled" ? rack.status : "in_use";
+}
+
+function handleRackCommand(rack: Rack, command: string) {
+  if (command === "delete") {
+    void context.deleteRack(rack);
+    return;
+  }
+  if (command === "in_use" || command === "reserved" || command === "disabled") {
+    void context.updateRackStatus(rack, command);
+  }
 }
 </script>
 
@@ -164,10 +181,10 @@ function openRackFromRoom(rack: Rack) {
           <el-pagination v-model:current-page="roomPage" size="small" layout="total, prev, next" :total="filteredRooms.length" />
         </el-card>
         <el-card shadow="never" class="facility-panel facility-detail-panel">
-          <template #header><div class="facility-panel-header"><strong>机房详情</strong><el-button v-if="selectedRoom && can('racks.manage')" link type="primary" @click="openRoomModal(selectedRoom)">编辑</el-button></div></template>
+          <template #header><div class="facility-panel-header"><strong>机房详情</strong><div class="facility-panel-header-actions"><el-button v-if="selectedRoom && can('racks.manage')" type="primary" plain size="small" :disabled="!selectedRoom.is_active" :title="selectedRoom.is_active ? '在当前机房新增机柜' : '停用机房不能新增机柜'" @click="context.openRackModal(undefined, selectedRoom)">新增机柜</el-button><el-button v-if="selectedRoom && can('racks.manage')" link type="primary" @click="openRoomModal(selectedRoom)">编辑机房</el-button></div></div></template>
           <template v-if="selectedRoom">
             <div class="facility-detail-grid"><div><span>机房名称</span><strong>{{ selectedRoom.name }}</strong></div><div><span>所属数据中心</span><strong>{{ selectedRoom.data_center_name }}</strong></div><div><span>机柜数量</span><strong>{{ selectedRoom.racks_count || 0 }}</strong></div><div><span>设备数量</span><strong>{{ selectedRoom.assets_count || 0 }}</strong></div><div><span>状态</span><StatusTag :type="selectedRoom.is_active ? 'success' : 'info'" :label="selectedRoom.is_active ? '使用中' : '停用'" /></div><div><span>创建时间</span><strong>{{ selectedRoom.created_at ? new Date(selectedRoom.created_at).toLocaleDateString('zh-CN') : '—' }}</strong></div><div><span>负责人</span><strong>{{ selectedRoom.owner_name || '—' }}</strong></div><div><span>联系电话</span><strong>{{ selectedRoom.contact_phone || '—' }}</strong></div><div class="full"><span>备注</span><strong>{{ selectedRoom.notes || '—' }}</strong></div></div>
-            <div class="facility-subtitle">机柜布局图</div><div class="room-rack-layout"><button v-for="rack in roomRacks" :key="rack.id" class="room-rack-card" :class="`status-${rack.status || 'in_use'}`" :title="`${rack.code} · 已用 ${rackUsed(rack)} U / ${rack.total_u} U · ${rack.allocations?.length || 0} 台设备`" @click="openRackFromRoom(rack)"><strong>{{ rack.code }}</strong><small>{{ rackUsed(rack) }}/{{ rack.total_u }} U · {{ rack.allocations?.length || 0 }} 台</small></button><el-empty v-if="!roomRacks.length" description="该机房暂无机柜" /></div>
+            <div class="facility-subtitle">机柜布局图</div><div class="room-rack-layout"><div v-for="rack in roomRacks" :key="rack.id" class="room-rack-card-wrap"><button class="room-rack-card" :class="`status-${rackStatusCode(rack)}`" :title="`${rack.code} · ${rack.name || '未命名'} · 已用 ${rackUsed(rack)} U / ${rack.total_u} U · ${rack.allocations?.length || 0} 台设备`" @click="openRackFromRoom(rack)"><span class="room-rack-card-title"><strong>{{ rack.code }}</strong><small v-if="rack.name">{{ rack.name }}</small></span><small>{{ rackUsed(rack) }}/{{ rack.total_u }} U · {{ rack.allocations?.length || 0 }} 台</small><StatusTag :type="statusType(rack.status, rack.is_active)" :label="statusLabel(rack.status, rack.is_active)" /></button><div v-if="can('racks.manage')" class="room-rack-card-actions"><el-button link type="primary" size="small" :disabled="deletingRackId === rack.id || updatingRackId === rack.id" @click.stop="context.openRackModal(rack, selectedRoom || undefined)">编辑</el-button><el-dropdown trigger="click" :disabled="deletingRackId === rack.id || updatingRackId === rack.id" @command="(command: string) => handleRackCommand(rack, command)"><el-button link size="small" :disabled="deletingRackId === rack.id || updatingRackId === rack.id" @click.stop><span>更多</span><el-icon><MoreFilled /></el-icon></el-button><template #dropdown><el-dropdown-menu><el-dropdown-item v-if="rackStatusCode(rack) !== 'in_use'" command="in_use">设为使用中</el-dropdown-item><el-dropdown-item v-if="rackStatusCode(rack) !== 'reserved'" command="reserved">设为预留</el-dropdown-item><el-dropdown-item v-if="rackStatusCode(rack) !== 'disabled'" command="disabled">设为停用</el-dropdown-item><el-dropdown-item divided command="delete">删除</el-dropdown-item></el-dropdown-menu></template></el-dropdown></div></div><el-empty v-if="!roomRacks.length" description="该机房暂无机柜" /></div>
           </template><el-empty v-else description="请选择机房查看详情" />
         </el-card>
         </section>
@@ -175,5 +192,6 @@ function openRackFromRoom(rack: Rack) {
       </PageContainer>
     </template>
 
+    <RackFormDialog :context="context" />
   </div>
 </template>

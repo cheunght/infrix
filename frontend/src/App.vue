@@ -132,6 +132,10 @@ const {
   serverRooms,
   racks,
   facilitySummary,
+  rackListLoading,
+  rackCanvasLoading,
+  rackListError,
+  rackCanvasError,
   selectedDataCenter,
   selectedRoom,
   selectedRack,
@@ -146,6 +150,13 @@ const {
   showRoomModal,
   editingRoom,
   roomForm,
+  showRackModal,
+  editingRack,
+  rackForm,
+  rackFormFieldErrors,
+  rackSaving,
+  deletingRackId,
+  updatingRackId,
   loadDataCenters,
   loadRackManagement,
   loadServerRooms,
@@ -155,10 +166,16 @@ const {
   openRoomModal,
   saveRoom,
   deleteRoom,
+  openRackModal,
+  saveRack,
+  deleteRack,
+  updateRackStatus,
+  clearRackFormErrors,
   exportRackLayout,
   visibleRacks,
   roomOptions,
   rackOptions,
+  hasRackFilters,
   focusedRack,
   rackDetailOpen,
   displayedRacks,
@@ -173,6 +190,7 @@ const {
   rackUtilization,
   rackUtilizationColor,
   selectRack,
+  retryRackView,
   changeDataCenter,
   changeRoom,
   changeRackFilter,
@@ -353,6 +371,7 @@ const {
   assetRackOptions,
   loadAssets,
   openAssetEditor,
+  retryAssetDetail,
   openAssetClone,
   openNewAssetModal,
   saveAsset,
@@ -399,6 +418,11 @@ const {
   licensePageSize,
   licenseKeyword,
   licenseStatus,
+  licenseListLoading,
+  licenseListError,
+  resetLicenseFilters,
+  retryLicenseList,
+  deletingLicenseId,
   showLicenseModal,
   editingLicense,
   licenseForm,
@@ -462,6 +486,7 @@ const spares = useSpareParts({
   confirmAction,
   dataCenters,
   actionMessage,
+  can,
 });
 const {
   spareParts,
@@ -487,6 +512,11 @@ const {
   spareSelectedPart,
   sparePartForm,
   showSparePartModal,
+  spareSaving,
+  deletingSparePartId,
+  updatingSparePartId,
+  spareListLoading,
+  spareListError,
   editingSparePart,
   spareOperationType,
   spareOperationForm,
@@ -499,6 +529,8 @@ const {
   loadSpareData,
   refreshSparePart,
   searchSpareParts,
+  resetSpareFilters,
+  retrySpareList,
   changeSparePage,
   changeSparePageSize,
   selectSparePart,
@@ -515,6 +547,10 @@ const {
   spareOperationLabel,
   stockLocations,
   stockLoading,
+  stockLocationLoadingByPart,
+  stockLocationErrorByPart,
+  stockLocationTotalsByPart,
+  stockLocationLoadedByPart,
   loadStockLocations,
   transactionRows,
   transactionCount,
@@ -698,7 +734,10 @@ function closeAssetDetail() {
 async function load() {
   if (!authenticated.value) return;
   const version = beginLoad();
-  loading.value = true;
+  // Spare parts and the rack view own their workspace loading masks so a
+  // list/canvas request never blocks the entire routed application.
+  const usesLocalPageLoading = page.value === "spares" || (page.value === "racks" && rackSection.value === "view");
+  loading.value = !usesLocalPageLoading;
   pageError.value = "";
   try {
     if (page.value === "ledger") await loadAssets(version);
@@ -733,7 +772,7 @@ async function load() {
       actionMessage.value = pageError.value;
     }
   } finally {
-    if (isCurrentLoad(version)) loading.value = false;
+    if (isCurrentLoad(version) && !usesLocalPageLoading) loading.value = false;
   }
 }
 function navigate(item: (typeof navItems)[number]) {
@@ -881,6 +920,7 @@ onBeforeUnmount(() => {
 const pageContext = {
   request,
   downloadFile: download,
+  currentUsername: username,
   loading, dashboard, assets,
   dashboardDate, dashboardDateTime, handleMenuSelect,
   dashboardLoading,
@@ -900,31 +940,36 @@ const pageContext = {
   exportRepairs, openFaultModal, repairRows, openRepairModal, formatDateTime,
   repairPage, repairPageSize, repairCount, changeRepairPage,
   changeRepairPageSize,
-  licenseKeyword, searchLicenses, licenseStatus,
+  licenseKeyword, searchLicenses, licenseStatus, licenseListLoading, licenseListError,
+  resetLicenseFilters, retryLicenseList, deletingLicenseId,
   openLicenseModal, deleteLicense, licenses, licensePage,
   licensePageSize, licenseCount, changeLicensePage, changeLicensePageSize,
   spareParts, spareStocks, spareTransactions, sparePartCount, spareStockCount, spareTransactionCount,
   sparePage, sparePageSize,
   spareSearch, spareType, spareActive, spareListDataCenter, spareListRoom,
   spareRooms,
-  sparePartForm, editingSparePart, showSparePartModal, openSparePartModal, saveSparePart, toggleSparePart,
-  deleteSparePart, searchSpareParts, changeSparePage, changeSparePageSize,
+  sparePartForm, editingSparePart, showSparePartModal, spareSaving, deletingSparePartId, updatingSparePartId,
+  spareListLoading, spareListError, openSparePartModal, saveSparePart, toggleSparePart,
+  deleteSparePart, searchSpareParts, resetSpareFilters, retrySpareList, changeSparePage, changeSparePageSize,
   openSpareOperation, spareOperationType, spareOperationForm, showSpareOperationModal,
   spareOperationSaving, spareOperationCurrentQuantity, spareOperationLocationLabel,
   spareOperationLocationLocked, saveSpareOperation, spareOperationLabel,
-  stockLocations, stockLoading, loadStockLocations, transactionRows, transactionCount,
+  stockLocations, stockLoading, stockLocationLoadingByPart, stockLocationErrorByPart,
+  stockLocationTotalsByPart, stockLocationLoadedByPart, loadStockLocations, transactionRows, transactionCount,
   transactionPage, transactionPageSize, transactionLoading, transactionError, loadTransactions,
   changeTransactionPage, changeTransactionPageSize,
   rackSection, serverRooms, openDataCenterModal, openRoomModal, deleteRoom, racks,
+  showRackModal, editingRack, rackForm, rackFormFieldErrors, rackSaving, deletingRackId, updatingRackId,
+  openRackModal, saveRack, deleteRack, updateRackStatus, clearRackFormErrors,
   dataCenters, selectedDataCenter, changeDataCenter, changeRoom,
-  facilitySummary,
+  facilitySummary, rackListLoading, rackCanvasLoading, rackListError, rackCanvasError,
   changeRackFilter, selectedRoom,
-  roomOptions, selectedRack, rackOptions, selectedRackDeviceType, deviceTypes,
-  resetRackFilters, exportRackLayout, rackViewTitle, displayedRacks,
+  roomOptions, selectedRack, rackOptions, hasRackFilters, selectedRackDeviceType, deviceTypes,
+  resetRackFilters, retryRackView, exportRackLayout, rackViewTitle, displayedRacks,
   rackUtilization, rackUtilizationColor, rackUsedU, focusedRackId, focusedRack, visibleRacks, selectRack,
   rackViewStyle, rackBodyStyle,
   rackAllocationStyle, rackGapUnavailable, openRackAssetDetail,
-  rackDetailOpen, detailAsset, detailLoading, detailError, closeAssetDetail,
+  rackDetailOpen, detailAsset, detailLoading, detailError, retryAssetDetail, closeAssetDetail,
   rackCount, rackPage, changeRackPage,
   settingsSection, dictionarySection,
   dictionarySearch, loadDictionaries, currentDictionaryLabel,

@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { Search } from "@element-plus/icons-vue";
 import type { RackFiltersContext } from "../types/page-context";
 const props = defineProps<{ context: RackFiltersContext }>();
 const context = props.context;
@@ -11,7 +12,6 @@ const {
   roomOptions,
   selectedRack,
   changeRackFilter,
-  rackOptions,
   selectedRackDeviceType,
   deviceTypes,
   resetRackFilters,
@@ -53,17 +53,16 @@ const {
         :value="room.id"
       />
     </el-select>
-    <el-select
+    <el-input
       v-model="selectedRack"
-      class="itam-filter-select"
+      class="rack-code-filter"
       aria-label="机柜编号"
-      placeholder="全部机柜"
+      placeholder="输入机柜编号"
+      :prefix-icon="Search"
       clearable
-      @change="changeRackFilter"
-    >
-      <el-option label="全部机柜" value="" />
-      <el-option v-for="code in rackOptions" :key="code" :label="code" :value="code" />
-    </el-select>
+      @keyup.enter="changeRackFilter"
+      @clear="changeRackFilter"
+    />
     <el-select
       v-model="selectedRackDeviceType"
       class="itam-filter-select"

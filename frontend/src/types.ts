@@ -276,6 +276,29 @@ export type InventoryTask = {
   summary: InventorySummary;
 };
 export type InventoryInspector = { id: number; username: string; display_name: string };
+export type InventoryScopeLocation = { id: number; name: string };
+export type InventoryScopePreview = {
+  data_center: InventoryScopeLocation;
+  server_room: InventoryScopeLocation | null;
+  scope_label: string;
+  total: number;
+  racked: number;
+  unracked: number;
+  retired: number;
+  includes_unracked: boolean;
+  warnings: string[];
+};
+export type RackStatus = "in_use" | "reserved" | "disabled";
+export type RackFormState = {
+  room: string;
+  code: string;
+  name: string;
+  rack_type: string;
+  owner_name: string;
+  notes: string;
+  total_u: number;
+  status: RackStatus;
+};
 export type Rack = {
   id: number;
   code: string;
@@ -288,7 +311,7 @@ export type Rack = {
   data_center_name?: string;
   server_room_name?: string;
   is_active?: boolean;
-  status?: "in_use" | "reserved" | "disabled" | string;
+  status?: RackStatus | string;
   status_label?: string;
   used_u?: number;
   free_u?: number;

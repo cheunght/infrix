@@ -823,6 +823,46 @@ class AssetWriteSerializer(serializers.ModelSerializer):
         return instance
 
 
+class InventoryScopePreviewQuerySerializer(serializers.Serializer):
+    """Validated query parameters for the read-only inventory scope preview."""
+
+    data_center = serializers.PrimaryKeyRelatedField(queryset=DataCenter.objects.all())
+    server_room = serializers.PrimaryKeyRelatedField(
+        queryset=ServerRoom.objects.select_related("data_center"),
+        required=False,
+        allow_null=True,
+    )
+
+    def validate(self, attrs):
+        data_center = attrs["data_center"]
+        server_room = attrs.get("server_room")
+        if not data_center.is_active:
+            raise serializers.ValidationError({"data_center": "停用的数据中心不能创建盘点任务"})
+        if server_room is not None:
+            if server_room.data_center_id != data_center.id:
+                raise serializers.ValidationError({"server_room": "机房不属于所选数据中心"})
+            if not server_room.is_active:
+                raise serializers.ValidationError({"server_room": "停用的机房不能创建盘点任务"})
+        return attrs
+
+
+class InventoryScopeLocationSerializer(serializers.Serializer):
+    id = serializers.IntegerField()
+    name = serializers.CharField()
+
+
+class InventoryScopePreviewSerializer(serializers.Serializer):
+    data_center = InventoryScopeLocationSerializer()
+    server_room = InventoryScopeLocationSerializer(allow_null=True)
+    scope_label = serializers.CharField()
+    total = serializers.IntegerField()
+    racked = serializers.IntegerField()
+    unracked = serializers.IntegerField()
+    retired = serializers.IntegerField()
+    includes_unracked = serializers.BooleanField()
+    warnings = serializers.ListField(child=serializers.CharField())
+
+
 INVENTORY_STATUS_LABELS = dict(InventoryItem.STATUS)
 
 

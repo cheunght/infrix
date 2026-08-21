@@ -6,6 +6,8 @@ import type {
   FacilitySummary,
   Page,
   Rack,
+  RackFormState,
+  RackStatus,
   ServerRoom,
 } from "../types";
 import type { RackSection } from "../router";
@@ -37,6 +39,11 @@ export function useFacilities(deps: FacilitiesDeps) {
   const serverRooms = ref<ServerRoom[]>([]);
   const racks = ref<Rack[]>([]);
   const facilitySummary = ref<FacilitySummary | null>(null);
+  const rackListLoading = ref(false);
+  const rackCanvasLoading = ref(false);
+  const rackListError = ref("");
+  const rackCanvasError = ref("");
+  const rackViewRequestId = ref(0);
   const selectedDataCenter = ref("");
   const selectedRoom = ref("");
   const selectedRack = ref("");
@@ -59,6 +66,22 @@ export function useFacilities(deps: FacilitiesDeps) {
     notes: "",
     is_active: true,
   });
+  const showRackModal = ref(false);
+  const editingRack = ref<Rack | null>(null);
+  const rackForm = ref<RackFormState>({
+    room: "",
+    code: "",
+    name: "",
+    rack_type: "标准机柜",
+    owner_name: "",
+    notes: "",
+    total_u: 45,
+    status: "in_use",
+  });
+  const rackFormFieldErrors = ref<Record<string, string>>({});
+  const rackSaving = ref(false);
+  const deletingRackId = ref<number | null>(null);
+  const updatingRackId = ref<number | null>(null);
 
   async function loadDataCenters(version = deps.beginLoad()) {
     const result = await deps.request<{ results?: DataCenter[]; count?: number } | DataCenter[]>(
@@ -95,21 +118,52 @@ export function useFacilities(deps: FacilitiesDeps) {
   }
 
   async function loadRackView(version = deps.beginLoad()) {
-    await loadServerRooms(version);
-    const params = new URLSearchParams({
-      page: String(rackPage.value),
-      page_size: String(rackPageSize.value),
-    });
-    if (selectedDataCenter.value) params.set("room__data_center", selectedDataCenter.value);
-    if (selectedRoom.value) params.set("room", selectedRoom.value);
-    if (selectedRack.value) params.set("code", selectedRack.value);
-    if (selectedRackDeviceType.value) params.set("device_type", selectedRackDeviceType.value);
-    const result = await deps.request<{ results?: Rack[]; count?: number } | Rack[]>(
-      `/racks/?${params.toString()}`,
-    );
-    if (!deps.isCurrentLoad(version)) return;
-    racks.value = Array.isArray(result) ? result : result?.results || [];
-    rackCount.value = Array.isArray(result) ? result.length : Number(result?.count || 0);
+    const requestId = ++rackViewRequestId.value;
+    if (deps.isCurrentLoad(version)) {
+      rackListLoading.value = true;
+      rackCanvasLoading.value = true;
+      rackListError.value = "";
+      rackCanvasError.value = "";
+    }
+    try {
+      await loadServerRooms(version);
+      if (!deps.isCurrentLoad(version) || requestId !== rackViewRequestId.value) return;
+      const params = new URLSearchParams({
+        page: String(rackPage.value),
+        page_size: String(rackPageSize.value),
+      });
+      if (selectedDataCenter.value) params.set("room__data_center", selectedDataCenter.value);
+      if (selectedRoom.value) params.set("room", selectedRoom.value);
+      if (selectedRack.value) params.set("code", selectedRack.value);
+      if (selectedRackDeviceType.value) params.set("device_type", selectedRackDeviceType.value);
+      const result = await deps.request<{ results?: Rack[]; count?: number } | Rack[]>(
+        `/racks/?${params.toString()}`,
+      );
+      if (!deps.isCurrentLoad(version) || requestId !== rackViewRequestId.value) return;
+      racks.value = Array.isArray(result) ? result : result?.results || [];
+      rackCount.value = Array.isArray(result) ? result.length : Number(result?.count || 0);
+    } catch (error) {
+      if (!deps.isCurrentLoad(version) || requestId !== rackViewRequestId.value || isAbortError(error)) return;
+      const message = error instanceof Error && error.message
+        ? error.message
+        : "机柜数据加载失败，请稍后重试";
+      rackListError.value = message;
+      rackCanvasError.value = message;
+    } finally {
+      if (deps.isCurrentLoad(version) && requestId === rackViewRequestId.value) {
+        rackListLoading.value = false;
+        rackCanvasLoading.value = false;
+      }
+    }
+  }
+
+  function isAbortError(error: unknown) {
+    return error instanceof DOMException && error.name === "AbortError"
+      || error instanceof Error && error.name === "AbortError";
+  }
+
+  function retryRackView() {
+    void deps.reload();
   }
 
   function openDataCenterModal(dataCenter?: DataCenter) {
@@ -193,6 +247,169 @@ export function useFacilities(deps: FacilitiesDeps) {
     }
   }
 
+  function clearRackFormErrors() {
+    rackFormFieldErrors.value = {};
+  }
+
+  function rackFormDefaults(room?: ServerRoom): RackFormState {
+    return {
+      room: room ? String(room.id) : "",
+      code: "",
+      name: "",
+      rack_type: "标准机柜",
+      owner_name: "",
+      notes: "",
+      total_u: 45,
+      status: "in_use",
+    };
+  }
+
+  function openRackModal(rack?: Rack, room?: ServerRoom) {
+    editingRack.value = rack || null;
+    clearRackFormErrors();
+    if (rack) {
+      rackForm.value = {
+        room: String(rack.room),
+        code: rack.code || "",
+        name: rack.name || "",
+        rack_type: rack.rack_type || "标准机柜",
+        owner_name: rack.owner_name || "",
+        notes: rack.notes || "",
+        total_u: Number(rack.total_u) || 45,
+        status: (rack.status === "reserved" || rack.status === "disabled" ? rack.status : "in_use"),
+      };
+    } else {
+      const currentRoom = room || serverRooms.value.find((item) => String(item.id) === selectedRoom.value);
+      rackForm.value = rackFormDefaults(currentRoom);
+    }
+    showRackModal.value = true;
+  }
+
+  function errorText(value: unknown): string {
+    if (Array.isArray(value)) return value.map(errorText).filter(Boolean).join("；");
+    if (value && typeof value === "object") return Object.values(value).map(errorText).filter(Boolean).join("；");
+    return String(value ?? "");
+  }
+
+  function extractRackFormErrors(error: unknown) {
+    const candidate = error && typeof error === "object"
+      ? error as { details?: unknown; message?: string }
+      : {};
+    const details = candidate.details;
+    const source = details && typeof details === "object" && !Array.isArray(details)
+      ? details as Record<string, unknown>
+      : {};
+    const fields: Record<string, string> = {};
+    const general: string[] = [];
+    for (const [field, value] of Object.entries(source)) {
+      const message = errorText(value);
+      if (!message) continue;
+      if (["room", "code", "name", "rack_type", "owner_name", "notes", "total_u", "status"].includes(field)) {
+        fields[field] = message;
+      } else if (field === "detail" || field === "non_field_errors") {
+        general.push(message);
+      } else {
+        general.push(`${field}：${message}`);
+      }
+    }
+    return { fields, message: general.join("；") || candidate.message || "机柜保存失败" };
+  }
+
+  async function refreshRackDataAfterMutation() {
+    if (deps.page.value === "racks" && deps.rackSection.value === "view") {
+      await loadRackView();
+      return;
+    }
+    await loadRackManagement();
+  }
+
+  async function saveRack() {
+    if (rackSaving.value) return;
+    rackSaving.value = true;
+    clearRackFormErrors();
+    const form = rackForm.value;
+    const payload = {
+      room: Number(form.room),
+      code: form.code.trim(),
+      name: form.name.trim(),
+      rack_type: form.rack_type.trim(),
+      owner_name: form.owner_name.trim(),
+      notes: form.notes.trim(),
+      total_u: Number(form.total_u),
+      status: form.status,
+    };
+    try {
+      const path = editingRack.value ? `/racks/${editingRack.value.id}/` : "/racks/";
+      await deps.request(path, {
+        method: editingRack.value ? "PATCH" : "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+      });
+      showRackModal.value = false;
+      editingRack.value = null;
+      deps.actionMessage.value = "机柜已保存";
+      try {
+        await refreshRackDataAfterMutation();
+      } catch (refreshError) {
+        deps.actionMessage.value = `机柜已保存，但页面刷新失败：${refreshError instanceof Error ? refreshError.message : "请稍后重试"}`;
+      }
+    } catch (error) {
+      const parsed = extractRackFormErrors(error);
+      rackFormFieldErrors.value = parsed.fields;
+      deps.actionMessage.value = parsed.message;
+    } finally {
+      rackSaving.value = false;
+    }
+  }
+
+  async function updateRackStatus(rack: Rack, status: RackStatus) {
+    if (updatingRackId.value === rack.id || rack.status === status) return;
+    if (status !== "in_use" && rack.allocations.length) {
+      const statusLabel = status === "reserved" ? "预留" : "停用";
+      if (!(await deps.confirmAction(`机柜“${rack.code}”已有 ${rack.allocations.length} 台设备，确定设为${statusLabel}吗？`))) return;
+    }
+    updatingRackId.value = rack.id;
+    try {
+      await deps.request(`/racks/${rack.id}/`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ status }),
+      });
+      deps.actionMessage.value = "机柜状态已更新";
+      try {
+        await refreshRackDataAfterMutation();
+      } catch (refreshError) {
+        deps.actionMessage.value = `机柜状态已更新，但页面刷新失败：${refreshError instanceof Error ? refreshError.message : "请稍后重试"}`;
+      }
+    } catch (error) {
+      deps.actionMessage.value = error instanceof Error ? error.message : "机柜状态更新失败";
+    } finally {
+      updatingRackId.value = null;
+    }
+  }
+
+  async function deleteRack(rack: Rack) {
+    if (deletingRackId.value === rack.id) return;
+    const roomLabel = `${rack.data_center_name || "未知数据中心"} / ${rack.server_room_name || "未知机房"}`;
+    if (!(await deps.confirmAction(`确定删除机柜“${rack.code}”吗？\n位置：${roomLabel}`))) return;
+    deletingRackId.value = rack.id;
+    try {
+      await deps.request(`/racks/${rack.id}/`, { method: "DELETE" });
+      if (focusedRackId.value === rack.id) clearRackSelection();
+      if (selectedRack.value === rack.code) selectedRack.value = "";
+      deps.actionMessage.value = "机柜已删除";
+      try {
+        await refreshRackDataAfterMutation();
+      } catch (refreshError) {
+        deps.actionMessage.value = `机柜已删除，但页面刷新失败：${refreshError instanceof Error ? refreshError.message : "请稍后重试"}`;
+      }
+    } catch (error) {
+      deps.actionMessage.value = error instanceof Error ? error.message : "机柜删除失败";
+    } finally {
+      deletingRackId.value = null;
+    }
+  }
+
   async function exportRackLayout() {
     try {
       await deps.download("/reports/racks/export/", "rack-layout.xlsx");
@@ -225,6 +442,9 @@ export function useFacilities(deps: FacilitiesDeps) {
       .filter((code, index, all) => all.indexOf(code) === index)
       .sort(),
   );
+  const hasRackFilters = computed(() => Boolean(
+    selectedDataCenter.value || selectedRoom.value || selectedRack.value || selectedRackDeviceType.value,
+  ));
   const focusedRack = computed(
     () =>
       visibleRacks.value.find((rack) => rack.id === focusedRackId.value) ||
@@ -311,24 +531,25 @@ export function useFacilities(deps: FacilitiesDeps) {
     if (rackDetailOpen.value && focusedRackId.value !== rack.id) deps.closeAssetDetail();
     focusRack(rack);
   }
+  function clearRackSelection() {
+    focusedRackId.value = null;
+    deps.closeAssetDetail();
+  }
   function changeDataCenter() {
     selectedRoom.value = "";
     selectedRack.value = "";
-    focusedRackId.value = null;
-    deps.closeAssetDetail();
+    clearRackSelection();
     rackPage.value = 1;
     void deps.reload();
   }
   function changeRoom() {
     selectedRack.value = "";
-    focusedRackId.value = null;
-    deps.closeAssetDetail();
+    clearRackSelection();
     rackPage.value = 1;
     void deps.reload();
   }
   function changeRackFilter() {
-    focusedRackId.value = null;
-    deps.closeAssetDetail();
+    clearRackSelection();
     rackPage.value = 1;
     void deps.reload();
   }
@@ -337,13 +558,15 @@ export function useFacilities(deps: FacilitiesDeps) {
     selectedRoom.value = "";
     selectedRack.value = "";
     selectedRackDeviceType.value = "";
-    focusedRackId.value = null;
-    deps.closeAssetDetail();
+    clearRackSelection();
     rackPage.value = 1;
     void deps.reload();
   }
   function changeRackPage(pageNumber: number) {
-    rackPage.value = Math.min(Math.max(pageNumber, 1), Math.max(1, Math.ceil(rackCount.value / rackPageSize.value)));
+    const nextPage = Math.min(Math.max(pageNumber, 1), Math.max(1, Math.ceil(rackCount.value / rackPageSize.value)));
+    if (nextPage === rackPage.value) return;
+    clearRackSelection();
+    rackPage.value = nextPage;
     void deps.reload();
   }
 
@@ -352,6 +575,10 @@ export function useFacilities(deps: FacilitiesDeps) {
     serverRooms,
     racks,
     facilitySummary,
+    rackListLoading,
+    rackCanvasLoading,
+    rackListError,
+    rackCanvasError,
     selectedDataCenter,
     selectedRoom,
     selectedRack,
@@ -366,6 +593,13 @@ export function useFacilities(deps: FacilitiesDeps) {
     showRoomModal,
     editingRoom,
     roomForm,
+    showRackModal,
+    editingRack,
+    rackForm,
+    rackFormFieldErrors,
+    rackSaving,
+    deletingRackId,
+    updatingRackId,
     loadDataCenters,
     loadRackManagement,
     loadServerRooms,
@@ -375,10 +609,16 @@ export function useFacilities(deps: FacilitiesDeps) {
     openRoomModal,
     saveRoom,
     deleteRoom,
+    openRackModal,
+    saveRack,
+    deleteRack,
+    updateRackStatus,
+    clearRackFormErrors,
     exportRackLayout,
     visibleRacks,
     roomOptions,
     rackOptions,
+    hasRackFilters,
     focusedRack,
     rackDetailOpen,
     displayedRacks,
@@ -393,6 +633,8 @@ export function useFacilities(deps: FacilitiesDeps) {
     rackUtilization,
     rackUtilizationColor,
     selectRack,
+    clearRackSelection,
+    retryRackView,
     changeDataCenter,
     changeRoom,
     changeRackFilter,

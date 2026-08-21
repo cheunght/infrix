@@ -52,9 +52,12 @@
 }
 
 .rack-list-item {
+  box-sizing: border-box;
   width: 100%;
-  min-height: 66px;
-  padding: 12px 13px;
+  min-height: 104px;
+  height: 104px;
+  overflow: hidden;
+  padding: 8px 10px;
   border: 1px solid transparent;
   border-radius: 8px;
   background: #fff;
@@ -78,17 +81,43 @@
 .rack-list-row {
   display: flex;
   align-items: center;
-  justify-content: space-between;
+  justify-content: flex-start;
   gap: 10px;
 }
 
 .rack-list-row strong {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  margin-right: auto;
   font-size: 14px;
+}
+
+.rack-list-row strong small {
+  color: #66758a;
+  font-size: 11px;
+  font-weight: 500;
 }
 
 .rack-list-row span {
   font-size: 12px;
   font-weight: 600;
+}
+
+.rack-list-row .el-tag {
+  flex: 0 0 auto;
+  margin-left: 4px;
+}
+
+.rack-list-room {
+  min-width: 0;
+  margin-top: 6px;
+  overflow: hidden;
+  color: #7a899e;
+  font-size: 11px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .rack-util-track {
@@ -107,12 +136,55 @@
   transition: width .2s ease;
 }
 
-.rack-list-item small {
-  display: none;
+.rack-list-usage {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+  margin-top: 6px;
+  color: #66758a;
+  font-size: 11px;
 }
 
 .rack-list-empty {
-  padding: 50px 12px;
+  padding: 28px 12px 12px;
+}
+
+.rack-panel-empty {
+  display: flex;
+  flex: 1 1 auto;
+  min-height: 180px;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+}
+
+.rack-panel-state {
+  display: flex;
+  flex: 1 1 auto;
+  min-height: 220px;
+  flex-direction: column;
+  justify-content: center;
+  gap: 12px;
+  padding: 16px 4px;
+}
+
+.rack-panel-error {
+  align-items: flex-start;
+  color: #66758a;
+}
+
+.rack-panel-error strong {
+  color: #273651;
+  font-size: 14px;
+}
+
+.rack-panel-error span {
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 12px;
 }
 
 .rack-list-pagination {
@@ -122,7 +194,7 @@
 }
 
 .rack-layout-panel {
-  overflow: hidden;
+  overflow: visible;
   background:#fff;
 }
 
@@ -223,12 +295,25 @@
 }
 
 .rack-u-card .rack-body {
+  position: relative;
   min-height: 0;
   padding-right: 0;
   padding-left: 0;
   border:6px solid #eef1f6;
   border-radius:8px;
   background:#dfe5ee;
+}
+
+.rack-empty-hint {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  z-index: 1;
+  transform: translate(-50%, -50%);
+  color: #7a899e;
+  font-size: 12px;
+  pointer-events: none;
+  white-space: nowrap;
 }
 
 .rack-u-card .rack-row {
@@ -320,7 +405,7 @@
 
 /* Rack workspace owns all three columns; no page padding or overlay is used. */
 .rack-view-layout {
-  grid-template-columns: 236px minmax(0, 1fr);
+  grid-template-columns: minmax(208px, 236px) minmax(0, 1fr);
   gap: 18px;
   /* The filter row now has its own divider and breathing room.  Give the
      U-position workspace the corresponding extra height so every rack body
@@ -330,7 +415,7 @@
 }
 
 .rack-view-layout.has-inspector {
-  grid-template-columns: 236px minmax(280px, 1fr) 360px;
+  grid-template-columns: minmax(208px, 236px) minmax(260px, 1fr) clamp(320px, 28vw, 380px);
 }
 
 .rack-list-panel,
@@ -348,6 +433,53 @@
   flex: 1 1 auto;
   min-height: 0;
   max-height: none;
+}
+
+/* Keep the rack list rows compact and identical in both normal and selected
+   states.  The explicit border-box height prevents the selected border from
+   pushing the final usage line outside the card. */
+.rack-list {
+  gap: 7px;
+  padding: 1px;
+}
+
+.rack-list-item,
+.rack-list-item.active {
+  box-sizing: border-box;
+}
+
+.rack-list-row {
+  min-width: 0;
+  min-height: 24px;
+  line-height: 20px;
+}
+
+.rack-list-row .el-tag {
+  box-sizing: border-box;
+  max-height: 24px;
+  line-height: 22px;
+  padding-top: 0;
+  padding-bottom: 0;
+}
+
+.rack-list-room {
+  margin-top: 3px;
+  line-height: 16px;
+}
+
+.rack-util-track {
+  height: 6px;
+  margin: 6px 0 5px;
+}
+
+.rack-list-usage {
+  min-width: 0;
+  margin-top: 0;
+  line-height: 16px;
+}
+
+.rack-list-usage span {
+  min-width: 0;
 }
 
 .rack-list-pagination {
@@ -408,15 +540,20 @@
   flex: 1 1 auto;
   min-height: 0;
   align-items: flex-start;
-  flex-wrap: nowrap;
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(210px, 1fr));
+  align-content: start;
+  gap: 18px;
+  overflow-x: auto;
+  overflow-y: auto;
 }
 
 .rack-u-scroll.single-rack {
+  grid-template-columns: minmax(210px, 240px);
   justify-content: center;
 }
 
 .rack-u-scroll.single-rack .rack-u-card {
-  flex: 0 0 210px;
   min-width: 210px;
 }
 
@@ -427,6 +564,22 @@
   margin-bottom: 16px;
   padding-bottom: 14px;
   border-bottom: 1px solid #dfe6f0;
+}
+
+.ep-main .rack-view-toolbar .rack-code-filter {
+  width: clamp(170px, 18vw, 220px) !important;
+  max-width: 220px !important;
+  flex: 0 1 220px;
+  flex-basis: 220px !important;
+}
+
+@media (max-width: 760px) {
+  .ep-main .rack-view-toolbar .rack-code-filter {
+    width: 100% !important;
+    max-width: none !important;
+    flex: 1 1 100% !important;
+    flex-basis: 100% !important;
+  }
 }
 
 .rack-view-layout > .rack-asset-inspector {
@@ -468,7 +621,7 @@
   }
 
   .rack-view-layout.has-inspector {
-    grid-template-columns: 210px minmax(240px, 1fr) 310px;
+    grid-template-columns: 210px minmax(250px, 1fr) clamp(300px, 28vw, 340px);
   }
 }
 
@@ -535,6 +688,7 @@
 .facility-panel .el-card__header { padding:14px 16px; border-bottom-color:#edf1f7; }
 .facility-panel .el-card__body { min-width:0; padding:14px 16px; }
 .facility-panel-header { display:flex; align-items:center; justify-content:space-between; gap:10px; min-width:0; }
+.facility-panel-header-actions { display:flex; align-items:center; justify-content:flex-end; gap:6px; flex:0 0 auto; }
 .facility-panel-header strong { color:#26344e; font-size:15px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
 .facility-list { display:grid; gap:7px; margin-top:12px; }
 .facility-list-item { display:flex; align-items:center; justify-content:space-between; width:100%; min-height:44px; padding:9px 11px; border:1px solid transparent; border-radius:8px; background:#fff; color:#34425d; cursor:pointer; text-align:left; }
@@ -553,10 +707,27 @@
 .facility-detail-grid span { color:#8a97aa; font-size:12px; }
 .facility-detail-grid strong { min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; color:#2f3d56; font-size:14px; font-weight:600; }
 .facility-subtitle { margin:20px 0 10px; color:#34425c; font-size:14px; font-weight:650; }
-.room-rack-layout { display:grid; grid-template-columns:repeat(auto-fill,minmax(102px,1fr)); gap:10px; min-width:0; }
-.room-rack-card { display:grid; gap:5px; min-height:68px; padding:11px; border:1px solid #dfe7f1; border-radius:9px; color:#fff; cursor:pointer; text-align:left; }
+.room-rack-layout { display:grid; grid-template-columns:repeat(auto-fill,minmax(170px,1fr)); gap:10px; min-width:0; align-items:start; }
+.room-rack-card-wrap { display:grid; min-width:0; gap:6px; }
+.room-rack-card { display:grid; gap:5px; min-height:88px; padding:11px; border:1px solid #dfe7f1; border-radius:9px; color:#fff; cursor:pointer; text-align:left; }
+.room-rack-card-title { display:grid; min-width:0; gap:2px; }
+.room-rack-card strong, .room-rack-card-title small { min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
 .room-rack-card strong { font-size:14px; }
 .room-rack-card small { font-size:11px; opacity:.9; }
+.room-rack-card .el-tag { justify-self:start; border-color:rgb(255 255 255 / 40%); background:rgb(255 255 255 / 15%); color:#fff; }
+.room-rack-card-actions { display:flex; align-items:center; justify-content:flex-end; min-height:26px; gap:2px; }
+.room-rack-card-actions .el-button { padding:2px 4px; }
+.room-rack-card-actions .el-dropdown .el-button { display:inline-flex; align-items:center; gap:3px; }
+.rack-form-dialog .el-dialog__body { padding-top:4px; }
+.rack-form { min-width:0; }
+.rack-form .el-divider { margin:16px 0 14px; }
+.rack-form .el-divider:first-child { margin-top:0; }
+.rack-form-grid { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:0 16px; }
+.rack-form-grid .el-form-item { min-width:0; }
+.rack-form-span-2 { grid-column:1 / -1; }
+.rack-form .control-full { width:100%; }
+.rack-form-hint { display:block; margin-top:4px; color:#78869a; font-size:12px; line-height:1.4; }
+.rack-form-footer { display:flex; justify-content:flex-end; gap:8px; }
 .room-rack-card.status-in_use { background:#16a36a; border-color:#16a36a; }
 .room-rack-card.status-reserved { background:#2563eb; border-color:#2563eb; }
 .room-rack-card.status-disabled { background:#8a97a8; border-color:#8a97a8; }
@@ -574,6 +745,9 @@
 @media (max-width: 520px) {
   .facility-detail-grid { grid-template-columns:1fr; }
   .facility-detail-grid > div.full { grid-column:auto; }
+  .rack-form-grid { grid-template-columns:1fr; }
+  .rack-form-span-2 { grid-column:auto; }
+  .facility-panel-header-actions { gap:2px; }
 }
 
 /* Element Plus hosts the rack panels while the U-position canvas remains custom. */
@@ -583,7 +757,7 @@
   min-width: 0;
   min-height: 0;
   height: 100%;
-  overflow: hidden;
+  overflow: visible;
   border: 0;
   border-radius: 12px;
   box-shadow: none;

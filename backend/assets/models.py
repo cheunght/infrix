@@ -187,6 +187,10 @@ class SpareStock(Timestamped):
                 fields=["part", "data_center", "server_room"],
                 name="uniq_spare_stock_location",
             ),
+            models.CheckConstraint(
+                condition=models.Q(quantity__gte=0),
+                name="spare_stock_quantity_nonnegative",
+            ),
         ]
 
 
