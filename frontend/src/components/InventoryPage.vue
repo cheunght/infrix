@@ -100,15 +100,6 @@ onMounted(async () => {
 <template>
   <div class="itam-page">
     <PageContainer v-if="!activeTask">
-      <template #header>
-        <PageHeader description="创建盘点任务并跟踪现场核对进度">
-          <template #actions>
-            <el-button v-if="can('inventory.manage')" type="primary" :icon="Plus" :loading="taskCreating" @click="openNewTask">
-              新建盘点任务
-            </el-button>
-          </template>
-        </PageHeader>
-      </template>
       <template #toolbar>
         <PageToolbar>
           <SearchField class="itam-filter-search" v-model="taskSearch" placeholder="搜索盘点任务、数据中心或盘点人" aria-label="搜索盘点任务" @search="() => { taskPage = 1; loadTasks(); }" />
@@ -121,7 +112,12 @@ onMounted(async () => {
           <el-select class="itam-filter-select" v-model="taskRoom" placeholder="全部机房" clearable @change="() => { taskPage = 1; loadTasks(); }">
             <el-option v-for="room in taskFilterRooms" :key="room.id" :label="room.name" :value="String(room.id)" />
           </el-select>
-          <el-button :icon="Refresh" @click="resetTaskFilters">重置</el-button>
+          <template #actions>
+            <el-button v-if="can('inventory.manage')" type="primary" :icon="Plus" :loading="taskCreating" @click="openNewTask">
+              新建盘点任务
+            </el-button>
+            <el-button :icon="Refresh" @click="resetTaskFilters">重置</el-button>
+          </template>
         </PageToolbar>
       </template>
       <PageContent surface>

@@ -3,7 +3,6 @@ import { proxyRefs } from "vue";
 import type { CustomFieldContext } from "../types/page-context";
 import PageContainer from "./page/PageContainer.vue";
 import PageContent from "./page/PageContent.vue";
-import PageHeader from "./page/PageHeader.vue";
 import PageToolbar from "./page/PageToolbar.vue";
 import StatusTag from "./StatusTag.vue";
 const props = defineProps<{ context: CustomFieldContext }>();
@@ -12,13 +11,6 @@ const c = proxyRefs(props.context);
 
 <template>
   <PageContainer>
-    <template #header>
-      <PageHeader description="为不同设备类型配置动态属性和字段选项">
-        <template #actions>
-          <el-button type="primary" :disabled="!c.can('custom_fields.manage')" @click="c.openCustomFieldModal()">新增字段</el-button>
-        </template>
-      </PageHeader>
-    </template>
     <template #toolbar>
       <PageToolbar>
         <el-select class="itam-filter-select" v-model="c.customFieldDeviceType" placeholder="全部设备类型" clearable @change="c.loadCustomFields()">
@@ -27,6 +19,9 @@ const c = proxyRefs(props.context);
         <el-select class="itam-filter-select" v-model="c.customFieldActive" placeholder="状态" @change="c.loadCustomFields()">
           <el-option label="全部状态" value="all" /><el-option label="启用" value="true" /><el-option label="停用" value="false" />
         </el-select>
+        <template #actions>
+          <el-button type="primary" :disabled="!c.can('custom_fields.manage')" @click="c.openCustomFieldModal()">新增字段</el-button>
+        </template>
       </PageToolbar>
     </template>
     <PageContent surface>

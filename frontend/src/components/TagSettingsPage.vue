@@ -3,7 +3,6 @@ import { proxyRefs } from "vue";
 import SearchField from "./SearchField.vue";
 import PageContainer from "./page/PageContainer.vue";
 import PageContent from "./page/PageContent.vue";
-import PageHeader from "./page/PageHeader.vue";
 import PageToolbar from "./page/PageToolbar.vue";
 import StatusTag from "./StatusTag.vue";
 import type { TagContext } from "../types/page-context";
@@ -14,13 +13,6 @@ const c = proxyRefs(props.context);
 
 <template>
   <PageContainer>
-    <template #header>
-      <PageHeader description="维护资产标签并查看标签引用情况">
-        <template #actions>
-          <el-button type="primary" :disabled="!c.can('tags.manage')" @click="c.openTagModal()">新增标签</el-button>
-        </template>
-      </PageHeader>
-    </template>
     <template #toolbar>
       <PageToolbar>
         <SearchField class="itam-filter-search" v-model="c.tagSearch" placeholder="搜索标签" aria-label="搜索标签" @search="c.loadTags()" />
@@ -29,6 +21,9 @@ const c = proxyRefs(props.context);
           <el-option label="启用" value="true" />
           <el-option label="停用" value="false" />
         </el-select>
+        <template #actions>
+          <el-button type="primary" :disabled="!c.can('tags.manage')" @click="c.openTagModal()">新增标签</el-button>
+        </template>
       </PageToolbar>
     </template>
     <PageContent surface>

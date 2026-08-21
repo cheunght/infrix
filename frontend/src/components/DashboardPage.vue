@@ -24,7 +24,6 @@ import type {
 import type { DashboardContext } from "../types/page-context";
 import StatusTag, { type StatusTagType } from "./StatusTag.vue";
 import PageContainer from "./page/PageContainer.vue";
-import PageHeader from "./page/PageHeader.vue";
 
 const props = defineProps<{ context: DashboardContext }>();
 const {
@@ -96,12 +95,6 @@ function expirationTagType(item: DashboardExpiration): StatusTagType {
 
 <template>
   <PageContainer class="itam-page dashboard-shell">
-    <template #header>
-      <PageHeader
-        title="资产管理概览"
-        description="实时掌握资产运行状态与关键指标"
-      />
-    </template>
     <div class="dashboard-body">
       <div v-if="dashboardLoading" class="dashboard-inline-loading" role="status" aria-live="polite">
         <el-icon class="is-loading"><Refresh /></el-icon>

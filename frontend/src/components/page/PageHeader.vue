@@ -1,5 +1,7 @@
 <script setup lang="ts">
-withDefaults(
+import { computed } from "vue";
+
+const props = withDefaults(
   defineProps<{
     title?: string;
     description?: string;
@@ -9,10 +11,14 @@ withDefaults(
     description: "",
   },
 );
+
+// The shell already provides the page title on ordinary routes.  Only a
+// header with a real description needs the two-line header rhythm.
+const compact = computed(() => !props.description);
 </script>
 
 <template>
-  <header class="page-header">
+  <header class="page-header" :class="{ 'page-header--compact': compact }">
     <div class="page-header__leading">
       <div v-if="$slots.leading" class="page-header__leading-action">
         <slot name="leading" />

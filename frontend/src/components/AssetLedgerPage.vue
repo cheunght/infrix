@@ -7,7 +7,6 @@ import PagedTable from "./PagedTable.vue";
 import SearchField from "./SearchField.vue";
 import PageContainer from "./page/PageContainer.vue";
 import PageContent from "./page/PageContent.vue";
-import PageHeader from "./page/PageHeader.vue";
 import PageToolbar from "./page/PageToolbar.vue";
 import StatusTag from "./StatusTag.vue";
 import type { AssetLedgerContext } from "../types/page-context";
@@ -132,13 +131,6 @@ function handleToolbarAction(command: string) {
 <template>
   <div class="itam-page">
     <PageContainer>
-      <template #header>
-        <PageHeader description="统一管理企业 IT 资产、位置和生命周期信息">
-          <template #actions>
-            <el-button v-if="can('assets.manage')" type="primary" :icon="Plus" @click="openNewAssetModal">新增资产</el-button>
-          </template>
-        </PageHeader>
-      </template>
       <template #toolbar>
         <PageToolbar class="asset-ledger-toolbar">
           <div class="asset-toolbar-filters">
@@ -176,6 +168,7 @@ function handleToolbarAction(command: string) {
             </el-popover>
           </div>
           <div class="asset-toolbar-actions">
+            <el-button v-if="can('assets.manage')" type="primary" :icon="Plus" @click="openNewAssetModal">新增资产</el-button>
             <el-button @click="resetAssetFilters">重置</el-button>
             <div class="asset-toolbar-table-actions">
               <el-popover placement="bottom" :width="240" trigger="click">

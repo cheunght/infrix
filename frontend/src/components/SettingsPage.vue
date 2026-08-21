@@ -6,7 +6,6 @@ import CustomFieldSettingsPage from "./CustomFieldSettingsPage.vue";
 import TagSettingsPage from "./TagSettingsPage.vue";
 import PageContainer from "./page/PageContainer.vue";
 import PageContent from "./page/PageContent.vue";
-import PageHeader from "./page/PageHeader.vue";
 import PageTabs, { type PageTabItem } from "./page/PageTabs.vue";
 import PageToolbar from "./page/PageToolbar.vue";
 import StatusTag from "./StatusTag.vue";
@@ -64,8 +63,12 @@ const organizationTabs: PageTabItem[] = [
         <CustomFieldSettingsPage v-if="settingsSection === 'custom-fields'" :context="props.context" />
         <TagSettingsPage v-else-if="settingsSection === 'tags'" :context="props.context" />
         <PageContainer v-else-if="settingsSection === 'dictionaries'">
-          <template #header>
-            <PageHeader description="维护品牌、设备类型和数据中心基础资料">
+          <template #subnav>
+            <PageTabs
+              v-model="dictionarySection"
+              :items="dictionaryTabs"
+              @update:model-value="() => loadDictionaries()"
+            >
               <template #actions>
                 <el-button
                   type="primary"
@@ -75,14 +78,7 @@ const organizationTabs: PageTabItem[] = [
                   新增{{ currentDictionaryLabel }}
                 </el-button>
               </template>
-            </PageHeader>
-          </template>
-          <template #subnav>
-            <PageTabs
-              v-model="dictionarySection"
-              :items="dictionaryTabs"
-              @update:model-value="() => loadDictionaries()"
-            />
+            </PageTabs>
           </template>
           <template #toolbar>
             <PageToolbar>
@@ -153,15 +149,12 @@ const organizationTabs: PageTabItem[] = [
           </PageContent>
         </PageContainer>
         <PageContainer v-else-if="settingsSection === 'organization' && isAdmin">
-          <template #header>
-            <PageHeader description="管理用户账号、角色和访问范围">
-              <template v-if="organizationTab === 'users'" #actions>
-                <el-button type="primary" @click="openUserModal()">新增用户</el-button>
-              </template>
-            </PageHeader>
-          </template>
           <template #subnav>
-            <PageTabs v-model="organizationTab" :items="organizationTabs" />
+            <PageTabs v-model="organizationTab" :items="organizationTabs">
+              <template #actions>
+                <el-button v-if="organizationTab === 'users'" type="primary" @click="openUserModal()">新增用户</el-button>
+              </template>
+            </PageTabs>
           </template>
           <PageContent surface>
             <el-table
@@ -200,7 +193,6 @@ const organizationTabs: PageTabItem[] = [
           </PageContent>
         </PageContainer>
         <PageContainer v-else-if="settingsSection === 'audit' && can('audit.view')">
-          <template #header><PageHeader description="查看系统操作、登录和数据变更审计记录" /></template>
           <template #toolbar>
             <PageToolbar>
               <SearchField class="itam-filter-search" v-model="auditFilters.search" placeholder="操作者、资源或编号" aria-label="搜索操作日志" @search="searchAuditLogs" />

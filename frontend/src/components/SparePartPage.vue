@@ -6,7 +6,6 @@ import PagedTable from "./PagedTable.vue";
 import SearchField from "./SearchField.vue";
 import PageContainer from "./page/PageContainer.vue";
 import PageContent from "./page/PageContent.vue";
-import PageHeader from "./page/PageHeader.vue";
 import PageToolbar from "./page/PageToolbar.vue";
 import StatusTag from "./StatusTag.vue";
 import type { DataCenter, DictionaryItem, ServerRoom, SparePart, SpareStock, SpareTransaction } from "../types";
@@ -151,13 +150,6 @@ watch(showSpareOperationModal, (open, wasOpen) => { if (!open && wasOpen) refres
 <template>
   <div class="itam-page spare-page">
     <PageContainer>
-      <template #header>
-        <PageHeader description="按数量管理备件库存、地点和库存流水">
-          <template #actions>
-            <el-button v-if="can('spares.manage')" type="primary" :icon="Plus" @click="openSparePartModal()">新增备件</el-button>
-          </template>
-        </PageHeader>
-      </template>
       <template #toolbar>
         <PageToolbar class="spare-page-toolbar">
           <SearchField class="itam-filter-search" v-model="spareSearch" placeholder="搜索备件名称、类型、品牌或型号" aria-label="搜索备件" :loading="spareListLoading" @search="searchSpareParts" />
@@ -165,7 +157,10 @@ watch(showSpareOperationModal, (open, wasOpen) => { if (!open && wasOpen) refres
           <el-select class="itam-filter-select" v-model="spareActive" placeholder="全部状态" :clearable="can('spares.manage')" @change="searchSpareParts"><el-option v-for="item in spareStatusOptions" :key="item.value" :label="item.label" :value="item.value" /></el-select>
           <el-select class="itam-filter-select" v-model="spareListDataCenter" placeholder="全部数据中心" clearable @change="onSpareListDataCenterChange"><el-option v-for="center in activeDataCenters" :key="center.id" :label="center.name" :value="String(center.id)" /></el-select>
           <el-select class="itam-filter-select" v-model="spareListRoom" placeholder="全部机房" clearable @change="searchSpareParts"><el-option v-for="room in roomsFor(spareListDataCenter)" :key="room.id" :label="room.name" :value="String(room.id)" /></el-select>
-          <template #actions><el-button :disabled="spareListLoading" @click="resetSpareFilters">重置</el-button></template>
+          <template #actions>
+            <el-button v-if="can('spares.manage')" type="primary" :icon="Plus" @click="openSparePartModal()">新增备件</el-button>
+            <el-button :disabled="spareListLoading" @click="resetSpareFilters">重置</el-button>
+          </template>
         </PageToolbar>
       </template>
       <PageContent surface class="spare-list-content">

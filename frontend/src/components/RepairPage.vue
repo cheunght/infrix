@@ -5,7 +5,6 @@ import PagedTable from "./PagedTable.vue";
 import SearchField from "./SearchField.vue";
 import PageContainer from "./page/PageContainer.vue";
 import PageContent from "./page/PageContent.vue";
-import PageHeader from "./page/PageHeader.vue";
 import PageToolbar from "./page/PageToolbar.vue";
 import StatusTag from "./StatusTag.vue";
 import type { RepairContext } from "../types/page-context";
@@ -45,13 +44,6 @@ const hasRepairFilters = computed(() => Boolean(
 <template>
   <div class="itam-page repair-page">
     <PageContainer>
-      <template #header>
-        <PageHeader description="记录设备故障、维修过程和处理状态">
-          <template #actions>
-            <el-button v-if="can('faults.manage')" type="primary" :icon="Warning" @click="openFaultModal()">登记故障</el-button>
-          </template>
-        </PageHeader>
-      </template>
       <template #toolbar>
         <PageToolbar>
           <SearchField class="itam-filter-search" v-model="repairKeyword" placeholder="搜索资产编号、名称、故障原因" aria-label="搜索故障" @search="searchRepairs" />
@@ -62,6 +54,7 @@ const hasRepairFilters = computed(() => Boolean(
           <el-date-picker class="itam-filter-date" v-model="repairStart" type="date" value-format="YYYY-MM-DD" placeholder="开始日期" @change="onRepairDateChange" />
           <el-date-picker class="itam-filter-date" v-model="repairEnd" type="date" value-format="YYYY-MM-DD" placeholder="结束日期" @change="onRepairDateChange" />
           <template #actions>
+            <el-button v-if="can('faults.manage')" type="primary" :icon="Warning" @click="openFaultModal()">登记故障</el-button>
             <el-button @click="resetRepairFilters">重置</el-button>
             <el-button v-if="can('faults.export')" :icon="Download" @click="exportRepairs">导出维修记录</el-button>
           </template>

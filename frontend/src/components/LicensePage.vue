@@ -5,7 +5,6 @@ import SearchField from "./SearchField.vue";
 import type { LicenseContext } from "../types/page-context";
 import PageContainer from "./page/PageContainer.vue";
 import PageContent from "./page/PageContent.vue";
-import PageHeader from "./page/PageHeader.vue";
 import PageToolbar from "./page/PageToolbar.vue";
 import StatusTag from "./StatusTag.vue";
 
@@ -39,16 +38,6 @@ const licenseHasFilters = computed(
 <template>
   <div class="itam-page">
     <PageContainer>
-      <template #header>
-        <PageHeader description="维护软件许可、授权数量和到期状态">
-          <template #actions>
-            <el-button v-if="can('licenses.manage')" type="primary" @click="openLicenseModal()">
-              新增许可证
-            </el-button>
-          </template>
-        </PageHeader>
-      </template>
-
       <template #toolbar>
         <PageToolbar>
         <SearchField
@@ -72,6 +61,9 @@ const licenseHasFilters = computed(
           <el-option label="超授权" value="over_limit" />
         </el-select>
         <template #actions>
+          <el-button v-if="can('licenses.manage')" type="primary" @click="openLicenseModal()">
+            新增许可证
+          </el-button>
           <el-button :disabled="licenseListLoading" @click="resetLicenseFilters">重置</el-button>
         </template>
         </PageToolbar>

@@ -83,6 +83,13 @@ header.page-header {
   padding: 0 !important;
 }
 
+/* Pages whose shell already provides the title can use an action-only
+   header.  Let that header size itself to the controls instead of reserving
+   the two-line title/description height. */
+header.page-header.page-header--compact {
+  min-height: 0;
+}
+
 .page-header__copy {
   min-width: 0;
 }
@@ -120,6 +127,26 @@ header.page-header {
   align-items: center;
   gap: var(--space-sm);
   min-width: 0;
+}
+
+.page-tabs-row {
+  display: flex;
+  align-items: stretch;
+  gap: var(--space-lg);
+  min-width: 0;
+}
+
+.page-tabs-row > .page-tabs {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.page-tabs-actions {
+  display: flex;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: var(--space-sm);
+  padding-bottom: 6px;
 }
 
 .page-tabs {
@@ -287,6 +314,18 @@ header.page-header {
 
   .page-tabs .el-tabs__item {
     padding-inline: var(--space-md);
+  }
+
+  .page-tabs-row {
+    align-items: flex-start;
+    flex-wrap: wrap;
+    gap: var(--space-sm) var(--space-lg);
+  }
+
+  .page-tabs-actions {
+    width: 100%;
+    justify-content: flex-end;
+    padding-bottom: 0;
   }
 
   .page-section__header {
