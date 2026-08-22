@@ -1,5 +1,5 @@
 import type { Ref } from "vue";
-import { ApiError } from "../api";
+import { ApiError, flattenError } from "../api";
 import type { RequestFn } from "../types/page-context";
 
 export interface AuthDeps {
@@ -20,7 +20,9 @@ export interface AuthDeps {
   password: Ref<string>;
   loginError: Ref<string>;
   showPasswordModal: Ref<boolean>;
-  passwordForm: Ref<{ old_password: string; new_password: string }>;
+  passwordForm: Ref<{ old_password: string; new_password: string; confirm_password: string }>;
+  passwordSaving: Ref<boolean>;
+  passwordFormErrors: Ref<Record<string, string>>;
   actionMessage: Ref<string>;
   settingsSection: Ref<string>;
 }
@@ -121,20 +123,42 @@ export function useAuth(deps: AuthDeps) {
   }
 
   async function changePassword() {
+    if (deps.passwordSaving.value) return;
+    deps.passwordSaving.value = true;
+    deps.passwordFormErrors.value = {};
     try {
       const wasRequired = deps.passwordChangeRequired.value;
       await deps.request("/auth/change-password/", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(deps.passwordForm.value),
+        body: JSON.stringify({
+          old_password: deps.passwordForm.value.old_password,
+          new_password: deps.passwordForm.value.new_password,
+        }),
       });
       deps.showPasswordModal.value = false;
       deps.passwordChangeRequired.value = false;
-      deps.passwordForm.value = { old_password: "", new_password: "" };
+      deps.passwordForm.value = { old_password: "", new_password: "", confirm_password: "" };
       deps.actionMessage.value = "密码已修改，请妥善保存";
       if (wasRequired) await deps.bootstrapApplication();
     } catch (error) {
+      const details = error && typeof error === "object" && "details" in error
+        ? (error as { details?: unknown }).details
+        : undefined;
+      const source = details && typeof details === "object" && !Array.isArray(details)
+        ? details as Record<string, unknown>
+        : {};
+      const fieldErrors: Record<string, string> = {};
+      if (source.old_password) fieldErrors.old_password = flattenError(source.old_password);
+      if (source.new_password) fieldErrors.new_password = flattenError(source.new_password);
+      if (source.confirm_password) fieldErrors.confirm_password = flattenError(source.confirm_password);
+      if (source.detail && !fieldErrors.old_password && !fieldErrors.new_password) {
+        fieldErrors.old_password = flattenError(source.detail);
+      }
+      deps.passwordFormErrors.value = fieldErrors;
       deps.actionMessage.value = error instanceof Error ? error.message : "修改失败";
+    } finally {
+      deps.passwordSaving.value = false;
     }
   }
 

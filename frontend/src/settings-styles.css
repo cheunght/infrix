@@ -1,0 +1,198 @@
+.settings-state {
+  display: flex;
+  min-height: 180px;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-lg, 16px);
+  padding: var(--space-xl, 24px);
+  flex-wrap: wrap;
+  color: var(--el-text-color-secondary);
+}
+
+.settings-state__copy {
+  display: grid;
+  min-width: 0;
+  max-width: min(560px, 100%);
+  gap: var(--space-xs, 4px);
+}
+
+.settings-state__copy strong {
+  color: var(--el-text-color-primary);
+  font-weight: 600;
+}
+
+.settings-state__copy span {
+  overflow-wrap: anywhere;
+}
+
+.settings-empty {
+  display: flex;
+  min-height: 120px;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-sm, 8px);
+  padding: var(--space-lg, 16px);
+  flex-wrap: wrap;
+  color: var(--el-text-color-secondary);
+}
+
+.form-grid-full {
+  grid-column: 1 / -1;
+}
+
+.custom-field-visibility-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 18px;
+  margin: 0;
+}
+
+.custom-field-validation {
+  margin: 0;
+}
+
+.custom-field-validation-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(120px, 180px));
+  gap: 10px;
+  width: auto;
+}
+
+.custom-field-validation-grid .el-input,
+.custom-field-validation-grid .el-input-number,
+.custom-field-validation-grid .el-date-editor {
+  width: 100%;
+}
+
+.custom-field-dialog {
+  max-width: calc(100vw - 32px);
+}
+
+.custom-field-dialog .el-dialog__body {
+  max-height: min(680px, calc(100vh - 220px));
+  overflow-y: auto;
+  padding-top: 8px;
+}
+
+.custom-field-dialog .el-select,
+.custom-field-dialog .el-input,
+.custom-field-dialog .el-input-number,
+.custom-field-dialog .el-date-editor {
+  width: 100%;
+}
+
+.custom-field-form-section + .custom-field-form-section {
+  margin-top: 18px;
+}
+
+.custom-field-section-title {
+  margin-bottom: 14px;
+  color: var(--el-text-color-primary);
+  font-size: 13px;
+  font-weight: 600;
+  line-height: 1.4;
+}
+
+.custom-field-basic-grid,
+.custom-field-advanced-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 4px 16px;
+}
+
+.custom-field-basic-grid .el-form-item,
+.custom-field-advanced-grid .el-form-item {
+  min-width: 0;
+  margin-bottom: 14px;
+}
+
+.custom-field-form-full {
+  grid-column: 1 / -1;
+}
+
+.custom-field-form-help {
+  margin-top: 6px;
+  color: var(--el-text-color-secondary);
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.custom-field-required {
+  margin-top: -2px;
+}
+
+.custom-field-advanced-toggle {
+  display: flex;
+  width: 100%;
+  align-items: center;
+  justify-content: space-between;
+  padding: 12px 0;
+  border: 0;
+  border-top: 1px solid var(--el-border-color-lighter);
+  border-bottom: 1px solid var(--el-border-color-lighter);
+  background: transparent;
+  color: var(--el-text-color-primary);
+  cursor: pointer;
+  font: inherit;
+  font-size: 13px;
+  font-weight: 600;
+  text-align: left;
+}
+
+.custom-field-advanced-toggle .el-icon {
+  color: var(--el-text-color-secondary);
+  transition: transform 0.2s ease;
+}
+
+.custom-field-advanced-toggle .el-icon.is-expanded {
+  transform: rotate(180deg);
+}
+
+.custom-field-advanced-config {
+  padding-top: 18px;
+}
+
+.custom-field-advanced-config .custom-field-form-section + .custom-field-form-section {
+  padding-top: 18px;
+  border-top: 1px solid var(--el-border-color-lighter);
+}
+
+.custom-field-advanced-grid .custom-field-sort-order {
+  width: 160px;
+  max-width: 100%;
+}
+
+.custom-field-option-hint {
+  margin-top: -2px;
+}
+
+.custom-field-validation .el-form-item__content {
+  display: block;
+}
+
+.custom-field-validation-grid .el-input-number,
+.custom-field-validation-grid .el-date-editor {
+  width: 100%;
+}
+
+@media (max-width: 720px) {
+  .custom-field-dialog {
+    max-width: calc(100vw - 20px);
+  }
+
+  .custom-field-dialog .el-dialog__body {
+    max-height: calc(100vh - 190px);
+    padding-right: 16px;
+    padding-left: 16px;
+  }
+
+  .custom-field-basic-grid,
+  .custom-field-advanced-grid,
+  .custom-field-validation-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .custom-field-form-full {
+    grid-column: auto;
+  }
+}

@@ -37,7 +37,9 @@ const props = defineProps<{
   auth: {
     showPasswordModal: Ref<boolean>;
     passwordChangeRequired: Ref<boolean>;
-    passwordForm: Ref<{ old_password: string; new_password: string }>;
+    passwordForm: Ref<{ old_password: string; new_password: string; confirm_password: string }>;
+    passwordSaving: Ref<boolean>;
+    passwordFormErrors: Ref<Record<string, string>>;
     changePassword: () => void | Promise<void>;
   };
 }>();
@@ -69,10 +71,14 @@ const {
   showDataCenterModal,
   editingDataCenter,
   dataCenterForm,
+  dataCenterSaving,
+  dataCenterFormErrors,
   saveDataCenter,
   showRoomModal,
   editingRoom,
   roomForm,
+  roomSaving,
+  roomFormErrors,
   dataCenters,
   saveRoom,
 } = props.facilities;
@@ -173,17 +179,17 @@ const {
   userForm,
   userFormRef,
   userFormRules,
+  userSaving,
+  userFormErrors,
   roles,
   saveUser,
-  showRoleModal,
-  editingRole,
-  roleForm,
-  saveRole,
   showDictionaryModal,
   editingDictionary,
   currentDictionaryLabel,
   dictionarySection,
   dictionaryForm,
+  dictionaryFormErrors,
+  dictionarySaving,
   saveDictionary,
 } = props.settings;
 
@@ -191,8 +197,100 @@ const {
   showPasswordModal,
   passwordChangeRequired,
   passwordForm,
+  passwordSaving,
+  passwordFormErrors,
   changePassword,
 } = props.auth;
+
+const dictionaryFormRef = ref<FormInstance>();
+const dataCenterFormRef = ref<FormInstance>();
+const roomFormRef = ref<FormInstance>();
+const passwordFormRef = ref<FormInstance>();
+
+const dictionaryFormRules = computed<FormRules>(() => ({
+  name: [
+    { required: true, whitespace: true, message: "请输入名称", trigger: "blur" },
+    {
+      max: dictionarySection.value === "device-types" ? 80 : 120,
+      message: dictionarySection.value === "device-types" ? "设备类型名称不能超过 80 个字符" : "名称不能超过 120 个字符",
+      trigger: "blur",
+    },
+  ],
+  address: [{ max: 255, message: "地址不能超过 255 个字符", trigger: "blur" }],
+  color: dictionarySection.value === "device-types"
+    ? [{ pattern: /^#[0-9A-Fa-f]{6}$/, message: "颜色必须是六位十六进制值，例如 #1677EF", trigger: ["blur", "change"] }]
+    : [],
+}));
+
+const dataCenterFormRules: FormRules = {
+  name: [
+    { required: true, whitespace: true, message: "请输入数据中心名称", trigger: "blur" },
+    { max: 120, message: "数据中心名称不能超过 120 个字符", trigger: "blur" },
+  ],
+  address: [{ max: 255, message: "地址不能超过 255 个字符", trigger: "blur" }],
+};
+
+const roomFormRules: FormRules = {
+  data_center: [{ required: true, message: "请选择数据中心", trigger: "change" }],
+  name: [
+    { required: true, whitespace: true, message: "请输入机房名称", trigger: "blur" },
+    { max: 120, message: "机房名称不能超过 120 个字符", trigger: "blur" },
+  ],
+  owner_name: [{ max: 120, message: "负责人不能超过 120 个字符", trigger: "blur" }],
+  contact_phone: [{ max: 50, message: "联系方式不能超过 50 个字符", trigger: "blur" }],
+};
+
+const passwordFormRules: FormRules = {
+  old_password: [{ required: true, message: "请输入原密码", trigger: "blur" }],
+  new_password: [
+    { required: true, message: "请输入新密码", trigger: "blur" },
+    {
+      validator: (_rule, value, callback) => {
+        const password = String(value || "");
+        if (password && password.length < 8) callback(new Error("新密码至少需要 8 位"));
+        else callback();
+      },
+      trigger: ["blur", "change"],
+    },
+  ],
+  confirm_password: [
+    { required: true, message: "请确认新密码", trigger: "blur" },
+    {
+      validator: (_rule, value, callback) => {
+        if (String(value || "") !== String(passwordForm.value.new_password || "")) {
+          callback(new Error("两次输入的新密码不一致"));
+        } else {
+          callback();
+        }
+      },
+      trigger: ["blur", "change"],
+    },
+  ],
+};
+
+async function submitDictionary() {
+  const valid = await dictionaryFormRef.value?.validate().catch(() => false);
+  if (valid !== true) return;
+  await saveDictionary();
+}
+
+async function submitDataCenter() {
+  const valid = await dataCenterFormRef.value?.validate().catch(() => false);
+  if (valid !== true) return;
+  await saveDataCenter();
+}
+
+async function submitRoom() {
+  const valid = await roomFormRef.value?.validate().catch(() => false);
+  if (valid !== true) return;
+  await saveRoom();
+}
+
+async function submitPassword() {
+  const valid = await passwordFormRef.value?.validate().catch(() => false);
+  if (valid !== true) return;
+  await changePassword();
+}
 
 const canEditAsset = computed(() => props.assetContext.can("assets.manage"));
 
@@ -211,6 +309,9 @@ function editCurrentAsset() {
     class="user-account-dialog"
     width="660px"
     destroy-on-close
+    :show-close="!userSaving"
+    :close-on-click-modal="!userSaving"
+    :close-on-press-escape="!userSaving"
   >
     <el-form
       ref="userFormRef"
@@ -222,7 +323,7 @@ function editCurrentAsset() {
       label-width="88px"
       @submit.prevent="saveUser"
     >
-      <el-form-item label="用户名" prop="username" required>
+      <el-form-item label="用户名" prop="username" required :error="userFormErrors.username">
         <el-input
           v-model="userForm.username"
           :disabled="!!editingUser"
@@ -232,7 +333,7 @@ function editCurrentAsset() {
           placeholder="请输入用户名"
         />
       </el-form-item>
-      <el-form-item label="姓" prop="last_name" required>
+      <el-form-item label="姓" prop="last_name" required :error="userFormErrors.last_name">
         <el-input
           v-model="userForm.last_name"
           autocomplete="family-name"
@@ -241,7 +342,7 @@ function editCurrentAsset() {
           placeholder="请输入姓"
         />
       </el-form-item>
-      <el-form-item label="名" prop="first_name" required>
+      <el-form-item label="名" prop="first_name" required :error="userFormErrors.first_name">
         <el-input
           v-model="userForm.first_name"
           autocomplete="given-name"
@@ -250,7 +351,7 @@ function editCurrentAsset() {
           placeholder="请输入名"
         />
       </el-form-item>
-      <el-form-item label="邮箱" prop="email">
+      <el-form-item label="邮箱" prop="email" :error="userFormErrors.email">
         <el-input
           v-model="userForm.email"
           type="email"
@@ -260,7 +361,7 @@ function editCurrentAsset() {
           placeholder="请输入邮箱（可选）"
         />
       </el-form-item>
-      <el-form-item label="角色" prop="role_code" required>
+      <el-form-item label="角色" prop="role_code" required :error="userFormErrors.role_code">
         <el-select
           v-model="userForm.role_code"
           class="user-account-role"
@@ -288,6 +389,7 @@ function editCurrentAsset() {
         :label="editingUser ? '重置密码' : '密码'"
         prop="password"
         :required="!editingUser"
+        :error="userFormErrors.password"
       >
         <el-input
           v-model="userForm.password"
@@ -313,26 +415,8 @@ function editCurrentAsset() {
       <p class="form-hint">每个账号只分配一个预设角色，权限由服务端强制校验。</p>
     </el-form>
     <template #footer>
-      <el-button @click="showUserModal = false">取消</el-button>
-      <el-button type="primary" @click="saveUser">保存用户</el-button>
-    </template>
-  </el-dialog>
-
-  <el-dialog
-    v-model="showRoleModal"
-    :title="editingRole ? '编辑角色' : '新增角色'"
-    width="420px"
-    destroy-on-close
-  >
-    <el-form label-position="top">
-      <el-form-item label="角色名称" required>
-        <el-input v-model="roleForm.name" maxlength="150" />
-      </el-form-item>
-      <p class="form-hint">角色可分配给用户，后续可在 Django 权限组中配置具体权限。</p>
-    </el-form>
-    <template #footer>
-      <el-button @click="showRoleModal = false">取消</el-button>
-      <el-button type="primary" @click="saveRole">保存角色</el-button>
+      <el-button :disabled="userSaving" @click="showUserModal = false">取消</el-button>
+      <el-button type="primary" :loading="userSaving" @click="saveUser">保存用户</el-button>
     </template>
   </el-dialog>
 
@@ -341,23 +425,29 @@ function editCurrentAsset() {
     :title="`${editingDictionary ? '编辑' : '新增'}${currentDictionaryLabel}`"
     width="420px"
     destroy-on-close
+    :show-close="!dictionarySaving"
+    :close-on-click-modal="!dictionarySaving"
+    :close-on-press-escape="!dictionarySaving"
   >
-    <el-form label-position="top">
-      <el-form-item :label="`${currentDictionaryLabel}名称`" required>
-        <el-input v-model="dictionaryForm.name" maxlength="120" />
+    <el-form ref="dictionaryFormRef" :model="dictionaryForm" :rules="dictionaryFormRules" label-position="top" :validate-on-rule-change="false" @submit.prevent="submitDictionary">
+      <el-form-item :label="currentDictionaryLabel + '名称'" prop="name" required :error="dictionaryFormErrors.name">
+        <el-input v-model="dictionaryForm.name" :maxlength="dictionarySection === 'device-types' ? 80 : 120" />
       </el-form-item>
-      <el-form-item v-if="dictionarySection === 'device-types'" label="类型颜色">
+      <el-form-item v-if="dictionarySection === 'data-centers'" label="地址" prop="address" :error="dictionaryFormErrors.address">
+        <el-input v-model="dictionaryForm.address" maxlength="255" />
+      </el-form-item>
+      <el-form-item v-if="dictionarySection === 'device-types'" label="类型颜色" prop="color" :error="dictionaryFormErrors.color">
         <div class="color-input">
           <el-color-picker v-model="dictionaryForm.color" />
-          <el-input v-model="dictionaryForm.color" />
+          <el-input v-model="dictionaryForm.color" maxlength="7" />
         </div>
       </el-form-item>
       <el-checkbox v-model="dictionaryForm.is_active">启用</el-checkbox>
       <p class="form-hint">已被资产使用的字典项不能删除，只能停用。</p>
     </el-form>
     <template #footer>
-      <el-button @click="showDictionaryModal = false">取消</el-button>
-      <el-button type="primary" @click="saveDictionary">保存{{ currentDictionaryLabel }}</el-button>
+      <el-button :disabled="dictionarySaving" @click="showDictionaryModal = false">取消</el-button>
+      <el-button type="primary" :loading="dictionarySaving" :disabled="dictionarySaving" @click="submitDictionary">保存{{ currentDictionaryLabel }}</el-button>
     </template>
   </el-dialog>
 
@@ -415,18 +505,19 @@ function editCurrentAsset() {
     :title="passwordChangeRequired ? '首次登录请修改密码' : '修改密码'"
     width="420px"
     destroy-on-close
-    :show-close="!passwordChangeRequired"
-    :close-on-click-modal="!passwordChangeRequired"
-    :close-on-press-escape="!passwordChangeRequired"
+    :show-close="!passwordChangeRequired && !passwordSaving"
+    :close-on-click-modal="!passwordChangeRequired && !passwordSaving"
+    :close-on-press-escape="!passwordChangeRequired && !passwordSaving"
   >
-    <el-form label-position="top">
-      <el-form-item label="原密码" required><el-input v-model="passwordForm.old_password" type="password" show-password /></el-form-item>
-      <el-form-item label="新密码" required><el-input v-model="passwordForm.new_password" type="password" show-password /></el-form-item>
+    <el-form ref="passwordFormRef" :model="passwordForm" :rules="passwordFormRules" label-position="top" :validate-on-rule-change="false" @submit.prevent="submitPassword">
+      <el-form-item label="原密码" prop="old_password" required :error="passwordFormErrors.old_password"><el-input v-model="passwordForm.old_password" type="password" show-password autocomplete="current-password" /></el-form-item>
+      <el-form-item label="新密码" prop="new_password" required :error="passwordFormErrors.new_password"><el-input v-model="passwordForm.new_password" type="password" show-password autocomplete="new-password" /></el-form-item>
+      <el-form-item label="确认新密码" prop="confirm_password" required :error="passwordFormErrors.confirm_password"><el-input v-model="passwordForm.confirm_password" type="password" show-password autocomplete="new-password" /></el-form-item>
       <p class="form-hint">新密码至少 8 位。{{ passwordChangeRequired ? '首次登录必须完成修改后才能进入系统。' : '' }}</p>
     </el-form>
     <template #footer>
-      <el-button v-if="!passwordChangeRequired" @click="showPasswordModal = false">取消</el-button>
-      <el-button type="primary" @click="changePassword">保存密码</el-button>
+      <el-button v-if="!passwordChangeRequired" :disabled="passwordSaving" @click="showPasswordModal = false">取消</el-button>
+      <el-button type="primary" :loading="passwordSaving" :disabled="passwordSaving" @click="submitPassword">保存密码</el-button>
     </template>
   </el-dialog>
 
@@ -552,21 +643,21 @@ function editCurrentAsset() {
     </template>
   </el-dialog>
 
-  <el-dialog v-model="showDataCenterModal" :title="editingDataCenter ? '编辑数据中心' : '新增数据中心'" width="460px" destroy-on-close>
-    <el-form label-position="top">
-      <el-form-item label="数据中心名称" required><el-input v-model="dataCenterForm.name" maxlength="120" /></el-form-item>
-      <el-form-item label="地址"><el-input v-model="dataCenterForm.address" maxlength="255" /></el-form-item>
+  <el-dialog v-model="showDataCenterModal" :title="editingDataCenter ? '编辑数据中心' : '新增数据中心'" width="460px" destroy-on-close :show-close="!dataCenterSaving" :close-on-click-modal="!dataCenterSaving" :close-on-press-escape="!dataCenterSaving">
+    <el-form ref="dataCenterFormRef" :model="dataCenterForm" :rules="dataCenterFormRules" label-position="top" :validate-on-rule-change="false" @submit.prevent="submitDataCenter">
+      <el-form-item label="数据中心名称" prop="name" required :error="dataCenterFormErrors.name"><el-input v-model="dataCenterForm.name" maxlength="120" /></el-form-item>
+      <el-form-item label="地址" prop="address" :error="dataCenterFormErrors.address"><el-input v-model="dataCenterForm.address" maxlength="255" /></el-form-item>
       <el-checkbox v-model="dataCenterForm.is_active">启用</el-checkbox>
     </el-form>
     <template #footer>
-      <el-button @click="showDataCenterModal = false">取消</el-button>
-      <el-button type="primary" @click="saveDataCenter">保存</el-button>
+      <el-button :disabled="dataCenterSaving" @click="showDataCenterModal = false">取消</el-button>
+      <el-button type="primary" :loading="dataCenterSaving" :disabled="dataCenterSaving" @click="submitDataCenter">保存</el-button>
     </template>
   </el-dialog>
 
-  <el-dialog v-model="showRoomModal" :title="editingRoom ? '编辑机房' : '新增机房'" width="520px" destroy-on-close>
-    <el-form label-position="top">
-      <el-form-item label="数据中心" required>
+  <el-dialog v-model="showRoomModal" :title="editingRoom ? '编辑机房' : '新增机房'" width="520px" destroy-on-close :show-close="!roomSaving" :close-on-click-modal="!roomSaving" :close-on-press-escape="!roomSaving">
+    <el-form ref="roomFormRef" :model="roomForm" :rules="roomFormRules" label-position="top" :validate-on-rule-change="false" @submit.prevent="submitRoom">
+      <el-form-item label="数据中心" prop="data_center" required :error="roomFormErrors.data_center">
         <el-select v-model="roomForm.data_center" placeholder="请选择数据中心">
           <el-option
             v-for="center in dataCenters"
@@ -577,17 +668,17 @@ function editCurrentAsset() {
           />
         </el-select>
       </el-form-item>
-      <el-form-item label="机房名称" required><el-input v-model="roomForm.name" /></el-form-item>
+      <el-form-item label="机房名称" prop="name" required :error="roomFormErrors.name"><el-input v-model="roomForm.name" maxlength="120" /></el-form-item>
       <div class="form-grid">
-        <el-form-item label="负责人"><el-input v-model="roomForm.owner_name" /></el-form-item>
-        <el-form-item label="联系电话"><el-input v-model="roomForm.contact_phone" /></el-form-item>
+        <el-form-item label="负责人" prop="owner_name" :error="roomFormErrors.owner_name"><el-input v-model="roomForm.owner_name" maxlength="120" /></el-form-item>
+        <el-form-item label="联系电话" prop="contact_phone" :error="roomFormErrors.contact_phone"><el-input v-model="roomForm.contact_phone" maxlength="50" /></el-form-item>
       </div>
-      <el-form-item label="备注"><el-input v-model="roomForm.notes" type="textarea" :rows="3" /></el-form-item>
+      <el-form-item label="备注" prop="notes" :error="roomFormErrors.notes"><el-input v-model="roomForm.notes" type="textarea" :rows="3" /></el-form-item>
       <el-checkbox v-model="roomForm.is_active">启用</el-checkbox>
     </el-form>
     <template #footer>
-      <el-button @click="showRoomModal = false">取消</el-button>
-      <el-button type="primary" @click="saveRoom">保存</el-button>
+      <el-button :disabled="roomSaving" @click="showRoomModal = false">取消</el-button>
+      <el-button type="primary" :loading="roomSaving" :disabled="roomSaving" @click="submitRoom">保存</el-button>
     </template>
   </el-dialog>
 

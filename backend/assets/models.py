@@ -92,7 +92,13 @@ class CustomField(Timestamped):
         ("boolean", "是/否"),
     ]
 
-    device_type = models.ForeignKey(DeviceType, on_delete=models.PROTECT, related_name="custom_fields")
+    device_type = models.ForeignKey(
+        DeviceType,
+        null=True,
+        blank=True,
+        on_delete=models.PROTECT,
+        related_name="custom_fields",
+    )
     key = models.CharField(max_length=80, unique=True)
     name = models.CharField(max_length=120)
     field_type = models.CharField(max_length=20, choices=FIELD_TYPES)
@@ -100,12 +106,21 @@ class CustomField(Timestamped):
     default_value = models.CharField(max_length=255, blank=True)
     sort_order = models.PositiveIntegerField(default=0)
     is_active = models.BooleanField(default=True)
+    group = models.CharField(max_length=80, blank=True, default="")
+    help_text = models.TextField(max_length=1000, blank=True, default="")
+    placeholder = models.CharField(max_length=255, blank=True, default="")
+    form_visible = models.BooleanField(default=True)
+    detail_visible = models.BooleanField(default=True)
+    list_visible = models.BooleanField(default=False)
+    filterable = models.BooleanField(default=False)
+    validation_config = models.JSONField(default=dict, blank=True)
 
     class Meta:
         ordering = ["device_type__name", "sort_order", "id"]
 
     def __str__(self):
-        return f"{self.device_type.name} / {self.name}"
+        scope = self.device_type.name if self.device_type_id else "全部资产"
+        return f"{scope} / {self.name}"
 
 
 class CustomFieldOption(Timestamped):

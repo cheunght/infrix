@@ -1,13 +1,15 @@
 from django.core.exceptions import ValidationError as DjangoValidationError
 from django.db import IntegrityError, transaction
 from collections import Counter
-from django.db.models import Count
+from django.db.models import Count, Q
 from rest_framework import serializers
 from django.contrib.auth.models import Group, User
 from django.contrib.auth.password_validation import validate_password
 from django.utils import timezone
 from datetime import date, timedelta
+from decimal import Decimal, InvalidOperation
 from typing import Any
+import json
 import re
 from .models import AuditLog, Asset, AssetCustomValue, AssetNetworkAddress, AssetTag, Brand, CustomField, CustomFieldOption, DataCenter, DeviceType, FaultEvent, InventoryItem, InventoryTask, MaintenanceContract, ProcurementRecord, Rack, RackUnitAllocation, RepairRecord, ServerRoom, SoftwareLicense, SparePart, SpareStock, SpareStockTransaction, Tag, UserSecurityProfile
 from .services import apply_asset_custom_values, apply_asset_tags, apply_spare_stock_transaction, configure_asset
@@ -158,6 +160,131 @@ class DeviceTypeSerializer(BaseDictionarySerializer):
         fields = ["id", "name", "color", "is_active", "assets_count", "created_at", "updated_at"]
 
 
+_VALIDATION_CONFIG_KEYS = {
+    "text": {"min_length", "max_length"},
+    "textarea": {"min_length", "max_length"},
+    "number": {"min", "max", "precision"},
+    "date": {"min_date", "max_date"},
+    "multiselect": {"min_items", "max_items"},
+    "select": set(),
+    "boolean": set(),
+}
+
+
+def _validation_integer(value, label, *, maximum=None):
+    if isinstance(value, bool) or not isinstance(value, int) or value < 0:
+        raise ValueError(f"{label}必须是非负整数")
+    if maximum is not None and value > maximum:
+        raise ValueError(f"{label}不能大于 {maximum}")
+    return value
+
+
+def _validation_decimal(value, label):
+    if isinstance(value, bool):
+        raise ValueError(f"{label}必须是数字")
+    try:
+        parsed = Decimal(str(value))
+    except (InvalidOperation, TypeError, ValueError) as exc:
+        raise ValueError(f"{label}必须是数字") from exc
+    if not parsed.is_finite():
+        raise ValueError(f"{label}必须是有限数字")
+    return str(parsed)
+
+
+def _validation_date(value, label):
+    if not isinstance(value, str) or not re.fullmatch(r"\d{4}-\d{2}-\d{2}", value):
+        raise ValueError(f"{label}必须是 YYYY-MM-DD 日期")
+    try:
+        date.fromisoformat(value)
+    except ValueError as exc:
+        raise ValueError(f"{label}必须是 YYYY-MM-DD 日期") from exc
+    return value
+
+
+def _normalize_validation_config(field_type, value):
+    if not isinstance(value, dict):
+        raise ValueError("校验配置必须是 JSON 对象")
+    allowed = _VALIDATION_CONFIG_KEYS.get(field_type, set())
+    unknown = sorted(set(value) - allowed)
+    if unknown:
+        raise ValueError(f"不支持的校验配置项：{'、'.join(unknown)}")
+
+    normalized = {}
+    for key, raw in value.items():
+        if key in {"min_length", "max_length", "min_items", "max_items"}:
+            normalized[key] = _validation_integer(raw, key)
+        elif key == "precision":
+            normalized[key] = _validation_integer(raw, key, maximum=6)
+        elif key in {"min", "max"}:
+            normalized[key] = _validation_decimal(raw, key)
+        elif key in {"min_date", "max_date"}:
+            normalized[key] = _validation_date(raw, key)
+
+    if {"min_length", "max_length"}.issubset(normalized) and normalized["min_length"] > normalized["max_length"]:
+        raise ValueError("min_length 不能大于 max_length")
+    if {"min_items", "max_items"}.issubset(normalized) and normalized["min_items"] > normalized["max_items"]:
+        raise ValueError("min_items 不能大于 max_items")
+    if {"min", "max"}.issubset(normalized) and Decimal(normalized["min"]) > Decimal(normalized["max"]):
+        raise ValueError("min 不能大于 max")
+    if {"min_date", "max_date"}.issubset(normalized) and normalized["min_date"] > normalized["max_date"]:
+        raise ValueError("min_date 不能晚于 max_date")
+    return normalized
+
+
+def _validate_default_value(field_type, value, active_options):
+    if not isinstance(value, str):
+        raise ValueError("默认值必须是字符串")
+    if not value.strip():
+        return ""
+    if field_type in {"text", "textarea"}:
+        return value
+    if field_type == "number":
+        try:
+            parsed = Decimal(value.strip())
+        except InvalidOperation as exc:
+            raise ValueError("数字字段的默认值必须能解析为数字") from exc
+        if not parsed.is_finite():
+            raise ValueError("数字字段的默认值必须是有限数字")
+        if parsed.as_tuple().exponent < -6:
+            raise ValueError("数字字段的默认值最多支持 6 位小数")
+        return value.strip()
+    if field_type == "date":
+        return _validation_date(value.strip(), "日期字段的默认值")
+    if field_type == "boolean":
+        normalized = value.strip()
+        if normalized not in {"true", "false"}:
+            raise ValueError("布尔字段的默认值只能是 true 或 false")
+        return normalized
+    if field_type == "select":
+        if value not in active_options:
+            raise ValueError("下拉字段的默认值必须是启用中的选项值")
+        return value
+    if field_type == "multiselect":
+        try:
+            parsed = json.loads(value)
+        except (TypeError, ValueError) as exc:
+            raise ValueError("多选字段的默认值必须是 JSON 字符串数组") from exc
+        if not isinstance(parsed, list) or any(not isinstance(item, str) or item not in active_options for item in parsed):
+            raise ValueError("多选字段的默认值必须只包含启用中的选项值")
+        return value
+    return value
+
+
+def _default_references_option(field, option_value):
+    default_value = (field.default_value or "").strip()
+    if not default_value:
+        return False
+    if field.field_type == "select":
+        return default_value == option_value
+    if field.field_type == "multiselect":
+        try:
+            values = json.loads(default_value)
+        except (TypeError, ValueError):
+            return False
+        return isinstance(values, list) and option_value in values
+    return False
+
+
 class CustomFieldOptionSerializer(serializers.ModelSerializer):
     def validate_value(self, value):
         value = (value or "").strip()
@@ -178,6 +305,19 @@ class CustomFieldOptionSerializer(serializers.ModelSerializer):
             raise serializers.ValidationError("选项名称不能为空")
         return value
 
+    def validate(self, attrs):
+        field = attrs.get("field", self.instance.field if self.instance else None)
+        if field and field.field_type not in {"select", "multiselect"}:
+            raise serializers.ValidationError({"field": "只有下拉单选或多选字段可以配置选项"})
+        if self.instance:
+            if "field" in attrs and attrs["field"].pk != self.instance.field_id:
+                raise serializers.ValidationError({"field": "选项创建后不能修改所属字段"})
+            if "value" in attrs and attrs["value"] != self.instance.value:
+                raise serializers.ValidationError({"value": "选项值创建后不能修改"})
+            if "is_active" in attrs and not attrs["is_active"] and _default_references_option(self.instance.field, self.instance.value):
+                raise serializers.ValidationError({"is_active": "选项被字段默认值引用，不能停用"})
+        return attrs
+
     class Meta:
         model = CustomFieldOption
         fields = ["id", "field", "value", "label", "sort_order", "is_active", "created_at", "updated_at"]
@@ -187,7 +327,7 @@ class CustomFieldOptionSerializer(serializers.ModelSerializer):
 class CustomFieldSerializer(serializers.ModelSerializer):
     options = CustomFieldOptionSerializer(many=True, read_only=True)
     assets_count = serializers.IntegerField(read_only=True)
-    device_type_name = serializers.CharField(source="device_type.name", read_only=True)
+    device_type_name = serializers.CharField(source="device_type.name", read_only=True, allow_null=True)
     field_type_label = serializers.SerializerMethodField()
 
     def get_field_type_label(self, obj) -> str:
@@ -207,20 +347,70 @@ class CustomFieldSerializer(serializers.ModelSerializer):
         return value
 
     def validate(self, attrs):
+        field_type = attrs.get("field_type", self.instance.field_type if self.instance else None)
         if self.instance and "field_type" in attrs and attrs["field_type"] != self.instance.field_type:
-            if self.instance.asset_values.exists():
-                raise serializers.ValidationError({"field_type": "字段已有资产值，不能修改字段类型"})
-        if "device_type" in attrs and not attrs["device_type"].is_active:
+            if self.instance.asset_values.exists() or self.instance.options.exists():
+                raise serializers.ValidationError({"field_type": "字段已有资产值或选项，不能修改字段类型"})
+            if "validation_config" not in attrs:
+                attrs["validation_config"] = {}
+        if self.instance and "device_type" in attrs:
+            device_type_id = attrs["device_type"].pk if attrs["device_type"] is not None else None
+            if device_type_id != self.instance.device_type_id:
+                raise serializers.ValidationError({"device_type": "字段创建后不能修改绑定设备类型"})
+        device_type = attrs.get("device_type", self.instance.device_type if self.instance else None)
+        if device_type is not None and not device_type.is_active:
             raise serializers.ValidationError({"device_type": "停用的设备类型不能绑定自定义字段"})
+        required = attrs.get("required", self.instance.required if self.instance else False)
+        form_visible = attrs.get("form_visible", self.instance.form_visible if self.instance else True)
+        if required and not form_visible:
+            raise serializers.ValidationError({"form_visible": "必填字段必须在资产表单中显示"})
+
+        config = attrs.get("validation_config", self.instance.validation_config if self.instance else {})
+        try:
+            attrs["validation_config"] = _normalize_validation_config(field_type, config)
+        except ValueError as exc:
+            raise serializers.ValidationError({"validation_config": str(exc)}) from exc
+
+        default_value = attrs.get("default_value", self.instance.default_value if self.instance else "")
+        if "default_value" in self.initial_data and not isinstance(self.initial_data["default_value"], str):
+            raise serializers.ValidationError({"default_value": "默认值必须是字符串"})
+        active_options = set()
+        if self.instance:
+            active_options = set(self.instance.options.filter(is_active=True).values_list("value", flat=True))
+        try:
+            attrs["default_value"] = _validate_default_value(field_type, default_value, active_options)
+        except ValueError as exc:
+            raise serializers.ValidationError({"default_value": str(exc)}) from exc
         return attrs
 
     class Meta:
         model = CustomField
         fields = [
             "id", "device_type", "device_type_name", "key", "name", "field_type", "field_type_label",
-            "required", "default_value", "sort_order", "is_active", "assets_count", "options", "created_at", "updated_at",
+            "required", "default_value", "sort_order", "is_active", "group", "help_text", "placeholder",
+            "form_visible", "detail_visible", "list_visible", "filterable", "validation_config",
+            "assets_count", "options", "created_at", "updated_at",
         ]
         read_only_fields = ["id", "device_type_name", "field_type_label", "assets_count", "options", "created_at", "updated_at"]
+
+
+class CustomFieldRuntimeOptionSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = CustomFieldOption
+        fields = ["id", "value", "label", "sort_order", "is_active"]
+
+
+class CustomFieldRuntimeSchemaSerializer(serializers.ModelSerializer):
+    options = CustomFieldRuntimeOptionSerializer(many=True, read_only=True)
+    device_type_name = serializers.CharField(source="device_type.name", read_only=True, allow_null=True)
+
+    class Meta:
+        model = CustomField
+        fields = [
+            "id", "key", "name", "device_type", "device_type_name", "field_type", "required", "sort_order",
+            "group", "default_value", "help_text", "placeholder", "form_visible", "detail_visible",
+            "list_visible", "filterable", "is_active", "validation_config", "options",
+        ]
 
 
 class TagSerializer(serializers.ModelSerializer):
@@ -532,7 +722,7 @@ def _raw_custom_value(value):
     if field.field_type in {"text", "textarea", "select"}:
         return value.text_value
     if field.field_type == "number":
-        return float(value.number_value) if value.number_value is not None else None
+        return str(value.number_value) if value.number_value is not None else None
     if field.field_type == "date":
         return value.date_value.isoformat() if value.date_value else None
     if field.field_type == "boolean":
@@ -545,21 +735,33 @@ def _asset_custom_fields(obj):
         item.field_id: _raw_custom_value(item)
         for item in obj.custom_values.select_related("field").prefetch_related("field__options").all()
     }
-    fields = obj.device_type.custom_fields.prefetch_related("options").all() if obj.device_type_id else []
+    scope = Q(device_type__isnull=True)
+    if obj.device_type_id:
+        scope |= Q(device_type_id=obj.device_type_id)
+    fields = CustomField.objects.filter(scope).select_related("device_type").prefetch_related("options").order_by("sort_order", "id")
     # Include disabled historical fields even when the device type still has
     # them defined, so old values remain visible and read-only in the UI.
     known_ids = {field.id for field in fields}
-    historical = CustomField.objects.filter(asset_values__asset=obj).exclude(pk__in=known_ids).prefetch_related("options")
+    historical = CustomField.objects.filter(asset_values__asset=obj).exclude(pk__in=known_ids).select_related("device_type").prefetch_related("options")
     result = []
     for field in list(fields) + list(historical):
         result.append({
             "id": field.id,
             "key": field.key,
             "name": field.name,
+            "device_type": field.device_type_id,
+            "device_type_name": field.device_type.name if field.device_type_id else None,
             "field_type": field.field_type,
             "field_type_label": dict(CustomField.FIELD_TYPES).get(field.field_type, field.field_type),
             "required": field.required,
             "default_value": field.default_value,
+            "group": field.group,
+            "help_text": field.help_text,
+            "placeholder": field.placeholder,
+            "form_visible": field.form_visible,
+            "detail_visible": field.detail_visible,
+            "list_visible": field.list_visible,
+            "validation_config": field.validation_config,
             "is_active": field.is_active,
             "value": values_by_field.get(field.id),
             "options": [
@@ -619,6 +821,12 @@ class AssetListSerializer(serializers.ModelSerializer):
     maintenance_provider = serializers.SerializerMethodField()
     maintenance_expiry_date = serializers.SerializerMethodField()
     tag_names = serializers.SerializerMethodField()
+    custom_values = serializers.SerializerMethodField()
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        if not self.context.get("requested_custom_columns"):
+            self.fields.pop("custom_values", None)
 
     def _network(self, obj, role):
         for address in obj.network_addresses.all():
@@ -691,6 +899,15 @@ class AssetListSerializer(serializers.ModelSerializer):
     def get_tag_names(self, obj) -> list[str]:
         return [item.tag.name for item in obj.asset_tags.select_related("tag").all()]
 
+    def get_custom_values(self, obj) -> dict[str, object]:
+        values = {}
+        for item in getattr(obj, "list_custom_values", ()):
+            field = item.field
+            if field.device_type_id not in {None, obj.device_type_id}:
+                continue
+            values[field.key] = _raw_custom_value(item)
+        return values
+
     class Meta:
         model = Asset
         fields = [
@@ -701,7 +918,7 @@ class AssetListSerializer(serializers.ModelSerializer):
             "business_ip", "management_ip", "oob_ip", "data_center", "server_room",
             "rack_code", "u_range", "purchase_date", "supplier", "purchase_order_no",
             "maintenance_provider", "maintenance_expiry_date",
-            "tag_names",
+            "tag_names", "custom_values",
         ]
 
 
@@ -807,13 +1024,12 @@ class AssetWriteSerializer(serializers.ModelSerializer):
                 instance.save()
                 if configuration is not None:
                     configure_asset(instance, configuration)
-                if custom_values is not None or old_device_type_id != instance.device_type_id:
-                    apply_asset_custom_values(
-                        instance,
-                        custom_values or {},
-                        submitted=custom_values is not None,
-                        old_device_type_id=old_device_type_id,
-                    )
+                apply_asset_custom_values(
+                    instance,
+                    custom_values or {},
+                    submitted=custom_values is not None,
+                    old_device_type_id=old_device_type_id,
+                )
                 if tags is not None:
                     apply_asset_tags(instance, tags)
         except DjangoValidationError as exc:

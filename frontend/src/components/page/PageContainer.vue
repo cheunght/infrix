@@ -8,19 +8,21 @@ const props = withDefaults(
     description?: string;
     contentClass?: string;
     compactControls?: boolean;
+    toolbarVisible?: boolean;
   }>(),
   {
     title: "",
     description: "",
     contentClass: "",
     compactControls: false,
+    toolbarVisible: true,
   },
 );
 
 const slots = useSlots();
 const hasHeader = computed(() => Boolean(slots.header || props.title || props.description));
 const hasSubnav = computed(() => Boolean(slots.subnav));
-const hasToolbar = computed(() => Boolean(slots.toolbar));
+const hasToolbar = computed(() => props.toolbarVisible && Boolean(slots.toolbar));
 </script>
 
 <template>

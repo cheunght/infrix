@@ -1,4 +1,5 @@
 import { computed, ref, type ComputedRef, type Ref } from "vue";
+import { flattenError } from "../api";
 import type {
   AssetDetail,
   DataCenter,
@@ -29,7 +30,7 @@ export interface FacilitiesDeps extends FacilitiesApi {
   actionMessage: Ref<string>;
   closeAssetDetail: () => void;
   openRackAssetDetail: (assetId: number, rackId: number) => void | Promise<void>;
-  refreshDictionaries: () => void | Promise<void>;
+  refreshDictionaries: () => void | Promise<boolean | void>;
   reload: () => void | Promise<void>;
   confirmAction: (message: string) => Promise<boolean>;
 }
@@ -56,6 +57,8 @@ export function useFacilities(deps: FacilitiesDeps) {
   const showDataCenterModal = ref(false);
   const editingDataCenter = ref<DataCenter | null>(null);
   const dataCenterForm = ref({ name: "", address: "", is_active: true });
+  const dataCenterSaving = ref(false);
+  const dataCenterFormErrors = ref<Record<string, string>>({});
   const showRoomModal = ref(false);
   const editingRoom = ref<ServerRoom | null>(null);
   const roomForm = ref({
@@ -66,6 +69,8 @@ export function useFacilities(deps: FacilitiesDeps) {
     notes: "",
     is_active: true,
   });
+  const roomSaving = ref(false);
+  const roomFormErrors = ref<Record<string, string>>({});
   const showRackModal = ref(false);
   const editingRack = ref<Rack | null>(null);
   const rackForm = ref<RackFormState>({
@@ -82,6 +87,20 @@ export function useFacilities(deps: FacilitiesDeps) {
   const rackSaving = ref(false);
   const deletingRackId = ref<number | null>(null);
   const updatingRackId = ref<number | null>(null);
+
+  function extractFormErrors(error: unknown, fields: readonly string[]) {
+    const details = error && typeof error === "object" && "details" in error
+      ? (error as { details?: unknown }).details
+      : undefined;
+    const source = details && typeof details === "object" && !Array.isArray(details)
+      ? details as Record<string, unknown>
+      : {};
+    return Object.fromEntries(
+      fields
+        .map((field) => [field, flattenError(source[field])] as const)
+        .filter(([, message]) => Boolean(message)),
+    );
+  }
 
   async function loadDataCenters(version = deps.beginLoad()) {
     const result = await deps.request<{ results?: DataCenter[]; count?: number } | DataCenter[]>(
@@ -168,6 +187,7 @@ export function useFacilities(deps: FacilitiesDeps) {
 
   function openDataCenterModal(dataCenter?: DataCenter) {
     editingDataCenter.value = dataCenter || null;
+    dataCenterFormErrors.value = {};
     dataCenterForm.value = dataCenter
       ? {
           name: dataCenter.name,
@@ -179,6 +199,11 @@ export function useFacilities(deps: FacilitiesDeps) {
   }
 
   async function saveDataCenter() {
+    if (dataCenterSaving.value) return;
+    dataCenterSaving.value = true;
+    dataCenterFormErrors.value = {};
+    dataCenterForm.value.name = dataCenterForm.value.name.trim();
+    dataCenterForm.value.address = dataCenterForm.value.address.trim();
     try {
       const path = editingDataCenter.value
         ? `/data-centers/${editingDataCenter.value.id}/`
@@ -190,15 +215,24 @@ export function useFacilities(deps: FacilitiesDeps) {
       });
       showDataCenterModal.value = false;
       deps.actionMessage.value = "数据中心已保存";
-      await deps.refreshDictionaries();
-      await loadRackManagement();
+      try {
+        const dictionariesRefreshed = await deps.refreshDictionaries();
+        if (dictionariesRefreshed === false) throw new Error("字典数据刷新失败");
+        await loadRackManagement();
+      } catch (refreshError) {
+        deps.actionMessage.value = "数据中心已保存，但页面刷新失败：" + (refreshError instanceof Error ? refreshError.message : "请稍后重试");
+      }
     } catch (error) {
+      dataCenterFormErrors.value = extractFormErrors(error, ["name", "address", "is_active"]);
       deps.actionMessage.value = error instanceof Error ? error.message : "数据中心保存失败";
+    } finally {
+      dataCenterSaving.value = false;
     }
   }
 
   function openRoomModal(room?: ServerRoom) {
     editingRoom.value = room || null;
+    roomFormErrors.value = {};
     roomForm.value = room
       ? {
           data_center: String(room.data_center),
@@ -220,6 +254,14 @@ export function useFacilities(deps: FacilitiesDeps) {
   }
 
   async function saveRoom() {
+    if (roomSaving.value) return;
+    roomSaving.value = true;
+    roomFormErrors.value = {};
+    roomForm.value.data_center = roomForm.value.data_center.trim();
+    roomForm.value.name = roomForm.value.name.trim();
+    roomForm.value.owner_name = roomForm.value.owner_name.trim();
+    roomForm.value.contact_phone = roomForm.value.contact_phone.trim();
+    roomForm.value.notes = roomForm.value.notes.trim();
     try {
       const path = editingRoom.value
         ? `/server-rooms/${editingRoom.value.id}/`
@@ -231,9 +273,23 @@ export function useFacilities(deps: FacilitiesDeps) {
       });
       showRoomModal.value = false;
       deps.actionMessage.value = "机房已保存";
-      await loadRackManagement();
+      try {
+        await loadRackManagement();
+      } catch (refreshError) {
+        deps.actionMessage.value = "机房已保存，但页面刷新失败：" + (refreshError instanceof Error ? refreshError.message : "请稍后重试");
+      }
     } catch (error) {
+      roomFormErrors.value = extractFormErrors(error, [
+        "data_center",
+        "name",
+        "owner_name",
+        "contact_phone",
+        "notes",
+        "is_active",
+      ]);
       deps.actionMessage.value = error instanceof Error ? error.message : "机房保存失败";
+    } finally {
+      roomSaving.value = false;
     }
   }
 
@@ -590,9 +646,13 @@ export function useFacilities(deps: FacilitiesDeps) {
     showDataCenterModal,
     editingDataCenter,
     dataCenterForm,
+    dataCenterSaving,
+    dataCenterFormErrors,
     showRoomModal,
     editingRoom,
     roomForm,
+    roomSaving,
+    roomFormErrors,
     showRackModal,
     editingRack,
     rackForm,

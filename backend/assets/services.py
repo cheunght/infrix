@@ -4,6 +4,7 @@ from ipaddress import ip_address
 
 from django.core.exceptions import ValidationError
 from django.db import transaction
+from django.db.models import Q
 
 from .models import (
     Asset,
@@ -168,13 +169,15 @@ def configure_asset(asset: Asset, data):
 
 
 def _custom_field_value_is_empty(value, field_type):
-    if value is None:
-        return True
     if field_type in {"text", "textarea", "date", "select"}:
-        return str(value).strip() == ""
+        return value is None or (isinstance(value, str) and value.strip() == "")
+    if field_type == "number":
+        return value is None or (isinstance(value, str) and value.strip() == "")
+    if field_type == "boolean":
+        return value is None
     if field_type == "multiselect":
-        return not value
-    return False
+        return value is None or value == []
+    return value is None
 
 
 def _custom_date(value):
@@ -186,80 +189,124 @@ def _custom_date(value):
         raise ValidationError("日期格式应为 YYYY-MM-DD") from exc
 
 
+def _stored_custom_value(value):
+    field_type = value.field.field_type
+    if field_type in {"text", "textarea", "select"}:
+        return value.text_value
+    if field_type == "number":
+        return value.number_value
+    if field_type == "date":
+        return value.date_value
+    if field_type == "boolean":
+        return value.boolean_value
+    return value.json_value
+
+
+def _custom_value_payload(field, raw):
+    payload = {
+        "text_value": "",
+        "number_value": None,
+        "date_value": None,
+        "boolean_value": None,
+        "json_value": None,
+    }
+    if field.field_type in {"text", "textarea"}:
+        if not isinstance(raw, str):
+            raise ValueError("必须是文本")
+        payload["text_value"] = raw
+    elif field.field_type == "number":
+        number = Decimal(str(raw))
+        if not number.is_finite():
+            raise ValueError("必须是有效数字")
+        payload["number_value"] = number
+    elif field.field_type == "date":
+        payload["date_value"] = _custom_date(raw)
+    elif field.field_type == "boolean":
+        if not isinstance(raw, bool):
+            raise ValueError("必须是 true 或 false")
+        payload["boolean_value"] = raw
+    elif field.field_type in {"select", "multiselect"}:
+        options = {option.value for option in field.options.all() if option.is_active}
+        if field.field_type == "select":
+            if not isinstance(raw, str):
+                raise ValueError("必须是选项值")
+            submitted_values = [raw]
+        else:
+            if not isinstance(raw, list):
+                raise ValueError("必须是选项数组")
+            submitted_values = raw
+        if any(not isinstance(item, str) or item not in options for item in submitted_values):
+            raise ValueError("包含无效或已停用选项")
+        if field.field_type == "select":
+            payload["text_value"] = raw
+        else:
+            payload["json_value"] = submitted_values
+    return payload
+
+
 def apply_asset_custom_values(asset: Asset, values, *, submitted=True, is_create=False, old_device_type_id=None):
-    """Validate and persist dynamic values for the asset's current device type."""
-    values = values or {}
+    """Validate and persist partial values for the asset's current device type.
+
+    Values belonging to another device type are historical data.  They are not
+    part of the current validation set and must never be deleted on a device
+    type change.
+    """
+    if values is None:
+        values = {}
     if not isinstance(values, dict):
         raise ValidationError({"custom_values": "自定义字段值必须是对象"})
 
-    if old_device_type_id and old_device_type_id != asset.device_type_id:
-        AssetCustomValue.objects.filter(asset=asset).delete()
-
-    fields = list(
-        CustomField.objects.filter(device_type_id=asset.device_type_id)
-        .prefetch_related("options")
-        if asset.device_type_id
-        else []
-    )
+    scope = Q(device_type__isnull=True)
+    if asset.device_type_id:
+        scope |= Q(device_type_id=asset.device_type_id)
+    fields = list(CustomField.objects.filter(scope).prefetch_related("options"))
     by_key = {field.key: field for field in fields}
     if values:
         unknown = [key for key in values if key not in by_key]
         if unknown:
-            raise ValidationError({"custom_values": f"不存在或不属于当前设备类型的字段：{'、'.join(unknown)}"})
+            raise ValidationError({"custom_values": f"不存在或不属于当前设备类型的字段：{'、'.join(str(key) for key in unknown)}"})
 
-    if is_create:
-        missing = [
-            field.name for field in fields
-            if field.is_active and field.required and (
-                field.key not in values or _custom_field_value_is_empty(values.get(field.key), field.field_type)
-            )
-        ]
-        if missing:
-            raise ValidationError({"custom_values": f"必填自定义字段未填写：{'、'.join(missing)}"})
+    existing_values = {
+        item.field_id: _stored_custom_value(item)
+        for item in AssetCustomValue.objects.filter(
+            asset_id=asset.pk,
+            field_id__in=[field.id for field in fields],
+        ).select_related("field")
+    }
 
+    missing = []
+    for field in fields:
+        if not field.is_active or not field.required:
+            continue
+        if submitted and field.key in values:
+            candidate = values[field.key]
+        else:
+            candidate = existing_values.get(field.id)
+        if _custom_field_value_is_empty(candidate, field.field_type):
+            missing.append(field.name)
+    if missing:
+        raise ValidationError({"custom_values": f"必填自定义字段未填写：{'、'.join(missing)}"})
+
+    operations = []
     for key, raw in values.items():
         field = by_key[key]
         if not field.is_active:
             raise ValidationError({f"custom_values.{key}": "该字段已停用，不能修改"})
         if _custom_field_value_is_empty(raw, field.field_type):
-            AssetCustomValue.objects.filter(asset=asset, field=field).delete()
+            operations.append((field, None))
             continue
 
-        payload = {
-            "text_value": "",
-            "number_value": None,
-            "date_value": None,
-            "boolean_value": None,
-            "json_value": None,
-        }
         try:
-            if field.field_type in {"text", "textarea"}:
-                if not isinstance(raw, str):
-                    raise ValueError("必须是文本")
-                payload["text_value"] = raw
-            elif field.field_type == "number":
-                payload["number_value"] = Decimal(str(raw))
-            elif field.field_type == "date":
-                payload["date_value"] = _custom_date(raw)
-            elif field.field_type == "boolean":
-                if not isinstance(raw, bool):
-                    raise ValueError("必须是 true 或 false")
-                payload["boolean_value"] = raw
-            elif field.field_type in {"select", "multiselect"}:
-                options = {option.value for option in field.options.all() if option.is_active}
-                submitted_values = [raw] if field.field_type == "select" else raw
-                if field.field_type == "multiselect" and not isinstance(submitted_values, list):
-                    raise ValueError("必须是选项数组")
-                if any(not isinstance(item, str) or item not in options for item in submitted_values):
-                    raise ValueError("包含无效或已停用选项")
-                if field.field_type == "select":
-                    payload["text_value"] = raw
-                else:
-                    payload["json_value"] = submitted_values
+            payload = _custom_value_payload(field, raw)
         except (InvalidOperation, ValueError, TypeError) as exc:
             raise ValidationError({f"custom_values.{key}": str(exc)}) from exc
+        operations.append((field, payload))
 
-        AssetCustomValue.objects.update_or_create(asset=asset, field=field, defaults=payload)
+    for field, payload in operations:
+        if payload is None:
+            AssetCustomValue.objects.filter(asset=asset, field=field).delete()
+        else:
+            AssetCustomValue.objects.update_or_create(asset=asset, field=field, defaults=payload)
 
 
 def apply_asset_tags(asset: Asset, tags, *, submitted=True):

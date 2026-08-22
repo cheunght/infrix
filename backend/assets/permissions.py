@@ -19,6 +19,15 @@ class BusinessRolePermission(BasePermission):
         return user_has_capability(request.user, capability)
 
 
+class CanViewAssetCustomFieldSchema(BasePermission):
+    message = "当前角色没有读取资产业务字段 Schema 的权限"
+
+    def has_permission(self, request, view):
+        return user_has_capability(request.user, "assets.view") or user_has_capability(
+            request.user, "assets.manage"
+        )
+
+
 class IsSystemAdministrator(BasePermission):
     message = "仅系统管理员可以执行此操作"
 

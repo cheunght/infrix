@@ -2,9 +2,12 @@ import type { ComputedRef, Ref } from "vue";
 import type { RackSection, SettingsSection } from "./router";
 import type {
   Asset,
+  AssetCustomFilter,
   AssetDetail,
   CustomField,
+  CustomFieldForm,
   CustomFieldOption,
+  CustomFieldSchema,
   DataCenter,
   DashboardOverview,
   DashboardStatus,
@@ -89,6 +92,16 @@ export interface AssetFilters {
   model: string;
 }
 
+export interface AssetLedgerColumnOption {
+  key: string;
+  label: string;
+  required?: boolean;
+  dynamic?: boolean;
+  field?: CustomFieldSchema;
+  scopeLabel?: string;
+  width?: number;
+}
+
 export interface AssetLedgerContext {
   loading: Ref<boolean>;
   assetListLoading: Ref<boolean>;
@@ -98,14 +111,25 @@ export interface AssetLedgerContext {
   assetFilters: AssetFilters;
   resetAssetFilters: () => void | Promise<void>;
   assetTagFilter: Ref<string>;
+  draftCustomFilters: Ref<AssetCustomFilter[]>;
+  appliedCustomFilters: Ref<AssetCustomFilter[]>;
+  applyAssetCustomFilters: (filters: AssetCustomFilter[]) => void | Promise<void>;
+  assetFilterCustomFieldSchema: Ref<CustomFieldSchema[]>;
+  assetFilterCustomSchemaLoading: Ref<boolean>;
+  assetFilterCustomSchemaError: Ref<string>;
+  retryAssetFilterCustomSchema: () => void | Promise<void>;
   brands: Ref<DictionaryItem[]>;
   deviceTypes: Ref<DictionaryItem[]>;
   tags: Ref<Tag[]>;
-  assetColumnOptions: Array<{ key: string; label: string; required?: boolean }>;
+  assetColumnOptions: AssetLedgerColumnOption[];
+  assetDynamicColumnOptions: ComputedRef<AssetLedgerColumnOption[]>;
   visibleAssetColumns: Ref<string[]>;
   toggleAssetColumn: (key: string) => void;
   resetAssetColumns: () => void;
-  visibleAssetColumnOptions: ComputedRef<Array<{ key: string; label: string; required?: boolean }>>;
+  visibleAssetColumnOptions: ComputedRef<AssetLedgerColumnOption[]>;
+  assetListCustomSchemaLoading: Ref<boolean>;
+  assetListCustomSchemaError: Ref<string>;
+  retryAssetListCustomSchema: () => void | Promise<void>;
   can: CapabilityFn;
   openNewAssetModal: () => void | Promise<void>;
   selectedAssetIds: Ref<number[]>;
@@ -139,6 +163,9 @@ export interface AssetFormContext {
   assetFormFieldErrors: Ref<Record<string, string>>;
   retryAssetFormLoad: () => void | Promise<void>;
   clearAssetFormErrors: () => void;
+  assetCustomSchemaLoading: Ref<boolean>;
+  assetCustomSchemaError: Ref<string>;
+  retryAssetCustomSchema: () => void | Promise<void>;
   activeDeviceTypes: ComputedRef<DictionaryItem[]>;
   syncAssetDeviceType: () => void | Promise<void>;
   activeBrands: ComputedRef<DictionaryItem[]>;
@@ -149,7 +176,8 @@ export interface AssetFormContext {
   assetRackOptions: Ref<Rack[]>;
   changeAssetRack: () => void | Promise<void>;
   setAssetRackMounted: (value: boolean) => void;
-  assetCustomFieldSchema: Ref<CustomField[]>;
+  assetCustomFieldSchema: Ref<CustomFieldSchema[]>;
+  updateAssetCustomFieldValue: (key: string, value: unknown) => void;
   tags: Ref<Tag[]>;
   saveAsset: () => void | Promise<void>;
 }
@@ -401,7 +429,13 @@ export interface SettingsContext extends CustomFieldContext, TagContext {
   can: CapabilityFn;
   dictionarySection: Ref<string>;
   dictionarySearch: Ref<string>;
-  loadDictionaries: () => void | Promise<void>;
+  loadDictionaries: () => void | Promise<boolean>;
+  retryDictionaries: () => void | Promise<boolean>;
+  dictionaryLoading: Ref<boolean>;
+  dictionaryError: Ref<string>;
+  dictionarySaving: Ref<boolean>;
+  dictionaryActionId: Ref<number | null>;
+  dictionaryFormErrors: Ref<Record<string, string>>;
   currentDictionaryLabel: ComputedRef<string>;
   openDictionaryModal: (item?: DictionaryItem | DataCenter) => void;
   currentDictionaryItems: ComputedRef<DictionaryItem[]>;
@@ -409,15 +443,32 @@ export interface SettingsContext extends CustomFieldContext, TagContext {
   deleteDictionary: (item: DictionaryItem) => void | Promise<void>;
   dictionaryItemUsed: (item: DictionaryItem) => boolean;
   isAdmin: Ref<boolean>;
+  organizationLoading: Ref<boolean>;
+  organizationError: ComputedRef<string>;
+  userListError: Ref<string>;
+  roleListError: Ref<string>;
+  retryOrganization: () => void | Promise<boolean>;
   users: Ref<ManagedUser[]>;
+  userSearch: Ref<string>;
+  userPage: Ref<number>;
+  userPageSize: Ref<number>;
+  userCount: Ref<number>;
+  searchUsers: () => void | Promise<void>;
+  retryUserList: () => void | Promise<boolean>;
+  changeUserPage: (page: number) => void | Promise<void>;
+  changeUserPageSize: (size: number) => void | Promise<void>;
   openUserModal: (user?: ManagedUser) => void;
   toggleUser: (user: ManagedUser) => void | Promise<void>;
   deleteUser: (user: ManagedUser) => void | Promise<void>;
+  userSaving: Ref<boolean>;
+  userActionId: Ref<number | null>;
+  userFormErrors: Ref<Record<string, string>>;
   roles: Ref<Role[]>;
-  openRoleModal: (role?: Role) => void;
-  deleteRole: (role: Role) => void | Promise<void>;
   auditFilters: Ref<Record<string, string>>;
-  loadAuditLogs: () => void | Promise<void>;
+  auditListLoading: Ref<boolean>;
+  auditListError: Ref<string>;
+  loadAuditLogs: () => void | Promise<boolean>;
+  retryAuditLogs: () => void | Promise<boolean>;
   searchAuditLogs: () => void | Promise<void>;
   auditLogs: Ref<import("./types").AuditLog[]>;
   formatDateTime: (value: string | null) => string;
@@ -432,22 +483,35 @@ export interface CustomFieldContext {
   loading: Ref<boolean>;
   customFieldDeviceType: Ref<string>;
   customFieldActive: Ref<string>;
-  loadCustomFields: () => void | Promise<void>;
+  loadCustomFields: () => void | Promise<boolean>;
+  retryCustomFieldList: () => void | Promise<boolean>;
+  customFieldListLoading: Ref<boolean>;
+  customFieldListError: Ref<string>;
   deviceTypes: Ref<DictionaryItem[]>;
   can: CapabilityFn;
   openCustomFieldModal: (field?: CustomField) => void;
   customFields: Ref<CustomField[]>;
   showCustomFieldModal: Ref<boolean>;
   editingCustomField: Ref<CustomField | null>;
-  customFieldForm: Ref<Record<string, string | number | boolean>>;
+  customFieldForm: Ref<CustomFieldForm>;
+  customFieldFormErrors: Ref<Record<string, string>>;
   saveCustomField: () => void | Promise<void>;
+  customFieldSaving: Ref<boolean>;
   toggleCustomField: (field: CustomField) => void | Promise<void>;
   deleteCustomField: (field: CustomField) => void | Promise<void>;
+  customFieldActionId: Ref<number | null>;
   customFieldOptionForm: Ref<Record<string, string | number | boolean>>;
+  customFieldOptionFormErrors: Ref<Record<string, string>>;
+  customFieldOptionLoading: Ref<boolean>;
+  customFieldOptionError: Ref<string>;
   showCustomFieldOptionModal: Ref<boolean>;
   editingCustomFieldOption: Ref<CustomFieldOption | null>;
   openCustomFieldOptionModal: (field?: CustomField | null, option?: CustomFieldOption) => void;
+  loadCustomFieldOptions: (field?: CustomField | null) => void | Promise<boolean>;
+  retryCustomFieldOptions: () => void | Promise<boolean>;
   saveCustomFieldOption: () => void | Promise<void>;
+  customFieldOptionSaving: Ref<boolean>;
+  customFieldOptionActionId: Ref<number | null>;
   deleteCustomFieldOption: (option: CustomFieldOption) => void | Promise<void>;
 }
 
@@ -455,16 +519,22 @@ export interface TagContext {
   loading: Ref<boolean>;
   tagSearch: Ref<string>;
   tagActive: Ref<string>;
-  loadTags: () => void | Promise<void>;
+  loadTags: () => void | Promise<boolean>;
+  retryTagList: () => void | Promise<boolean>;
+  tagListLoading: Ref<boolean>;
+  tagListError: Ref<string>;
   can: CapabilityFn;
   openTagModal: (tag?: Tag) => void;
   tags: Ref<Tag[]>;
   showTagModal: Ref<boolean>;
   editingTag: Ref<Tag | null>;
   tagForm: Ref<Record<string, string | boolean>>;
+  tagFormErrors: Ref<Record<string, string>>;
   saveTag: () => void | Promise<void>;
+  tagSaving: Ref<boolean>;
   toggleTag: (tag: Tag) => void | Promise<void>;
   deleteTag: (tag: Tag) => void | Promise<void>;
+  tagActionId: Ref<number | null>;
 }
 
 export interface AppPageContext extends DashboardContext, AssetLedgerContext, AssetFormContext, RackSharedContext, LicenseContext, RepairContext, SpareContext, InventoryContext, SettingsContext, CustomFieldContext, TagContext {

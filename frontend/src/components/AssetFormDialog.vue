@@ -3,7 +3,8 @@
 import { computed, nextTick, ref, watch } from "vue";
 import type { FormInstance, FormRules } from "element-plus";
 import type { AssetFormContext } from "../types/page-context";
-import type { CustomFieldOption, Tag } from "../types";
+import type { CustomFieldSchema, Tag } from "../types";
+import DynamicFieldRenderer from "./fields/DynamicFieldRenderer.vue";
 
 const props = defineProps<{ context: AssetFormContext }>();
 const context = props.context;
@@ -29,11 +30,29 @@ const {
   changeAssetRack,
   setAssetRackMounted,
   assetCustomFieldSchema,
+  assetCustomSchemaLoading,
+  assetCustomSchemaError,
+  retryAssetCustomSchema,
+  updateAssetCustomFieldValue,
   tags,
   saveAsset,
 } = context;
 
 const formRef = ref<FormInstance>();
+const visibleAssetCustomFields = computed(() =>
+  assetCustomFieldSchema.value.filter((field) => field.is_active !== false && field.form_visible !== false),
+);
+type DynamicFieldGroup = { name: string; fields: CustomFieldSchema[] };
+const dynamicFieldGroups = computed<DynamicFieldGroup[]>(() => {
+  const groups = new Map<string, CustomFieldSchema[]>();
+  for (const field of visibleAssetCustomFields.value) {
+    const groupName = field.group?.trim() || "其它";
+    const fields = groups.get(groupName) || [];
+    fields.push(field);
+    groups.set(groupName, fields);
+  }
+  return Array.from(groups, ([name, fields]) => ({ name, fields }));
+});
 
 const requiredRule = (label: string) => ({
   required: true,
@@ -79,6 +98,84 @@ const rackLocationRule = {
   trigger: "submit",
 };
 
+function isCustomFieldEmpty(field: CustomFieldSchema, value: unknown) {
+  if (field.field_type === "text" || field.field_type === "textarea") return value === "" || value === null || value === undefined;
+  if (field.field_type === "number") return value === "" || value === null || value === undefined;
+  if (field.field_type === "date" || field.field_type === "select") return value === "" || value === null || value === undefined;
+  if (field.field_type === "multiselect") return value === null || value === undefined || (Array.isArray(value) && value.length === 0);
+  return value === null || value === undefined;
+}
+
+function finiteConfigNumber(value: unknown): number | undefined {
+  if (value === null || value === undefined || value === "") return undefined;
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed : undefined;
+}
+
+function customFieldRule(field: CustomFieldSchema) {
+  return {
+    validator: (_rule: unknown, value: unknown, callback: (error?: Error) => void) => {
+      const empty = isCustomFieldEmpty(field, value);
+      if (empty) return callback(field.required ? new Error(`请输入${field.name}`) : undefined);
+
+      const config = field.validation_config || {};
+      if (field.field_type === "text" || field.field_type === "textarea") {
+        const length = String(value).length;
+        if (config.min_length != null && length < config.min_length) {
+          return callback(new Error(`${field.name}至少需要 ${config.min_length} 个字符`));
+        }
+        if (config.max_length != null && length > config.max_length) {
+          return callback(new Error(`${field.name}不能超过 ${config.max_length} 个字符`));
+        }
+      }
+
+      if (field.field_type === "number") {
+        const number = Number(value);
+        if (!Number.isFinite(number)) return callback(new Error(`${field.name}必须是有效数字`));
+        const min = finiteConfigNumber(config.min);
+        const max = finiteConfigNumber(config.max);
+        if (min !== undefined && number < min) return callback(new Error(`${field.name}不能小于 ${min}`));
+        if (max !== undefined && number > max) return callback(new Error(`${field.name}不能大于 ${max}`));
+        const precision = finiteConfigNumber(config.precision);
+        if (precision !== undefined && Number.isInteger(precision) && precision >= 0) {
+          const factor = 10 ** precision;
+          if (Number.isFinite(factor) && Math.abs(number * factor - Math.round(number * factor)) > 1e-8) {
+            return callback(new Error(`${field.name}最多保留 ${precision} 位小数`));
+          }
+        }
+      }
+
+      if (field.field_type === "date") {
+        const date = String(value);
+        if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) return callback(new Error(`${field.name}日期格式应为 YYYY-MM-DD`));
+        if (config.min_date && date < config.min_date) return callback(new Error(`${field.name}不能早于 ${config.min_date}`));
+        if (config.max_date && date > config.max_date) return callback(new Error(`${field.name}不能晚于 ${config.max_date}`));
+      }
+
+      if (field.field_type === "multiselect") {
+        if (!Array.isArray(value)) return callback(new Error(`${field.name}必须是选项数组`));
+        if (config.min_items != null && value.length < config.min_items) {
+          return callback(new Error(`${field.name}至少选择 ${config.min_items} 项`));
+        }
+        if (config.max_items != null && value.length > config.max_items) {
+          return callback(new Error(`${field.name}最多选择 ${config.max_items} 项`));
+        }
+      }
+
+      if (field.field_type === "select" || field.field_type === "multiselect") {
+        const activeValues = new Set((field.options || []).filter((option) => option.is_active).map((option) => option.value));
+        const submittedValues = field.field_type === "select" ? [value] : (Array.isArray(value) ? value : []);
+        if (submittedValues.some((item) => typeof item !== "string" || !activeValues.has(item))) {
+          return callback(new Error(`${field.name}包含无效或已停用选项`));
+        }
+      }
+
+      callback();
+    },
+    trigger: "submit",
+  };
+}
+
 const assetRules = computed<FormRules>(() => {
   const rules: FormRules = {
     asset_no: [requiredRule("资产编号")],
@@ -96,16 +193,8 @@ const assetRules = computed<FormRules>(() => {
     rack_end_u: [rackLocationRule],
   };
 
-  for (const field of assetCustomFieldSchema.value) {
-    if (!field.required) continue;
-    rules[`custom_values.${field.key}`] = [{
-      validator: (_rule: unknown, value: unknown, callback: (error?: Error) => void) => {
-        const empty = value === null || value === undefined || value === "" ||
-          (Array.isArray(value) && value.length === 0);
-        callback(empty ? new Error(`请输入${field.name}`) : undefined);
-      },
-      trigger: "submit",
-    }];
+  for (const field of visibleAssetCustomFields.value) {
+    rules[`custom_values.${field.key}`] = [customFieldRule(field)];
   }
   return rules;
 });
@@ -128,7 +217,7 @@ function handleDialogClosed() {
 }
 
 async function submitAsset() {
-  if (assetFormLoading.value || assetFormLoadError.value || assetFormSaving.value || !formRef.value) return;
+  if (assetFormLoading.value || assetFormLoadError.value || assetCustomSchemaLoading.value || assetCustomSchemaError.value || assetFormSaving.value || !formRef.value) return;
   clearAssetFormErrors();
   const valid = await formRef.value.validate().catch(() => false);
   if (valid === false) return;
@@ -204,34 +293,43 @@ watch(showAssetModal, (open) => {
         <el-form-item label="使用人" :error="fieldError('owner_name')"><el-input v-model="assetForm.owner_name" /></el-form-item>
       </div>
 
-      <el-divider v-if="assetCustomFieldSchema.length || tags.length" content-position="left">标签与自定义字段</el-divider>
+      <el-divider v-if="tags.length" content-position="left">标签</el-divider>
       <el-form-item v-if="tags.length" label="标签" class="asset-form-full" :error="fieldError('tags')">
         <el-select v-model="assetForm.tags" multiple clearable filterable placeholder="请选择标签">
           <el-option v-for="tag in tags.filter((item: Tag) => item.is_active || assetForm.tags.includes(String(item.id)))" :key="tag.id" :label="tag.name" :value="String(tag.id)" />
         </el-select>
       </el-form-item>
-      <div v-if="assetCustomFieldSchema.length" class="asset-form-grid">
-        <el-form-item
-          v-for="field in assetCustomFieldSchema"
-          :key="field.id"
-          :label="field.name"
-          :prop="`custom_values.${field.key}`"
-          :required="field.required"
-          :error="fieldError(`custom_values.${field.key}`)"
-          :class="field.field_type === 'textarea' ? 'asset-form-full' : ''"
-        >
-          <el-input v-if="field.field_type === 'text'" v-model="assetForm.custom_values[field.key]" :placeholder="field.default_value || ''" />
-          <el-input v-else-if="field.field_type === 'textarea'" v-model="assetForm.custom_values[field.key]" type="textarea" :rows="3" :placeholder="field.default_value || ''" />
-          <el-input-number v-else-if="field.field_type === 'number'" v-model="assetForm.custom_values[field.key] as number" :placeholder="field.default_value || ''" />
-          <el-date-picker v-else-if="field.field_type === 'date'" v-model="assetForm.custom_values[field.key] as string" type="date" value-format="YYYY-MM-DD" :placeholder="field.default_value || '请选择日期'" />
-          <el-select v-else-if="field.field_type === 'select'" v-model="assetForm.custom_values[field.key]" clearable :placeholder="field.default_value || '请选择'">
-            <el-option v-for="option in (field.options || []).filter((item: CustomFieldOption) => item.is_active)" :key="option.id" :label="option.label" :value="option.value" />
-          </el-select>
-          <el-select v-else-if="field.field_type === 'multiselect'" v-model="assetForm.custom_values[field.key]" multiple clearable :placeholder="field.default_value || '请选择'">
-            <el-option v-for="option in (field.options || []).filter((item: CustomFieldOption) => item.is_active)" :key="option.id" :label="option.label" :value="option.value" />
-          </el-select>
-          <el-switch v-else-if="field.field_type === 'boolean'" v-model="assetForm.custom_values[field.key] as boolean" />
-        </el-form-item>
+      <el-divider v-if="assetCustomSchemaLoading || assetCustomSchemaError || dynamicFieldGroups.length" content-position="left">扩展字段</el-divider>
+      <div v-if="assetCustomSchemaLoading" class="asset-custom-schema-state">
+        <el-skeleton :rows="4" animated />
+      </div>
+      <div v-else-if="assetCustomSchemaError" class="asset-custom-schema-state">
+        <el-alert title="扩展字段加载失败" :description="assetCustomSchemaError" type="error" :closable="false" show-icon />
+        <el-button type="primary" plain :disabled="assetFormSaving" @click="retryAssetCustomSchema">重试</el-button>
+      </div>
+      <div v-else-if="dynamicFieldGroups.length" class="asset-custom-field-groups">
+        <section v-for="group in dynamicFieldGroups" :key="group.name" class="asset-custom-field-group">
+          <div class="asset-custom-field-group__title">{{ group.name }}</div>
+          <div class="asset-form-grid">
+            <el-form-item
+              v-for="field in group.fields"
+              :key="field.id"
+              :label="field.name"
+              :prop="`custom_values.${field.key}`"
+              :required="field.required"
+              :error="fieldError(`custom_values.${field.key}`)"
+              :class="field.field_type === 'textarea' ? 'asset-form-full' : ''"
+            >
+              <DynamicFieldRenderer
+                :field="field"
+                :model-value="assetForm.custom_values[field.key]"
+                :disabled="assetFormSaving || assetCustomSchemaLoading"
+                @update:model-value="updateAssetCustomFieldValue(field.key, $event)"
+              />
+              <div v-if="field.help_text" class="asset-custom-field-help">{{ field.help_text }}</div>
+            </el-form-item>
+          </div>
+        </section>
       </div>
 
       <el-divider content-position="left">机柜位置（可选）</el-divider>
@@ -288,7 +386,7 @@ watch(showAssetModal, (open) => {
 
     <template #footer>
       <el-button :disabled="assetFormSaving" @click="closeDialog">取消</el-button>
-      <el-button type="primary" :loading="assetFormSaving" :disabled="assetFormLoading || !!assetFormLoadError" @click="submitAsset">
+      <el-button type="primary" :loading="assetFormSaving" :disabled="assetFormLoading || !!assetFormLoadError || assetCustomSchemaLoading || !!assetCustomSchemaError" @click="submitAsset">
         {{ assetModalMode === "clone" ? "创建克隆" : assetModalMode === "edit" ? "保存修改" : "保存资产" }}
       </el-button>
     </template>

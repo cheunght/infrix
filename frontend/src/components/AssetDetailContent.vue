@@ -3,6 +3,7 @@ import { computed, toRefs } from "vue";
 import type { AssetDetail } from "../types";
 import { statusLabel } from "../status";
 import StatusTag from "./StatusTag.vue";
+import DynamicFieldDisplay from "./fields/DynamicFieldDisplay.vue";
 
 const props = defineProps<{
   asset: AssetDetail | null;
@@ -110,13 +111,71 @@ const hasBasicFields = computed(() => basicFields.value.some((field) => hasConte
 const hasLocationFields = computed(() => locationFields.value.some((field) => hasContent(field.raw)));
 const hasNetworkFields = computed(() => networkFields.value.some((field) => hasContent(field.raw)));
 const hasProcurementFields = computed(() => procurementFields.value.some((field) => hasContent(field.raw)));
-const customFields = computed(() => asset.value?.custom_fields?.filter((field) => hasContent(field.value)) || []);
-const hasMetadata = computed(() => Boolean(asset.value?.tags?.length || customFields.value.length));
 const hasNotes = computed(() => hasContent(asset.value?.notes));
 const inventoryRecords = computed(() => asset.value?.inventory_records || []);
 
-function customFieldValue(field: NonNullable<AssetDetail["custom_fields"]>[number]): string {
-  return displayValue(field.value);
+type AssetCustomField = NonNullable<AssetDetail["custom_fields"]>[number];
+type DynamicFieldGroup = { name: string; fields: AssetCustomField[] };
+type HistoricalFieldGroup = { key: string; deviceTypeName: string; fields: AssetCustomField[] };
+
+function isCurrentScope(field: AssetCustomField): boolean {
+  const currentDeviceType = asset.value?.device_type;
+  return field.device_type == null || (currentDeviceType != null && String(field.device_type) === String(currentDeviceType));
+}
+
+function isHistoricalField(field: AssetCustomField): boolean {
+  // A disabled device-type field is no longer part of the active runtime
+  // scope, but its stored value remains useful historical information.
+  return !isCurrentScope(field) || (field.is_active === false && field.device_type != null);
+}
+
+function groupCurrentFields(fields: AssetCustomField[]): DynamicFieldGroup[] {
+  const groups = new Map<string, AssetCustomField[]>();
+  for (const field of fields) {
+    const name = field.group?.trim() || "其它";
+    const group = groups.get(name) || [];
+    group.push(field);
+    groups.set(name, group);
+  }
+  return Array.from(groups, ([name, groupFields]) => ({ name, fields: groupFields }))
+    .filter((group) => group.fields.some((field) => hasContent(field.value)));
+}
+
+function historicalFieldSort(a: AssetCustomField, b: AssetCustomField): number {
+  const aName = a.device_type_name || "";
+  const bName = b.device_type_name || "";
+  return aName.localeCompare(bName, "zh-CN") ||
+    (a.device_type || 0) - (b.device_type || 0) ||
+    a.sort_order - b.sort_order ||
+    a.id - b.id;
+}
+
+const currentFieldGroups = computed<DynamicFieldGroup[]>(() => {
+  const fields = (asset.value?.custom_fields || []).filter((field) =>
+    isCurrentScope(field) && !isHistoricalField(field) && field.detail_visible === true,
+  );
+  return groupCurrentFields(fields);
+});
+
+const historicalFieldGroups = computed<HistoricalFieldGroup[]>(() => {
+  const fields = (asset.value?.custom_fields || [])
+    .filter((field) => isHistoricalField(field) && hasContent(field.value))
+    .sort(historicalFieldSort);
+  const groups = new Map<string, HistoricalFieldGroup>();
+  for (const field of fields) {
+    const deviceTypeName = field.device_type_name || `设备类型 #${field.device_type ?? "?"}`;
+    const key = `${field.device_type ?? "none"}:${deviceTypeName}`;
+    const group = groups.get(key) || { key, deviceTypeName, fields: [] };
+    group.fields.push(field);
+    groups.set(key, group);
+  }
+  return Array.from(groups.values());
+});
+
+const hasTags = computed(() => Boolean(asset.value?.tags?.length));
+
+function fieldLabel(field: AssetCustomField): string {
+  return field.name || field.key;
 }
 
 function retryDetail() {
@@ -186,19 +245,39 @@ function retryDetail() {
         </dl>
       </section>
 
-      <section v-if="hasMetadata" class="asset-detail-section">
-        <h3>标签与自定义字段</h3>
+      <section v-if="hasTags" class="asset-detail-section">
+        <h3>标签</h3>
         <div v-if="asset.tags?.length" class="asset-detail-tags">
           <el-tag v-for="tag in asset.tags" :key="tag.id" size="small" :type="tag.is_active ? undefined : 'info'">
             {{ tag.name }}
           </el-tag>
         </div>
-        <dl v-if="customFields.length" class="asset-detail-fields asset-detail-custom-fields">
-          <template v-for="field in customFields" :key="field.id">
-            <dt>{{ field.name }}<small v-if="!field.is_active">（已停用）</small></dt>
-            <dd>{{ customFieldValue(field) }}</dd>
-          </template>
-        </dl>
+      </section>
+
+      <section v-if="currentFieldGroups.length" class="asset-detail-section asset-detail-custom-section">
+        <h3>扩展字段</h3>
+        <div v-for="group in currentFieldGroups" :key="group.name" class="asset-detail-custom-group">
+          <h4>{{ group.name }}</h4>
+          <dl class="asset-detail-fields asset-detail-custom-fields">
+            <template v-for="field in group.fields" :key="field.id">
+              <dt>{{ fieldLabel(field) }}<small v-if="!field.is_active">（已停用）</small></dt>
+              <dd><DynamicFieldDisplay :field="field" :value="field.value" /></dd>
+            </template>
+          </dl>
+        </div>
+      </section>
+
+      <section v-if="historicalFieldGroups.length" class="asset-detail-section asset-detail-custom-section asset-detail-custom-section--historical">
+        <h3>历史扩展字段</h3>
+        <div v-for="group in historicalFieldGroups" :key="group.key" class="asset-detail-custom-group">
+          <h4>历史扩展字段 · {{ group.deviceTypeName }}</h4>
+          <dl class="asset-detail-fields asset-detail-custom-fields">
+            <template v-for="field in group.fields" :key="field.id">
+              <dt>{{ fieldLabel(field) }}<small v-if="!field.is_active">（已停用）</small></dt>
+              <dd><DynamicFieldDisplay :field="field" :value="field.value" /></dd>
+            </template>
+          </dl>
+        </div>
       </section>
 
       <section v-if="hasNotes" class="asset-detail-section">

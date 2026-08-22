@@ -1,11 +1,14 @@
 import { computed, reactive, ref, type ComputedRef, type Ref } from "vue";
 import { ElMessage } from "element-plus";
-import { pageItems, pageTotal, type PageResult } from "../api";
+import { ApiError, pageItems, pageTotal, type PageResult } from "../api";
 import type { Page } from "../types";
 import type {
   Asset,
   AssetDetail,
+  AssetCustomFilter,
   CustomField,
+  CustomFieldFilterOperator,
+  CustomFieldSchema,
   DataCenter,
   DictionaryItem,
   Rack,
@@ -14,7 +17,7 @@ import type {
 } from "../types";
 import type { AssetFilters, AssetFormState, RequestFn } from "../types/page-context";
 
-export type AssetColumnKey =
+export type StaticAssetColumnKey =
   | "asset_no"
   | "name"
   | "asset_type"
@@ -38,11 +41,41 @@ export type AssetColumnKey =
   | "maintenance_expiry_date"
   | "notes";
 
+export type DynamicAssetColumnKey = `custom:${string}`;
+export type AssetColumnKey = StaticAssetColumnKey | DynamicAssetColumnKey;
+export const MAX_DYNAMIC_ASSET_COLUMNS = 12;
+export const MAX_DYNAMIC_ASSET_FILTERS = 8;
+export const CUSTOM_FIELD_FILTER_OPERATORS: Record<CustomField["field_type"], CustomFieldFilterOperator[]> = {
+  text: ["contains", "eq"],
+  textarea: ["contains", "eq"],
+  number: ["eq", "gte", "lte"],
+  date: ["eq", "gte", "lte"],
+  boolean: ["eq"],
+  select: ["eq"],
+  multiselect: ["contains"],
+};
+
+export function defaultCustomFieldFilterOperator(fieldType: CustomField["field_type"]): CustomFieldFilterOperator {
+  return fieldType === "text" || fieldType === "textarea" || fieldType === "multiselect" ? "contains" : "eq";
+}
+
+export function isDynamicAssetColumnKey(key: string): key is DynamicAssetColumnKey {
+  return key.startsWith("custom:") && key.length > "custom:".length;
+}
+
+function dynamicAssetFieldKey(key: string): string {
+  return key.slice("custom:".length);
+}
+
 export type AssetColumnOption = {
   key: AssetColumnKey;
   label: string;
   defaultVisible?: boolean;
   required?: boolean;
+  dynamic?: boolean;
+  field?: CustomFieldSchema;
+  scopeLabel?: string;
+  width?: number;
 };
 
 export type ImportPreviewChange = {
@@ -123,13 +156,13 @@ const defaultColumns: AssetColumnOption[] = [
   { key: "notes", label: "备注" },
 ];
 
-const legacyColumnKeys: AssetColumnKey[] = ["name", "u_range"];
-const legacyColumnAliases: Partial<Record<AssetColumnKey, AssetColumnKey>> = {
+const legacyColumnKeys: StaticAssetColumnKey[] = ["name", "u_range"];
+const legacyColumnAliases: Partial<Record<StaticAssetColumnKey, StaticAssetColumnKey>> = {
   name: "asset_no",
   u_range: "rack_code",
 };
-const supportedColumnKeys = new Set<AssetColumnKey>([
-  ...defaultColumns.map((column) => column.key),
+const supportedColumnKeys = new Set<StaticAssetColumnKey>([
+  ...defaultColumns.map((column) => column.key as StaticAssetColumnKey),
   ...legacyColumnKeys,
 ]);
 
@@ -137,11 +170,15 @@ const requiredColumnKeys = defaultColumns
   .filter((column) => column.required)
   .map((column) => column.key);
 
-function normalizeVisibleColumns(keys: AssetColumnKey[]): AssetColumnKey[] {
-  const selected = new Set(keys.map((key) => legacyColumnAliases[key] || key));
-  return defaultColumns
+function normalizeVisibleColumns(keys: AssetColumnKey[], dynamicKeys?: Set<string>): AssetColumnKey[] {
+  const selected = new Set<AssetColumnKey>(keys.map((key) => legacyColumnAliases[key as StaticAssetColumnKey] || key));
+  const normalizedStatic = defaultColumns
     .filter((column) => selected.has(column.key) || column.required)
     .map((column) => column.key);
+  const normalizedDynamic = keys.filter(
+    (key): key is DynamicAssetColumnKey => isDynamicAssetColumnKey(key) && (!dynamicKeys || dynamicKeys.has(dynamicAssetFieldKey(key))),
+  );
+  return [...normalizedStatic, ...Array.from(new Set(normalizedDynamic)).slice(0, MAX_DYNAMIC_ASSET_COLUMNS)];
 }
 
 function emptyAssetForm(): AssetFormState {
@@ -187,7 +224,7 @@ function loadSavedColumns(): AssetColumnKey[] {
     const saved = JSON.parse(localStorage.getItem("itam.asset.columns") || "null");
     if (Array.isArray(saved)) {
       const valid = saved.filter((key): key is AssetColumnKey =>
-        typeof key === "string" && supportedColumnKeys.has(key as AssetColumnKey),
+        typeof key === "string" && (supportedColumnKeys.has(key as StaticAssetColumnKey) || isDynamicAssetColumnKey(key)),
       );
       if (valid.length) return normalizeVisibleColumns(valid);
     }
@@ -322,23 +359,44 @@ export function useAssets(deps: AssetsDeps) {
       assetFilters.tag = value;
     },
   });
-  const assetCustomFilterField = ref("");
-  const assetCustomFilterValue = ref("");
+  const draftCustomFilters = ref<AssetCustomFilter[]>([]);
+  const appliedCustomFilters = ref<AssetCustomFilter[]>([]);
+  const assetFilterCustomFieldSchema = ref<CustomFieldSchema[]>([]);
+  const assetFilterCustomSchemaLoading = ref(false);
+  const assetFilterCustomSchemaError = ref("");
+  const assetFilterCustomSchemaLoaded = ref(false);
+  const assetFilterCustomSchemaRequestId = ref(0);
+  let assetFilterCustomSchemaController: AbortController | null = null;
+  let assetFilterCustomSchemaPromise: Promise<boolean> | null = null;
   const assetLookup = ref("");
   const assetListLoading = ref(false);
   const assetListError = ref("");
   const visibleAssetColumns = ref<AssetColumnKey[]>(loadSavedColumns());
+  const assetListCustomFieldSchema = ref<CustomFieldSchema[]>([]);
+  const assetListCustomSchemaLoading = ref(false);
+  const assetListCustomSchemaError = ref("");
+  const assetListCustomSchemaLoaded = ref(false);
+  const assetListCustomSchemaRequestId = ref(0);
+  let assetListCustomSchemaController: AbortController | null = null;
+  let assetListCustomSchemaPromise: Promise<boolean> | null = null;
 
   const showAssetModal = ref(false);
   const editingAsset = ref<Asset | null>(null);
   const assetModalMode = ref<"new" | "edit" | "clone">("new");
   const assetForm = ref<AssetFormState>(emptyAssetForm());
-  const assetCustomFieldSchema = ref<CustomField[]>([]);
+  const assetCustomFieldSchema = ref<CustomFieldSchema[]>([]);
   const assetFormLoading = ref(false);
   const assetFormLoadError = ref("");
   const assetFormSaving = ref(false);
   const assetFormFieldErrors = ref<Record<string, string>>({});
   const assetFormRequestId = ref(0);
+  const assetCustomSchemaLoading = ref(false);
+  const assetCustomSchemaError = ref("");
+  const assetCustomSchemaRequestId = ref(0);
+  const assetCustomFieldDeviceType = ref("");
+  const assetCustomFieldHistoryValues = ref<Record<string, unknown>>({});
+  const assetCustomFieldUserEditedKeys = new Set<string>();
+  let assetCustomSchemaController: AbortController | null = null;
   const assetFormTarget = ref<{ assetId: number | null; clone: boolean; isNew: boolean }>({
     assetId: null,
     clone: false,
@@ -353,8 +411,18 @@ export function useAssets(deps: AssetsDeps) {
   const detailRequestId = ref(0);
   const detailAssetId = ref<number | null>(null);
 
+  const assetDynamicColumnOptions = computed<AssetColumnOption[]>(() =>
+    assetListCustomFieldSchema.value.map((field) => ({
+      key: `custom:${field.key}` as DynamicAssetColumnKey,
+      label: field.name,
+      dynamic: true,
+      field,
+      scopeLabel: field.device_type_name || "全局",
+      width: field.field_type === "textarea" ? 160 : 130,
+    })),
+  );
   const visibleAssetColumnOptions = computed(() =>
-    defaultColumns.filter((column) => visibleAssetColumns.value.includes(column.key)),
+    [...defaultColumns, ...assetDynamicColumnOptions.value].filter((column) => visibleAssetColumns.value.includes(column.key)),
   );
   const assetRoomOptions = computed(() =>
     deps.serverRooms.value.filter(
@@ -386,8 +454,145 @@ export function useAssets(deps: AssetsDeps) {
     );
   });
 
+  function saveVisibleColumns() {
+    localStorage.setItem("itam.asset.columns", JSON.stringify(visibleAssetColumns.value));
+  }
+
+  function selectedAssetCustomColumnKeys(): string[] {
+    const availableKeys = new Set(assetListCustomFieldSchema.value.map((field) => field.key));
+    return visibleAssetColumns.value
+      .filter(isDynamicAssetColumnKey)
+      .map(dynamicAssetFieldKey)
+      .filter((key) => availableKeys.has(key));
+  }
+
+  async function loadAssetListCustomSchema(force = false): Promise<boolean> {
+    if (!force && assetListCustomSchemaLoaded.value) return true;
+    if (!force && assetListCustomSchemaPromise) return assetListCustomSchemaPromise;
+
+    assetListCustomSchemaController?.abort();
+    const controller = new AbortController();
+    assetListCustomSchemaController = controller;
+    const requestId = ++assetListCustomSchemaRequestId.value;
+    assetListCustomSchemaLoading.value = true;
+    assetListCustomSchemaError.value = "";
+
+    const request = (async () => {
+      try {
+        const result = await deps.request<CustomFieldSchema[]>("/custom-fields/schema/?list_visible=1", {
+          signal: controller.signal,
+        });
+        if (!result || requestId !== assetListCustomSchemaRequestId.value || controller.signal.aborted) return false;
+
+        const fields = result.filter((field) => field.is_active !== false && field.list_visible !== false);
+        assetListCustomFieldSchema.value = fields;
+        assetListCustomSchemaLoaded.value = true;
+        const availableKeys = new Set(fields.map((field) => field.key));
+        visibleAssetColumns.value = normalizeVisibleColumns(visibleAssetColumns.value, availableKeys);
+        saveVisibleColumns();
+        return true;
+      } catch (error) {
+        if (requestId === assetListCustomSchemaRequestId.value && !isAbortError(error)) {
+          assetListCustomFieldSchema.value = [];
+          assetListCustomSchemaLoaded.value = false;
+          assetListCustomSchemaError.value = error instanceof Error && error.message
+            ? error.message
+            : "扩展列配置加载失败，请重试";
+        }
+        return false;
+      } finally {
+        if (requestId === assetListCustomSchemaRequestId.value) {
+          assetListCustomSchemaLoading.value = false;
+          if (assetListCustomSchemaController === controller) assetListCustomSchemaController = null;
+        }
+      }
+    })();
+    assetListCustomSchemaPromise = request;
+    try {
+      return await request;
+    } finally {
+      if (assetListCustomSchemaPromise === request) assetListCustomSchemaPromise = null;
+    }
+  }
+
+  function ensureAssetListCustomSchema() {
+    if (assetListCustomSchemaLoaded.value || assetListCustomSchemaLoading.value) return;
+    void loadAssetListCustomSchema().then((loaded) => {
+      if (loaded && selectedAssetCustomColumnKeys().length) void loadAssets();
+    });
+  }
+
+  async function retryAssetListCustomSchema() {
+    if (await loadAssetListCustomSchema(true)) await loadAssets();
+  }
+
+  async function loadAssetFilterCustomSchema(force = false): Promise<boolean> {
+    if (!force && assetFilterCustomSchemaLoaded.value) return true;
+    if (!force && assetFilterCustomSchemaPromise) return assetFilterCustomSchemaPromise;
+
+    assetFilterCustomSchemaController?.abort();
+    const controller = new AbortController();
+    assetFilterCustomSchemaController = controller;
+    const requestId = ++assetFilterCustomSchemaRequestId.value;
+    assetFilterCustomSchemaLoading.value = true;
+    assetFilterCustomSchemaError.value = "";
+
+    const request = (async () => {
+      try {
+        const result = await deps.request<CustomFieldSchema[]>("/custom-fields/schema/?filterable=1", {
+          signal: controller.signal,
+        });
+        if (!result || requestId !== assetFilterCustomSchemaRequestId.value || controller.signal.aborted) return false;
+
+        assetFilterCustomFieldSchema.value = result.filter((field) => field.is_active !== false && field.filterable === true);
+        assetFilterCustomSchemaLoaded.value = true;
+        return true;
+      } catch (error) {
+        if (requestId === assetFilterCustomSchemaRequestId.value && !isAbortError(error)) {
+          assetFilterCustomFieldSchema.value = [];
+          assetFilterCustomSchemaLoaded.value = false;
+          assetFilterCustomSchemaError.value = error instanceof Error && error.message
+            ? error.message
+            : "动态筛选字段加载失败，请重试";
+        }
+        return false;
+      } finally {
+        if (requestId === assetFilterCustomSchemaRequestId.value) {
+          assetFilterCustomSchemaLoading.value = false;
+          if (assetFilterCustomSchemaController === controller) assetFilterCustomSchemaController = null;
+        }
+      }
+    })();
+    assetFilterCustomSchemaPromise = request;
+    try {
+      return await request;
+    } finally {
+      if (assetFilterCustomSchemaPromise === request) assetFilterCustomSchemaPromise = null;
+    }
+  }
+
+  function ensureAssetFilterCustomSchema() {
+    if (assetFilterCustomSchemaLoaded.value || assetFilterCustomSchemaLoading.value) return;
+    void loadAssetFilterCustomSchema();
+  }
+
+  async function retryAssetFilterCustomSchema() {
+    await loadAssetFilterCustomSchema(true);
+  }
+
+  function invalidCustomFilterError(error: unknown): string {
+    if (!(error instanceof ApiError) || error.status !== 400) return "";
+    const details = error.details && typeof error.details === "object" && !Array.isArray(error.details)
+      ? error.details as Record<string, unknown>
+      : {};
+    const message = errorText(details.custom_filters);
+    return message ? `筛选条件无效：${message}` : "";
+  }
+
   async function loadAssets(version = deps.beginLoad()): Promise<void> {
     if (!deps.authenticated.value) return;
+    ensureAssetListCustomSchema();
+    ensureAssetFilterCustomSchema();
     if (deps.isCurrentLoad(version)) {
       assetListLoading.value = true;
       assetListError.value = "";
@@ -403,9 +608,13 @@ export function useAssets(deps: AssetsDeps) {
     if (assetFilters.tag) params.set("tag", assetFilters.tag);
     if (assetFilters.brand) params.set("brand", assetFilters.brand);
     if (assetFilters.model.trim()) params.set("model", assetFilters.model.trim());
-    if (assetCustomFilterField.value && assetCustomFilterValue.value.trim()) {
-      params.set(`custom__${assetCustomFilterField.value}`, assetCustomFilterValue.value.trim());
+    for (const filter of appliedCustomFilters.value) {
+      if (filter.fieldKey && filter.value.trim()) {
+        params.append(`custom__${filter.fieldKey}__${filter.operator}`, filter.value.trim());
+      }
     }
+    const requestedCustomColumns = selectedAssetCustomColumnKeys();
+    if (requestedCustomColumns.length) params.set("custom_columns", requestedCustomColumns.join(","));
     try {
       const payload = await deps.request<PageResult<Asset> | Asset[]>(`/assets/?${params.toString()}`);
       if (!payload || !deps.isCurrentLoad(version)) return;
@@ -426,22 +635,128 @@ export function useAssets(deps: AssetsDeps) {
       );
     } catch (error) {
       if (deps.isCurrentLoad(version) && !isAbortError(error)) {
-        assetListError.value = error instanceof Error && error.message
+        assetListError.value = invalidCustomFilterError(error) || (error instanceof Error && error.message
           ? error.message
-          : "资产数据加载失败，请稍后重试";
+          : "资产数据加载失败，请稍后重试");
       }
     } finally {
       if (deps.isCurrentLoad(version)) assetListLoading.value = false;
     }
   }
 
-  async function loadAssetCustomSchema(deviceTypeId: string | number, version = deps.beginLoad()) {
-    if (!deviceTypeId) {
-      assetCustomFieldSchema.value = [];
-      return;
+  function visibleCustomFields(schema: CustomFieldSchema[]) {
+    return schema.filter((field) => field.is_active !== false && field.form_visible !== false);
+  }
+
+  function hasCustomValue(values: Record<string, unknown>, key: string) {
+    return Object.prototype.hasOwnProperty.call(values, key);
+  }
+
+  function defaultCustomFieldValue(field: CustomFieldSchema): unknown {
+    const raw = field.default_value;
+    if (!raw) return undefined;
+    if (field.field_type === "number") {
+      const value = Number(raw.trim());
+      return Number.isFinite(value) ? value : undefined;
     }
-    const result = await deps.request<CustomField[]>(`/custom-fields/schema/?device_type=${deviceTypeId}`);
-    if (deps.isCurrentLoad(version)) assetCustomFieldSchema.value = result;
+    if (field.field_type === "boolean") return raw.trim() === "true";
+    if (field.field_type === "multiselect") {
+      try {
+        const value: unknown = JSON.parse(raw);
+        return Array.isArray(value) && value.every((item) => typeof item === "string") ? value : undefined;
+      } catch {
+        return undefined;
+      }
+    }
+    return raw;
+  }
+
+  function reconcileCustomValuesForSchema(schema: CustomFieldSchema[]) {
+    const current = assetForm.value.custom_values || {};
+    const history = assetCustomFieldHistoryValues.value;
+    const next: Record<string, unknown> = {};
+    for (const field of visibleCustomFields(schema)) {
+      if (hasCustomValue(current, field.key)) {
+        next[field.key] = current[field.key];
+        continue;
+      }
+      if (assetModalMode.value === "edit" && hasCustomValue(history, field.key)) {
+        next[field.key] = history[field.key];
+        continue;
+      }
+      if (assetModalMode.value === "new" && !assetCustomFieldUserEditedKeys.has(field.key)) {
+        const defaultValue = defaultCustomFieldValue(field);
+        if (defaultValue !== undefined) next[field.key] = defaultValue;
+        else if (field.field_type === "boolean") next[field.key] = false;
+      }
+    }
+    assetForm.value.custom_values = next;
+  }
+
+  function resetCustomValuesForDeviceType(deviceTypeId: string) {
+    if (!deviceTypeId) return;
+    const values = assetForm.value.custom_values || {};
+    for (const field of visibleCustomFields(assetCustomFieldSchema.value)) {
+      if (field.device_type != null && String(field.device_type) === deviceTypeId) {
+        delete values[field.key];
+        assetCustomFieldUserEditedKeys.delete(field.key);
+      }
+    }
+    assetForm.value.custom_values = { ...values };
+  }
+
+  function updateAssetCustomFieldValue(key: string, value: unknown) {
+    assetForm.value.custom_values[key] = value;
+    assetCustomFieldUserEditedKeys.add(key);
+  }
+
+  function resetAssetCustomSchemaState() {
+    assetCustomSchemaController?.abort();
+    assetCustomSchemaController = null;
+    assetCustomSchemaRequestId.value += 1;
+    assetCustomSchemaLoading.value = false;
+    assetCustomSchemaError.value = "";
+    assetCustomFieldDeviceType.value = "";
+    assetCustomFieldSchema.value = [];
+  }
+
+  function currentCustomValuesForSubmit(values: Record<string, unknown>) {
+    const allowedKeys = new Set(visibleCustomFields(assetCustomFieldSchema.value).map((field) => field.key));
+    return Object.fromEntries(
+      Object.entries(values).filter(([key]) => allowedKeys.has(key)),
+    );
+  }
+
+  async function loadAssetCustomSchema(deviceTypeId: string | number): Promise<boolean> {
+    const normalizedDeviceType = deviceTypeId ? String(deviceTypeId) : "";
+    assetCustomSchemaController?.abort();
+    const controller = new AbortController();
+    assetCustomSchemaController = controller;
+    const requestId = ++assetCustomSchemaRequestId.value;
+    assetCustomFieldDeviceType.value = normalizedDeviceType;
+    assetCustomSchemaLoading.value = true;
+    assetCustomSchemaError.value = "";
+    assetCustomFieldSchema.value = [];
+    const query = normalizedDeviceType ? `?device_type=${encodeURIComponent(normalizedDeviceType)}` : "";
+    try {
+      const result = await deps.request<CustomFieldSchema[]>(`/custom-fields/schema/${query}`, { signal: controller.signal });
+      if (!result || requestId !== assetCustomSchemaRequestId.value) return false;
+      assetCustomFieldSchema.value = result;
+      reconcileCustomValuesForSchema(result);
+      return true;
+    } catch (error) {
+      if (requestId === assetCustomSchemaRequestId.value && !isAbortError(error)) {
+        assetCustomSchemaError.value = error instanceof Error && error.message
+          ? error.message
+          : "扩展字段加载失败，请重试";
+      }
+      return false;
+    } finally {
+      if (requestId === assetCustomSchemaRequestId.value) {
+        assetCustomSchemaLoading.value = false;
+        if (assetCustomSchemaController === controller) assetCustomSchemaController = null;
+      }
+    }
   }
 
   async function openAssetDetail(assetId: number) {
@@ -487,18 +802,21 @@ export function useAssets(deps: AssetsDeps) {
     assetModalMode.value = clone ? "clone" : "edit";
     editingAsset.value = clone ? null : ({ id: assetId } as Asset);
     assetForm.value = emptyAssetForm();
-    assetCustomFieldSchema.value = [];
+    assetCustomFieldHistoryValues.value = {};
+    assetCustomFieldUserEditedKeys.clear();
+    resetAssetCustomSchemaState();
     showAssetModal.value = true;
     try {
       await deps.loadRackManagement();
       const detail = await deps.request<AssetDetail>(`/assets/${assetId}/`);
-      await loadAssetCustomSchema(detail.device_type ? String(detail.device_type) : "");
-      if (requestId !== assetFormRequestId.value) return;
+      if (!detail || requestId !== assetFormRequestId.value) return;
       const network = (role: string) =>
         detail.network_addresses.find((item) => item.role === role)?.address || "";
       const rack = detail.rack_allocation;
       const procurement = detail.procurement_records[0];
       const maintenance = detail.maintenance_contracts[0];
+      const historyValues = { ...(detail.custom_values || {}) };
+      assetCustomFieldHistoryValues.value = historyValues;
       assetForm.value = {
         ...emptyAssetForm(),
         asset_no: detail.asset_no,
@@ -533,8 +851,10 @@ export function useAssets(deps: AssetsDeps) {
         maintenance_start_date: maintenance?.start_date || "",
         maintenance_expiry_date: maintenance?.expiry_date || "",
         tags: (detail.tags || []).map((tag) => String(tag.id)),
-        custom_values: { ...(detail.custom_values || {}) },
+        custom_values: historyValues,
       };
+      await loadAssetCustomSchema(detail.device_type ? String(detail.device_type) : "");
+      if (requestId !== assetFormRequestId.value) return;
       editingAsset.value = clone ? null : detail;
       if (clone) {
         assetForm.value.asset_no = "";
@@ -568,11 +888,14 @@ export function useAssets(deps: AssetsDeps) {
     editingAsset.value = null;
     assetModalMode.value = "new";
     assetForm.value = emptyAssetForm();
-    assetCustomFieldSchema.value = [];
+    assetCustomFieldHistoryValues.value = {};
+    assetCustomFieldUserEditedKeys.clear();
+    resetAssetCustomSchemaState();
     showAssetModal.value = true;
     assetFormLoading.value = true;
     try {
       await deps.loadRackManagement();
+      await loadAssetCustomSchema("");
     } catch (error) {
       if (requestId === assetFormRequestId.value) {
         assetFormLoadError.value = error instanceof Error ? error.message : "资产关联数据加载失败";
@@ -596,13 +919,19 @@ export function useAssets(deps: AssetsDeps) {
     }
   }
 
+  async function retryAssetCustomSchema() {
+    if (!showAssetModal.value || assetFormLoading.value) return;
+    await loadAssetCustomSchema(assetForm.value.device_type);
+  }
+
   async function saveAsset() {
-    if (assetFormSaving.value) return;
+    if (assetFormSaving.value || assetCustomSchemaLoading.value || assetCustomSchemaError.value) return;
     const editingAssetId = editingAsset.value?.id || null;
     assetFormSaving.value = true;
     assetFormFieldErrors.value = {};
     try {
       const {
+        asset_type: _assetType,
         data_center,
         asset_data_center,
         server_room_id,
@@ -627,6 +956,7 @@ export function useAssets(deps: AssetsDeps) {
         custom_values,
         ...asset
       } = assetForm.value;
+      const submittedCustomValues = currentCustomValuesForSubmit(custom_values || {});
       if (
         rack_mounted &&
         [data_center, server_room_id, rack_id, rack_start_u, rack_end_u].some(
@@ -649,7 +979,7 @@ export function useAssets(deps: AssetsDeps) {
           model: model || "",
           device_type: asset.device_type || null,
           tags: (tags || []).map((value) => Number(value)).filter((value) => Number.isFinite(value)),
-          custom_values: custom_values || {},
+          custom_values: submittedCustomValues,
           configuration: {
             data_center: rack_mounted ? data_center : "",
             server_room_id: rack_mounted ? server_room_id : "",
@@ -675,6 +1005,8 @@ export function useAssets(deps: AssetsDeps) {
       deps.actionMessage.value = editingAsset.value ? "资产及关联信息已更新" : "资产及关联信息已保存";
       editingAsset.value = null;
       assetForm.value = emptyAssetForm();
+      assetCustomFieldHistoryValues.value = {};
+      assetCustomFieldUserEditedKeys.clear();
       await loadAssets();
       if (
         editingAssetId &&
@@ -754,19 +1086,29 @@ export function useAssets(deps: AssetsDeps) {
   function toggleAssetColumn(key: string) {
     const columnKey = key as AssetColumnKey;
     if (requiredColumnKeys.includes(columnKey)) return;
+    if (
+      isDynamicAssetColumnKey(columnKey) &&
+      !visibleAssetColumns.value.includes(columnKey) &&
+      visibleAssetColumns.value.filter(isDynamicAssetColumnKey).length >= MAX_DYNAMIC_ASSET_COLUMNS
+    ) {
+      ElMessage.info(`扩展列最多同时显示 ${MAX_DYNAMIC_ASSET_COLUMNS} 个`);
+      return;
+    }
     if (visibleAssetColumns.value.includes(columnKey)) {
       if (visibleAssetColumns.value.length <= 1) return;
       visibleAssetColumns.value = visibleAssetColumns.value.filter((item) => item !== columnKey);
     } else {
       visibleAssetColumns.value = [...visibleAssetColumns.value, columnKey];
     }
-    localStorage.setItem("itam.asset.columns", JSON.stringify(visibleAssetColumns.value));
+    saveVisibleColumns();
+    if (isDynamicAssetColumnKey(columnKey)) void loadAssets();
   }
   function resetAssetColumns() {
     visibleAssetColumns.value = normalizeVisibleColumns(
       defaultColumns.filter((column) => column.defaultVisible).map((column) => column.key),
     );
-    localStorage.setItem("itam.asset.columns", JSON.stringify(visibleAssetColumns.value));
+    saveVisibleColumns();
+    void loadAssets();
   }
   function assetValue(asset: Asset, key: string): string {
     const rack = asset.rack_allocation;
@@ -776,7 +1118,7 @@ export function useAssets(deps: AssetsDeps) {
     };
     const procurement = asset.procurement_records?.[0];
     const maintenance = asset.maintenance_contracts?.[0];
-    const values: Record<AssetColumnKey, string> = {
+    const values: Record<StaticAssetColumnKey, string> = {
       asset_no: asset.asset_no,
       name: asset.name,
       asset_type: asset.device_type_name || asset.asset_type || "—",
@@ -800,7 +1142,7 @@ export function useAssets(deps: AssetsDeps) {
       maintenance_expiry_date: asset.maintenance_expiry_date || maintenance?.expiry_date || "—",
       notes: asset.notes || "—",
     };
-    return values[key as AssetColumnKey];
+    return values[key as StaticAssetColumnKey] || "—";
   }
 
   function formatImportError(detail: unknown): string {
@@ -886,17 +1228,22 @@ export function useAssets(deps: AssetsDeps) {
   }
   async function syncAssetDeviceType() {
     const deviceType = deps.deviceTypes.value.find((item) => String(item.id) === assetForm.value.device_type);
-    const previousType = editingAsset.value?.device_type ? String(editingAsset.value.device_type) : "";
-    if (previousType && previousType !== assetForm.value.device_type && Object.keys(assetForm.value.custom_values || {}).length) {
-      const confirmed = await deps.confirmAction("切换设备类型会清空原设备类型的自定义字段值，是否继续？");
+    const nextType = assetForm.value.device_type;
+    const previousType = assetCustomFieldDeviceType.value;
+    const previousValues = assetForm.value.custom_values || {};
+    const hasPreviousScopedValues = previousType !== "" && visibleCustomFields(assetCustomFieldSchema.value).some(
+      (field) => field.device_type != null && String(field.device_type) === previousType && hasCustomValue(previousValues, field.key),
+    );
+    if (editingAsset.value && previousType !== nextType && hasPreviousScopedValues) {
+      const confirmed = await deps.confirmAction("切换设备类型后，原设备类型的扩展字段将作为历史数据保留，新设备类型将使用新的字段配置，是否继续？");
       if (!confirmed) {
         assetForm.value.device_type = previousType;
         return;
       }
-      assetForm.value.custom_values = {};
     }
+    if (previousType !== nextType) resetCustomValuesForDeviceType(previousType);
     if (deviceType) assetForm.value.asset_type = deviceType.name;
-    await loadAssetCustomSchema(assetForm.value.device_type);
+    await loadAssetCustomSchema(nextType);
   }
   function changeAssetDataCenter() {
     assetForm.value.server_room_id = "";
@@ -932,6 +1279,11 @@ export function useAssets(deps: AssetsDeps) {
     }
     return loadAssets();
   }
+  function applyAssetCustomFilters(filters: AssetCustomFilter[]) {
+    appliedCustomFilters.value = filters.map((filter) => ({ ...filter }));
+    assetPage.value = 1;
+    return loadAssets();
+  }
   function resetAssetFilters() {
     assetSearch.value = "";
     assetFilters.status = "";
@@ -939,8 +1291,8 @@ export function useAssets(deps: AssetsDeps) {
     assetFilters.tag = "";
     assetFilters.brand = "";
     assetFilters.model = "";
-    assetCustomFilterField.value = "";
-    assetCustomFilterValue.value = "";
+    draftCustomFilters.value = [];
+    appliedCustomFilters.value = [];
     assetPage.value = 1;
     return loadAssets();
   }
@@ -957,7 +1309,10 @@ export function useAssets(deps: AssetsDeps) {
     const query = assetLookup.value.trim();
     if (!query) return;
     try {
-      const payload = await deps.request<PageResult<Asset> | Asset[]>(`/assets/?search=${encodeURIComponent(query)}&page_size=100&compact=1`);
+      const params = new URLSearchParams({ search: query, page_size: "100", compact: "1" });
+      const requestedCustomColumns = selectedAssetCustomColumnKeys();
+      if (requestedCustomColumns.length) params.set("custom_columns", requestedCustomColumns.join(","));
+      const payload = await deps.request<PageResult<Asset> | Asset[]>(`/assets/?${params.toString()}`);
       const matches = pageItems(payload);
       if (matches.length === 1) {
         await openAssetDetail(matches[0].id);
@@ -985,14 +1340,24 @@ export function useAssets(deps: AssetsDeps) {
     assetListLoading,
     assetListError,
     assetTagFilter,
-    assetCustomFilterField,
-    assetCustomFilterValue,
+    draftCustomFilters,
+    appliedCustomFilters,
+    applyAssetCustomFilters,
+    assetFilterCustomFieldSchema,
+    assetFilterCustomSchemaLoading,
+    assetFilterCustomSchemaError,
+    retryAssetFilterCustomSchema,
     assetLookup,
     assetColumnOptions: defaultColumns,
+    assetDynamicColumnOptions,
     visibleAssetColumns,
     visibleAssetColumnOptions,
     toggleAssetColumn,
     resetAssetColumns,
+    assetListCustomFieldSchema,
+    assetListCustomSchemaLoading,
+    assetListCustomSchemaError,
+    retryAssetListCustomSchema,
     showAssetModal,
     editingAsset,
     assetModalMode,
@@ -1002,6 +1367,10 @@ export function useAssets(deps: AssetsDeps) {
     assetFormSaving,
     assetFormFieldErrors,
     assetCustomFieldSchema,
+    assetCustomSchemaLoading,
+    assetCustomSchemaError,
+    retryAssetCustomSchema,
+    updateAssetCustomFieldValue,
     activeBrands,
     activeDeviceTypes,
     activeDataCenters,

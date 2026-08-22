@@ -105,7 +105,9 @@ let openAssetDetail: (assetId: number) => Promise<void> = async () => {};
 let invalidateAssetDetail: () => void = () => {};
 const actionMessage = ref("");
 const pageError = ref("");
-const passwordForm = ref({ old_password: "", new_password: "" });
+const passwordForm = ref({ old_password: "", new_password: "", confirm_password: "" });
+const passwordSaving = ref(false);
+const passwordFormErrors = ref<Record<string, string>>({});
 const viewportHeight = ref(window.innerHeight);
 const settingsSection = ref<SettingsSection>("dictionaries");
 // 机房资源保留机房管理和视图管理两个入口。
@@ -123,7 +125,9 @@ const facilities = useFacilities({
   actionMessage,
   closeAssetDetail,
   openRackAssetDetail,
-  refreshDictionaries: () => loadDictionaries(),
+  refreshDictionaries: async () => {
+    return loadDictionaries();
+  },
   reload: () => load(),
   confirmAction,
 });
@@ -214,50 +218,89 @@ const {
   customFields,
   customFieldDeviceType,
   customFieldActive,
+  customFieldListLoading,
+  customFieldListError,
+  customFieldOptionLoading,
+  customFieldOptionError,
+  customFieldSaving,
+  customFieldOptionSaving,
+  customFieldActionId,
+  customFieldOptionActionId,
   customFieldForm,
   customFieldOptionForm,
+  customFieldFormErrors,
+  customFieldOptionFormErrors,
   editingCustomField,
   editingCustomFieldOption,
   showCustomFieldModal,
   showCustomFieldOptionModal,
   tags,
+  tagListLoading,
+  tagListError,
+  tagSaving,
+  tagActionId,
   tagSearch,
   tagActive,
   tagForm,
+  tagFormErrors,
   editingTag,
   showTagModal,
   users,
+  organizationLoading,
+  organizationError,
+  userListError,
+  roleListError,
+  userSaving,
+  userActionId,
+  userFormErrors,
   roles,
+  userSearch,
+  userPage,
+  userPageSize,
+  userCount,
   showUserModal,
   editingUser,
   userForm,
   userFormRef,
   userFormRules,
-  roleForm,
-  editingRole,
-  showRoleModal,
   dictionarySection,
+  dictionaryLoading,
+  dictionaryError,
+  dictionarySaving,
+  dictionaryActionId,
   dictionarySearch,
   showDictionaryModal,
   editingDictionary,
   dictionaryForm,
+  dictionaryFormErrors,
   auditLogs,
   auditCount,
   auditPage,
   auditPageSize,
   auditFilters,
+  auditListLoading,
+  auditListError,
   loadDictionaries,
+  retryDictionaries,
   loadCustomFields,
+  retryCustomFieldList,
+  loadCustomFieldOptions,
+  retryCustomFieldOptions,
   loadTags,
+  retryTagList,
   loadOrganization,
+  retryOrganization,
+  loadUsers,
+  retryUserList,
+  searchUsers,
+  changeUserPage,
+  changeUserPageSize,
   loadAuditLogs,
+  retryAuditLogs,
   openUserModal,
   saveUser,
   toggleUser,
   deleteUser,
-  openRoleModal,
-  saveRole,
-  deleteRole,
   openCustomFieldModal,
   saveCustomField,
   toggleCustomField,
@@ -300,6 +343,8 @@ const auth = useAuth({
   loginError,
   showPasswordModal,
   passwordForm,
+  passwordSaving,
+  passwordFormErrors,
   actionMessage,
   settingsSection,
 });
@@ -308,6 +353,8 @@ const overlayAuth = {
   showPasswordModal,
   passwordChangeRequired,
   passwordForm,
+  passwordSaving,
+  passwordFormErrors,
   changePassword,
 };
 const assetsApi = useAssets({
@@ -345,14 +392,23 @@ const {
   assetListLoading,
   assetListError,
   assetTagFilter,
-  assetCustomFilterField,
-  assetCustomFilterValue,
   assetLookup,
+  draftCustomFilters,
+  appliedCustomFilters,
+  applyAssetCustomFilters,
+  assetFilterCustomFieldSchema,
+  assetFilterCustomSchemaLoading,
+  assetFilterCustomSchemaError,
+  retryAssetFilterCustomSchema,
   assetColumnOptions,
+  assetDynamicColumnOptions,
   visibleAssetColumns,
   visibleAssetColumnOptions,
   toggleAssetColumn,
   resetAssetColumns,
+  assetListCustomSchemaLoading,
+  assetListCustomSchemaError,
+  retryAssetListCustomSchema,
   showAssetModal,
   editingAsset,
   assetModalMode,
@@ -364,6 +420,10 @@ const {
   retryAssetFormLoad,
   clearAssetFormErrors,
   assetCustomFieldSchema,
+  assetCustomSchemaLoading,
+  assetCustomSchemaError,
+  retryAssetCustomSchema,
+  updateAssetCustomFieldValue,
   activeBrands,
   activeDeviceTypes,
   activeDataCenters,
@@ -622,8 +682,8 @@ function routeIsAllowed() {
   const section = route.meta.settingsSection || "dictionaries";
   if (section === "organization" && !isAdmin.value) return false;
   if (section === "audit" && !can("audit.view")) return false;
-  if (section === "custom-fields" && !can("custom_fields.manage")) return false;
-  if (section === "tags" && !can("tags.manage")) return false;
+  if (section === "custom-fields" && !can("custom_fields.view")) return false;
+  if (section === "tags" && !can("tags.view")) return false;
   return true;
 }
 
@@ -736,7 +796,7 @@ async function load() {
   const version = beginLoad();
   // Spare parts and the rack view own their workspace loading masks so a
   // list/canvas request never blocks the entire routed application.
-  const usesLocalPageLoading = page.value === "spares" || (page.value === "racks" && rackSection.value === "view");
+  const usesLocalPageLoading = page.value === "settings" || page.value === "spares" || (page.value === "racks" && rackSection.value === "view");
   loading.value = !usesLocalPageLoading;
   pageError.value = "";
   try {
@@ -925,9 +985,13 @@ const pageContext = {
   dashboardDate, dashboardDateTime, handleMenuSelect,
   dashboardLoading,
   openAssetDetail, openRackSection,
-  assetSearch, searchLedger, assetColumnOptions, visibleAssetColumns,
+  assetSearch, searchLedger, assetColumnOptions, assetDynamicColumnOptions, visibleAssetColumns,
   assetFilters, assetListLoading, assetListError, resetAssetFilters,
-  assetTagFilter, tags,
+  draftCustomFilters, appliedCustomFilters, applyAssetCustomFilters,
+  assetFilterCustomFieldSchema, assetFilterCustomSchemaLoading, assetFilterCustomSchemaError,
+  retryAssetFilterCustomSchema,
+  assetTagFilter, tags, assetListCustomSchemaLoading, assetListCustomSchemaError,
+  retryAssetListCustomSchema,
   toggleAssetColumn, resetAssetColumns, visibleAssetColumnOptions, can,
   openNewAssetModal, selectedAssetIds, deleteSelectedAssets, exportAssets,
   registerFaultFromSelection, downloadImportTemplate, onElementUploadChange,
@@ -972,23 +1036,32 @@ const pageContext = {
   rackDetailOpen, detailAsset, detailLoading, detailError, retryAssetDetail, closeAssetDetail,
   rackCount, rackPage, changeRackPage,
   settingsSection, dictionarySection,
-  dictionarySearch, loadDictionaries, currentDictionaryLabel,
+  dictionarySearch, dictionaryLoading, dictionaryError, dictionarySaving, dictionaryActionId,
+  dictionaryFormErrors,
+  loadDictionaries, retryDictionaries, currentDictionaryLabel,
   openDictionaryModal, currentDictionaryItems, toggleDictionary,
-  dictionaryItemUsed, deleteDictionary, isAdmin, users, openUserModal,
-  toggleUser, deleteUser, roles, openRoleModal, deleteRole, auditFilters,
-  loadAuditLogs, searchAuditLogs, auditLogs, auditPage, auditPageSize, auditCount,
+  dictionaryItemUsed, deleteDictionary, isAdmin, organizationLoading, organizationError,
+  userListError, roleListError, retryOrganization, users, userSearch, userPage, userPageSize, userCount,
+  userFormErrors, userSaving, userActionId, openUserModal,
+  toggleUser, deleteUser, roles, retryUserList, searchUsers, changeUserPage, changeUserPageSize,
+  auditFilters, auditListLoading, auditListError,
+  loadAuditLogs, retryAuditLogs, searchAuditLogs, auditLogs, auditPage, auditPageSize, auditCount,
   changeAuditPage, changeAuditPageSize,
-  customFieldDeviceType, customFieldActive, loadCustomFields, customFields,
+  customFieldDeviceType, customFieldActive, customFieldListLoading, customFieldListError,
+  customFieldOptionLoading, customFieldOptionError, customFieldSaving, customFieldOptionSaving,
+  customFieldActionId, customFieldOptionActionId, loadCustomFields, retryCustomFieldList, loadCustomFieldOptions, retryCustomFieldOptions, customFields,
   openCustomFieldModal, saveCustomField, toggleCustomField, deleteCustomField,
   openCustomFieldOptionModal, saveCustomFieldOption, deleteCustomFieldOption,
-  customFieldForm, showCustomFieldModal, editingCustomField, customFieldOptionForm,
-  showCustomFieldOptionModal, editingCustomFieldOption, tagSearch, tagActive,
-  loadTags, openTagModal, saveTag, toggleTag, deleteTag, tagForm, showTagModal, editingTag,
+  customFieldForm, customFieldFormErrors, showCustomFieldModal, editingCustomField, customFieldOptionForm,
+  customFieldOptionFormErrors,
+  showCustomFieldOptionModal, editingCustomFieldOption, tagSearch, tagActive, tagListLoading, tagListError, tagSaving, tagActionId,
+  loadTags, retryTagList, openTagModal, saveTag, toggleTag, deleteTag, tagForm, tagFormErrors, showTagModal, editingTag,
   brands,
   showAssetModal, assetModalMode, editingAsset, assetForm, activeDeviceTypes,
   assetFormLoading, assetFormLoadError, assetFormSaving, assetFormFieldErrors,
   retryAssetFormLoad, clearAssetFormErrors,
   assetCustomFieldSchema,
+  assetCustomSchemaLoading, assetCustomSchemaError, retryAssetCustomSchema, updateAssetCustomFieldValue,
   syncAssetDeviceType, activeBrands, activeDataCenters, changeAssetDataCenter,
   assetRoomOptions, changeAssetRoom, assetRackOptions, changeAssetRack, setAssetRackMounted,
   saveAsset,
@@ -1114,9 +1187,9 @@ const overlayAssetDetail = {
             ><el-icon><Setting /></el-icon><span>系统设置</span></template
           ><el-menu-item index="settings-dictionaries"
             >数据字典</el-menu-item
-          ><el-menu-item v-if="can('custom_fields.manage')" index="settings-custom-fields"
+          ><el-menu-item v-if="can('custom_fields.view')" index="settings-custom-fields"
             >自定义字段</el-menu-item
-          ><el-menu-item v-if="can('tags.manage')" index="settings-tags"
+          ><el-menu-item v-if="can('tags.view')" index="settings-tags"
             >标签管理</el-menu-item
           ><el-menu-item v-if="isAdmin" index="settings-organization"
             >组织权限</el-menu-item

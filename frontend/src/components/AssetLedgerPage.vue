@@ -1,15 +1,24 @@
 <!-- UX Reference: standard data-list page. Reuse interaction patterns, not asset-specific fields. -->
 <script setup lang="ts">
 import { computed } from "vue";
-import { Delete, Download, Filter, MoreFilled, Operation, Plus, Upload, Warning } from "@element-plus/icons-vue";
-import type { Asset } from "../types";
+import { ElMessage } from "element-plus";
+import { Delete, Download, Filter, MoreFilled, Operation, Plus, Upload } from "@element-plus/icons-vue";
+import type { Asset, AssetCustomFilter, CustomFieldFilterOperator, CustomFieldSchema } from "../types";
 import PagedTable from "./PagedTable.vue";
 import SearchField from "./SearchField.vue";
 import PageContainer from "./page/PageContainer.vue";
 import PageContent from "./page/PageContent.vue";
 import PageToolbar from "./page/PageToolbar.vue";
 import StatusTag from "./StatusTag.vue";
+import DynamicFilterValueEditor from "./fields/DynamicFilterValueEditor.vue";
+import DynamicFieldDisplay from "./fields/DynamicFieldDisplay.vue";
 import type { AssetLedgerContext } from "../types/page-context";
+import {
+  CUSTOM_FIELD_FILTER_OPERATORS,
+  defaultCustomFieldFilterOperator,
+  MAX_DYNAMIC_ASSET_COLUMNS,
+  MAX_DYNAMIC_ASSET_FILTERS,
+} from "../composables/useAssets";
 
 const props = defineProps<{ context: AssetLedgerContext }>();
 const context = props.context;
@@ -24,10 +33,21 @@ const {
   brands,
   deviceTypes,
   assetColumnOptions,
+  assetDynamicColumnOptions,
   visibleAssetColumns,
   toggleAssetColumn,
   resetAssetColumns,
   visibleAssetColumnOptions,
+  assetListCustomSchemaLoading,
+  assetListCustomSchemaError,
+  retryAssetListCustomSchema,
+  draftCustomFilters,
+  appliedCustomFilters,
+  applyAssetCustomFilters,
+  assetFilterCustomFieldSchema,
+  assetFilterCustomSchemaLoading,
+  assetFilterCustomSchemaError,
+  retryAssetFilterCustomSchema,
   can,
   openNewAssetModal,
   selectedAssetIds,
@@ -67,7 +87,8 @@ const hasAssetFilters = computed(() => Boolean(
   assetFilters.deviceType ||
   assetFilters.tag ||
   assetFilters.brand ||
-  assetFilters.model.trim(),
+  assetFilters.model.trim() ||
+  appliedCustomFilters.value.length,
 ));
 const exportLabel = computed(() =>
   selectedAssetIds.value.length ? `导出选中（${selectedAssetIds.value.length}）` : "导出全部",
@@ -82,8 +103,17 @@ const assetColumnMinWidths: Record<string, number> = {
   maintenance_expiry_date: 130,
 };
 
-function assetColumnMinWidth(key: string): number {
-  return assetColumnMinWidths[key] || 120;
+function assetColumnMinWidth(column: { key: string; width?: number }): number {
+  return column.width || assetColumnMinWidths[column.key] || 120;
+}
+
+function dynamicAssetValue(asset: Asset, columnKey: string): unknown {
+  return asset.custom_values?.[columnKey.slice("custom:".length)];
+}
+
+function dynamicColumnDisabled(columnKey: string): boolean {
+  return !visibleAssetColumns.value.includes(columnKey) &&
+    visibleAssetColumns.value.filter((key) => key.startsWith("custom:")).length >= MAX_DYNAMIC_ASSET_COLUMNS;
 }
 
 function assetLocation(asset: Asset) {
@@ -121,6 +151,91 @@ function updateAssetHeaderFilter(filter: "status" | "deviceType", value: string)
   return searchLedger();
 }
 
+const operatorLabels: Record<CustomFieldFilterOperator, string> = {
+  contains: "包含",
+  eq: "等于",
+  gte: "大于等于",
+  lte: "小于等于",
+};
+
+function fieldScopeLabel(field: CustomFieldSchema): string {
+  return field.device_type_name ? `设备类型：${field.device_type_name}` : "全局字段";
+}
+
+function fieldLabel(field: CustomFieldSchema): string {
+  return `${field.name} · ${fieldScopeLabel(field)}`;
+}
+
+function fieldForDynamicFilter(condition: AssetCustomFilter): CustomFieldSchema | undefined {
+  return assetFilterCustomFieldSchema.value.find((field) => field.key === condition.fieldKey);
+}
+
+function dynamicFilterFields(condition: AssetCustomFilter): CustomFieldSchema[] {
+  const selectedKey = condition.fieldKey;
+  const deviceType = assetFilters.deviceType;
+  return assetFilterCustomFieldSchema.value.filter((field) =>
+    !deviceType ||
+    field.device_type === null ||
+    String(field.device_type) === String(deviceType) ||
+    field.key === selectedKey,
+  );
+}
+
+function operatorOptions(condition: AssetCustomFilter): CustomFieldFilterOperator[] {
+  const field = fieldForDynamicFilter(condition);
+  return field ? CUSTOM_FIELD_FILTER_OPERATORS[field.field_type] : [];
+}
+
+function operatorLabel(operator: CustomFieldFilterOperator): string {
+  return operatorLabels[operator];
+}
+
+function syncDraftCustomFilters() {
+  draftCustomFilters.value = appliedCustomFilters.value.map((filter) => ({ ...filter }));
+}
+
+function addDynamicFilter() {
+  if (draftCustomFilters.value.length >= MAX_DYNAMIC_ASSET_FILTERS) return;
+  draftCustomFilters.value.push({ fieldKey: "", operator: "eq", value: "" });
+}
+
+function removeDynamicFilter(index: number) {
+  draftCustomFilters.value.splice(index, 1);
+}
+
+function onDynamicFieldChange(condition: AssetCustomFilter) {
+  const field = fieldForDynamicFilter(condition);
+  condition.operator = field ? defaultCustomFieldFilterOperator(field.field_type) : "eq";
+  condition.value = "";
+}
+
+function onDynamicOperatorChange(condition: AssetCustomFilter) {
+  condition.value = "";
+}
+
+async function applyDynamicFilters() {
+  const normalized: AssetCustomFilter[] = [];
+  for (const [index, condition] of draftCustomFilters.value.entries()) {
+    const rowNumber = index + 1;
+    const field = fieldForDynamicFilter(condition);
+    if (!field) {
+      ElMessage.warning(`筛选条件无效：第 ${rowNumber} 条请选择字段`);
+      return;
+    }
+    if (!CUSTOM_FIELD_FILTER_OPERATORS[field.field_type].includes(condition.operator)) {
+      ElMessage.warning(`筛选条件无效：第 ${rowNumber} 条操作符不适用于该字段`);
+      return;
+    }
+    const value = condition.value.trim();
+    if (!value) {
+      ElMessage.warning(`筛选条件无效：第 ${rowNumber} 条请输入筛选值`);
+      return;
+    }
+    normalized.push({ fieldKey: field.key, operator: condition.operator, value });
+  }
+  await applyAssetCustomFilters(normalized);
+}
+
 function handleToolbarAction(command: string) {
   if (command === "template") return downloadImportTemplate();
   if (command === "fault") return registerFaultFromSelection();
@@ -151,7 +266,13 @@ function handleToolbarAction(command: string) {
             >
               <el-option v-for="tag in activeTags" :key="tag.id" :label="tag.name" :value="tag.name" />
             </el-select>
-            <el-popover placement="bottom-start" :width="280" trigger="click">
+            <el-popover
+              placement="bottom-start"
+              :width="680"
+              trigger="click"
+              popper-class="asset-ledger-filter-popover"
+              @show="syncDraftCustomFilters"
+            >
               <template #reference><el-button class="asset-toolbar-more" :icon="Filter">更多筛选</el-button></template>
               <div class="asset-ledger-advanced-filters">
                 <el-form label-position="top">
@@ -164,6 +285,73 @@ function handleToolbarAction(command: string) {
                     <el-input v-model="assetFilters.model" clearable placeholder="输入型号" @keyup.enter="searchLedger" @clear="searchLedger" />
                   </el-form-item>
                 </el-form>
+                <el-divider />
+                <section class="asset-ledger-dynamic-filter-section" aria-labelledby="asset-dynamic-filter-title">
+                  <div class="asset-ledger-dynamic-filter-heading">
+                    <span id="asset-dynamic-filter-title">动态字段筛选</span>
+                    <span class="asset-ledger-dynamic-filter-note">条件之间为 AND，最多 8 条</span>
+                  </div>
+                  <div v-if="assetFilterCustomSchemaLoading" class="asset-column-section__state">正在加载可筛选字段…</div>
+                  <div v-else-if="assetFilterCustomSchemaError" class="asset-column-section__state asset-column-section__state--error">
+                    <span>{{ assetFilterCustomSchemaError }}</span>
+                    <el-button link type="primary" @click="retryAssetFilterCustomSchema">重试</el-button>
+                  </div>
+                  <div v-else-if="!assetFilterCustomFieldSchema.length" class="asset-column-section__state">暂无可筛选字段</div>
+                  <template v-else>
+                    <div v-for="(condition, index) in draftCustomFilters" :key="`${index}-${condition.fieldKey}`" class="asset-ledger-dynamic-filter-row">
+                      <el-select
+                        v-model="condition.fieldKey"
+                        filterable
+                        clearable
+                        placeholder="选择字段"
+                        @change="onDynamicFieldChange(condition)"
+                      >
+                        <el-option
+                          v-for="field in dynamicFilterFields(condition)"
+                          :key="field.key"
+                          :label="fieldLabel(field)"
+                          :value="field.key"
+                        />
+                      </el-select>
+                      <el-select
+                        v-model="condition.operator"
+                        :disabled="!fieldForDynamicFilter(condition)"
+                        placeholder="操作符"
+                        @change="onDynamicOperatorChange(condition)"
+                      >
+                        <el-option
+                          v-for="operator in operatorOptions(condition)"
+                          :key="operator"
+                          :label="operatorLabel(operator)"
+                          :value="operator"
+                        />
+                      </el-select>
+                      <DynamicFilterValueEditor
+                        v-if="fieldForDynamicFilter(condition)"
+                        :field="fieldForDynamicFilter(condition)!"
+                        v-model="condition.value"
+                      />
+                      <el-input v-else disabled placeholder="先选择字段" />
+                      <el-button
+                        text
+                        type="danger"
+                        :icon="Delete"
+                        aria-label="删除筛选条件"
+                        title="删除筛选条件"
+                        @click="removeDynamicFilter(index)"
+                      />
+                    </div>
+                    <div class="asset-ledger-dynamic-filter-actions">
+                      <el-button link type="primary" :disabled="draftCustomFilters.length >= MAX_DYNAMIC_ASSET_FILTERS" @click="addDynamicFilter">
+                        添加条件
+                      </el-button>
+                      <div class="asset-ledger-dynamic-filter-buttons">
+                        <el-button @click="syncDraftCustomFilters">取消</el-button>
+                        <el-button type="primary" @click="applyDynamicFilters">应用</el-button>
+                      </div>
+                    </div>
+                  </template>
+                </section>
               </div>
             </el-popover>
           </div>
@@ -171,10 +359,28 @@ function handleToolbarAction(command: string) {
             <el-button v-if="can('assets.manage')" type="primary" :icon="Plus" @click="openNewAssetModal">新增资产</el-button>
             <el-button @click="resetAssetFilters">重置</el-button>
             <div class="asset-toolbar-table-actions">
-              <el-popover placement="bottom" :width="240" trigger="click">
+              <el-popover placement="bottom" :width="300" trigger="click">
                 <template #reference><el-button :icon="Operation">显示列</el-button></template>
                 <div class="ep-column-list">
-                  <el-checkbox v-for="column in assetColumnOptions" :key="column.key" :model-value="visibleAssetColumns.includes(column.key)" :disabled="column.required" :title="column.required ? '核心字段不可隐藏' : undefined" @change="toggleAssetColumn(column.key)">{{ column.label }}<span v-if="column.required" class="asset-ledger-column-fixed">（固定）</span></el-checkbox>
+                  <div class="asset-column-section">
+                    <div class="asset-column-section__title">基础字段</div>
+                    <el-checkbox v-for="column in assetColumnOptions" :key="column.key" :model-value="visibleAssetColumns.includes(column.key)" :disabled="column.required" :title="column.required ? '核心字段不可隐藏' : undefined" @change="toggleAssetColumn(column.key)">{{ column.label }}<span v-if="column.required" class="asset-ledger-column-fixed">（固定）</span></el-checkbox>
+                  </div>
+                  <div class="asset-column-section">
+                    <div class="asset-column-section__title">扩展字段</div>
+                    <div v-if="assetListCustomSchemaLoading" class="asset-column-section__state">正在加载扩展列配置…</div>
+                    <div v-else-if="assetListCustomSchemaError" class="asset-column-section__state asset-column-section__state--error">
+                      <span>扩展列配置加载失败</span>
+                      <el-button link type="primary" @click="retryAssetListCustomSchema">重试</el-button>
+                    </div>
+                    <template v-else>
+                      <el-checkbox v-for="column in assetDynamicColumnOptions" :key="column.key" :model-value="visibleAssetColumns.includes(column.key)" :disabled="dynamicColumnDisabled(column.key)" :title="[column.scopeLabel, column.field?.help_text].filter(Boolean).join(' · ') || undefined" @change="toggleAssetColumn(column.key)">
+                        <span>{{ column.label }}</span>
+                        <span v-if="column.scopeLabel" class="asset-column-option-scope">（{{ column.scopeLabel }}）</span>
+                      </el-checkbox>
+                      <div v-if="!assetDynamicColumnOptions.length" class="asset-column-section__state">暂无可配置的扩展列</div>
+                    </template>
+                  </div>
                   <el-button link type="primary" @click="resetAssetColumns">恢复默认</el-button>
                 </div>
               </el-popover>
@@ -211,7 +417,7 @@ function handleToolbarAction(command: string) {
               </div>
             </template>
             <el-table-column type="selection" width="48" />
-            <el-table-column v-for="column in visibleAssetColumnOptions" :key="column.key" :label="column.label" :min-width="assetColumnMinWidth(column.key)" show-overflow-tooltip>
+            <el-table-column v-for="column in visibleAssetColumnOptions" :key="column.key" :label="column.label" :min-width="assetColumnMinWidth(column)" show-overflow-tooltip>
               <template #header>
                 <div v-if="column.key === 'status'" class="asset-table-header-filter">
                   <span class="asset-table-header-filter__label">{{ column.label }}</span>
@@ -265,6 +471,7 @@ function handleToolbarAction(command: string) {
                     <span class="asset-location-cell__secondary">{{ assetLocation(row).secondary }}</span>
                   </span>
                 </el-tooltip>
+                <DynamicFieldDisplay v-else-if="column.dynamic && column.field" class="asset-ledger-dynamic-cell" :field="column.field" :value="dynamicAssetValue(row, column.key)" />
                 <span v-else>{{ assetValue(row, column.key) }}</span>
               </template>
             </el-table-column>

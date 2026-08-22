@@ -18,11 +18,22 @@ export type DictionaryItem = {
   created_at?: string;
   updated_at?: string;
 };
-export type CustomFieldOption = { id: number; field: number; value: string; label: string; sort_order: number; is_active: boolean };
+export type CustomFieldOption = { id: number; field?: number; value: string; label: string; sort_order: number; is_active: boolean };
+export type CustomFieldValidationConfig = {
+  min_length?: number;
+  max_length?: number;
+  min?: number | string;
+  max?: number | string;
+  precision?: number;
+  min_date?: string;
+  max_date?: string;
+  min_items?: number;
+  max_items?: number;
+};
 export type CustomField = {
   id: number;
-  device_type: number;
-  device_type_name?: string;
+  device_type: number | null;
+  device_type_name?: string | null;
   key: string;
   name: string;
   field_type: "text" | "textarea" | "number" | "date" | "select" | "multiselect" | "boolean";
@@ -31,8 +42,41 @@ export type CustomField = {
   default_value: string;
   sort_order: number;
   is_active: boolean;
+  group: string;
+  help_text: string;
+  placeholder: string;
+  form_visible: boolean;
+  detail_visible: boolean;
+  list_visible: boolean;
+  filterable: boolean;
+  validation_config: CustomFieldValidationConfig;
   assets_count?: number;
   options?: CustomFieldOption[];
+};
+export type CustomFieldSchema = CustomField;
+export type CustomFieldFilterOperator = "contains" | "eq" | "gte" | "lte";
+export type AssetCustomFilter = {
+  fieldKey: string;
+  operator: CustomFieldFilterOperator;
+  value: string;
+};
+export type CustomFieldForm = {
+  device_type: string;
+  key: string;
+  name: string;
+  field_type: CustomField["field_type"];
+  required: boolean;
+  default_value: string;
+  sort_order: number;
+  is_active: boolean;
+  group: string;
+  help_text: string;
+  placeholder: string;
+  form_visible: boolean;
+  detail_visible: boolean;
+  list_visible: boolean;
+  filterable: boolean;
+  validation_config: CustomFieldValidationConfig;
 };
 export type Tag = { id: number; name: string; is_active: boolean; assets_count?: number; created_at?: string; updated_at?: string };
 export type AssetCustomFieldValue = CustomField & { value: string | number | boolean | string[] | null };

@@ -1,7 +1,8 @@
 from django.conf import settings
-from django.db.models import Case, CharField, Count, F, Q, Prefetch, Sum, Value, When
+from django.db.models import BooleanField, Case, CharField, Count, Exists, F, OuterRef, Q, Prefetch, Sum, Value, When
 from django.db.models.functions import Coalesce
-from django.db import transaction
+from django.db import connection, transaction
+from django.db.models.expressions import RawSQL
 import csv
 import io
 import re
@@ -18,8 +19,9 @@ from rest_framework.decorators import action, api_view, permission_classes, pars
 from rest_framework.parsers import MultiPartParser, FormParser
 from rest_framework.permissions import AllowAny, IsAdminUser, IsAuthenticated
 from rest_framework.response import Response
+from rest_framework.exceptions import ValidationError as DRFValidationError
 from drf_spectacular.types import OpenApiTypes
-from drf_spectacular.utils import extend_schema
+from drf_spectacular.utils import OpenApiParameter, extend_schema
 from django.http import HttpResponse
 from django.shortcuts import get_object_or_404
 from django.utils import timezone
@@ -28,11 +30,11 @@ from openpyxl import Workbook
 from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
 from openpyxl.utils import get_column_letter
 from .models import AuthThrottleState, AuditLog, Asset, AssetCustomValue, AssetNetworkAddress, AssetTag, Brand, CustomField, CustomFieldOption, DataCenter, DeviceType, FaultEvent, InventoryItem, InventoryTask, MaintenanceContract, ProcurementRecord, Rack, RackUnitAllocation, RepairRecord, ServerRoom, SoftwareLicense, SparePart, SpareStock, SpareStockTransaction, Tag, UserSecurityProfile
-from .serializers import AuditLogSerializer, AssetDetailSerializer, AssetListSerializer, AssetSerializer, AssetWriteSerializer, BrandSerializer, CustomFieldOptionSerializer, CustomFieldSerializer, DataCenterSerializer, DeviceTypeSerializer, FaultEventSerializer, GroupSerializer, InventoryInspectorSerializer, InventoryItemSerializer, InventoryScopePreviewQuerySerializer, InventoryScopePreviewSerializer, InventoryTaskSerializer, RackSerializer, RepairRecordSerializer, ServerRoomSerializer, SoftwareLicenseSerializer, SparePartDetailSerializer, SparePartSerializer, SpareStockSerializer, SpareStockTransactionSerializer, TagSerializer, UserSerializer
+from .serializers import AuditLogSerializer, AssetDetailSerializer, AssetListSerializer, AssetSerializer, AssetWriteSerializer, BrandSerializer, CustomFieldOptionSerializer, CustomFieldRuntimeSchemaSerializer, CustomFieldSerializer, DataCenterSerializer, DeviceTypeSerializer, FaultEventSerializer, GroupSerializer, InventoryInspectorSerializer, InventoryItemSerializer, InventoryScopePreviewQuerySerializer, InventoryScopePreviewSerializer, InventoryTaskSerializer, RackSerializer, RepairRecordSerializer, ServerRoomSerializer, SoftwareLicenseSerializer, SparePartDetailSerializer, SparePartSerializer, SpareStockSerializer, SpareStockTransactionSerializer, TagSerializer, UserSerializer, _default_references_option
 from .services import apply_spare_stock_transaction, sync_asset_fault_status, sync_repair_completion
 from .inventory import get_inventory_scope_assets
-from .audit import model_snapshot, write_audit_log
-from .permissions import BusinessRolePermission, CanExportAssets, CanExportFaults, CanExportInventory, CanExportRacks, CanImportAssets, CanManageInventory, CanViewAuditLog, CanViewDashboard, CanViewInventory, CanViewLicenses, IsSystemAdministrator
+from .audit import asset_custom_value_changes, asset_custom_value_snapshot, model_snapshot, write_audit_log
+from .permissions import BusinessRolePermission, CanExportAssets, CanExportFaults, CanExportInventory, CanExportRacks, CanImportAssets, CanManageInventory, CanViewAssetCustomFieldSchema, CanViewAuditLog, CanViewDashboard, CanViewInventory, CanViewLicenses, IsSystemAdministrator
 from .roles import ROLE_DEFINITIONS, ROLE_NAME_TO_CODE, user_capabilities, user_role_code
 from .reporting import (
     DashboardScopeError,
@@ -49,28 +51,35 @@ class AuditedModelViewSetMixin:
     def audit_snapshot(self, instance):
         return model_snapshot(instance)
 
+    def audit_extra(self, before, after, *, action):
+        return None
+
     @transaction.atomic
     def perform_create(self, serializer):
         instance = serializer.save()
+        after = self.audit_snapshot(instance)
         write_audit_log(
             self.request,
             action="create",
             resource_type=self.audit_resource,
             resource_id=instance.pk,
-            after=self.audit_snapshot(instance),
+            after=after,
+            extra=self.audit_extra(None, after, action="create"),
         )
 
     @transaction.atomic
     def perform_update(self, serializer):
         before = self.audit_snapshot(serializer.instance)
         instance = serializer.save()
+        after = self.audit_snapshot(instance)
         write_audit_log(
             self.request,
             action="update",
             resource_type=self.audit_resource,
             resource_id=instance.pk,
             before=before,
-            after=self.audit_snapshot(instance),
+            after=after,
+            extra=self.audit_extra(before, after, action="update"),
         )
 
     @transaction.atomic
@@ -99,7 +108,55 @@ def _date_filter_errors(request, fields):
     return None
 
 
+CUSTOM_FILTER_MAX_CONDITIONS = 8
+CUSTOM_FILTER_OPERATOR_SUFFIXES = ("contains", "gte", "lte", "eq")
+CUSTOM_FILTER_OPERATORS_BY_TYPE = {
+    "text": {"contains", "eq"},
+    "textarea": {"contains", "eq"},
+    "number": {"eq", "gte", "lte"},
+    "date": {"eq", "gte", "lte"},
+    "boolean": {"eq"},
+    "select": {"eq"},
+    "multiselect": {"contains"},
+}
+
+
+def _custom_filter_key_and_operator(query_key):
+    field_part = query_key[len("custom__"):]
+    for operator in CUSTOM_FILTER_OPERATOR_SUFFIXES:
+        suffix = f"__{operator}"
+        if field_part.endswith(suffix):
+            return field_part[:-len(suffix)], operator
+    return field_part, None
+
+
+def _custom_filter_boolean(value):
+    normalized = value.lower()
+    if normalized in {"true", "1", "yes", "是"}:
+        return True
+    if normalized in {"false", "0", "no", "否"}:
+        return False
+    raise ValueError("必须是是或否")
+
+
+def _custom_filter_multiselect_membership(value):
+    if connection.vendor == "sqlite":
+        return RawSQL(
+            "EXISTS (SELECT 1 FROM json_each(json_value) WHERE json_type(json_value) = 'array' AND json_each.value = %s)",
+            [value],
+            output_field=BooleanField(),
+        )
+    if connection.vendor == "mysql":
+        return RawSQL(
+            "JSON_TYPE(json_value) = 'ARRAY' AND JSON_CONTAINS(json_value, JSON_QUOTE(%s), '$')",
+            [value],
+            output_field=BooleanField(),
+        )
+    return Q(json_value__contains=[value])
+
+
 class AssetViewSet(AuditedModelViewSetMixin, viewsets.ModelViewSet):
+    max_custom_columns = 12
     queryset = Asset.objects.select_related("department", "brand", "device_type", "asset_data_center", "rack_allocation__rack__room__data_center").prefetch_related("network_addresses", "procurement_records", "maintenance_contracts", "asset_tags__tag", "custom_values__field__options").order_by("asset_no")
     serializer_class = AssetSerializer
     permission_classes = [BusinessRolePermission]
@@ -119,11 +176,49 @@ class AssetViewSet(AuditedModelViewSetMixin, viewsets.ModelViewSet):
         "asset_tags__tag__name", "custom_values__text_value", "custom_values__json_value",
     ]
 
+    @extend_schema(
+        parameters=[
+            OpenApiParameter(
+                name="custom_columns",
+                type=OpenApiTypes.STR,
+                required=False,
+                description="compact 台账列表需要返回的动态字段 key，支持逗号分隔或重复参数，最多 12 个。",
+            ),
+            OpenApiParameter(
+                name="compact",
+                type=OpenApiTypes.BOOL,
+                required=False,
+                description="使用资产台账的轻量列表响应。",
+            ),
+            OpenApiParameter(
+                name="tag",
+                type=OpenApiTypes.STR,
+                required=False,
+                description="按标签名称筛选资产。",
+            ),
+            OpenApiParameter(
+                name="custom__{field_key}",
+                type=OpenApiTypes.STR,
+                required=False,
+                description="兼容旧版动态字段等值/文本包含筛选；field_key 为运行时字段编码。",
+            ),
+            OpenApiParameter(
+                name="custom__{field_key}__{operator}",
+                type=OpenApiTypes.STR,
+                required=False,
+                description="动态字段筛选；operator 按字段类型使用 eq、contains、gte 或 lte。多个条件为 AND。",
+            ),
+        ]
+    )
+    def list(self, request, *args, **kwargs):
+        return super().list(request, *args, **kwargs)
+
     def get_queryset(self):
         queryset = super().get_queryset()
         if self.request.query_params.get("search", "").strip():
             queryset = queryset.distinct()
         if self.request.query_params.get("compact", "").lower() in {"1", "true", "yes"}:
+            requested_custom_columns = self._requested_custom_columns()
             queryset = queryset.select_related(
                 "brand", "device_type", "asset_data_center", "rack_allocation__rack__room__data_center"
             ).prefetch_related(None).prefetch_related(
@@ -140,44 +235,158 @@ class AssetViewSet(AuditedModelViewSetMixin, viewsets.ModelViewSet):
                     queryset=MaintenanceContract.objects.only("id", "asset_id", "provider", "expiry_date").order_by("-updated_at", "-id"),
                 ),
                 Prefetch("asset_tags", queryset=AssetTag.objects.select_related("tag")),
-                Prefetch("custom_values", queryset=AssetCustomValue.objects.select_related("field").prefetch_related("field__options")),
             )
+            if requested_custom_columns:
+                queryset = queryset.prefetch_related(
+                    Prefetch(
+                        "custom_values",
+                        queryset=AssetCustomValue.objects.filter(
+                            field__key__in=requested_custom_columns,
+                            field__is_active=True,
+                            field__list_visible=True,
+                        ).select_related("field"),
+                        to_attr="list_custom_values",
+                    )
+                )
         tag = self.request.query_params.get("tag", "").strip()
         if tag:
             queryset = queryset.filter(asset_tags__tag__name__iexact=tag)
-        for query_key, value in self.request.query_params.items():
-            if not query_key.startswith("custom__") or not value.strip():
-                continue
-            field_key = query_key[8:]
-            field = CustomField.objects.filter(key=field_key, is_active=True).first()
-            if not field:
-                queryset = queryset.none()
-                break
-            base = {"custom_values__field_id": field.id}
+        for field, operator, value in self._validated_custom_filters():
+            values = AssetCustomValue.objects.filter(
+                asset_id=OuterRef("pk"),
+                field_id=field.id,
+                field__is_active=True,
+            ).filter(
+                Q(field__device_type_id__isnull=True)
+                | Q(field__device_type_id=OuterRef("device_type_id")),
+            )
             if field.field_type in {"text", "textarea"}:
-                base["custom_values__text_value__icontains"] = value
-            elif field.field_type in {"select", "number", "date"}:
-                if field.field_type == "number":
-                    try:
-                        value = Decimal(value)
-                    except InvalidOperation:
-                        queryset = queryset.none()
-                        break
-                base["custom_values__text_value" if field.field_type == "select" else "custom_values__number_value" if field.field_type == "number" else "custom_values__date_value"] = value
+                lookup = "text_value__icontains" if operator == "contains" else "text_value"
+                values = values.filter(**{lookup: value})
+            elif field.field_type == "number":
+                lookup = {"eq": "exact", "gte": "gte", "lte": "lte"}[operator]
+                values = values.filter(**{f"number_value__{lookup}": value})
+            elif field.field_type == "date":
+                lookup = {"eq": "exact", "gte": "gte", "lte": "lte"}[operator]
+                values = values.filter(**{f"date_value__{lookup}": value})
             elif field.field_type == "boolean":
-                if value.lower() in {"true", "1", "yes", "是"}:
-                    base["custom_values__boolean_value"] = True
-                elif value.lower() in {"false", "0", "no", "否"}:
-                    base["custom_values__boolean_value"] = False
-                else:
-                    queryset = queryset.none()
-                    break
+                values = values.filter(boolean_value=value)
+            elif field.field_type == "select":
+                values = values.filter(text_value=value)
             else:
-                base["custom_values__json_value__icontains"] = value
-            queryset = queryset.filter(**base)
-        if tag or any(key.startswith("custom__") for key in self.request.query_params):
+                values = values.filter(_custom_filter_multiselect_membership(value))
+            queryset = queryset.filter(Exists(values))
+        if tag:
             queryset = queryset.distinct()
         return queryset
+
+    def _validated_custom_filters(self):
+        raw_conditions = [
+            (query_key, value)
+            for query_key, values in self.request.query_params.lists()
+            if query_key.startswith("custom__")
+            for value in values
+        ]
+        if not raw_conditions:
+            return []
+        if len(raw_conditions) > CUSTOM_FILTER_MAX_CONDITIONS:
+            raise DRFValidationError({"custom_filters": f"动态筛选条件最多 {CUSTOM_FILTER_MAX_CONDITIONS} 条"})
+
+        parsed = []
+        field_keys = set()
+        for query_key, raw_value in raw_conditions:
+            field_key, explicit_operator = _custom_filter_key_and_operator(query_key)
+            parsed.append((query_key, field_key, explicit_operator, raw_value))
+            if field_key:
+                field_keys.add(field_key)
+        fields = {
+            field.key: field
+            for field in CustomField.objects.filter(key__in=field_keys).select_related("device_type").prefetch_related("options")
+        }
+        errors = []
+        validated = []
+        for query_key, field_key, explicit_operator, raw_value in parsed:
+            field = fields.get(field_key)
+            if not field:
+                errors.append(f"{query_key}：字段不存在")
+                continue
+            if not field.is_active:
+                errors.append(f"{field.name}：字段已停用")
+                continue
+            if not field.filterable:
+                errors.append(f"{field.name}：字段未开启筛选")
+                continue
+            operator = explicit_operator or ("contains" if field.field_type in {"text", "textarea", "multiselect"} else "eq")
+            if operator not in CUSTOM_FILTER_OPERATORS_BY_TYPE.get(field.field_type, set()):
+                errors.append(f"{field.name}：不支持“{operator}”操作")
+                continue
+            value = str(raw_value).strip()
+            if not value:
+                errors.append(f"{field.name}：筛选值不能为空")
+                continue
+            try:
+                if field.field_type == "number":
+                    value = Decimal(value)
+                    if not value.is_finite():
+                        raise ValueError("必须是有限数字")
+                elif field.field_type == "date":
+                    if not re.fullmatch(r"\d{4}-\d{2}-\d{2}", value):
+                        raise ValueError("必须使用 YYYY-MM-DD 格式")
+                    value = date.fromisoformat(value)
+                elif field.field_type == "boolean":
+                    value = _custom_filter_boolean(value)
+                elif field.field_type in {"select", "multiselect"}:
+                    active_options = {option.value for option in field.options.all() if option.is_active}
+                    if value not in active_options:
+                        raise ValueError("选项值不存在或已停用")
+            except (InvalidOperation, ValueError) as exc:
+                errors.append(f"{field.name}：{exc}")
+                continue
+            validated.append((field, operator, value))
+        if errors:
+            raise DRFValidationError({"custom_filters": errors})
+        return validated
+
+    def _requested_custom_columns(self) -> "list[str]":
+        cached = getattr(self, "_requested_custom_columns_cache", None)
+        if cached is not None:
+            return cached
+
+        raw_values = self.request.query_params.getlist("custom_columns")
+        keys = []
+        for raw_value in raw_values:
+            keys.extend(part.strip() for part in raw_value.split(",") if part.strip())
+        keys = list(dict.fromkeys(keys))
+        if len(keys) > self.max_custom_columns:
+            raise DRFValidationError({
+                "custom_columns": f"动态列最多同时请求 {self.max_custom_columns} 个字段",
+            })
+        if not keys:
+            self._requested_custom_columns_cache = []
+            return []
+
+        available = set(
+            CustomField.objects.filter(
+                key__in=keys,
+                is_active=True,
+                list_visible=True,
+            ).values_list("key", flat=True)
+        )
+        missing = [key for key in keys if key not in available]
+        if missing:
+            raise DRFValidationError({
+                "custom_columns": f"动态列不存在、已停用或未开启列表展示：{', '.join(missing)}",
+            })
+        self._requested_custom_columns_cache = keys
+        return keys
+
+    def get_serializer_context(self):
+        context = super().get_serializer_context()
+        if self.action == "list" and self.request.query_params.get("compact", "").lower() in {"1", "true", "yes"}:
+            context["requested_custom_columns"] = self._requested_custom_columns()
+        else:
+            context["requested_custom_columns"] = []
+        return context
 
     def get_serializer_class(self):
         if self.action in {"create", "update", "partial_update"}:
@@ -190,7 +399,26 @@ class AssetViewSet(AuditedModelViewSetMixin, viewsets.ModelViewSet):
 
     def audit_snapshot(self, instance):
         refreshed = self.queryset.get(pk=instance.pk)
-        return AssetDetailSerializer(refreshed).data
+        snapshot = AssetDetailSerializer(refreshed).data
+        custom_snapshot = asset_custom_value_snapshot(refreshed.pk)
+        snapshot["custom_value_snapshot"] = custom_snapshot
+        snapshot["custom_values"] = {
+            item["key"]: item["value"] for item in custom_snapshot
+        }
+        custom_values_by_id = {item["field_id"]: item["value"] for item in custom_snapshot}
+        for field in snapshot.get("custom_fields", []):
+            if field.get("id") in custom_values_by_id:
+                field["value"] = custom_values_by_id[field["id"]]
+        return snapshot
+
+    def audit_extra(self, before, after, *, action):
+        if action not in {"create", "update"}:
+            return None
+        changes = asset_custom_value_changes(
+            (before or {}).get("custom_value_snapshot"),
+            (after or {}).get("custom_value_snapshot"),
+        )
+        return {"custom_changes": changes} if changes else None
 
     @transaction.atomic
     def perform_destroy(self, instance):
@@ -439,6 +667,11 @@ class CustomFieldViewSet(AuditedModelViewSetMixin, viewsets.ModelViewSet):
     search_fields = ["key", "name", "device_type__name"]
     ordering_fields = ["name", "sort_order", "created_at", "updated_at"]
 
+    def get_permissions(self):
+        if self.action == "schema_fields":
+            return [CanViewAssetCustomFieldSchema()]
+        return super().get_permissions()
+
     def get_queryset(self):
         queryset = super().get_queryset()
         if self.action not in {"retrieve", "update", "partial_update", "destroy"}:
@@ -449,15 +682,56 @@ class CustomFieldViewSet(AuditedModelViewSetMixin, viewsets.ModelViewSet):
                 queryset = queryset.filter(is_active=active == "true")
         return queryset
 
-    @action(detail=False, methods=["get"], url_path="schema")
+    @extend_schema(
+        parameters=[
+            OpenApiParameter(
+                name="device_type",
+                type=OpenApiTypes.INT,
+                required=False,
+                description="仅返回全局字段与指定设备类型字段。",
+            ),
+            OpenApiParameter(
+                name="list_visible",
+                type=OpenApiTypes.BOOL,
+                required=False,
+                description="仅返回启用且允许台账列展示的字段。",
+            ),
+            OpenApiParameter(
+                name="filterable",
+                type=OpenApiTypes.BOOL,
+                required=False,
+                description="仅返回启用且允许台账筛选的字段；返回选项仅包含启用选项。",
+            ),
+        ],
+        responses=CustomFieldRuntimeSchemaSerializer(many=True),
+    )
+    @action(detail=False, methods=["get"], url_path="schema", pagination_class=None, filter_backends=[])
     def schema_fields(self, request):
+        list_visible = request.query_params.get("list_visible", "").strip().lower() in {"1", "true", "yes"}
+        filterable = request.query_params.get("filterable", "").strip().lower() in {"1", "true", "yes"}
+        if list_visible or filterable:
+            filters = {"is_active": True}
+            if list_visible:
+                filters["list_visible"] = True
+            if filterable:
+                filters["filterable"] = True
+            options = CustomFieldOption.objects.all().order_by("sort_order", "id")
+            if filterable:
+                options = options.filter(is_active=True)
+            queryset = CustomField.objects.filter(**filters).select_related("device_type").prefetch_related(
+                Prefetch("options", queryset=options)
+            ).order_by("device_type__name", "sort_order", "id")
+            return Response(CustomFieldRuntimeSchemaSerializer(queryset, many=True).data)
+
         device_type = request.query_params.get("device_type", "").strip()
-        queryset = self.get_queryset().filter(is_active=True)
         if device_type:
-            queryset = queryset.filter(device_type_id=device_type)
+            scope = Q(device_type__isnull=True) | Q(device_type_id=device_type)
         else:
-            queryset = queryset.none()
-        return Response(CustomFieldSerializer(queryset, many=True).data)
+            scope = Q(device_type__isnull=True)
+        queryset = CustomField.objects.filter(is_active=True).filter(scope).select_related("device_type").prefetch_related(
+            Prefetch("options", queryset=CustomFieldOption.objects.filter(is_active=True))
+        ).order_by("sort_order", "id")
+        return Response(CustomFieldRuntimeSchemaSerializer(queryset, many=True).data)
 
     def perform_destroy(self, instance):
         from rest_framework.exceptions import ValidationError as DRFValidationError
@@ -481,7 +755,18 @@ class CustomFieldOptionViewSet(AuditedModelViewSetMixin, viewsets.ModelViewSet):
 
     def perform_destroy(self, instance):
         from rest_framework.exceptions import ValidationError as DRFValidationError
-        if instance.field.asset_values.filter(json_value__contains=[instance.value]).exists() or instance.field.asset_values.filter(text_value=instance.value).exists():
+        if _default_references_option(instance.field, instance.value):
+            raise DRFValidationError("选项被字段默认值引用，不能删除")
+        used = False
+        for text_value, json_value in AssetCustomValue.objects.filter(
+            field_id=instance.field_id
+        ).values_list("text_value", "json_value"):
+            if text_value == instance.value or (
+                isinstance(json_value, list) and instance.value in json_value
+            ):
+                used = True
+                break
+        if used:
             raise DRFValidationError("选项已有资产使用，不能删除，请先停用")
         super().perform_destroy(instance)
 
@@ -663,6 +948,20 @@ class GroupViewSet(viewsets.ReadOnlyModelViewSet):
     ordering_fields = ["name", "user_count"]
 
 
+def _user_audit_snapshot(user):
+    role_code = user_role_code(user)
+    return {
+        "username": user.username,
+        "display_name": user.get_full_name() or user.username,
+        "first_name": user.first_name,
+        "last_name": user.last_name,
+        "email": user.email,
+        "role_code": role_code,
+        "role_name": ROLE_DEFINITIONS.get(role_code, {}).get("name", ""),
+        "is_active": user.is_active,
+    }
+
+
 class UserViewSet(viewsets.ModelViewSet):
     queryset = User.objects.prefetch_related("groups").order_by("username")
     serializer_class = UserSerializer
@@ -671,6 +970,33 @@ class UserViewSet(viewsets.ModelViewSet):
     search_fields = ["username", "first_name", "last_name", "email"]
     ordering_fields = ["username", "date_joined", "last_login"]
 
+    @transaction.atomic
+    def perform_create(self, serializer):
+        instance = serializer.save()
+        write_audit_log(
+            self.request,
+            action="create",
+            resource_type="user",
+            resource_id=instance.pk,
+            after=_user_audit_snapshot(instance),
+        )
+
+    @transaction.atomic
+    def perform_update(self, serializer):
+        before = _user_audit_snapshot(serializer.instance)
+        password_reset = "password" in serializer.validated_data
+        instance = serializer.save()
+        write_audit_log(
+            self.request,
+            action="update",
+            resource_type="user",
+            resource_id=instance.pk,
+            before=before,
+            after=_user_audit_snapshot(instance),
+            extra={"password_reset": True} if password_reset else None,
+        )
+
+    @transaction.atomic
     def perform_destroy(self, instance):
         if instance.pk == self.request.user.pk:
             from rest_framework.exceptions import ValidationError as DRFValidationError
@@ -678,7 +1004,16 @@ class UserViewSet(viewsets.ModelViewSet):
         if instance.is_superuser:
             from rest_framework.exceptions import ValidationError as DRFValidationError
             raise DRFValidationError("不能通过业务接口删除超级管理员")
+        before = _user_audit_snapshot(instance)
+        resource_id = instance.pk
         instance.delete()
+        write_audit_log(
+            self.request,
+            action="delete",
+            resource_type="user",
+            resource_id=resource_id,
+            before=before,
+        )
 
 
 class FaultEventViewSet(AuditedModelViewSetMixin, viewsets.ModelViewSet):
@@ -1278,6 +1613,7 @@ def auth_logout(request):
 @extend_schema(request=OpenApiTypes.OBJECT, responses=OpenApiTypes.OBJECT)
 @api_view(["POST"])
 @permission_classes([IsAuthenticated])
+@transaction.atomic
 def auth_change_password(request):
     old_password = request.data.get("old_password", "")
     new_password = request.data.get("new_password", "")
@@ -1293,6 +1629,13 @@ def auth_change_password(request):
     profile.must_change_password = False
     profile.password_changed_at = timezone.now()
     profile.save(update_fields=["must_change_password", "password_changed_at", "updated_at"])
+    write_audit_log(
+        request,
+        action="update",
+        resource_type="user",
+        resource_id=request.user.pk,
+        extra={"password_change": True},
+    )
     login(request, request.user)
     return Response({"ok": True, "password_change_required": False})
 

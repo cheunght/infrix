@@ -9,6 +9,7 @@ import './feature-styles.css'
 import './rack-view.css'
 import './element-admin.css'
 import './components/page/page-layout.css'
+import './settings-styles.css'
 
 const app = createApp(App)
 app.use(router).use(ElementPlus, { locale: zhCn })
