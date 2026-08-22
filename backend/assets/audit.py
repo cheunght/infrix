@@ -2,7 +2,7 @@ import json
 
 from django.core.serializers.json import DjangoJSONEncoder
 
-from .models import AssetCustomValue, AuditLog
+from .models import Asset, AssetCustomValue, AuditLog
 
 
 SENSITIVE_KEYS = {
@@ -35,6 +35,36 @@ def model_snapshot(instance):
             continue
         snapshot[field.name] = field.value_from_object(instance)
     return json_value(snapshot)
+
+
+def asset_audit_snapshot(asset_id):
+    """Build the same rich asset snapshot used by asset write audits."""
+    from .serializers import AssetDetailSerializer
+
+    asset = Asset.objects.select_related(
+        "department",
+        "brand",
+        "device_type",
+        "asset_data_center",
+        "rack_allocation__rack__room__data_center",
+    ).prefetch_related(
+        "network_addresses",
+        "procurement_records",
+        "maintenance_contracts",
+        "asset_tags__tag",
+        "custom_values__field__options",
+    ).get(pk=asset_id)
+    snapshot = AssetDetailSerializer(asset).data
+    custom_snapshot = asset_custom_value_snapshot(asset.pk)
+    snapshot["custom_value_snapshot"] = custom_snapshot
+    snapshot["custom_values"] = {
+        item["key"]: item["value"] for item in custom_snapshot
+    }
+    custom_values_by_id = {item["field_id"]: item["value"] for item in custom_snapshot}
+    for field in snapshot.get("custom_fields", []):
+        if field.get("id") in custom_values_by_id:
+            field["value"] = custom_values_by_id[field["id"]]
+    return snapshot
 
 
 def asset_custom_value_snapshot(asset_id):

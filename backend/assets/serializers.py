@@ -3,6 +3,7 @@ from django.db import IntegrityError, transaction
 from collections import Counter
 from django.db.models import Count, Q
 from rest_framework import serializers
+from rest_framework.exceptions import ValidationError as DRFValidationError
 from django.contrib.auth.models import Group, User
 from django.contrib.auth.password_validation import validate_password
 from django.utils import timezone
@@ -12,7 +13,7 @@ from typing import Any
 import json
 import re
 from .models import AuditLog, Asset, AssetCustomValue, AssetNetworkAddress, AssetTag, Brand, CustomField, CustomFieldOption, DataCenter, DeviceType, FaultEvent, InventoryItem, InventoryTask, MaintenanceContract, ProcurementRecord, Rack, RackUnitAllocation, RepairRecord, ServerRoom, SoftwareLicense, SparePart, SpareStock, SpareStockTransaction, Tag, UserSecurityProfile
-from .services import apply_asset_custom_values, apply_asset_tags, apply_spare_stock_transaction, configure_asset
+from .services import apply_asset_custom_values, apply_asset_tags, apply_spare_stock_transaction, configure_asset, inventory_snapshot_location, inventory_task_can_delete, validate_inventory_resolution_request
 from .roles import ROLE_AUDITOR, ROLE_DEFINITIONS, ROLE_NAME_TO_CODE, preset_group_for_code, user_role_code
 
 
@@ -938,7 +939,7 @@ class AssetDetailSerializer(serializers.ModelSerializer):
 
     def get_inventory_records(self, obj) -> list[dict[str, Any]]:
         return InventoryItemSerializer(
-            obj.inventory_items.select_related("asset", "task", "task__data_center", "task__server_room", "checked_by", "actual_rack__room__data_center"),
+            obj.inventory_items.select_related("asset", "task", "task__data_center", "task__server_room", "checked_by", "resolved_by", "actual_rack__room__data_center"),
             many=True,
         ).data
 
@@ -1080,6 +1081,84 @@ class InventoryScopePreviewSerializer(serializers.Serializer):
 
 
 INVENTORY_STATUS_LABELS = dict(InventoryItem.STATUS)
+INVENTORY_RESOLUTION_STATUS_LABELS = dict(InventoryItem.RESOLUTION_STATUS)
+INVENTORY_RESOLUTION_ACTION_LABELS = dict(InventoryItem.RESOLUTION_ACTION)
+
+
+class InventoryResolutionSerializer(serializers.Serializer):
+    action = serializers.ChoiceField(choices=InventoryItem.RESOLUTION_ACTION)
+    note = serializers.CharField(required=False, allow_blank=True, trim_whitespace=True)
+
+    def validate(self, attrs):
+        validate_inventory_resolution_request(
+            attrs.get("action"),
+            attrs.get("note", ""),
+        )
+        return attrs
+
+
+class InventoryBulkResolutionSerializer(serializers.Serializer):
+    item_ids = serializers.ListField(
+        child=serializers.IntegerField(min_value=1),
+        allow_empty=False,
+    )
+    action = serializers.ChoiceField(choices=InventoryItem.RESOLUTION_ACTION)
+    note = serializers.CharField(required=False, allow_blank=True, trim_whitespace=True)
+
+    def validate_item_ids(self, value):
+        unique_ids = list(dict.fromkeys(value))
+        if len(unique_ids) > 100:
+            raise serializers.ValidationError("一次最多处理 100 条盘点异常")
+        return unique_ids
+
+    def validate(self, attrs):
+        validate_inventory_resolution_request(
+            attrs.get("action"),
+            attrs.get("note", ""),
+            bulk=True,
+        )
+        return attrs
+
+
+class InventoryBulkResolutionResultSerializer(serializers.Serializer):
+    item_id = serializers.IntegerField()
+    asset_no = serializers.CharField()
+    success = serializers.BooleanField()
+    reason = serializers.CharField(allow_blank=True)
+
+
+class InventoryBulkResolutionResponseSerializer(serializers.Serializer):
+    requested = serializers.IntegerField()
+    succeeded = serializers.IntegerField()
+    failed = serializers.IntegerField()
+    results = InventoryBulkResolutionResultSerializer(many=True)
+
+
+class InventoryBulkNormalSerializer(serializers.Serializer):
+    item_ids = serializers.ListField(
+        child=serializers.IntegerField(min_value=1),
+        allow_empty=False,
+    )
+
+    def validate_item_ids(self, value):
+        unique_ids = list(dict.fromkeys(value))
+        if len(unique_ids) > 100:
+            raise serializers.ValidationError("一次最多标记 100 条盘点项")
+        return unique_ids
+
+
+class InventoryBulkNormalResultSerializer(serializers.Serializer):
+    item_id = serializers.IntegerField()
+    asset_no = serializers.CharField()
+    success = serializers.BooleanField()
+    reason = serializers.CharField(allow_blank=True)
+
+
+class InventoryBulkNormalResponseSerializer(serializers.Serializer):
+    requested = serializers.IntegerField()
+    succeeded = serializers.IntegerField()
+    failed = serializers.IntegerField()
+    results = InventoryBulkNormalResultSerializer(many=True)
 
 
 class InventoryItemSerializer(serializers.ModelSerializer):
@@ -1098,12 +1177,24 @@ class InventoryItemSerializer(serializers.ModelSerializer):
     actual_data_center = serializers.CharField(source="actual_rack.room.data_center.name", read_only=True, allow_null=True)
     actual_server_room = serializers.CharField(source="actual_rack.room.name", read_only=True, allow_null=True)
     actual_rack_code = serializers.CharField(source="actual_rack.code", read_only=True, allow_null=True)
+    resolution_status_label = serializers.SerializerMethodField()
+    resolution_action_label = serializers.SerializerMethodField()
+    resolved_by_name = serializers.SerializerMethodField()
 
     def get_status_label(self, obj) -> str:
         return INVENTORY_STATUS_LABELS.get(obj.status, obj.status)
 
     def get_checked_by_name(self, obj) -> str:
         return (obj.checked_by.get_full_name() or obj.checked_by.username) if obj.checked_by else ""
+
+    def get_resolution_status_label(self, obj) -> str:
+        return INVENTORY_RESOLUTION_STATUS_LABELS.get(obj.resolution_status, obj.resolution_status)
+
+    def get_resolution_action_label(self, obj) -> str:
+        return INVENTORY_RESOLUTION_ACTION_LABELS.get(obj.resolution_action, "") if obj.resolution_action else ""
+
+    def get_resolved_by_name(self, obj) -> str:
+        return (obj.resolved_by.get_full_name() or obj.resolved_by.username) if obj.resolved_by else ""
 
     def _snapshot(self, obj):
         return obj.system_snapshot or {}
@@ -1124,10 +1215,29 @@ class InventoryItemSerializer(serializers.ModelSerializer):
         return self._snapshot(obj).get("end_u")
 
     def validate(self, attrs):
+        protected_fields = {
+            "resolution_status",
+            "resolution_action",
+            "resolution_note",
+            "resolved_by",
+            "resolved_at",
+        }
+        if any(field in self.initial_data for field in protected_fields):
+            raise serializers.ValidationError({"detail": "异常处理字段只能通过专用处理接口修改"})
         task = self.instance.task if self.instance else self.context.get("task")
         if task and task.status == "completed":
             raise serializers.ValidationError({"detail": "已完成的盘点任务已锁定，不能修改"})
         status = attrs.get("status", self.instance.status if self.instance else "pending")
+        if status == "normal":
+            if not self.instance:
+                raise serializers.ValidationError({"status": "盘点项必须来自已生成的盘点任务"})
+            try:
+                snapshot_rack, snapshot_start_u, snapshot_end_u = inventory_snapshot_location(self.instance)
+            except DRFValidationError as exc:
+                raise serializers.ValidationError(exc.detail) from exc
+            attrs["actual_rack"] = snapshot_rack
+            attrs["actual_start_u"] = snapshot_start_u
+            attrs["actual_end_u"] = snapshot_end_u
         actual_rack = attrs.get("actual_rack", self.instance.actual_rack if self.instance else None)
         start_u = attrs.get("actual_start_u", self.instance.actual_start_u if self.instance else None)
         end_u = attrs.get("actual_end_u", self.instance.actual_end_u if self.instance else None)
@@ -1172,13 +1282,18 @@ class InventoryItemSerializer(serializers.ModelSerializer):
             "system_data_center", "system_server_room", "system_rack_code", "system_start_u", "system_end_u",
             "status", "status_label", "checked_at", "checked_by", "checked_by_name",
             "actual_rack", "actual_data_center", "actual_server_room", "actual_rack_code",
-            "actual_start_u", "actual_end_u", "notes", "created_at", "updated_at",
+            "actual_start_u", "actual_end_u", "notes",
+            "resolution_status", "resolution_status_label", "resolution_action", "resolution_action_label",
+            "resolution_note", "resolved_by", "resolved_by_name", "resolved_at",
+            "created_at", "updated_at",
         ]
         read_only_fields = [
             "id", "task", "task_name", "asset", "asset_no", "asset_name", "asset_type", "serial_number",
             "system_data_center", "system_server_room", "system_rack_code", "system_start_u", "system_end_u",
             "status_label", "checked_at", "checked_by", "checked_by_name", "actual_data_center",
-            "actual_server_room", "actual_rack_code", "created_at", "updated_at",
+            "actual_server_room", "actual_rack_code", "resolution_status", "resolution_status_label",
+            "resolution_action", "resolution_action_label", "resolution_note", "resolved_by",
+            "resolved_by_name", "resolved_at", "created_at", "updated_at",
         ]
 
 
@@ -1188,27 +1303,46 @@ class InventoryTaskSerializer(serializers.ModelSerializer):
     server_room_name = serializers.CharField(source="server_room.name", read_only=True, allow_null=True)
     inspector_name = serializers.SerializerMethodField()
     summary = serializers.SerializerMethodField()
+    can_delete = serializers.SerializerMethodField()
 
     def get_inspector_name(self, obj) -> str:
         return obj.inspector.get_full_name() or obj.inspector.username
+
+    def get_can_delete(self, obj) -> bool:
+        return inventory_task_can_delete(obj)
 
     def get_summary(self, obj) -> dict[str, Any]:
         prefetched = getattr(obj, "_prefetched_objects_cache", {}).get("items")
         if prefetched is not None:
             counts = Counter(item.status for item in prefetched)
+            resolution_counts = Counter(
+                item.resolution_status
+                for item in prefetched
+                if item.status not in {"pending", "normal"}
+            )
         else:
-            counts = dict(obj.items.values("status").annotate(count=Count("id")).values_list("status", "count"))
+            rows = obj.items.values("status", "resolution_status").annotate(count=Count("id"))
+            counts = Counter()
+            resolution_counts = Counter()
+            for row in rows:
+                counts[row["status"]] += row["count"]
+                if row["status"] not in {"pending", "normal"}:
+                    resolution_counts[row["resolution_status"]] += row["count"]
         total = sum(counts.values())
         checked = total - counts.get("pending", 0)
+        exceptions = total - counts.get("pending", 0) - counts.get("normal", 0)
         return {
             "total": total,
             "checked": checked,
             "pending": counts.get("pending", 0),
             "normal": counts.get("normal", 0),
+            "exceptions": exceptions,
             "location_mismatch": counts.get("location_mismatch", 0),
             "not_found": counts.get("not_found", 0),
             "info_mismatch": counts.get("info_mismatch", 0),
             "other": counts.get("other", 0),
+            "resolution_pending": resolution_counts.get("pending", 0),
+            "resolution_resolved": resolution_counts.get("resolved", 0),
             "completion_rate": round(checked / total * 100, 1) if total else 0,
         }
 
@@ -1239,9 +1373,9 @@ class InventoryTaskSerializer(serializers.ModelSerializer):
         fields = [
             "id", "name", "data_center", "data_center_name", "server_room", "server_room_name",
             "inspector", "inspector_name", "start_at", "end_at", "status", "completed_at", "notes",
-            "summary", "created_at", "updated_at",
+            "summary", "can_delete", "created_at", "updated_at",
         ]
-        read_only_fields = ["id", "data_center_name", "server_room_name", "inspector_name", "status", "completed_at", "summary", "created_at", "updated_at"]
+        read_only_fields = ["id", "data_center_name", "server_room_name", "inspector_name", "status", "completed_at", "summary", "can_delete", "created_at", "updated_at"]
 
 
 class RackSerializer(serializers.ModelSerializer):

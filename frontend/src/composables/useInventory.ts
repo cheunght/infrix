@@ -2,8 +2,12 @@ import { computed, onBeforeUnmount, ref } from "vue";
 import { ElMessage, ElMessageBox } from "element-plus";
 import { pageItems, pageTotal, type PageResult } from "../api";
 import type {
+  InventoryBulkNormalResponse,
+  InventoryBulkResolutionResponse,
   InventoryInspector,
   InventoryItem,
+  InventoryResolutionAction,
+  InventoryResolutionStatus,
   InventoryScopePreview,
   InventoryTask,
   InventoryStatus,
@@ -13,6 +17,7 @@ import type {
 import type { InventoryContext } from "../types/page-context";
 
 type AuxKey = "rooms" | "inspectors" | "racks";
+type BatchSelectionMode = "inventory" | "resolution";
 
 export function useInventory(context: InventoryContext) {
   const taskListLoading = ref(false);
@@ -24,9 +29,13 @@ export function useInventory(context: InventoryContext) {
   const auxLoading = ref(false);
   const auxErrors = ref<Record<AuxKey, string>>({ rooms: "", inspectors: "", racks: "" });
   const taskCreating = ref(false);
+  const taskDeletingId = ref<number | null>(null);
   const taskCompleting = ref(false);
   const taskReopening = ref(false);
   const itemSaving = ref(false);
+  const resolutionSaving = ref(false);
+  const bulkResolutionSaving = ref(false);
+  const bulkNormalSaving = ref(false);
 
   const tasks = ref<InventoryTask[]>([]);
   const taskCount = ref(0);
@@ -43,11 +52,18 @@ export function useInventory(context: InventoryContext) {
   const itemPageSize = ref(50);
   const itemSearch = ref("");
   const itemStatus = ref("");
+  const itemResolutionStatus = ref<InventoryResolutionStatus | "">("");
+  const selectedBatchItems = ref<InventoryItem[]>([]);
+  const batchSelectionMode = ref<BatchSelectionMode | null>(null);
   const inspectors = ref<InventoryInspector[]>([]);
   const racks = ref<Rack[]>([]);
   const showTaskDialog = ref(false);
   const showItemDialog = ref(false);
+  const showResolutionDialog = ref(false);
+  const showBulkResolutionDialog = ref(false);
+  const showBulkNormalDialog = ref(false);
   const editingItem = ref<InventoryItem | null>(null);
+  const resolutionItem = ref<InventoryItem | null>(null);
   const scopePreview = ref<InventoryScopePreview | null>(null);
   const scopePreviewLoading = ref(false);
   const scopePreviewError = ref("");
@@ -73,6 +89,19 @@ export function useInventory(context: InventoryContext) {
     actual_end_u: "",
     notes: "",
   });
+  const resolutionForm = ref<{
+    action: InventoryResolutionAction | "";
+    note: string;
+  }>({
+    action: "",
+    note: "",
+  });
+  const bulkResolutionAction = ref<InventoryResolutionAction | "">("");
+  const bulkResolutionCount = ref(0);
+  const bulkResolutionForm = ref({ note: "" });
+  const bulkResolutionResult = ref<InventoryBulkResolutionResponse | null>(null);
+  const bulkNormalCount = ref(0);
+  const bulkNormalResult = ref<InventoryBulkNormalResponse | null>(null);
 
   let taskRequestId = 0;
   let itemRequestId = 0;
@@ -117,10 +146,16 @@ export function useInventory(context: InventoryContext) {
     { label: "其他异常", value: "other" },
   ];
   const itemResultOptions = itemStatusOptions.filter((item) => item.value !== "pending");
+  const itemResolutionStatusOptions = [
+    { label: "待处理", value: "pending" as const },
+    { label: "已处理", value: "resolved" as const },
+  ];
   const taskHasFilters = computed(() =>
     Boolean(taskSearch.value.trim() || taskStatus.value || taskDataCenter.value || taskRoom.value),
   );
-  const itemHasFilters = computed(() => Boolean(itemSearch.value.trim() || itemStatus.value));
+  const itemHasFilters = computed(() => Boolean(
+    itemSearch.value.trim() || itemStatus.value || itemResolutionStatus.value,
+  ));
   const taskAuxError = computed(() => auxErrors.value.rooms || auxErrors.value.inspectors || "");
   const itemAuxError = computed(() => auxErrors.value.racks || "");
   const auxError = computed(() =>
@@ -161,6 +196,119 @@ export function useInventory(context: InventoryContext) {
       info_mismatch: "danger",
       other: "warning",
     } as Record<string, "success" | "warning" | "danger" | "info">)[status] || "info";
+  }
+  function isExceptionStatus(status: string) {
+    return !["pending", "normal"].includes(status);
+  }
+  function isInventoryBatchSelectable(item: InventoryItem) {
+    return context.can("inventory.manage") &&
+      activeTask.value?.status === "in_progress" &&
+      item.status === "pending";
+  }
+  function isResolutionBatchSelectable(item: InventoryItem) {
+    return context.can("inventory.manage") &&
+      isExceptionStatus(item.status) &&
+      item.resolution_status === "pending";
+  }
+  function batchSelectionModeFor(item: InventoryItem): BatchSelectionMode | null {
+    if (isInventoryBatchSelectable(item)) return "inventory";
+    if (isResolutionBatchSelectable(item)) return "resolution";
+    return null;
+  }
+  function isBatchSelectableForMode(item: InventoryItem, mode: BatchSelectionMode) {
+    return mode === "inventory"
+      ? isInventoryBatchSelectable(item)
+      : isResolutionBatchSelectable(item);
+  }
+  function isBatchSelectable(item: InventoryItem) {
+    if (batchSelectionMode.value) {
+      return isBatchSelectableForMode(item, batchSelectionMode.value);
+    }
+    return Boolean(batchSelectionModeFor(item));
+  }
+  function onBatchSelectionChange(rows: InventoryItem[]) {
+    if (!rows.length) {
+      clearBatchSelection();
+      return;
+    }
+    const mode = batchSelectionMode.value || rows.map(batchSelectionModeFor).find(Boolean) || null;
+    if (!mode) {
+      clearBatchSelection();
+      return;
+    }
+    batchSelectionMode.value = mode;
+    selectedBatchItems.value = rows.filter((item) => isBatchSelectableForMode(item, mode));
+  }
+  function clearBatchSelection() {
+    selectedBatchItems.value = [];
+    batchSelectionMode.value = null;
+  }
+  function resolutionStatusLabel(status: string) {
+    return ({
+      not_required: "—",
+      pending: "待处理",
+      resolved: "已处理",
+    } as Record<string, string>)[status] || status || "—";
+  }
+  function resolutionStatusTagType(status: string) {
+    return ({
+      not_required: "info",
+      pending: "warning",
+      resolved: "success",
+    } as Record<string, "success" | "warning" | "danger" | "info">)[status] || "info";
+  }
+  function resolutionActionLabel(action: string | null | undefined) {
+    return ({
+      update_asset: "更新资产台账",
+      keep_asset: "保持资产台账",
+      confirm_missing: "确认设备缺失",
+      ignore: "忽略 / 误报",
+    } as Record<string, string>)[action || ""] || "—";
+  }
+  function batchResolutionActionOptions(items = selectedBatchItems.value) {
+    if (
+      batchSelectionMode.value !== "resolution" ||
+      !items.length ||
+      items.some((item) => !isBatchSelectableForMode(item, "resolution"))
+    ) return [];
+    const options: Array<{ label: string; value: InventoryResolutionAction }> = [
+      { label: "保持当前台账", value: "keep_asset" },
+      { label: "忽略 / 误报", value: "ignore" },
+    ];
+    if (items.every((item) => item.status === "not_found")) {
+      options.unshift({ label: "确认设备缺失", value: "confirm_missing" });
+    }
+    return options;
+  }
+  function hasCompleteActualLocation(item: InventoryItem | null | undefined) {
+    return Boolean(
+      item &&
+      item.status === "location_mismatch" &&
+      item.actual_rack &&
+      item.actual_data_center &&
+      item.actual_server_room &&
+      item.actual_rack_code &&
+      item.actual_start_u != null &&
+      item.actual_end_u != null,
+    );
+  }
+  function resolutionActionOptions(item: InventoryItem | null | undefined) {
+    if (!item || !isExceptionStatus(item.status) || item.resolution_status !== "pending") return [];
+    const options: Array<{ label: string; value: InventoryResolutionAction }> = [];
+    if (
+      item.status === "location_mismatch" &&
+      context.can("inventory.manage") &&
+      context.can("assets.manage") &&
+      hasCompleteActualLocation(item)
+    ) {
+      options.push({ label: "更新资产台账", value: "update_asset" });
+    }
+    if (item.status === "not_found") {
+      options.push({ label: "确认设备缺失", value: "confirm_missing" });
+    }
+    options.push({ label: "保持当前台账", value: "keep_asset" });
+    options.push({ label: "忽略 / 误报", value: "ignore" });
+    return options;
   }
   function taskScope(task: InventoryTask) {
     return task.server_room_name
@@ -337,6 +485,7 @@ export function useInventory(context: InventoryContext) {
 
   async function loadItems(corrected = false): Promise<boolean> {
     if (!activeTask.value) return false;
+    clearBatchSelection();
     const taskId = activeTask.value.id;
     const requestId = ++itemRequestId;
     itemController?.abort();
@@ -351,6 +500,7 @@ export function useInventory(context: InventoryContext) {
       });
       if (itemSearch.value.trim()) params.set("search", itemSearch.value.trim());
       if (itemStatus.value) params.set("status", itemStatus.value);
+      if (itemResolutionStatus.value) params.set("resolution_status", itemResolutionStatus.value);
       const result = await context.request<PageResult<InventoryItem> | InventoryItem[]>(
         `/inventory-tasks/${taskId}/items/?${params}`,
         { signal: controller.signal },
@@ -385,6 +535,7 @@ export function useInventory(context: InventoryContext) {
 
   async function refreshActiveTask(taskId = activeTask.value?.id) {
     if (!taskId || activeTask.value?.id !== taskId) return false;
+    clearBatchSelection();
     const requestId = ++taskDetailRequestId;
     taskDetailController?.abort();
     const controller = new AbortController();
@@ -418,6 +569,7 @@ export function useInventory(context: InventoryContext) {
   }
 
   async function openTask(task: InventoryTask) {
+    clearBatchSelection();
     const requestId = ++taskDetailRequestId;
     taskDetailController?.abort();
     itemController?.abort();
@@ -436,6 +588,7 @@ export function useInventory(context: InventoryContext) {
       itemPage.value = 1;
       itemSearch.value = "";
       itemStatus.value = "";
+      itemResolutionStatus.value = "";
       await loadItems();
     } catch (error) {
       if (requestId === taskDetailRequestId && !controller.signal.aborted) {
@@ -456,6 +609,7 @@ export function useInventory(context: InventoryContext) {
     itemRequestId += 1;
     itemController?.abort();
     activeTask.value = null;
+    clearBatchSelection();
     items.value = [];
     itemCount.value = 0;
     itemListError.value = "";
@@ -570,6 +724,34 @@ export function useInventory(context: InventoryContext) {
     }
   }
 
+  async function deleteTask(task: InventoryTask) {
+    if (!context.can("inventory.manage") || !task.can_delete || taskDeletingId.value !== null) {
+      return false;
+    }
+    const ok = await ElMessageBox.confirm(
+      `删除后会同时删除尚未填写盘点结果的明细，且无法恢复。确定删除任务“${task.name}”吗？`,
+      "删除盘点任务",
+      { type: "warning" },
+    ).catch(() => false);
+    if (!ok || taskDeletingId.value !== null) return false;
+
+    taskDeletingId.value = task.id;
+    try {
+      await context.request(`/inventory-tasks/${task.id}/`, { method: "DELETE" });
+      await loadTasks();
+      ElMessage.success("盘点任务已删除");
+      if (taskListError.value) {
+        ElMessage.warning("盘点任务已删除，但列表刷新失败，请稍后重试");
+      }
+      return true;
+    } catch (error) {
+      ElMessage.error(error instanceof Error ? error.message : "盘点任务删除失败");
+      return false;
+    } finally {
+      taskDeletingId.value = null;
+    }
+  }
+
   async function completeTask() {
     if (!activeTask.value || taskCompleting.value) return;
     if (activeTask.value.summary.pending > 0) {
@@ -591,7 +773,12 @@ export function useInventory(context: InventoryContext) {
       );
       if (activeTask.value?.id === taskId) activeTask.value = result;
       await Promise.all([loadItems(), loadTasks()]);
-      ElMessage.success("盘点任务已完成");
+      const resolutionPending = result.summary.resolution_pending || 0;
+      ElMessage.success(
+        resolutionPending > 0
+          ? `盘点任务已完成，仍有 ${resolutionPending} 条异常待处理`
+          : "盘点任务已完成",
+      );
       if (itemListError.value || taskListError.value) {
         ElMessage.warning("盘点任务已完成，但部分数据刷新失败，请稍后重试");
       }
@@ -636,18 +823,62 @@ export function useInventory(context: InventoryContext) {
     }
   }
 
+  function emptyItemLocation() {
+    return { actual_rack: "", actual_start_u: "", actual_end_u: "" };
+  }
+
+  function systemLocationFor(item: InventoryItem | null | undefined) {
+    if (
+      !item?.system_rack_code ||
+      item.system_start_u == null ||
+      item.system_end_u == null
+    ) {
+      return emptyItemLocation();
+    }
+
+    const candidates = activeRacks.value.filter((rack) => rack.code === item.system_rack_code);
+    const rack = candidates.find(
+      (candidate) =>
+        candidate.server_room_name === item.system_server_room &&
+        candidate.data_center_name === item.system_data_center,
+    ) || (candidates.length === 1 ? candidates[0] : null);
+    if (!rack) return emptyItemLocation();
+
+    return {
+      actual_rack: String(rack.id),
+      actual_start_u: String(item.system_start_u),
+      actual_end_u: String(item.system_end_u),
+    };
+  }
+
+  function clearItemLocation() {
+    Object.assign(itemForm.value, emptyItemLocation());
+  }
+
+  function applySystemLocation(item: InventoryItem | null | undefined = editingItem.value) {
+    Object.assign(itemForm.value, systemLocationFor(item));
+  }
+
   async function initializeItem(item: InventoryItem) {
     if (!activeTask.value || activeTask.value.status === "completed") return false;
     if (!racks.value.length) await loadRacks();
     if (itemAuxError.value) return false;
     editingItem.value = item;
+    const initialLocation =
+      item.status === "normal"
+        ? systemLocationFor(item)
+        : item.status === "pending" || item.status === "not_found"
+          ? emptyItemLocation()
+          : {
+              actual_rack: item.actual_rack ? String(item.actual_rack) : "",
+              actual_start_u: item.actual_start_u == null ? "" : String(item.actual_start_u),
+              actual_end_u: item.actual_end_u == null ? "" : String(item.actual_end_u),
+            };
     itemForm.value = {
       // A pending item must be explicitly assigned a result.  Treating it as
       // normal on open makes an accidental save look like a verified result.
       status: item.status === "pending" ? "" : item.status,
-      actual_rack: item.actual_rack ? String(item.actual_rack) : "",
-      actual_start_u: item.actual_start_u == null ? "" : String(item.actual_start_u),
-      actual_end_u: item.actual_end_u == null ? "" : String(item.actual_end_u),
+      ...initialLocation,
       notes: item.notes || "",
     };
     showItemDialog.value = true;
@@ -658,11 +889,293 @@ export function useInventory(context: InventoryContext) {
     await initializeItem(item);
   }
 
+  function openResolution(item: InventoryItem) {
+    if (!isExceptionStatus(item.status)) return;
+    if (item.resolution_status === "pending" && !context.can("inventory.manage")) return;
+    if (item.resolution_status === "resolved" && !context.can("inventory.view")) return;
+    if (!["pending", "resolved"].includes(item.resolution_status)) return;
+    resolutionItem.value = item;
+    resolutionForm.value = {
+      action: item.resolution_action || "",
+      note: item.resolution_note || "",
+    };
+    showResolutionDialog.value = true;
+  }
+
+  function closeResolutionDialog() {
+    if (resolutionSaving.value) return;
+    showResolutionDialog.value = false;
+    resolutionItem.value = null;
+    resolutionForm.value = { action: "", note: "" };
+  }
+
+  async function saveResolution() {
+    const item = resolutionItem.value;
+    const action = resolutionForm.value.action;
+    if (!item || resolutionSaving.value) return false;
+    if (!context.can("inventory.manage")) {
+      ElMessage.error("当前账号没有处理盘点异常的权限");
+      return false;
+    }
+    const allowedActions = resolutionActionOptions(item).map((option) => option.value);
+    if (item.resolution_status !== "pending" || !action || !allowedActions.includes(action)) {
+      ElMessage.warning("请选择有效的异常处理方式");
+      return false;
+    }
+    if (action === "ignore" && !resolutionForm.value.note.trim()) {
+      ElMessage.warning("忽略异常时必须填写处理备注");
+      return false;
+    }
+
+    const taskId = item.task;
+    const assetId = item.asset;
+    resolutionSaving.value = true;
+    try {
+      await context.request<InventoryItem>(`/inventory-items/${item.id}/resolve/`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action, note: resolutionForm.value.note }),
+      });
+      showResolutionDialog.value = false;
+      resolutionItem.value = null;
+      resolutionForm.value = { action: "", note: "" };
+      const [itemsLoaded, taskLoaded] = await Promise.all([
+        loadItems(),
+        refreshActiveTask(taskId),
+        loadTasks(),
+      ]);
+      let detailRefresh: boolean | null = null;
+      if (action === "update_asset" && context.refreshOpenAssetDetail) {
+        try {
+          detailRefresh = await context.refreshOpenAssetDetail(assetId);
+        } catch {
+          detailRefresh = false;
+        }
+      }
+      ElMessage.success("盘点异常已处理");
+      if (!itemsLoaded || !taskLoaded || itemListError.value || taskDetailError.value || taskListError.value) {
+        ElMessage.warning("异常已处理，但页面数据刷新失败，请重新加载");
+      }
+      if (detailRefresh === false) {
+        ElMessage.warning("异常已处理，但资产详情刷新失败");
+      }
+      return true;
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "";
+      if (message.includes("已被处理")) {
+        const [itemsLoaded, taskLoaded] = await Promise.all([
+          loadItems(),
+          refreshActiveTask(taskId),
+          loadTasks(),
+        ]);
+        showResolutionDialog.value = false;
+        resolutionItem.value = null;
+        resolutionForm.value = { action: "", note: "" };
+        ElMessage.warning(
+          itemsLoaded && taskLoaded
+            ? "该异常已被处理，已刷新最新状态"
+            : "该异常已被处理，但当前页面刷新失败，请重新加载",
+        );
+        return false;
+      }
+      ElMessage.error(message || "盘点异常处理失败");
+      return false;
+    } finally {
+      resolutionSaving.value = false;
+    }
+  }
+
+  function resetBulkResolutionDialog() {
+    showBulkResolutionDialog.value = false;
+    bulkResolutionAction.value = "";
+    bulkResolutionCount.value = 0;
+    bulkResolutionForm.value = { note: "" };
+    bulkResolutionResult.value = null;
+  }
+
+  function openBulkResolution(action: InventoryResolutionAction) {
+    if (batchSelectionMode.value !== "resolution" || !selectedBatchItems.value.length) return;
+    if (!batchResolutionActionOptions().some((option) => option.value === action)) {
+      ElMessage.warning("当前选中的盘点异常不支持该批量处理方式");
+      return;
+    }
+    bulkResolutionAction.value = action;
+    bulkResolutionCount.value = selectedBatchItems.value.length;
+    bulkResolutionForm.value = { note: "" };
+    bulkResolutionResult.value = null;
+    showBulkResolutionDialog.value = true;
+  }
+
+  function closeBulkResolutionDialog() {
+    if (bulkResolutionSaving.value) return;
+    resetBulkResolutionDialog();
+  }
+
+  async function saveBulkResolution() {
+    const action = bulkResolutionAction.value;
+    const selectedItems = selectedBatchItems.value;
+    if (!action || !selectedItems.length || bulkResolutionSaving.value) return false;
+    if (!context.can("inventory.manage")) {
+      ElMessage.error("当前账号没有处理盘点异常的权限");
+      return false;
+    }
+    if (!batchResolutionActionOptions(selectedItems).some((option) => option.value === action)) {
+      ElMessage.warning("当前选中的盘点异常不支持该批量处理方式");
+      return false;
+    }
+    if (action === "ignore" && !bulkResolutionForm.value.note.trim()) {
+      ElMessage.warning("忽略异常时必须填写处理备注");
+      return false;
+    }
+
+    const taskId = activeTask.value?.id;
+    if (!taskId) return false;
+    const itemIds = selectedItems.map((item) => item.id);
+    bulkResolutionSaving.value = true;
+    try {
+      const result = await context.request<InventoryBulkResolutionResponse>(
+        "/inventory-items/bulk-resolve/",
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            item_ids: itemIds,
+            action,
+            note: bulkResolutionForm.value.note,
+          }),
+        },
+      );
+      bulkResolutionResult.value = result;
+      clearBatchSelection();
+      const [itemsLoaded, taskDetailLoaded] = await Promise.all([
+        loadItems(),
+        refreshActiveTask(taskId),
+        loadTasks(),
+      ]);
+      const refreshFailed = !itemsLoaded || !taskDetailLoaded ||
+        Boolean(itemListError.value || taskDetailError.value || taskListError.value);
+      if (result.failed === 0) {
+        resetBulkResolutionDialog();
+        if (refreshFailed) {
+          ElMessage.warning("批量处理已完成，但页面数据刷新失败，请重新加载");
+        } else {
+          ElMessage.success(`已处理 ${result.succeeded} 条盘点异常`);
+        }
+      } else {
+        ElMessage.warning(
+          refreshFailed
+            ? `成功处理 ${result.succeeded} 条，${result.failed} 条失败；页面数据刷新失败，请重新加载`
+            : `成功处理 ${result.succeeded} 条，${result.failed} 条失败`,
+        );
+      }
+      return true;
+    } catch (error) {
+      ElMessage.error(error instanceof Error ? error.message : "批量盘点异常处理失败");
+      return false;
+    } finally {
+      bulkResolutionSaving.value = false;
+    }
+  }
+
+  function resetBulkNormalDialog() {
+    showBulkNormalDialog.value = false;
+    bulkNormalCount.value = 0;
+    bulkNormalResult.value = null;
+  }
+
+  function openBulkNormal() {
+    if (batchSelectionMode.value !== "inventory" || !selectedBatchItems.value.length) return;
+    if (activeTask.value?.status !== "in_progress") {
+      ElMessage.warning("已完成的盘点任务不能批量标记为正常");
+      return;
+    }
+    if (selectedBatchItems.value.some((item) => !isInventoryBatchSelectable(item))) {
+      ElMessage.warning("当前选中的盘点项已发生变化，请重新选择");
+      clearBatchSelection();
+      return;
+    }
+    bulkNormalCount.value = selectedBatchItems.value.length;
+    bulkNormalResult.value = null;
+    showBulkNormalDialog.value = true;
+  }
+
+  function closeBulkNormalDialog() {
+    if (bulkNormalSaving.value) return;
+    resetBulkNormalDialog();
+  }
+
+  async function saveBulkNormal() {
+    const selectedItems = selectedBatchItems.value;
+    if (
+      batchSelectionMode.value !== "inventory" ||
+      !selectedItems.length ||
+      bulkNormalSaving.value
+    ) return false;
+    if (!context.can("inventory.manage")) {
+      ElMessage.error("当前账号没有管理盘点的权限");
+      return false;
+    }
+    if (
+      activeTask.value?.status !== "in_progress" ||
+      selectedItems.some((item) => !isInventoryBatchSelectable(item))
+    ) {
+      ElMessage.warning("当前选中的盘点项已发生变化，请重新选择");
+      clearBatchSelection();
+      return false;
+    }
+
+    const taskId = activeTask.value.id;
+    bulkNormalSaving.value = true;
+    try {
+      const result = await context.request<InventoryBulkNormalResponse>(
+        "/inventory-items/bulk-confirm-normal/",
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ item_ids: selectedItems.map((item) => item.id) }),
+        },
+      );
+      bulkNormalResult.value = result;
+      clearBatchSelection();
+      const [itemsLoaded, taskDetailLoaded] = await Promise.all([
+        loadItems(),
+        refreshActiveTask(taskId),
+        loadTasks(),
+      ]);
+      const refreshFailed = !itemsLoaded || !taskDetailLoaded ||
+        Boolean(itemListError.value || taskDetailError.value || taskListError.value);
+      if (result.failed === 0) {
+        resetBulkNormalDialog();
+        if (refreshFailed) {
+          ElMessage.warning("批量标记正常已完成，但页面数据刷新失败，请重新加载");
+        } else {
+          ElMessage.success(`已将 ${result.succeeded} 条资产标记为盘点正常`);
+        }
+      } else {
+        ElMessage.warning(
+          refreshFailed
+            ? `已将 ${result.succeeded} 条资产标记为盘点正常，${result.failed} 条失败；页面数据刷新失败，请重新加载`
+            : `已将 ${result.succeeded} 条资产标记为盘点正常，${result.failed} 条失败`,
+        );
+      }
+      return true;
+    } catch (error) {
+      ElMessage.error(error instanceof Error ? error.message : "批量标记正常失败");
+      return false;
+    } finally {
+      bulkNormalSaving.value = false;
+    }
+  }
+
   function changeItemStatus() {
-    if (itemForm.value.status === "not_found") {
-      itemForm.value.actual_rack = "";
-      itemForm.value.actual_start_u = "";
-      itemForm.value.actual_end_u = "";
+    if (itemForm.value.status === "normal" || itemForm.value.status === "info_mismatch") {
+      applySystemLocation();
+    } else if (
+      itemForm.value.status === "not_found" ||
+      itemForm.value.status === "location_mismatch" ||
+      !itemForm.value.status
+    ) {
+      clearItemLocation();
     }
   }
 
@@ -697,19 +1210,25 @@ export function useInventory(context: InventoryContext) {
     }
     const taskId = activeTask.value.id;
     const itemId = editingItem.value.id;
+    const location =
+      itemForm.value.status === "normal"
+        ? systemLocationFor(editingItem.value)
+        : itemForm.value.status === "not_found"
+          ? emptyItemLocation()
+          : itemForm.value;
     await context.request(`/inventory-items/${itemId}/`, {
       method: "PATCH",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
         status: itemForm.value.status,
-        actual_rack: itemForm.value.actual_rack
-          ? Number(itemForm.value.actual_rack)
+        actual_rack: location.actual_rack
+          ? Number(location.actual_rack)
           : null,
-        actual_start_u: itemForm.value.actual_start_u
-          ? Number(itemForm.value.actual_start_u)
+        actual_start_u: location.actual_start_u
+          ? Number(location.actual_start_u)
           : null,
-        actual_end_u: itemForm.value.actual_end_u
-          ? Number(itemForm.value.actual_end_u)
+        actual_end_u: location.actual_end_u
+          ? Number(location.actual_end_u)
           : null,
         notes: itemForm.value.notes,
       }),
@@ -827,6 +1346,7 @@ export function useInventory(context: InventoryContext) {
   function resetItemFilters() {
     itemSearch.value = "";
     itemStatus.value = "";
+    itemResolutionStatus.value = "";
     itemPage.value = 1;
     void loadItems();
   }
@@ -863,9 +1383,13 @@ export function useInventory(context: InventoryContext) {
     taskAuxError,
     itemAuxError,
     taskCreating,
+    taskDeletingId,
     taskCompleting,
     taskReopening,
     itemSaving,
+    resolutionSaving,
+    bulkResolutionSaving,
+    bulkNormalSaving,
     tasks,
     taskCount,
     taskPage,
@@ -882,17 +1406,31 @@ export function useInventory(context: InventoryContext) {
     itemPageSize,
     itemSearch,
     itemStatus,
+    itemResolutionStatus,
+    selectedBatchItems,
+    batchSelectionMode,
     itemHasFilters,
     inspectors,
     racks,
     showTaskDialog,
     showItemDialog,
+    showResolutionDialog,
+    showBulkResolutionDialog,
+    showBulkNormalDialog,
     editingItem,
+    resolutionItem,
     scopePreview,
     scopePreviewLoading,
     scopePreviewError,
     taskForm,
     itemForm,
+    resolutionForm,
+    bulkResolutionAction,
+    bulkResolutionCount,
+    bulkResolutionForm,
+    bulkResolutionResult,
+    bulkNormalCount,
+    bulkNormalResult,
     activeDataCenters,
     activeRooms,
     taskFilterRooms,
@@ -900,10 +1438,23 @@ export function useInventory(context: InventoryContext) {
     taskStatusOptions,
     itemStatusOptions,
     itemResultOptions,
+    itemResolutionStatusOptions,
     taskStatusLabel,
     formatDateTime,
     locationText,
     statusTagType,
+    isExceptionStatus,
+    isBatchSelectable,
+    onBatchSelectionChange,
+    batchSelectionModeFor,
+    isBatchSelectableForMode,
+    clearBatchSelection,
+    resolutionStatusLabel,
+    resolutionStatusTagType,
+    resolutionActionLabel,
+    hasCompleteActualLocation,
+    resolutionActionOptions,
+    batchResolutionActionOptions,
     taskScope,
     loadRooms,
     loadInspectors,
@@ -922,10 +1473,20 @@ export function useInventory(context: InventoryContext) {
     clearScopePreview,
     closeTaskDialog,
     saveTask,
+    deleteTask,
     completeTask,
     reopenTask,
     exportTask,
     openItem,
+    openResolution,
+    closeResolutionDialog,
+    saveResolution,
+    openBulkResolution,
+    closeBulkResolutionDialog,
+    saveBulkResolution,
+    openBulkNormal,
+    closeBulkNormalDialog,
+    saveBulkNormal,
     changeItemStatus,
     saveItem,
     saveItemAndNext,

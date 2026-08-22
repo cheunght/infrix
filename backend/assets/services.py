@@ -5,6 +5,8 @@ from ipaddress import ip_address
 from django.core.exceptions import ValidationError
 from django.db import transaction
 from django.db.models import Q
+from rest_framework.exceptions import PermissionDenied, ValidationError as DRFValidationError
+from django.utils import timezone
 
 from .models import (
     Asset,
@@ -14,6 +16,8 @@ from .models import (
     CustomField,
     DataCenter,
     FaultEvent,
+    InventoryItem,
+    InventoryTask,
     MaintenanceContract,
     ProcurementRecord,
     Rack,
@@ -24,6 +28,7 @@ from .models import (
     SpareStockTransaction,
     Tag,
 )
+from .roles import user_has_capability
 
 
 def _value(data, key):
@@ -39,6 +44,345 @@ def _optional_date(data, key):
         return date.fromisoformat(value)
     except ValueError as exc:
         raise ValidationError({key: "日期格式应为 YYYY-MM-DD"}) from exc
+
+
+INVENTORY_EXCEPTION_STATUSES = frozenset({
+    "location_mismatch",
+    "not_found",
+    "info_mismatch",
+    "other",
+})
+
+
+def reset_inventory_resolution(item):
+    """Reset the resolution lifecycle after a盘点结果 changes."""
+    if item.status in {"pending", "normal"}:
+        item.resolution_status = "not_required"
+    else:
+        item.resolution_status = "pending"
+    item.resolution_action = None
+    item.resolution_note = ""
+    item.resolved_by = None
+    item.resolved_at = None
+
+
+def inventory_snapshot_location(item):
+    """Resolve a task snapshot into the exact location used by a normal result."""
+    snapshot = item.system_snapshot or {}
+    rack_id = snapshot.get("rack_id")
+    if rack_id in (None, ""):
+        return None, None, None
+
+    try:
+        rack = Rack.objects.select_related("room__data_center").get(pk=rack_id)
+    except (Rack.DoesNotExist, TypeError, ValueError) as exc:
+        raise DRFValidationError({"status": "任务创建时的系统机柜已不存在，无法标记为正常"}) from exc
+
+    if (
+        not snapshot.get("rack_code")
+        or snapshot.get("server_room_id") is None
+        or snapshot.get("data_center_id") is None
+        or rack.code != snapshot.get("rack_code")
+        or rack.room_id != snapshot.get("server_room_id")
+        or rack.room.data_center_id != snapshot.get("data_center_id")
+    ):
+        raise DRFValidationError({"status": "任务创建时的系统位置已发生变化，无法标记为正常"})
+
+    try:
+        start_u = int(snapshot.get("start_u"))
+        end_u = int(snapshot.get("end_u"))
+    except (TypeError, ValueError) as exc:
+        raise DRFValidationError({"status": "任务创建时的系统 U 位快照不完整，无法标记为正常"}) from exc
+
+    if start_u < 1 or end_u < start_u or end_u > rack.total_u:
+        raise DRFValidationError({"status": "任务创建时的系统 U 位快照无效，无法标记为正常"})
+    if not rack.is_active or not rack.room.is_active or not rack.room.data_center.is_active:
+        raise DRFValidationError({"status": "系统快照对应的机柜、机房或数据中心已停用，无法标记为正常"})
+    return rack, start_u, end_u
+
+
+@transaction.atomic
+def confirm_inventory_item_normal(
+    *,
+    item_id,
+    actor,
+    request,
+    require_pending=False,
+    source="inventory_confirm_normal",
+    notes=None,
+):
+    """Record a normal result from the immutable task snapshot."""
+    from .audit import write_audit_log
+    from .serializers import InventoryItemSerializer
+
+    item = InventoryItem.objects.select_for_update().select_related(
+        "asset",
+        "checked_by",
+        "resolved_by",
+        "actual_rack__room__data_center",
+    ).get(pk=item_id)
+    task = InventoryTask.objects.select_for_update().get(pk=item.task_id)
+    if task.status != "in_progress":
+        raise DRFValidationError({"detail": "已完成的盘点任务不能批量标记为正常"})
+    if require_pending and item.status != "pending":
+        raise DRFValidationError({"detail": "该盘点项已被盘点，不能批量标记为正常"})
+
+    rack, start_u, end_u = inventory_snapshot_location(item)
+    before = InventoryItemSerializer(item).data
+    item.status = "normal"
+    item.actual_rack = rack
+    item.actual_start_u = start_u
+    item.actual_end_u = end_u
+    item.checked_by = actor
+    item.checked_at = timezone.now()
+    if notes is not None:
+        item.notes = notes
+    reset_inventory_resolution(item)
+    item.save(update_fields=[
+        "status",
+        "actual_rack",
+        "actual_start_u",
+        "actual_end_u",
+        "checked_by",
+        "checked_at",
+        "notes",
+        "resolution_status",
+        "resolution_action",
+        "resolution_note",
+        "resolved_by",
+        "resolved_at",
+        "updated_at",
+    ])
+    write_audit_log(
+        request,
+        action="update",
+        resource_type="inventory_item",
+        resource_id=item.pk,
+        before=before,
+        after=InventoryItemSerializer(item).data,
+        extra={
+            "source": source,
+            "inventory_task_id": task.pk,
+            "inventory_item_id": item.pk,
+            "asset_id": item.asset_id,
+            "status": "normal",
+            "checked_by": actor.pk,
+            "checked_at": item.checked_at,
+        },
+    )
+    return item
+
+
+def _inventory_task_items(task, items=None):
+    if items is not None:
+        return items
+    prefetched = getattr(task, "_prefetched_objects_cache", {}).get("items")
+    if prefetched is not None:
+        return prefetched
+    return task.items.only(
+        "status",
+        "resolution_status",
+        "resolution_action",
+        "resolution_note",
+        "resolved_by",
+        "resolved_at",
+    ).all()
+
+
+def inventory_task_delete_block_reason(task, items=None):
+    """Return the business reason that prevents deleting an inventory task."""
+    if task.status == "completed":
+        return "已完成的盘点任务不能删除。"
+    if task.status != "in_progress":
+        return "当前状态的盘点任务不能删除。"
+
+    task_items = _inventory_task_items(task, items)
+    for item in task_items:
+        if (
+            item.resolution_status == "resolved"
+            or item.resolved_by_id
+            or item.resolved_at
+            or item.resolution_action
+            or str(item.resolution_note or "").strip()
+        ):
+            return "已有异常处理记录的任务不能删除，请保留盘点记录。"
+    if any(item.status != "pending" for item in task_items):
+        return "已经开始盘点的任务不能删除，请保留盘点记录。"
+    return None
+
+
+def inventory_task_can_delete(task, items=None):
+    """Return whether a task is still an untouched, deletable draft."""
+    return inventory_task_delete_block_reason(task, items) is None
+
+
+def validate_inventory_resolution_request(action, note="", *, bulk=False):
+    """Validate request-level resolution rules shared by single and bulk APIs."""
+    if action not in dict(InventoryItem.RESOLUTION_ACTION):
+        raise DRFValidationError({"action": "无效的盘点异常处理方式"})
+    if bulk and action == "update_asset":
+        raise DRFValidationError({"action": "批量处理不支持更新资产台账，请逐条处理位置异常。"})
+    if action == "ignore" and not str(note or "").strip():
+        raise DRFValidationError({"note": "忽略异常时必须填写处理备注"})
+
+
+@transaction.atomic
+def resolve_inventory_item(*, item_id, action, note, actor, request):
+    """Resolve one inventory exception with the canonical row-level rules."""
+    validate_inventory_resolution_request(action, note)
+    if action == "update_asset" and not user_has_capability(actor, "assets.manage"):
+        raise PermissionDenied("更新资产台账需要 assets.manage 权限")
+
+    from .audit import asset_audit_snapshot, write_audit_log
+    from .serializers import InventoryItemSerializer
+
+    item = InventoryItem.objects.select_for_update().select_related(
+        "asset",
+        "checked_by",
+        "resolved_by",
+        "actual_rack__room__data_center",
+    ).get(pk=item_id)
+    task = InventoryTask.objects.select_for_update().get(pk=item.task_id)
+    asset = Asset.objects.select_for_update().get(pk=item.asset_id)
+
+    if item.status not in INVENTORY_EXCEPTION_STATUSES:
+        raise DRFValidationError({"detail": "只有异常盘点项可以处理"})
+    if item.resolution_status != "pending":
+        raise DRFValidationError({"detail": "该异常已被处理"})
+    if action == "confirm_missing" and item.status != "not_found":
+        raise DRFValidationError({"action": "确认设备缺失只适用于未找到的资产"})
+    if action == "update_asset" and item.status != "location_mismatch":
+        raise DRFValidationError({"action": "更新资产台账目前只适用于位置不符"})
+
+    before_item = InventoryItemSerializer(item).data
+    asset_changed = False
+    if action == "update_asset":
+        if (
+            item.actual_rack_id is None
+            or item.actual_start_u is None
+            or item.actual_end_u is None
+        ):
+            raise DRFValidationError({"action": "位置不符必须包含完整的实际机柜和起止 U 位"})
+        before_asset = asset_audit_snapshot(asset.pk)
+        try:
+            asset_changed = update_asset_placement(
+                asset,
+                rack=item.actual_rack,
+                start_u=item.actual_start_u,
+                end_u=item.actual_end_u,
+            )
+        except ValidationError as exc:
+            detail = exc.message_dict if hasattr(exc, "message_dict") else {"detail": exc.messages}
+            raise DRFValidationError(detail) from exc
+        if asset_changed:
+            after_asset = asset_audit_snapshot(asset.pk)
+            write_audit_log(
+                request,
+                action="update",
+                resource_type="asset",
+                resource_id=asset.pk,
+                before=before_asset,
+                after=after_asset,
+                extra={
+                    "source": "inventory_resolution",
+                    "inventory_task_id": task.pk,
+                    "inventory_item_id": item.pk,
+                    "resolution_action": action,
+                },
+            )
+
+    from django.utils import timezone
+
+    now = timezone.now()
+    item.resolution_status = "resolved"
+    item.resolution_action = action
+    item.resolution_note = note
+    item.resolved_by = actor
+    item.resolved_at = now
+    item.save(update_fields=[
+        "resolution_status",
+        "resolution_action",
+        "resolution_note",
+        "resolved_by",
+        "resolved_at",
+        "updated_at",
+    ])
+    write_audit_log(
+        request,
+        action="resolve",
+        resource_type="inventory_item",
+        resource_id=item.pk,
+        before=before_item,
+        after=InventoryItemSerializer(item).data,
+        extra={
+            "inventory_task_id": task.pk,
+            "inventory_item_id": item.pk,
+            "asset_id": asset.pk,
+            "exception_status": item.status,
+            "resolution_action": action,
+            "resolution_note": note,
+            "resolved_by": actor.pk,
+            "resolved_at": now,
+            "asset_changed": asset_changed,
+        },
+    )
+    return item
+
+
+def update_asset_placement(asset: Asset, *, rack: Rack, start_u: int, end_u: int) -> bool:
+    """Update only an asset's rack placement using the canonical placement rules."""
+    rack = Rack.objects.select_related("room__data_center").select_for_update().get(pk=rack.pk)
+    if (
+        not rack.is_active
+        or not rack.room.is_active
+        or not rack.room.data_center.is_active
+        or getattr(rack, "status", "in_use") != "in_use"
+    ):
+        raise ValidationError({"rack_code": "预留或停用的机柜不能用于资产"})
+    if start_u < 1 or end_u < 1:
+        raise ValidationError({"rack_start_u": "U 位必须大于等于 1"})
+    if end_u < start_u:
+        raise ValidationError({"rack_start_u": "起始 U 位不能大于结束 U 位"})
+    if end_u > rack.total_u:
+        raise ValidationError({"rack_end_u": f"结束 U 位不能超过机柜容量 U{rack.total_u}"})
+
+    # Lock all allocations in the target rack before checking for overlap.
+    list(RackUnitAllocation.objects.select_for_update().filter(rack=rack))
+    conflicts = RackUnitAllocation.objects.select_related("asset").filter(
+        rack=rack,
+        start_u__lte=end_u,
+        end_u__gte=start_u,
+    ).exclude(asset_id=asset.pk)
+    conflict = conflicts.order_by("start_u", "id").first()
+    if conflict:
+        raise ValidationError({
+            "configuration": (
+                f"机柜 {rack.code} 的 U{start_u}-U{end_u} 与资产 "
+                f"{conflict.asset.asset_no}（U{conflict.start_u}-U{conflict.end_u}）冲突"
+            )
+        })
+
+    allocation = RackUnitAllocation.objects.select_for_update().filter(asset=asset).first()
+    changed = not (
+        allocation
+        and allocation.rack_id == rack.pk
+        and allocation.start_u == start_u
+        and allocation.end_u == end_u
+        and asset.asset_data_center_id == rack.room.data_center_id
+    )
+    if allocation is None:
+        allocation = RackUnitAllocation(asset=asset)
+    allocation.rack = rack
+    allocation.start_u = start_u
+    allocation.end_u = end_u
+    if changed:
+        allocation.full_clean()
+        allocation.save()
+    if asset.asset_data_center_id != rack.room.data_center_id:
+        asset.asset_data_center_id = rack.room.data_center_id
+        asset.save(update_fields=["asset_data_center", "updated_at"])
+        changed = True
+    return changed
 
 
 def configure_asset(asset: Asset, data):
@@ -96,35 +440,7 @@ def configure_asset(asset: Asset, data):
             raise ValidationError({"rack_code": "未找到所选机柜，请先在机房机柜维护中创建"})
         if not rack.is_active or getattr(rack, "status", "in_use") != "in_use":
             raise ValidationError({"rack_code": "预留或停用的机柜不能用于资产"})
-        rack = Rack.objects.select_for_update().get(pk=rack.pk)
-        list(RackUnitAllocation.objects.select_for_update().filter(rack=rack))
-        if start_u < 1 or end_u < 1:
-            raise ValidationError({"rack_start_u": "U 位必须大于等于 1"})
-        if end_u > rack.total_u:
-            raise ValidationError({"rack_end_u": f"结束 U 位不能超过机柜容量 U{rack.total_u}"})
-        conflicts = RackUnitAllocation.objects.select_related("asset").filter(
-            rack=rack,
-            start_u__lte=end_u,
-            end_u__gte=start_u,
-        ).exclude(asset_id=asset.pk)
-        conflict = conflicts.order_by("start_u", "id").first()
-        if conflict:
-            raise ValidationError({
-                "configuration": (
-                    f"机柜 {rack.code} 的 U{start_u}-U{end_u} 与资产 "
-                    f"{conflict.asset.asset_no}（U{conflict.start_u}-U{conflict.end_u}）冲突"
-                )
-            })
-        allocation, _ = RackUnitAllocation.objects.get_or_create(asset=asset, defaults={"rack": rack, "start_u": start_u, "end_u": end_u})
-        allocation.rack, allocation.start_u, allocation.end_u = rack, start_u, end_u
-        allocation.full_clean()
-        allocation.save()
-        # Keep the optional administrative data-center association aligned with
-        # the physical rack while the asset is mounted.  It remains available
-        # for inventory scoping after the asset is later unmounted.
-        if asset.asset_data_center_id != data_center.id:
-            asset.asset_data_center_id = data_center.id
-            asset.save(update_fields=["asset_data_center", "updated_at"])
+        update_asset_placement(asset, rack=rack, start_u=start_u, end_u=end_u)
     else:
         RackUnitAllocation.objects.filter(asset=asset).delete()
 

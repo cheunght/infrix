@@ -19,7 +19,7 @@ from rest_framework.decorators import action, api_view, permission_classes, pars
 from rest_framework.parsers import MultiPartParser, FormParser
 from rest_framework.permissions import AllowAny, IsAdminUser, IsAuthenticated
 from rest_framework.response import Response
-from rest_framework.exceptions import ValidationError as DRFValidationError
+from rest_framework.exceptions import MethodNotAllowed, PermissionDenied, ValidationError as DRFValidationError
 from drf_spectacular.types import OpenApiTypes
 from drf_spectacular.utils import OpenApiParameter, extend_schema
 from django.http import HttpResponse
@@ -30,12 +30,21 @@ from openpyxl import Workbook
 from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
 from openpyxl.utils import get_column_letter
 from .models import AuthThrottleState, AuditLog, Asset, AssetCustomValue, AssetNetworkAddress, AssetTag, Brand, CustomField, CustomFieldOption, DataCenter, DeviceType, FaultEvent, InventoryItem, InventoryTask, MaintenanceContract, ProcurementRecord, Rack, RackUnitAllocation, RepairRecord, ServerRoom, SoftwareLicense, SparePart, SpareStock, SpareStockTransaction, Tag, UserSecurityProfile
-from .serializers import AuditLogSerializer, AssetDetailSerializer, AssetListSerializer, AssetSerializer, AssetWriteSerializer, BrandSerializer, CustomFieldOptionSerializer, CustomFieldRuntimeSchemaSerializer, CustomFieldSerializer, DataCenterSerializer, DeviceTypeSerializer, FaultEventSerializer, GroupSerializer, InventoryInspectorSerializer, InventoryItemSerializer, InventoryScopePreviewQuerySerializer, InventoryScopePreviewSerializer, InventoryTaskSerializer, RackSerializer, RepairRecordSerializer, ServerRoomSerializer, SoftwareLicenseSerializer, SparePartDetailSerializer, SparePartSerializer, SpareStockSerializer, SpareStockTransactionSerializer, TagSerializer, UserSerializer, _default_references_option
-from .services import apply_spare_stock_transaction, sync_asset_fault_status, sync_repair_completion
+from .serializers import AuditLogSerializer, AssetDetailSerializer, AssetListSerializer, AssetSerializer, AssetWriteSerializer, BrandSerializer, CustomFieldOptionSerializer, CustomFieldRuntimeSchemaSerializer, CustomFieldSerializer, DataCenterSerializer, DeviceTypeSerializer, FaultEventSerializer, GroupSerializer, InventoryBulkNormalResponseSerializer, InventoryBulkNormalSerializer, InventoryBulkResolutionResponseSerializer, InventoryBulkResolutionSerializer, InventoryInspectorSerializer, InventoryItemSerializer, InventoryResolutionSerializer, InventoryScopePreviewQuerySerializer, InventoryScopePreviewSerializer, InventoryTaskSerializer, RackSerializer, RepairRecordSerializer, ServerRoomSerializer, SoftwareLicenseSerializer, SparePartDetailSerializer, SparePartSerializer, SpareStockSerializer, SpareStockTransactionSerializer, TagSerializer, UserSerializer, _default_references_option
+from .services import (
+    apply_spare_stock_transaction,
+    confirm_inventory_item_normal,
+    inventory_task_delete_block_reason,
+    reset_inventory_resolution,
+    resolve_inventory_item,
+    sync_asset_fault_status,
+    sync_repair_completion,
+    update_asset_placement,
+)
 from .inventory import get_inventory_scope_assets
-from .audit import asset_custom_value_changes, asset_custom_value_snapshot, model_snapshot, write_audit_log
+from .audit import asset_audit_snapshot, asset_custom_value_changes, model_snapshot, write_audit_log
 from .permissions import BusinessRolePermission, CanExportAssets, CanExportFaults, CanExportInventory, CanExportRacks, CanImportAssets, CanManageInventory, CanViewAssetCustomFieldSchema, CanViewAuditLog, CanViewDashboard, CanViewInventory, CanViewLicenses, IsSystemAdministrator
-from .roles import ROLE_DEFINITIONS, ROLE_NAME_TO_CODE, user_capabilities, user_role_code
+from .roles import ROLE_DEFINITIONS, ROLE_NAME_TO_CODE, user_capabilities, user_has_capability, user_role_code
 from .reporting import (
     DashboardScopeError,
     build_dashboard_payload,
@@ -398,18 +407,7 @@ class AssetViewSet(AuditedModelViewSetMixin, viewsets.ModelViewSet):
         return AssetSerializer
 
     def audit_snapshot(self, instance):
-        refreshed = self.queryset.get(pk=instance.pk)
-        snapshot = AssetDetailSerializer(refreshed).data
-        custom_snapshot = asset_custom_value_snapshot(refreshed.pk)
-        snapshot["custom_value_snapshot"] = custom_snapshot
-        snapshot["custom_values"] = {
-            item["key"]: item["value"] for item in custom_snapshot
-        }
-        custom_values_by_id = {item["field_id"]: item["value"] for item in custom_snapshot}
-        for field in snapshot.get("custom_fields", []):
-            if field.get("id") in custom_values_by_id:
-                field["value"] = custom_values_by_id[field["id"]]
-        return snapshot
+        return asset_audit_snapshot(instance.pk)
 
     def audit_extra(self, before, after, *, action):
         if action not in {"create", "update"}:
@@ -1177,6 +1175,22 @@ class InventoryTaskViewSet(AuditedModelViewSetMixin, viewsets.ModelViewSet):
             after={"task": model_snapshot(task), "items_created": len(assets)},
         )
 
+    @transaction.atomic
+    def perform_destroy(self, instance):
+        items = list(InventoryItem.objects.filter(task_id=instance.pk).select_for_update().order_by("pk").only(
+            "status",
+            "resolution_status",
+            "resolution_action",
+            "resolution_note",
+            "resolved_by",
+            "resolved_at",
+        ))
+        task = InventoryTask.objects.select_for_update().get(pk=instance.pk)
+        block_reason = inventory_task_delete_block_reason(task, items)
+        if block_reason:
+            raise DRFValidationError({"detail": block_reason})
+        super().perform_destroy(task)
+
     @extend_schema(
         parameters=[InventoryScopePreviewQuerySerializer],
         responses=InventoryScopePreviewSerializer,
@@ -1233,7 +1247,7 @@ class InventoryTaskViewSet(AuditedModelViewSetMixin, viewsets.ModelViewSet):
         # the task itself to a false 404.
         task = get_object_or_404(InventoryTask, pk=pk)
         queryset = InventoryItem.objects.filter(task=task).select_related(
-            "asset", "checked_by", "actual_rack__room__data_center"
+            "asset", "checked_by", "resolved_by", "actual_rack__room__data_center"
         ).order_by("asset__asset_no", "id")
         search = request.query_params.get("search", "").strip()
         if search:
@@ -1246,6 +1260,9 @@ class InventoryTaskViewSet(AuditedModelViewSetMixin, viewsets.ModelViewSet):
         status = request.query_params.get("status", "").strip()
         if status:
             queryset = queryset.filter(status=status)
+        resolution_status = request.query_params.get("resolution_status", "").strip()
+        if resolution_status:
+            queryset = queryset.filter(resolution_status=resolution_status)
         page = self.paginate_queryset(queryset)
         serializer = InventoryItemSerializer(page or queryset, many=True)
         if page is not None:
@@ -1293,7 +1310,7 @@ class InventoryTaskViewSet(AuditedModelViewSetMixin, viewsets.ModelViewSet):
     def export(self, request, pk=None):
         task = self.get_object()
         items = InventoryItem.objects.filter(task=task).select_related(
-            "asset", "checked_by", "actual_rack__room__data_center"
+            "asset", "checked_by", "resolved_by", "actual_rack__room__data_center"
         ).order_by("asset__asset_no", "id")
         book = Workbook()
         sheet = book.active
@@ -1301,7 +1318,7 @@ class InventoryTaskViewSet(AuditedModelViewSetMixin, viewsets.ModelViewSet):
         headers = [
             "盘点名称", "数据中心", "机房", "盘点人", "资产编号", "资产名称", "序列号", "设备类型", "业务 IP", "管理 IP", "带外 IP",
             "系统机柜", "系统 U 位", "盘点结果", "实际数据中心", "实际机房", "实际机柜", "实际 U 位",
-            "盘点时间", "盘点人", "备注",
+            "盘点时间", "盘点人", "备注", "处理状态", "处理方式", "处理人", "处理时间", "处理备注",
         ]
         sheet.append(headers)
         for item in items:
@@ -1325,6 +1342,11 @@ class InventoryTaskViewSet(AuditedModelViewSetMixin, viewsets.ModelViewSet):
                 timezone.localtime(item.checked_at).replace(tzinfo=None) if item.checked_at else "",
                 item.checked_by.get_full_name() or item.checked_by.username if item.checked_by_id else "",
                 item.notes,
+                dict(InventoryItem.RESOLUTION_STATUS).get(item.resolution_status, item.resolution_status),
+                dict(InventoryItem.RESOLUTION_ACTION).get(item.resolution_action, "") if item.resolution_action else "",
+                item.resolved_by.get_full_name() or item.resolved_by.username if item.resolved_by_id else "",
+                timezone.localtime(item.resolved_at).replace(tzinfo=None) if item.resolved_at else "",
+                item.resolution_note,
             ])
         for cell in sheet[1]:
             cell.font = Font(bold=True, color="FFFFFF")
@@ -1339,23 +1361,59 @@ class InventoryTaskViewSet(AuditedModelViewSetMixin, viewsets.ModelViewSet):
         return response
 
 
+def _inventory_error_message(error, fallback):
+    detail = getattr(error, "detail", error)
+
+    def flatten(value):
+        if isinstance(value, dict):
+            return "；".join(flatten(child) for child in value.values())
+        if isinstance(value, (list, tuple)):
+            return "；".join(flatten(child) for child in value)
+        return str(value or "")
+
+    return flatten(detail) or fallback
+
+
+def _inventory_resolution_error_message(error):
+    return _inventory_error_message(error, "盘点异常处理失败")
+
+
 class InventoryItemViewSet(viewsets.ModelViewSet):
     queryset = InventoryItem.objects.select_related(
-        "task", "asset", "checked_by", "actual_rack__room__data_center"
+        "task", "asset", "checked_by", "resolved_by", "actual_rack__room__data_center"
     )
     serializer_class = InventoryItemSerializer
     permission_classes = [BusinessRolePermission]
     permission_resource = "inventory"
-    http_method_names = ["get", "patch", "head", "options"]
+    http_method_names = ["get", "post", "patch", "head", "options"]
     filter_backends = [DjangoFilterBackend]
-    filterset_fields = ["task", "status"]
+    filterset_fields = ["task", "status", "resolution_status"]
+
+    def create(self, request, *args, **kwargs):
+        raise MethodNotAllowed("POST")
 
     @transaction.atomic
     def perform_update(self, serializer):
         item = serializer.instance
         if item.task.status == "completed":
-            from rest_framework.exceptions import ValidationError as DRFValidationError
             raise DRFValidationError({"detail": "已完成的盘点任务已锁定，不能修改"})
+        if serializer.validated_data.get("status", item.status) == "normal":
+            updated = confirm_inventory_item_normal(
+                item_id=item.pk,
+                actor=self.request.user,
+                request=self.request,
+                notes=serializer.validated_data.get("notes"),
+                source="inventory_result",
+            )
+            serializer.instance = updated
+            return
+        before_result = (
+            item.status,
+            item.actual_rack_id,
+            item.actual_start_u,
+            item.actual_end_u,
+            item.notes,
+        )
         before = InventoryItemSerializer(item).data
         updated = serializer.save()
         if updated.status == "pending":
@@ -1364,7 +1422,26 @@ class InventoryItemViewSet(viewsets.ModelViewSet):
         else:
             updated.checked_by = self.request.user
             updated.checked_at = timezone.now()
-        updated.save(update_fields=["checked_by", "checked_at", "updated_at"])
+        after_result = (
+            updated.status,
+            updated.actual_rack_id,
+            updated.actual_start_u,
+            updated.actual_end_u,
+            updated.notes,
+        )
+        resolution_reset = updated.status in {"pending", "normal"} or before_result != after_result
+        if resolution_reset:
+            reset_inventory_resolution(updated)
+        update_fields = ["checked_by", "checked_at", "updated_at"]
+        if resolution_reset:
+            update_fields.extend([
+                "resolution_status",
+                "resolution_action",
+                "resolution_note",
+                "resolved_by",
+                "resolved_at",
+            ])
+        updated.save(update_fields=update_fields)
         write_audit_log(
             self.request,
             action="update",
@@ -1374,13 +1451,168 @@ class InventoryItemViewSet(viewsets.ModelViewSet):
             after=InventoryItemSerializer(updated).data,
         )
 
+    @extend_schema(
+        request=InventoryResolutionSerializer,
+        responses=InventoryItemSerializer,
+        description="处理盘点异常；盘点结果本身在任务完成后仍保持锁定。",
+    )
+    @action(detail=True, methods=["post"], url_path="resolve")
+    def resolve(self, request, pk=None):
+        request_serializer = InventoryResolutionSerializer(data=request.data)
+        request_serializer.is_valid(raise_exception=True)
+        action_name = request_serializer.validated_data["action"]
+        note = request_serializer.validated_data.get("note", "")
+        if action_name == "update_asset" and not user_has_capability(request.user, "assets.manage"):
+            raise PermissionDenied("更新资产台账需要 assets.manage 权限")
+        item = self.get_object()
+        resolved_item = resolve_inventory_item(
+            item_id=item.pk,
+            action=action_name,
+            note=note,
+            actor=request.user,
+            request=request,
+        )
+        return Response(InventoryItemSerializer(resolved_item).data)
+
+    @extend_schema(
+        request=InventoryBulkResolutionSerializer,
+        responses=InventoryBulkResolutionResponseSerializer,
+        description="批量处理当前盘点任务中的盘点异常；不支持批量更新资产台账。",
+    )
+    @action(detail=False, methods=["post"], url_path="bulk-resolve")
+    def bulk_resolve(self, request):
+        request_serializer = InventoryBulkResolutionSerializer(data=request.data)
+        request_serializer.is_valid(raise_exception=True)
+        item_ids = request_serializer.validated_data["item_ids"]
+        action_name = request_serializer.validated_data["action"]
+        note = request_serializer.validated_data.get("note", "")
+
+        items = list(
+            InventoryItem.objects.filter(pk__in=item_ids).select_related("task", "asset")
+        )
+        items_by_id = {item.pk: item for item in items}
+        missing_ids = [item_id for item_id in item_ids if item_id not in items_by_id]
+        if missing_ids:
+            raise DRFValidationError({"item_ids": f"盘点项不存在：{', '.join(map(str, missing_ids))}"})
+        task_ids = {item.task_id for item in items}
+        if len(task_ids) != 1:
+            raise DRFValidationError({"item_ids": "所有盘点项必须属于同一个盘点任务"})
+
+        results = []
+        succeeded = 0
+        for item_id in item_ids:
+            item = items_by_id[item_id]
+            try:
+                resolved_item = resolve_inventory_item(
+                    item_id=item_id,
+                    action=action_name,
+                    note=note,
+                    actor=request.user,
+                    request=request,
+                )
+            except (DRFValidationError, PermissionDenied) as exc:
+                results.append({
+                    "item_id": item_id,
+                    "asset_no": item.asset.asset_no,
+                    "success": False,
+                    "reason": _inventory_resolution_error_message(exc),
+                })
+            except InventoryItem.DoesNotExist:
+                results.append({
+                    "item_id": item_id,
+                    "asset_no": item.asset.asset_no,
+                    "success": False,
+                    "reason": "盘点项不存在",
+                })
+            else:
+                succeeded += 1
+                results.append({
+                    "item_id": item_id,
+                    "asset_no": resolved_item.asset.asset_no,
+                    "success": True,
+                    "reason": "",
+                })
+
+        response_data = {
+            "requested": len(item_ids),
+            "succeeded": succeeded,
+            "failed": len(item_ids) - succeeded,
+            "results": results,
+        }
+        return Response(InventoryBulkResolutionResponseSerializer(response_data).data)
+
+    @extend_schema(
+        request=InventoryBulkNormalSerializer,
+        responses=InventoryBulkNormalResponseSerializer,
+        description="批量确认当前进行中盘点任务中的未盘点项为正常；位置由任务创建时的系统快照确定。",
+    )
+    @action(detail=False, methods=["post"], url_path="bulk-confirm-normal")
+    def bulk_confirm_normal(self, request):
+        request_serializer = InventoryBulkNormalSerializer(data=request.data)
+        request_serializer.is_valid(raise_exception=True)
+        item_ids = request_serializer.validated_data["item_ids"]
+
+        items = list(
+            InventoryItem.objects.filter(pk__in=item_ids).select_related("task", "asset")
+        )
+        items_by_id = {item.pk: item for item in items}
+        missing_ids = [item_id for item_id in item_ids if item_id not in items_by_id]
+        if missing_ids:
+            raise DRFValidationError({"item_ids": f"盘点项不存在：{', '.join(map(str, missing_ids))}"})
+        task_ids = {item.task_id for item in items}
+        if len(task_ids) != 1:
+            raise DRFValidationError({"item_ids": "所有盘点项必须属于同一个盘点任务"})
+
+        results = []
+        succeeded = 0
+        for item_id in item_ids:
+            item = items_by_id[item_id]
+            try:
+                confirmed_item = confirm_inventory_item_normal(
+                    item_id=item_id,
+                    actor=request.user,
+                    request=request,
+                    require_pending=True,
+                    source="inventory_bulk_confirm_normal",
+                )
+            except (DRFValidationError, PermissionDenied) as exc:
+                results.append({
+                    "item_id": item_id,
+                    "asset_no": item.asset.asset_no,
+                    "success": False,
+                    "reason": _inventory_error_message(exc, "批量标记正常失败"),
+                })
+            except InventoryItem.DoesNotExist:
+                results.append({
+                    "item_id": item_id,
+                    "asset_no": item.asset.asset_no,
+                    "success": False,
+                    "reason": "盘点项不存在",
+                })
+            else:
+                succeeded += 1
+                results.append({
+                    "item_id": item_id,
+                    "asset_no": confirmed_item.asset.asset_no,
+                    "success": True,
+                    "reason": "",
+                })
+
+        response_data = {
+            "requested": len(item_ids),
+            "succeeded": succeeded,
+            "failed": len(item_ids) - succeeded,
+            "results": results,
+        }
+        return Response(InventoryBulkNormalResponseSerializer(response_data).data)
+
 
 @extend_schema(responses=InventoryItemSerializer(many=True))
 @api_view(["GET"])
 @permission_classes([CanViewInventory])
 def asset_inventory_records(request, pk):
     records = InventoryItem.objects.filter(asset_id=pk).select_related(
-        "task", "task__data_center", "task__server_room", "checked_by", "actual_rack__room__data_center"
+        "task", "task__data_center", "task__server_room", "checked_by", "resolved_by", "actual_rack__room__data_center"
     )
     if not Asset.objects.filter(pk=pk).exists():
         from rest_framework.exceptions import NotFound

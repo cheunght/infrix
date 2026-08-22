@@ -419,6 +419,7 @@ export interface InventoryContext {
   can: CapabilityFn;
   currentUsername: Ref<string>;
   openAssetDetail: (assetId: number) => void | Promise<void>;
+  refreshOpenAssetDetail?: (assetId: number) => Promise<boolean | null>;
   dataCenters: Ref<DataCenter[]>;
   serverRooms: Ref<ServerRoom[]>;
 }

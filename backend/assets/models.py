@@ -472,6 +472,17 @@ class InventoryItem(Timestamped):
         ("info_mismatch", "设备信息不符"),
         ("other", "其他异常"),
     ]
+    RESOLUTION_STATUS = [
+        ("not_required", "无需处理"),
+        ("pending", "待处理"),
+        ("resolved", "已处理"),
+    ]
+    RESOLUTION_ACTION = [
+        ("update_asset", "更新资产台账"),
+        ("keep_asset", "保持资产台账"),
+        ("confirm_missing", "确认设备缺失"),
+        ("ignore", "忽略/误报"),
+    ]
 
     task = models.ForeignKey(InventoryTask, on_delete=models.CASCADE, related_name="items")
     asset = models.ForeignKey(Asset, on_delete=models.PROTECT, related_name="inventory_items")
@@ -495,6 +506,26 @@ class InventoryItem(Timestamped):
     actual_start_u = models.PositiveSmallIntegerField(null=True, blank=True)
     actual_end_u = models.PositiveSmallIntegerField(null=True, blank=True)
     notes = models.TextField(blank=True)
+    resolution_status = models.CharField(
+        max_length=20,
+        choices=RESOLUTION_STATUS,
+        default="not_required",
+    )
+    resolution_action = models.CharField(
+        max_length=30,
+        choices=RESOLUTION_ACTION,
+        null=True,
+        blank=True,
+    )
+    resolution_note = models.TextField(blank=True)
+    resolved_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+        related_name="resolved_inventory_items",
+    )
+    resolved_at = models.DateTimeField(null=True, blank=True)
 
     class Meta:
         ordering = ["asset__asset_no", "id"]

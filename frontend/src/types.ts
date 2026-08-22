@@ -265,6 +265,32 @@ export type AssetDetail = Asset & {
   custom_values: Record<string, unknown>;
 };
 export type InventoryStatus = "pending" | "normal" | "location_mismatch" | "not_found" | "info_mismatch" | "other";
+export type InventoryResolutionStatus = "not_required" | "pending" | "resolved";
+export type InventoryResolutionAction = "update_asset" | "keep_asset" | "confirm_missing" | "ignore";
+export type InventoryBulkResolutionResult = {
+  item_id: number;
+  asset_no: string;
+  success: boolean;
+  reason: string;
+};
+export type InventoryBulkResolutionResponse = {
+  requested: number;
+  succeeded: number;
+  failed: number;
+  results: InventoryBulkResolutionResult[];
+};
+export type InventoryBulkNormalResult = {
+  item_id: number;
+  asset_no: string;
+  success: boolean;
+  reason: string;
+};
+export type InventoryBulkNormalResponse = {
+  requested: number;
+  succeeded: number;
+  failed: number;
+  results: InventoryBulkNormalResult[];
+};
 export type InventoryItem = {
   id: number;
   task: number;
@@ -291,6 +317,14 @@ export type InventoryItem = {
   actual_start_u: number | null;
   actual_end_u: number | null;
   notes: string;
+  resolution_status: InventoryResolutionStatus;
+  resolution_status_label: string;
+  resolution_action: InventoryResolutionAction | null;
+  resolution_action_label: string;
+  resolution_note: string;
+  resolved_by: number | null;
+  resolved_by_name: string;
+  resolved_at: string | null;
 };
 export type InventorySummary = {
   total: number;
@@ -301,6 +335,9 @@ export type InventorySummary = {
   not_found: number;
   info_mismatch: number;
   other: number;
+  exceptions: number;
+  resolution_pending: number;
+  resolution_resolved: number;
   completion_rate: number;
 };
 export type InventoryTask = {
@@ -317,6 +354,7 @@ export type InventoryTask = {
   status: "in_progress" | "completed";
   completed_at: string | null;
   notes: string;
+  can_delete: boolean;
   summary: InventorySummary;
 };
 export type InventoryInspector = { id: number; username: string; display_name: string };
