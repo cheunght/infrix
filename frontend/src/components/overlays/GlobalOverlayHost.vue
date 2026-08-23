@@ -103,6 +103,7 @@ const {
   showRepairModal,
   selectedFault,
   repairForm,
+  repairTimeError,
   repairSaving,
   saveRepair,
 } = props.repairs;
@@ -112,6 +113,21 @@ const repairFormRef = ref<FormInstance>();
 const faultFormRules: FormRules = {
   asset: [{ required: true, message: "请选择故障资产", trigger: "change" }],
   occurred_at: [{ required: true, message: "请选择故障发生时间", trigger: "change" }],
+};
+const repairTimeRule = {
+  validator: (_rule: unknown, _value: unknown, callback: (error?: Error) => void) => {
+    const error = repairTimeError();
+    if (error) {
+      callback(new Error(error));
+      return;
+    }
+    callback();
+  },
+  trigger: ["change", "blur"],
+};
+const repairFormRules: FormRules = {
+  started_at: [repairTimeRule],
+  finished_at: [repairTimeRule],
 };
 
 const licenseFormRef = ref<FormInstance>();
@@ -558,18 +574,24 @@ function editCurrentAsset() {
     :title="selectedFault?.repair ? '编辑维修记录' : '填写维修记录'"
     width="420px"
     destroy-on-close
+    :show-close="!repairSaving"
+    :close-on-click-modal="!repairSaving"
+    :close-on-press-escape="!repairSaving"
   >
-    <el-form ref="repairFormRef" :model="repairForm" label-position="top" :validate-on-rule-change="false">
+    <el-form ref="repairFormRef" :model="repairForm" :rules="repairFormRules" label-position="top" :validate-on-rule-change="false">
       <el-alert
         :title="`${selectedFault?.asset_no || ''} · ${selectedFault?.asset_name || ''}`"
         type="info"
         :closable="false"
       />
-      <el-form-item label="维修完成时间"><el-date-picker v-model="repairForm.finished_at" type="datetime" value-format="YYYY-MM-DDTHH:mm" /></el-form-item>
-      <p class="form-hint">保存后故障自动关闭；清空完成时间会重新打开故障。</p>
+      <el-form-item label="维修厂商"><el-input v-model="repairForm.provider" placeholder="请输入维修厂商" /></el-form-item>
+      <el-form-item label="维修开始时间" prop="started_at"><el-date-picker v-model="repairForm.started_at" type="datetime" value-format="YYYY-MM-DDTHH:mm" /></el-form-item>
+      <el-form-item label="维修完成时间" prop="finished_at"><el-date-picker v-model="repairForm.finished_at" type="datetime" value-format="YYYY-MM-DDTHH:mm" /></el-form-item>
+      <el-form-item label="维修备注"><el-input v-model="repairForm.notes" type="textarea" :rows="4" placeholder="记录维修过程、结果或其他说明" /></el-form-item>
+      <p class="form-hint">填写完成时间后故障自动关闭；清空完成时间会重新打开故障，其他维修记录会保留。</p>
     </el-form>
     <template #footer>
-      <el-button @click="showRepairModal = false">取消</el-button>
+      <el-button :disabled="repairSaving" @click="showRepairModal = false">取消</el-button>
       <el-button type="primary" :loading="repairSaving" :disabled="repairSaving" @click="submitRepair">保存维修记录</el-button>
     </template>
   </el-dialog>

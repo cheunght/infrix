@@ -14,7 +14,7 @@ import type { SpareContext } from "../types/page-context";
 const props = defineProps<{ context: SpareContext }>();
 const context = props.context;
 const {
-  can, spareParts, sparePartCount, sparePage, sparePageSize, spareSearch, spareType, spareActive,
+  can, spareParts, sparePartCount, sparePage, sparePageSize, spareSearch, spareType,
   spareListDataCenter, spareListRoom, spareRooms, sparePartForm, editingSparePart, showSparePartModal,
   spareSaving, deletingSparePartId, updatingSparePartId, spareListLoading, spareListError,
   openSparePartModal, saveSparePart, toggleSparePart, deleteSparePart, searchSpareParts,
@@ -36,12 +36,8 @@ const partTypes = [
 ];
 const activeBrands = computed(() => (brands.value as DictionaryItem[]).filter((item) => item.is_active));
 const activeDataCenters = computed(() => (dataCenters.value as DataCenter[]).filter((item) => item.is_active));
-const spareStatusOptions = computed(() => can("spares.manage")
-  ? [{ value: "true", label: "启用" }, { value: "false", label: "停用" }, { value: "all", label: "全部" }]
-  : [{ value: "true", label: "启用" }]);
 const hasSpareFilters = computed(() => Boolean(
-  spareSearch.value.trim() || spareType.value || spareListDataCenter.value || spareListRoom.value
-    || (spareActive.value && spareActive.value !== "true" && spareActive.value !== "all"),
+  spareSearch.value.trim() || spareType.value || spareListDataCenter.value || spareListRoom.value,
 ));
 
 const expandedRows = ref<number[]>([]);
@@ -154,7 +150,6 @@ watch(showSpareOperationModal, (open, wasOpen) => { if (!open && wasOpen) refres
         <PageToolbar class="spare-page-toolbar">
           <SearchField class="itam-filter-search" v-model="spareSearch" placeholder="搜索备件名称、类型、品牌或型号" aria-label="搜索备件" :loading="spareListLoading" @search="searchSpareParts" />
           <el-select class="itam-filter-select" v-model="spareType" placeholder="全部类型" clearable @change="searchSpareParts"><el-option v-for="item in partTypes" :key="item.value" :label="item.label" :value="item.value" /></el-select>
-          <el-select class="itam-filter-select" v-model="spareActive" placeholder="全部状态" :clearable="can('spares.manage')" @change="searchSpareParts"><el-option v-for="item in spareStatusOptions" :key="item.value" :label="item.label" :value="item.value" /></el-select>
           <el-select class="itam-filter-select" v-model="spareListDataCenter" placeholder="全部数据中心" clearable @change="onSpareListDataCenterChange"><el-option v-for="center in activeDataCenters" :key="center.id" :label="center.name" :value="String(center.id)" /></el-select>
           <el-select class="itam-filter-select" v-model="spareListRoom" placeholder="全部机房" clearable @change="searchSpareParts"><el-option v-for="room in roomsFor(spareListDataCenter)" :key="room.id" :label="room.name" :value="String(room.id)" /></el-select>
           <template #actions>
@@ -245,7 +240,10 @@ watch(showSpareOperationModal, (open, wasOpen) => { if (!open && wasOpen) refres
 
 <style scoped>
 .spare-list-content { min-width: 0; }
-.spare-page-toolbar { flex-wrap: wrap; }
+.spare-page-toolbar { flex-wrap: nowrap; }
+.spare-page-toolbar :deep(.itam-filter-search) { min-width: 220px; flex: 1 1 320px; }
+.spare-page-toolbar :deep(.itam-filter-select) { min-width: 130px; flex: 0 1 160px; }
+.spare-page-toolbar :deep(.ep-toolbar-actions) { flex: 0 0 auto; white-space: nowrap; }
 .spare-list-error,
 .spare-inline-error {
   display: flex;
@@ -279,8 +277,11 @@ watch(showSpareOperationModal, (open, wasOpen) => { if (!open && wasOpen) refres
 .spare-transaction-error { margin-bottom: 12px; }
 
 @media (min-width: 1101px) and (max-width: 1450px) {
-  .spare-page-toolbar { row-gap: 8px; }
   .spare-page-toolbar :deep(.itam-filter-search) { flex-basis: 320px !important; width: 320px !important; max-width: 320px !important; }
+}
+
+@media (max-width: 1100px) {
+  .spare-page-toolbar { flex-wrap: wrap; }
 }
 
 @media (max-width: 640px) {

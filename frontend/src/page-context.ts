@@ -73,10 +73,16 @@ export interface AssetFormState {
 export interface DashboardContext {
   dashboard: Ref<DashboardOverview | null>;
   dashboardLoading: Ref<boolean>;
+  dashboardError: Ref<string>;
+  dashboardUpdatedAt: Ref<string | null>;
+  refreshDashboard: () => void | Promise<boolean>;
   handleMenuSelect: (index: string) => void;
   openAssetDetail: (assetId: number) => void | Promise<void>;
+  goToAssets: (query?: Record<string, string>) => void;
+  goToRepairs: (query?: Record<string, string>) => void;
+  goToLicenses: (query?: Record<string, string>) => void;
   openNewAssetModal: () => void | Promise<void>;
-  openRackSection: (section: RackSection | string) => void;
+  openRackSection: (section: RackSection | string, query?: Record<string, string>) => void;
   assetSearch: Ref<string>;
   searchLedger: () => void | Promise<void>;
   can: CapabilityFn;
@@ -90,6 +96,8 @@ export interface AssetFilters {
   tag: string;
   brand: string;
   model: string;
+  dataCenter: string;
+  warranty: string;
 }
 
 export interface AssetLedgerColumnOption {
@@ -120,6 +128,7 @@ export interface AssetLedgerContext {
   retryAssetFilterCustomSchema: () => void | Promise<void>;
   brands: Ref<DictionaryItem[]>;
   deviceTypes: Ref<DictionaryItem[]>;
+  dataCenters: Ref<DataCenter[]>;
   tags: Ref<Tag[]>;
   assetColumnOptions: AssetLedgerColumnOption[];
   assetDynamicColumnOptions: ComputedRef<AssetLedgerColumnOption[]>;
@@ -203,6 +212,19 @@ export interface RackSharedContext extends RackFiltersContext, RackListContext, 
   dataCenters: Ref<DataCenter[]>;
   racks: Ref<Rack[]>;
   facilitySummary: Ref<FacilitySummary | null>;
+  rackManagementLoading: Ref<boolean>;
+  dataCenterManagementError: Ref<string>;
+  roomManagementError: Ref<string>;
+  rackManagementError: Ref<string>;
+  roomManagementSearch: Ref<string>;
+  roomManagementDataCenter: Ref<string>;
+  roomManagementPage: Ref<number>;
+  roomManagementPageSize: Ref<number>;
+  roomManagementCount: Ref<number>;
+  changeRoomManagementSearch: () => void | Promise<void>;
+  changeRoomManagementDataCenter: () => void | Promise<void>;
+  changeRoomManagementPage: (page: number) => void | Promise<void>;
+  resetRoomManagementFilters: () => void | Promise<void>;
   rackListLoading: Ref<boolean>;
   rackCanvasLoading: Ref<boolean>;
   rackListError: Ref<string>;
@@ -210,7 +232,7 @@ export interface RackSharedContext extends RackFiltersContext, RackListContext, 
   can: CapabilityFn;
   openDataCenterModal: (center?: DataCenter) => void | Promise<void>;
   openRoomModal: (room?: ServerRoom) => void | Promise<void>;
-  openRackSection: (section: RackSection | string) => void;
+  openRackSection: (section: RackSection | string, query?: Record<string, string>) => void;
   selectRack: (rack: Rack) => void;
   rackDetailOpen: Ref<boolean>;
   rackViewStyle: ComputedRef<Record<string, string>>;
@@ -220,6 +242,8 @@ export interface RackSharedContext extends RackFiltersContext, RackListContext, 
   retryAssetDetail: () => void | Promise<void>;
   closeAssetDetail: () => void;
   deleteRoom: (room: ServerRoom) => void | Promise<void>;
+  updatingRoomId: Ref<number | null>;
+  updateRoomStatus: (room: ServerRoom, isActive: boolean) => void | Promise<void>;
   rackUsedU: (rack: Rack) => number;
   rackUtilization: (rack: Rack) => number;
   rackUtilizationColor: (rack: Rack) => string;
@@ -237,6 +261,7 @@ export interface RackSharedContext extends RackFiltersContext, RackListContext, 
   rackPage: Ref<number>;
   changeRackPage: (page: number) => void | Promise<void>;
   retryRackView: () => void | Promise<void>;
+  retryRackManagement: () => void | Promise<void>;
   hasRackFilters: ComputedRef<boolean>;
 }
 
@@ -246,7 +271,7 @@ export interface RackFiltersContext {
   changeDataCenter: () => void | Promise<void>;
   selectedRoom: Ref<string>;
   changeRoom: () => void | Promise<void>;
-  roomOptions: ComputedRef<Array<{ id: string; name: string }>>;
+  roomOptions: ComputedRef<Array<{ id: string; name: string; data_center_name?: string }>>;
   selectedRack: Ref<string>;
   changeRackFilter: () => void | Promise<void>;
   rackOptions: ComputedRef<string[]>;
@@ -265,6 +290,7 @@ export interface RackListContext {
   rackUsedU: (rack: Rack) => number;
   rackCount: Ref<number>;
   rackPage: Ref<number>;
+  rackPageSize: Ref<number>;
   changeRackPage: (page: number) => void | Promise<void>;
   rackListLoading: Ref<boolean>;
   rackListError: Ref<string>;

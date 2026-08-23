@@ -638,24 +638,145 @@ def apply_asset_tags(asset: Asset, tags, *, submitted=True):
     AssetTag.objects.bulk_create([AssetTag(asset=asset, tag=tag) for tag in tag_objects])
 
 
-def sync_asset_fault_status(asset_id: int):
-    """Derive asset status from whether it still has an open fault."""
-    has_open_fault = FaultEvent.objects.filter(asset_id=asset_id, is_closed=False).exists()
+REPAIR_RESTORE_STATUSES = frozenset({"in_stock", "in_use", "idle"})
+
+
+def _write_fault_status_audit(
+    *,
+    request,
+    asset,
+    old_status,
+    new_status,
+    old_snapshot,
+    new_snapshot,
+    fault_id=None,
+    repair_id=None,
+    transition=None,
+):
+    if request is None or old_status == new_status:
+        return
+
+    from .audit import write_audit_log
+
+    transition = transition or ("enter_repair" if new_status == "repair" else "restore")
+    write_audit_log(
+        request,
+        action="update",
+        resource_type="asset",
+        resource_id=asset.pk,
+        before={
+            "status": old_status,
+            "status_before_repair": old_snapshot,
+        },
+        after={
+            "status": new_status,
+            "status_before_repair": new_snapshot,
+        },
+        extra={
+            "source": "fault_status_sync",
+            "transition": transition,
+            "asset_id": asset.pk,
+            "fault_id": fault_id,
+            "repair_id": repair_id,
+            "old_status": old_status,
+            "new_status": new_status,
+            "status_before_repair": new_snapshot if new_status == "repair" else old_snapshot,
+        },
+    )
+
+
+@transaction.atomic
+def sync_asset_fault_status(asset_id: int, *, request=None, fault_id=None, repair_id=None, transition=None):
+    """Synchronize one asset's repair lifecycle and restore snapshot."""
+    asset = Asset.objects.select_for_update().get(pk=asset_id)
+    open_faults = FaultEvent.objects.filter(asset_id=asset_id, is_closed=False)
+    has_open_fault = open_faults.exists()
+    other_open_fault = open_faults.exclude(pk=fault_id).exists() if fault_id is not None else has_open_fault
+    old_status = asset.status
+    old_snapshot = asset.status_before_repair
+    update_fields = []
+
     if has_open_fault:
-        # A retired asset should not be silently brought back into the repair
-        # lifecycle just because an old/protected fault was edited.
-        Asset.objects.filter(pk=asset_id).exclude(status="retired").update(status="repair")
-    else:
-        # Only restore assets that this service previously marked as repairing;
-        # preserve in-stock, idle and retired states owned by administrators.
-        Asset.objects.filter(pk=asset_id, status="repair").update(status="in_use")
+        if asset.status != "retired":
+            if asset.status != "repair":
+                if not other_open_fault and asset.status_before_repair is None and asset.status in REPAIR_RESTORE_STATUSES:
+                    asset.status_before_repair = asset.status
+                    update_fields.append("status_before_repair")
+                asset.status = "repair"
+                update_fields.append("status")
+    elif asset.status == "repair":
+        if asset.status_before_repair in REPAIR_RESTORE_STATUSES:
+            asset.status = asset.status_before_repair
+            asset.status_before_repair = None
+            update_fields.extend(["status", "status_before_repair"])
+    elif asset.status_before_repair is not None:
+        # Clear only a stale internal snapshot; never infer a replacement status.
+        asset.status_before_repair = None
+        update_fields.append("status_before_repair")
+
+    if update_fields:
+        asset.save(update_fields=[*update_fields, "updated_at"])
+        _write_fault_status_audit(
+            request=request,
+            asset=asset,
+            old_status=old_status,
+            new_status=asset.status,
+            old_snapshot=old_snapshot,
+            new_snapshot=asset.status_before_repair,
+            fault_id=fault_id,
+            repair_id=repair_id,
+            transition=transition,
+        )
+    return asset
 
 
-def sync_repair_completion(repair):
-    """Keep repair completion, fault closure and asset status consistent."""
-    finished_at = repair.finished_at
-    FaultEvent.objects.filter(pk=repair.fault_id).update(is_closed=bool(finished_at), resolved_at=finished_at)
-    sync_asset_fault_status(repair.fault.asset_id)
+@transaction.atomic
+def sync_fault_completion(*, fault_id: int, finished_at, request=None, repair_id=None):
+    """Make FaultEvent completion state derive only from RepairRecord.finished_at."""
+    from .audit import write_audit_log
+
+    fault = FaultEvent.objects.select_for_update().get(pk=fault_id)
+    next_is_closed = bool(finished_at)
+    before = {"is_closed": fault.is_closed, "resolved_at": fault.resolved_at}
+    after = {"is_closed": next_is_closed, "resolved_at": finished_at}
+    if before != after:
+        FaultEvent.objects.filter(pk=fault.pk).update(
+            is_closed=next_is_closed,
+            resolved_at=finished_at,
+        )
+        if request is not None:
+            write_audit_log(
+                request,
+                action="close" if next_is_closed else "reopen",
+                resource_type="fault_event",
+                resource_id=fault.pk,
+                before=before,
+                after=after,
+                extra={
+                    "source": "repair_record",
+                    "repair_id": repair_id,
+                    "fault_id": fault.pk,
+                },
+            )
+
+    sync_asset_fault_status(
+        fault.asset_id,
+        request=request,
+        fault_id=fault.pk,
+        repair_id=repair_id,
+        transition="reopen" if not next_is_closed else None,
+    )
+    return fault
+
+
+def sync_repair_completion(repair, *, request=None):
+    """Keep RepairRecord, FaultEvent and Asset status consistent."""
+    return sync_fault_completion(
+        fault_id=repair.fault_id,
+        finished_at=repair.finished_at,
+        request=request,
+        repair_id=repair.pk,
+    )
 
 
 def _spare_location(data_center_id, server_room_id, *, role):

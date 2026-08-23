@@ -10,15 +10,33 @@ export interface DashboardApi {
 export function useDashboard(api: DashboardApi) {
   const dashboard = ref<DashboardOverview | null>(null);
   const dashboardLoading = ref(false);
+  const dashboardError = ref("");
+  const dashboardUpdatedAt = ref<string | null>(null);
 
-  async function loadDashboardData(version = api.beginLoad()) {
+  async function loadDashboardData(version = api.beginLoad()): Promise<boolean> {
     dashboardLoading.value = true;
+    dashboardError.value = "";
     try {
       const result = await api.request<DashboardOverview>("/reports/dashboard/");
-      if (api.isCurrentLoad(version)) dashboard.value = result;
+      if (!api.isCurrentLoad(version)) return false;
+      if (result == null) throw new Error("Dashboard 返回数据为空");
+      dashboard.value = result;
+      dashboardUpdatedAt.value = new Date().toISOString();
+      return true;
+    } catch (error) {
+      if (api.isCurrentLoad(version)) {
+        dashboardError.value = error instanceof Error && error.message
+          ? error.message
+          : "Dashboard 数据加载失败";
+      }
+      return false;
     } finally {
       if (api.isCurrentLoad(version)) dashboardLoading.value = false;
     }
+  }
+
+  function refreshDashboard() {
+    return loadDashboardData();
   }
 
   const maxDashboardStatusCount = computed(() =>
@@ -55,7 +73,10 @@ export function useDashboard(api: DashboardApi) {
   return {
     dashboard,
     dashboardLoading,
+    dashboardError,
+    dashboardUpdatedAt,
     loadDashboardData,
+    refreshDashboard,
     maxDashboardStatusCount,
     dashboardBarPercent,
     dashboardDate,

@@ -60,6 +60,7 @@ def asset_audit_snapshot(asset_id):
     snapshot["custom_values"] = {
         item["key"]: item["value"] for item in custom_snapshot
     }
+    snapshot["status_before_repair"] = asset.status_before_repair
     custom_values_by_id = {item["field_id"]: item["value"] for item in custom_snapshot}
     for field in snapshot.get("custom_fields", []):
         if field.get("id") in custom_values_by_id:

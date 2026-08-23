@@ -88,7 +88,10 @@ const {
 const {
   dashboard,
   dashboardLoading,
+  dashboardError,
+  dashboardUpdatedAt,
   loadDashboardData,
+  refreshDashboard,
   maxDashboardStatusCount,
   dashboardBarPercent,
   dashboardDate,
@@ -110,7 +113,7 @@ const passwordSaving = ref(false);
 const passwordFormErrors = ref<Record<string, string>>({});
 const viewportHeight = ref(window.innerHeight);
 const settingsSection = ref<SettingsSection>("dictionaries");
-// 机房资源保留机房管理和视图管理两个入口。
+// 机房资源保留机房管理和机柜管理两个入口。
 const rackSection = ref<RackSection>("rooms");
 const facilities = useFacilities({
   request,
@@ -136,6 +139,19 @@ const {
   serverRooms,
   racks,
   facilitySummary,
+  rackManagementLoading,
+  dataCenterManagementError,
+  roomManagementError,
+  rackManagementError,
+  roomManagementSearch,
+  roomManagementDataCenter,
+  roomManagementPage,
+  roomManagementPageSize,
+  roomManagementCount,
+  changeRoomManagementSearch,
+  changeRoomManagementDataCenter,
+  changeRoomManagementPage,
+  resetRoomManagementFilters,
   rackListLoading,
   rackCanvasLoading,
   rackListError,
@@ -161,6 +177,7 @@ const {
   rackSaving,
   deletingRackId,
   updatingRackId,
+  updatingRoomId,
   loadDataCenters,
   loadRackManagement,
   loadServerRooms,
@@ -170,6 +187,7 @@ const {
   openRoomModal,
   saveRoom,
   deleteRoom,
+  updateRoomStatus,
   openRackModal,
   saveRack,
   deleteRack,
@@ -195,6 +213,7 @@ const {
   rackUtilizationColor,
   selectRack,
   retryRackView,
+  retryRackManagement,
   changeDataCenter,
   changeRoom,
   changeRackFilter,
@@ -372,8 +391,9 @@ const assetsApi = useAssets({
   brands,
   deviceTypes,
   tags,
-  loadRackManagement,
+  loadRackManagement: async () => { await loadRackManagement(); },
   goToLedger: () => navigateToRoute(routeForPage("ledger"), true),
+  clearRouteQuery,
   showAssetDetail,
   detailAsset,
   detailLoading,
@@ -453,6 +473,7 @@ const {
   confirmImportPreview,
   importErrorText,
   searchLedger,
+  syncFiltersFromQuery: syncAssetFiltersFromQuery,
   resetAssetFilters,
   changeAssetPage,
   changeAssetPageSize,
@@ -471,6 +492,7 @@ const licensesApi = useLicenses({
   isCurrentLoad,
   confirmAction,
   actionMessage,
+  clearRouteQuery,
 });
 const {
   licenses,
@@ -489,6 +511,7 @@ const {
   licenseForm,
   loadLicenses,
   searchLicenses,
+  syncFiltersFromQuery: syncLicenseFiltersFromQuery,
   changeLicensePage,
   changeLicensePageSize,
   openLicenseModal,
@@ -504,6 +527,7 @@ const repairs = useRepairs({
   selectedAssetIds,
   actionMessage,
   refreshOpenAssetDetail: assetsApi.refreshOpenAssetDetail,
+  clearRouteQuery,
 });
 const {
   repairListLoading,
@@ -532,6 +556,7 @@ const {
   searchRepairs,
   onRepairStatusChange,
   onRepairDateChange,
+  syncFiltersFromQuery: syncRepairFiltersFromQuery,
   resetRepairFilters,
   retryRepairList,
   createFault,
@@ -664,8 +689,20 @@ function syncRouteState() {
   page.value = routePage;
   if (routePage === "settings")
     settingsSection.value = route.meta.settingsSection || "dictionaries";
-  if (routePage === "racks")
+  if (routePage === "racks") {
     rackSection.value = route.meta.rackSection || "rooms";
+    if (rackSection.value === "view") {
+      const roomQuery = String(route.query.room || "").trim();
+      const rackQuery = Number.parseInt(String(route.query.rack || ""), 10);
+      const rackCodeQuery = String(route.query.rack_code || "").trim();
+      if (roomQuery) selectedRoom.value = roomQuery;
+      if (rackCodeQuery) selectedRack.value = rackCodeQuery;
+      if (Number.isFinite(rackQuery) && rackQuery > 0) focusedRackId.value = rackQuery;
+    }
+  }
+  if (routePage === "ledger") syncAssetFiltersFromQuery(route.query);
+  if (routePage === "repairs") syncRepairFiltersFromQuery(route.query);
+  if (routePage === "licenses") syncLicenseFiltersFromQuery(route.query);
   pageTitle.value = route.meta.title || "仪表盘";
 }
 
@@ -704,6 +741,33 @@ function navigateToRoute(location: RouteLocationRaw, reloadIfSame = false) {
     return;
   }
   void router.push(location);
+}
+
+function clearRouteQuery(keys: string[]): boolean {
+  const routeName = route.name;
+  if (!routeName) return false;
+  const nextQuery = { ...route.query };
+  let changed = false;
+  for (const key of keys) {
+    if (Object.prototype.hasOwnProperty.call(nextQuery, key)) {
+      delete nextQuery[key];
+      changed = true;
+    }
+  }
+  if (changed) void router.replace({ name: routeName, query: nextQuery });
+  return changed;
+}
+
+function goToAssets(query: Record<string, string> = {}) {
+  navigateToRoute({ name: "assets", query });
+}
+
+function goToRepairs(query: Record<string, string> = {}) {
+  navigateToRoute({ name: "repairs", query });
+}
+
+function goToLicenses(query: Record<string, string> = {}) {
+  navigateToRoute({ name: "licenses", query });
 }
 
 function resetMainScroll() {
@@ -771,10 +835,16 @@ async function confirmAction(message: string) {
     return false;
   }
 }
-function openRackSection(section: RackSection | string) {
+function openRackSection(section: RackSection | string, query: Record<string, string> = {}) {
   const normalized: RackSection = section === "view" ? "view" : "rooms";
   rackSection.value = normalized;
-  navigateToRoute(routeForPage("racks", { rackSection: normalized }), true);
+  navigateToRoute(
+    {
+      name: normalized === "view" ? "racks-view" : "racks-rooms",
+      query,
+    },
+    true,
+  );
 }
 async function bootstrapApplication() {
   await loadDataCenters();
@@ -797,7 +867,7 @@ async function load() {
   const version = beginLoad();
   // Spare parts and the rack view own their workspace loading masks so a
   // list/canvas request never blocks the entire routed application.
-  const usesLocalPageLoading = page.value === "settings" || page.value === "spares" || (page.value === "racks" && rackSection.value === "view");
+  const usesLocalPageLoading = page.value === "dashboard" || page.value === "settings" || page.value === "spares" || (page.value === "racks" && (rackSection.value === "view" || rackSection.value === "rooms"));
   loading.value = !usesLocalPageLoading;
   pageError.value = "";
   try {
@@ -984,7 +1054,8 @@ const pageContext = {
   currentUsername: username,
   loading, dashboard, assets,
   dashboardDate, dashboardDateTime, handleMenuSelect,
-  dashboardLoading,
+  goToAssets, goToRepairs, goToLicenses,
+  dashboardLoading, dashboardError, dashboardUpdatedAt, refreshDashboard,
   openAssetDetail, refreshOpenAssetDetail, openRackSection,
   assetSearch, searchLedger, assetColumnOptions, assetDynamicColumnOptions, visibleAssetColumns,
   assetFilters, assetListLoading, assetListError, resetAssetFilters,
@@ -1023,19 +1094,22 @@ const pageContext = {
   stockLocationTotalsByPart, stockLocationLoadedByPart, loadStockLocations, transactionRows, transactionCount,
   transactionPage, transactionPageSize, transactionLoading, transactionError, loadTransactions,
   changeTransactionPage, changeTransactionPageSize,
-  rackSection, serverRooms, openDataCenterModal, openRoomModal, deleteRoom, racks,
-  showRackModal, editingRack, rackForm, rackFormFieldErrors, rackSaving, deletingRackId, updatingRackId,
+  rackSection, serverRooms, openDataCenterModal, openRoomModal, deleteRoom, updateRoomStatus, racks,
+  showRackModal, editingRack, rackForm, rackFormFieldErrors, rackSaving, deletingRackId, updatingRackId, updatingRoomId,
   openRackModal, saveRack, deleteRack, updateRackStatus, clearRackFormErrors,
   dataCenters, selectedDataCenter, changeDataCenter, changeRoom,
-  facilitySummary, rackListLoading, rackCanvasLoading, rackListError, rackCanvasError,
+  facilitySummary, rackManagementLoading, dataCenterManagementError, roomManagementError, rackManagementError,
+  roomManagementSearch, roomManagementDataCenter, roomManagementPage, roomManagementPageSize, roomManagementCount,
+  changeRoomManagementSearch, changeRoomManagementDataCenter, changeRoomManagementPage, resetRoomManagementFilters,
+  rackListLoading, rackCanvasLoading, rackListError, rackCanvasError,
   changeRackFilter, selectedRoom,
   roomOptions, selectedRack, rackOptions, hasRackFilters, selectedRackDeviceType, deviceTypes,
-  resetRackFilters, retryRackView, exportRackLayout, rackViewTitle, displayedRacks,
+  resetRackFilters, retryRackView, retryRackManagement, exportRackLayout, rackViewTitle, displayedRacks,
   rackUtilization, rackUtilizationColor, rackUsedU, focusedRackId, focusedRack, visibleRacks, selectRack,
   rackViewStyle, rackBodyStyle,
   rackAllocationStyle, rackGapUnavailable, openRackAssetDetail,
   rackDetailOpen, detailAsset, detailLoading, detailError, retryAssetDetail, closeAssetDetail,
-  rackCount, rackPage, changeRackPage,
+  rackCount, rackPage, rackPageSize, changeRackPage,
   settingsSection, dictionarySection,
   dictionarySearch, dictionaryLoading, dictionaryError, dictionarySaving, dictionaryActionId,
   dictionaryFormErrors,
@@ -1167,7 +1241,7 @@ const overlayAssetDetail = {
           @title-click="openRackSection('rooms')"
           ><template #title><el-icon><OfficeBuilding /></el-icon><span>机房资源</span></template
           ><el-menu-item v-if="can('racks.manage')" index="racks-rooms">机房管理</el-menu-item
-          ><el-menu-item index="racks-view">视图管理</el-menu-item></el-sub-menu
+          ><el-menu-item index="racks-view">机柜管理</el-menu-item></el-sub-menu
         >
         <el-menu-item index="licenses" title="软件许可"
           ><el-icon><Key /></el-icon

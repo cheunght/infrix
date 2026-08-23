@@ -121,6 +121,7 @@ def build_dashboard_capacity(scope):
         data_center.id: {
             "data_center_id": data_center.id,
             "data_center": data_center.name,
+            "room_count": 0,
             "asset_count": 0,
             "rack_count": 0,
             "total_u": 0,
@@ -130,6 +131,10 @@ def build_dashboard_capacity(scope):
         }
         for data_center in scope.active_data_centers
     }
+    for room in scope.rooms:
+        overview = data_center_overview_map.get(room.data_center_id)
+        if overview is not None:
+            overview["room_count"] += 1
     for asset in scope.asset_rows:
         allocation = getattr(asset, "rack_allocation", None)
         if allocation and not (

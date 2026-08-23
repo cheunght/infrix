@@ -132,6 +132,7 @@ export type DashboardTypeDistribution = {
 export type DashboardDataCenterOverview = {
   data_center_id: number;
   data_center: string;
+  room_count: number;
   asset_count: number;
   rack_count: number;
   total_u: number;
@@ -176,6 +177,13 @@ export type DashboardRecentChange = {
   actor_name: string;
   created_at: string;
 };
+export type DashboardLicenseSummary = {
+  total: number;
+  normal: number;
+  expiring: number;
+  expired: number;
+  over_limit: number;
+};
 export type DashboardOverview = {
   assets: {
     total: number;
@@ -199,17 +207,18 @@ export type DashboardOverview = {
     within_60_days?: number;
     within_90_days?: number;
   };
-  alerts: { open_faults: number };
+  alerts?: { open_faults: number };
   type_distribution?: DashboardTypeDistribution[];
   status_distribution: DashboardStatus[];
   data_center_capacity?: DashboardDataCenterCapacity[];
   room_capacity?: DashboardRoomCapacity[];
-  recent_alerts: DashboardAlert[];
+  recent_alerts?: DashboardAlert[];
   upcoming_expirations: DashboardExpiration[];
   data_center_overview?: DashboardDataCenterOverview[];
   rack_capacity?: DashboardRackCapacity[];
   inventory_summary?: DashboardInventorySummary | null;
   recent_changes?: DashboardRecentChange[];
+  licenses?: DashboardLicenseSummary;
 };
 export type AssetNetwork = { id: number; address: string; role: string; is_primary: boolean; notes?: string };
 export type AssetProcurement = { id: number; purchase_date: string; supplier: string; order_no: string; amount: string | null; notes: string };
@@ -385,6 +394,8 @@ export type Rack = {
   id: number;
   code: string;
   room: number;
+  created_at?: string;
+  updated_at?: string;
   total_u: number;
   name?: string;
   rack_type?: string;
@@ -395,6 +406,7 @@ export type Rack = {
   is_active?: boolean;
   status?: RackStatus | string;
   status_label?: string;
+  assets_count?: number;
   used_u?: number;
   free_u?: number;
   allocations: Array<{ asset: number; start_u: number; end_u: number; units: number; asset_no: string; asset_name: string; asset_type: string; device_type_name?: string | null; device_type_color?: string | null; brand_model?: string; serial_number?: string | null; status: string }>;

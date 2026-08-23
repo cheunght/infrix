@@ -15,8 +15,9 @@ const props = withDefaults(
     items: DonutItem[];
     total: number;
     centerLabel?: string;
+    selectable?: boolean;
   }>(),
-  { centerLabel: "总数" },
+  { centerLabel: "总数", selectable: false },
 );
 defineEmits<{ select: [item: DonutItem] }>();
 
@@ -64,18 +65,20 @@ const segments = computed(() => {
         <span>数量</span>
         <span>占比</span>
       </div>
-      <button
+      <component
         v-for="item in items"
         :key="item.key || item.label"
-        type="button"
+        :is="selectable ? 'button' : 'div'"
+        :type="selectable ? 'button' : undefined"
         class="dashboard-legend-item"
-        @click="$emit('select', item)"
+        :class="{ 'is-selectable': selectable }"
+        @click="selectable && $emit('select', item)"
       >
         <i :style="{ backgroundColor: item.color }" aria-hidden="true"></i>
         <span>{{ item.label }}</span>
         <strong>{{ item.count }}</strong>
         <small>{{ total ? ((item.count / total) * 100).toFixed(1) : "0.0" }}%</small>
-      </button>
+      </component>
       <el-empty v-if="!items.length || !total" description="暂无数据" :image-size="42" />
     </div>
   </div>

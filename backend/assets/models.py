@@ -296,6 +296,15 @@ class Asset(Timestamped):
     serial_number = models.CharField(max_length=160, blank=True, unique=True, null=True)
     purpose = models.CharField(max_length=255, blank=True)
     status = models.CharField(max_length=20, choices=STATUS, default="in_stock")
+    status_before_repair = models.CharField(
+        max_length=20,
+        choices=STATUS,
+        null=True,
+        blank=True,
+        default=None,
+        editable=False,
+        help_text="由故障维修生命周期维护的维修前资产状态快照",
+    )
     brand = models.ForeignKey(Brand, null=True, blank=True, on_delete=models.SET_NULL, related_name="assets")
     device_type = models.ForeignKey(DeviceType, null=True, blank=True, on_delete=models.SET_NULL, related_name="assets")
     asset_data_center = models.ForeignKey(

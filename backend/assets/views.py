@@ -38,10 +38,12 @@ from .services import (
     reset_inventory_resolution,
     resolve_inventory_item,
     sync_asset_fault_status,
+    sync_fault_completion,
     sync_repair_completion,
     update_asset_placement,
 )
 from .inventory import get_inventory_scope_assets
+from .license_status import filter_licenses_by_status, license_status_counts
 from .audit import asset_audit_snapshot, asset_custom_value_changes, model_snapshot, write_audit_log
 from .permissions import BusinessRolePermission, CanExportAssets, CanExportFaults, CanExportInventory, CanExportRacks, CanImportAssets, CanManageInventory, CanViewAssetCustomFieldSchema, CanViewAuditLog, CanViewDashboard, CanViewInventory, CanViewLicenses, IsSystemAdministrator
 from .roles import ROLE_DEFINITIONS, ROLE_NAME_TO_CODE, user_capabilities, user_has_capability, user_role_code
@@ -206,6 +208,19 @@ class AssetViewSet(AuditedModelViewSetMixin, viewsets.ModelViewSet):
                 description="按标签名称筛选资产。",
             ),
             OpenApiParameter(
+                name="data_center",
+                type=OpenApiTypes.INT,
+                required=False,
+                description="按数据中心 ID 筛选资产；已上架资产按机柜所属数据中心，未上架资产按所属数据中心。",
+            ),
+            OpenApiParameter(
+                name="warranty",
+                type=OpenApiTypes.STR,
+                required=False,
+                enum=["within_30_days", "expired"],
+                description="按维保到期状态筛选：within_30_days 表示今天至未来 30 天内到期，expired 表示已过期。",
+            ),
+            OpenApiParameter(
                 name="custom__{field_key}",
                 type=OpenApiTypes.STR,
                 required=False,
@@ -260,6 +275,25 @@ class AssetViewSet(AuditedModelViewSetMixin, viewsets.ModelViewSet):
         tag = self.request.query_params.get("tag", "").strip()
         if tag:
             queryset = queryset.filter(asset_tags__tag__name__iexact=tag)
+        data_center = self.request.query_params.get("data_center", "").strip()
+        try:
+            data_center_id = int(data_center) if data_center else None
+        except (TypeError, ValueError):
+            data_center_id = None
+        if data_center_id and data_center_id > 0:
+            queryset = queryset.filter(
+                Q(rack_allocation__rack__room__data_center_id=data_center_id)
+                | Q(rack_allocation__isnull=True, asset_data_center_id=data_center_id)
+            ).distinct()
+        warranty = self.request.query_params.get("warranty", "").strip()
+        today = timezone.localdate()
+        if warranty == "within_30_days":
+            queryset = queryset.filter(
+                maintenance_contracts__expiry_date__gte=today,
+                maintenance_contracts__expiry_date__lte=today + timedelta(days=30),
+            ).distinct()
+        elif warranty == "expired":
+            queryset = queryset.filter(maintenance_contracts__expiry_date__lt=today).distinct()
         for field, operator, value in self._validated_custom_filters():
             values = AssetCustomValue.objects.filter(
                 asset_id=OuterRef("pk"),
@@ -923,18 +957,7 @@ class SoftwareLicenseViewSet(AuditedModelViewSetMixin, viewsets.ModelViewSet):
     def get_queryset(self):
         queryset = super().get_queryset()
         status = self.request.query_params.get("status", "").strip()
-        today = timezone.localdate()
-        expiry_limit = today + timedelta(days=90)
-        within_limit = Q(used_count__lte=F("authorized_count"))
-        if status == "over_limit":
-            queryset = queryset.filter(used_count__gt=F("authorized_count"))
-        elif status == "expired":
-            queryset = queryset.filter(within_limit, expiry_date__lt=today)
-        elif status == "expiring":
-            queryset = queryset.filter(within_limit, expiry_date__gte=today, expiry_date__lte=expiry_limit)
-        elif status == "normal":
-            queryset = queryset.filter(within_limit).filter(Q(expiry_date__isnull=True) | Q(expiry_date__gt=expiry_limit))
-        return queryset
+        return filter_licenses_by_status(queryset, status)
 
 
 class GroupViewSet(viewsets.ReadOnlyModelViewSet):
@@ -1046,22 +1069,22 @@ class FaultEventViewSet(AuditedModelViewSetMixin, viewsets.ModelViewSet):
     def perform_create(self, serializer):
         super().perform_create(serializer)
         fault = serializer.instance
-        sync_asset_fault_status(fault.asset_id)
+        sync_asset_fault_status(fault.asset_id, request=self.request, fault_id=fault.pk)
 
     @transaction.atomic
     def perform_update(self, serializer):
         previous_asset_id = serializer.instance.asset_id
         super().perform_update(serializer)
         fault = serializer.instance
-        sync_asset_fault_status(previous_asset_id)
+        sync_asset_fault_status(previous_asset_id, request=self.request)
         if fault.asset_id != previous_asset_id:
-            sync_asset_fault_status(fault.asset_id)
+            sync_asset_fault_status(fault.asset_id, request=self.request, fault_id=fault.pk)
 
     @transaction.atomic
     def perform_destroy(self, instance):
         asset_id = instance.asset_id
         super().perform_destroy(instance)
-        sync_asset_fault_status(asset_id)
+        sync_asset_fault_status(asset_id, request=self.request)
 
 
 class RepairRecordViewSet(AuditedModelViewSetMixin, viewsets.ModelViewSet):
@@ -1079,20 +1102,24 @@ class RepairRecordViewSet(AuditedModelViewSetMixin, viewsets.ModelViewSet):
     def perform_create(self, serializer):
         super().perform_create(serializer)
         repair = serializer.instance
-        sync_repair_completion(repair)
+        sync_repair_completion(repair, request=self.request)
 
     @transaction.atomic
     def perform_update(self, serializer):
         super().perform_update(serializer)
         repair = serializer.instance
-        sync_repair_completion(repair)
+        sync_repair_completion(repair, request=self.request)
 
     @transaction.atomic
     def perform_destroy(self, instance):
         fault = instance.fault
         super().perform_destroy(instance)
-        FaultEvent.objects.filter(pk=fault.pk).update(is_closed=False, resolved_at=None)
-        sync_asset_fault_status(fault.asset_id)
+        sync_fault_completion(
+            fault_id=fault.pk,
+            finished_at=None,
+            request=self.request,
+            repair_id=instance.pk,
+        )
 
 
 def _inventory_snapshot(asset):
@@ -2280,17 +2307,12 @@ def repair_record_export(request):
 @api_view(["GET"])
 @permission_classes([CanViewLicenses])
 def license_summary(request):
-    today = timezone.localdate()
-    expiry_limit = today + timedelta(days=90)
-    licenses = SoftwareLicense.objects.all()
+    counts = license_status_counts()
     return Response({
-        "total": licenses.count(),
-        "within_90_days": licenses.filter(
-            expiry_date__gte=today, expiry_date__lte=expiry_limit
-        ).count(),
-        "over_license_risk": licenses.filter(
-            used_count__gt=F("authorized_count")
-        ).count(),
+        **counts,
+        # Keep the previous summary keys for existing clients.
+        "within_90_days": counts["expiring"],
+        "over_license_risk": counts["over_limit"],
     })
 
 
@@ -2302,7 +2324,11 @@ def dashboard_overview(request):
         scope = resolve_dashboard_scope(request)
     except DashboardScopeError as exc:
         return Response({"detail": str(exc)}, status=400)
-    return Response(build_dashboard_payload(scope))
+    return Response(build_dashboard_payload(
+        scope,
+        include_faults=user_has_capability(request.user, "faults.view"),
+        include_licenses=user_has_capability(request.user, "licenses.view"),
+    ))
 
 
 @extend_schema(responses=OpenApiTypes.OBJECT)

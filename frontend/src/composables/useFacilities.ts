@@ -40,6 +40,16 @@ export function useFacilities(deps: FacilitiesDeps) {
   const serverRooms = ref<ServerRoom[]>([]);
   const racks = ref<Rack[]>([]);
   const facilitySummary = ref<FacilitySummary | null>(null);
+  const rackManagementLoading = ref(false);
+  const dataCenterManagementError = ref("");
+  const roomManagementError = ref("");
+  const rackManagementError = ref("");
+  const rackManagementRequestId = ref(0);
+  const roomManagementSearch = ref("");
+  const roomManagementDataCenter = ref("");
+  const roomManagementPage = ref(1);
+  const roomManagementPageSize = ref(12);
+  const roomManagementCount = ref(0);
   const rackListLoading = ref(false);
   const rackCanvasLoading = ref(false);
   const rackListError = ref("");
@@ -87,6 +97,7 @@ export function useFacilities(deps: FacilitiesDeps) {
   const rackSaving = ref(false);
   const deletingRackId = ref<number | null>(null);
   const updatingRackId = ref<number | null>(null);
+  const updatingRoomId = ref<number | null>(null);
 
   function extractFormErrors(error: unknown, fields: readonly string[]) {
     const details = error && typeof error === "object" && "details" in error
@@ -111,18 +122,65 @@ export function useFacilities(deps: FacilitiesDeps) {
     }
   }
 
-  async function loadRackManagement(version = deps.beginLoad()) {
-    const [dataCenterResult, roomsResult, racksResult, summaryResult] = await Promise.all([
+  async function loadRackManagement(version = deps.beginLoad()): Promise<boolean> {
+    const requestId = ++rackManagementRequestId.value;
+    if (deps.isCurrentLoad(version)) {
+      rackManagementLoading.value = true;
+      dataCenterManagementError.value = "";
+      roomManagementError.value = "";
+      rackManagementError.value = "";
+    }
+    const roomParams = new URLSearchParams({
+      page: String(roomManagementPage.value),
+      page_size: String(roomManagementPageSize.value),
+      is_active: "all",
+    });
+    if (roomManagementSearch.value.trim()) roomParams.set("search", roomManagementSearch.value.trim());
+    if (roomManagementDataCenter.value) roomParams.set("data_center", roomManagementDataCenter.value);
+    const [dataCenterResult, roomsResult, racksResult, summaryResult] = await Promise.allSettled([
       deps.request<{ results?: DataCenter[] } | DataCenter[]>("/data-centers/?page_size=100&is_active=all"),
-      deps.request<{ results?: ServerRoom[] } | ServerRoom[]>("/server-rooms/?page_size=100&is_active=all"),
+      deps.request<{ results?: ServerRoom[]; count?: number } | ServerRoom[]>(`/server-rooms/?${roomParams.toString()}`),
       deps.request<{ results?: Rack[] } | Rack[]>("/racks/?page_size=100&is_active=all"),
       deps.request<FacilitySummary>("/facilities/summary/"),
     ]);
-    if (!deps.isCurrentLoad(version)) return;
-    dataCenters.value = Array.isArray(dataCenterResult) ? dataCenterResult : dataCenterResult?.results || [];
-    serverRooms.value = Array.isArray(roomsResult) ? roomsResult : roomsResult?.results || [];
-    racks.value = Array.isArray(racksResult) ? racksResult : racksResult?.results || [];
-    facilitySummary.value = summaryResult;
+    if (!deps.isCurrentLoad(version) || requestId !== rackManagementRequestId.value) return true;
+
+    if (dataCenterResult.status === "fulfilled") {
+      dataCenters.value = Array.isArray(dataCenterResult.value)
+        ? dataCenterResult.value
+        : dataCenterResult.value?.results || [];
+    } else {
+      dataCenterManagementError.value = requestErrorMessage(dataCenterResult.reason, "数据中心加载失败，请稍后重试");
+    }
+    if (roomsResult.status === "fulfilled") {
+      serverRooms.value = Array.isArray(roomsResult.value)
+        ? roomsResult.value
+        : roomsResult.value?.results || [];
+      roomManagementCount.value = Array.isArray(roomsResult.value)
+        ? roomsResult.value.length
+        : Number(roomsResult.value?.count || 0);
+      const lastRoomPage = Math.max(1, Math.ceil(roomManagementCount.value / roomManagementPageSize.value));
+      if (roomManagementPage.value > lastRoomPage) {
+        roomManagementPage.value = lastRoomPage;
+        return loadRackManagement(version);
+      }
+    } else {
+      roomManagementError.value = requestErrorMessage(roomsResult.reason, "机房加载失败，请稍后重试");
+    }
+    if (racksResult.status === "fulfilled") {
+      racks.value = Array.isArray(racksResult.value)
+        ? racksResult.value
+        : racksResult.value?.results || [];
+    } else {
+      rackManagementError.value = requestErrorMessage(racksResult.reason, "机柜加载失败，请稍后重试");
+    }
+    if (summaryResult.status === "fulfilled") facilitySummary.value = summaryResult.value;
+    rackManagementLoading.value = false;
+    return !dataCenterManagementError.value && !roomManagementError.value && !rackManagementError.value;
+  }
+
+  function requestErrorMessage(error: unknown, fallback: string) {
+    return error instanceof Error && error.message ? error.message : fallback;
   }
 
   async function loadServerRooms(version = deps.beginLoad()) {
@@ -138,22 +196,27 @@ export function useFacilities(deps: FacilitiesDeps) {
 
   async function loadRackView(version = deps.beginLoad()) {
     const requestId = ++rackViewRequestId.value;
+    const requestedFocusedRackId = focusedRackId.value;
     if (deps.isCurrentLoad(version)) {
       rackListLoading.value = true;
       rackCanvasLoading.value = true;
       rackListError.value = "";
       rackCanvasError.value = "";
+      racks.value = [];
+      rackCount.value = 0;
+      clearRackSelection();
     }
     try {
       await loadServerRooms(version);
       if (!deps.isCurrentLoad(version) || requestId !== rackViewRequestId.value) return;
+      const selectedRoomExists = serverRooms.value.some((room) => String(room.id) === selectedRoom.value && room.is_active);
+      if (selectedRoom.value && !selectedRoomExists) selectedRoom.value = "";
       const params = new URLSearchParams({
         page: String(rackPage.value),
         page_size: String(rackPageSize.value),
       });
-      if (selectedDataCenter.value) params.set("room__data_center", selectedDataCenter.value);
       if (selectedRoom.value) params.set("room", selectedRoom.value);
-      if (selectedRack.value) params.set("code", selectedRack.value);
+      if (selectedRack.value) params.set("search", selectedRack.value);
       if (selectedRackDeviceType.value) params.set("device_type", selectedRackDeviceType.value);
       const result = await deps.request<{ results?: Rack[]; count?: number } | Rack[]>(
         `/racks/?${params.toString()}`,
@@ -161,6 +224,9 @@ export function useFacilities(deps: FacilitiesDeps) {
       if (!deps.isCurrentLoad(version) || requestId !== rackViewRequestId.value) return;
       racks.value = Array.isArray(result) ? result : result?.results || [];
       rackCount.value = Array.isArray(result) ? result.length : Number(result?.count || 0);
+      focusedRackId.value = racks.value.find((rack) => rack.id === requestedFocusedRackId)?.id
+        || racks.value[0]?.id
+        || null;
     } catch (error) {
       if (!deps.isCurrentLoad(version) || requestId !== rackViewRequestId.value || isAbortError(error)) return;
       const message = error instanceof Error && error.message
@@ -182,6 +248,10 @@ export function useFacilities(deps: FacilitiesDeps) {
   }
 
   function retryRackView() {
+    void deps.reload();
+  }
+
+  function retryRackManagement() {
     void deps.reload();
   }
 
@@ -218,7 +288,7 @@ export function useFacilities(deps: FacilitiesDeps) {
       try {
         const dictionariesRefreshed = await deps.refreshDictionaries();
         if (dictionariesRefreshed === false) throw new Error("字典数据刷新失败");
-        await loadRackManagement();
+        if (!(await loadRackManagement())) throw new Error("资源数据刷新失败");
       } catch (refreshError) {
         deps.actionMessage.value = "数据中心已保存，但页面刷新失败：" + (refreshError instanceof Error ? refreshError.message : "请稍后重试");
       }
@@ -274,7 +344,7 @@ export function useFacilities(deps: FacilitiesDeps) {
       showRoomModal.value = false;
       deps.actionMessage.value = "机房已保存";
       try {
-        await loadRackManagement();
+        if (!(await loadRackManagement())) throw new Error("资源数据刷新失败");
       } catch (refreshError) {
         deps.actionMessage.value = "机房已保存，但页面刷新失败：" + (refreshError instanceof Error ? refreshError.message : "请稍后重试");
       }
@@ -293,11 +363,37 @@ export function useFacilities(deps: FacilitiesDeps) {
     }
   }
 
+  async function updateRoomStatus(room: ServerRoom, isActive: boolean) {
+    if (updatingRoomId.value === room.id || room.is_active === isActive) return;
+    updatingRoomId.value = room.id;
+    try {
+      await deps.request(`/server-rooms/${room.id}/`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ is_active: isActive }),
+      });
+      deps.actionMessage.value = isActive ? "机房已启用" : "机房已停用";
+      try {
+        if (!(await loadRackManagement())) throw new Error("资源数据刷新失败");
+      } catch (refreshError) {
+        deps.actionMessage.value = `${isActive ? "机房已启用" : "机房已停用"}，但页面刷新失败：${refreshError instanceof Error ? refreshError.message : "请稍后重试"}`;
+      }
+    } catch (error) {
+      deps.actionMessage.value = error instanceof Error ? error.message : "机房状态更新失败";
+    } finally {
+      updatingRoomId.value = null;
+    }
+  }
+
   async function deleteRoom(room: ServerRoom) {
+    if (room.racks_count || room.assets_count) {
+      deps.actionMessage.value = "请先迁移/移除关联资源后再删除";
+      return;
+    }
     if (!(await deps.confirmAction(`确定删除机房“${room.name}”吗？`))) return;
     try {
       await deps.request(`/server-rooms/${room.id}/`, { method: "DELETE" });
-      await loadRackManagement();
+      if (!(await loadRackManagement())) throw new Error("资源数据刷新失败");
     } catch (error) {
       deps.actionMessage.value = error instanceof Error ? error.message : "删除失败";
     }
@@ -373,10 +469,14 @@ export function useFacilities(deps: FacilitiesDeps) {
 
   async function refreshRackDataAfterMutation() {
     if (deps.page.value === "racks" && deps.rackSection.value === "view") {
+      const previousFocusedRackId = focusedRackId.value;
       await loadRackView();
+      if (previousFocusedRackId && racks.value.some((rack) => rack.id === previousFocusedRackId)) {
+        focusedRackId.value = previousFocusedRackId;
+      }
       return;
     }
-    await loadRackManagement();
+    if (!(await loadRackManagement())) throw new Error("资源数据刷新失败");
   }
 
   async function saveRack() {
@@ -474,13 +574,37 @@ export function useFacilities(deps: FacilitiesDeps) {
     }
   }
 
+  function changeRoomManagementSearch() {
+    roomManagementPage.value = 1;
+    void deps.reload();
+  }
+
+  function changeRoomManagementDataCenter() {
+    roomManagementPage.value = 1;
+    void deps.reload();
+  }
+
+  function changeRoomManagementPage(pageNumber: number) {
+    const nextPage = Math.min(
+      Math.max(pageNumber, 1),
+      Math.max(1, Math.ceil(roomManagementCount.value / roomManagementPageSize.value)),
+    );
+    if (nextPage === roomManagementPage.value) return;
+    roomManagementPage.value = nextPage;
+    void deps.reload();
+  }
+
+  function resetRoomManagementFilters() {
+    roomManagementSearch.value = "";
+    roomManagementDataCenter.value = "";
+    roomManagementPage.value = 1;
+    void deps.reload();
+  }
+
   const visibleRacks = computed(() =>
     racks.value.filter(
       (rack) =>
-        (!selectedRoom.value || String(rack.room) === selectedRoom.value) &&
-        (!selectedRack.value || rack.code === selectedRack.value) &&
-        (!selectedRackDeviceType.value ||
-          rack.allocations.some((item) => item.device_type_name === selectedRackDeviceType.value)),
+        !selectedRoom.value || String(rack.room) === selectedRoom.value,
     ),
   );
   const roomOptions = computed(() =>
@@ -490,7 +614,7 @@ export function useFacilities(deps: FacilitiesDeps) {
           room.is_active &&
           (!selectedDataCenter.value || String(room.data_center) === selectedDataCenter.value),
       )
-      .map((room) => ({ id: String(room.id), name: room.name })),
+      .map((room) => ({ id: String(room.id), name: room.name, data_center_name: room.data_center_name })),
   );
   const rackOptions = computed(() =>
     racks.value
@@ -511,7 +635,7 @@ export function useFacilities(deps: FacilitiesDeps) {
     () => deps.page.value === "racks" && deps.showAssetDetail.value,
   );
   const displayedRacks = computed(() =>
-    rackDetailOpen.value && focusedRack.value ? [focusedRack.value] : visibleRacks.value,
+    focusedRack.value ? [focusedRack.value] : [],
   );
   const rackViewTitle = computed(() =>
     focusedRack.value
@@ -519,18 +643,14 @@ export function useFacilities(deps: FacilitiesDeps) {
       : "机柜 U 位视图",
   );
   const rackViewStyle = computed(() => {
-    const maximumUnits = Math.max(1, ...displayedRacks.value.map((rack) => rack.total_u));
-    if (window.innerWidth <= 1000) return { "--rack-unit-height": "14px" };
-    const availableHeight = Math.max(495, deps.viewportHeight.value - 307);
+    const unitHeight = deps.viewportHeight.value < 720 ? 13 : 14;
     return {
-      "--rack-unit-height": `${Math.max(11, Math.min(19, Math.floor((availableHeight - 4) / maximumUnits)))}px`,
+      "--rack-unit-height": `${unitHeight}px`,
     };
   });
 
-  function rackUnitHeight(rack: Rack) {
-    if (window.innerWidth <= 1000) return 14;
-    const availableHeight = Math.max(495, deps.viewportHeight.value - 307);
-    return Math.max(11, Math.min(19, Math.floor((availableHeight - 4) / Math.max(rack.total_u, 1))));
+  function rackUnitHeight(_rack: Rack) {
+    return deps.viewportHeight.value < 720 ? 13 : 14;
   }
   function rackBodyHeight(rack: Rack) {
     return rack.total_u * rackUnitHeight(rack) + 4;
@@ -631,6 +751,19 @@ export function useFacilities(deps: FacilitiesDeps) {
     serverRooms,
     racks,
     facilitySummary,
+    rackManagementLoading,
+    dataCenterManagementError,
+    roomManagementError,
+    rackManagementError,
+    roomManagementSearch,
+    roomManagementDataCenter,
+    roomManagementPage,
+    roomManagementPageSize,
+    roomManagementCount,
+    changeRoomManagementSearch,
+    changeRoomManagementDataCenter,
+    changeRoomManagementPage,
+    resetRoomManagementFilters,
     rackListLoading,
     rackCanvasLoading,
     rackListError,
@@ -660,6 +793,7 @@ export function useFacilities(deps: FacilitiesDeps) {
     rackSaving,
     deletingRackId,
     updatingRackId,
+    updatingRoomId,
     loadDataCenters,
     loadRackManagement,
     loadServerRooms,
@@ -669,6 +803,7 @@ export function useFacilities(deps: FacilitiesDeps) {
     openRoomModal,
     saveRoom,
     deleteRoom,
+    updateRoomStatus,
     openRackModal,
     saveRack,
     deleteRack,
@@ -695,6 +830,7 @@ export function useFacilities(deps: FacilitiesDeps) {
     selectRack,
     clearRackSelection,
     retryRackView,
+    retryRackManagement,
     changeDataCenter,
     changeRoom,
     changeRackFilter,

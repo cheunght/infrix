@@ -32,6 +32,7 @@ const {
   tags,
   brands,
   deviceTypes,
+  dataCenters,
   assetColumnOptions,
   assetDynamicColumnOptions,
   visibleAssetColumns,
@@ -81,6 +82,7 @@ const statusOptions = [
 const activeTags = computed(() => tags.value.filter((item) => item.is_active));
 const activeBrands = computed(() => brands.value.filter((item) => item.is_active));
 const activeDeviceTypes = computed(() => deviceTypes.value.filter((item) => item.is_active));
+const activeDataCenters = computed(() => dataCenters.value.filter((item) => item.is_active !== false));
 const hasAssetFilters = computed(() => Boolean(
   assetSearch.value.trim() ||
   assetFilters.status ||
@@ -88,6 +90,8 @@ const hasAssetFilters = computed(() => Boolean(
   assetFilters.tag ||
   assetFilters.brand ||
   assetFilters.model.trim() ||
+  assetFilters.dataCenter ||
+  assetFilters.warranty ||
   appliedCustomFilters.value.length,
 ));
 const exportLabel = computed(() =>
@@ -283,6 +287,17 @@ function handleToolbarAction(command: string) {
                   </el-form-item>
                   <el-form-item label="型号">
                     <el-input v-model="assetFilters.model" clearable placeholder="输入型号" @keyup.enter="searchLedger" @clear="searchLedger" />
+                  </el-form-item>
+                  <el-form-item label="数据中心">
+                    <el-select v-model="assetFilters.dataCenter" clearable filterable placeholder="全部数据中心" @change="searchLedger">
+                      <el-option v-for="item in activeDataCenters" :key="item.id" :label="item.name" :value="String(item.id)" />
+                    </el-select>
+                  </el-form-item>
+                  <el-form-item label="维保状态">
+                    <el-select v-model="assetFilters.warranty" clearable placeholder="全部维保状态" @change="searchLedger">
+                      <el-option label="30 天内到期" value="within_30_days" />
+                      <el-option label="已过期" value="expired" />
+                    </el-select>
                   </el-form-item>
                 </el-form>
                 <el-divider />

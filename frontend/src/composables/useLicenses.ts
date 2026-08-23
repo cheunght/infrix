@@ -1,4 +1,5 @@
 import { ref, type Ref } from "vue";
+import type { LocationQuery } from "vue-router";
 import { pageItems, pageTotal, type PageResult } from "../api";
 import type { SoftwareLicense } from "../types";
 import type { RequestFn } from "../types/page-context";
@@ -9,6 +10,7 @@ export interface LicensesDeps {
   isCurrentLoad: (version: number) => boolean;
   confirmAction: (message: string) => Promise<boolean>;
   actionMessage: Ref<string>;
+  clearRouteQuery?: (keys: string[]) => boolean;
 }
 
 export function useLicenses(deps: LicensesDeps) {
@@ -88,6 +90,20 @@ export function useLicenses(deps: LicensesDeps) {
     licensePage.value = 1;
     void loadLicenses();
   }
+
+  function queryValue(query: LocationQuery, key: string): string {
+    const value = query[key];
+    return Array.isArray(value) ? String(value[0] ?? "") : String(value ?? "");
+  }
+
+  function syncFiltersFromQuery(query: LocationQuery) {
+    const status = queryValue(query, "status");
+    const validStatuses = new Set(["normal", "expiring", "expired", "over_limit"]);
+    licenseKeyword.value = queryValue(query, "search");
+    licenseStatus.value = validStatuses.has(status) ? status : "";
+    licensePage.value = 1;
+  }
+
   function changeLicensePage(page: number) {
     licensePage.value = Math.max(1, page);
     void loadLicenses();
@@ -102,6 +118,7 @@ export function useLicenses(deps: LicensesDeps) {
     licenseKeyword.value = "";
     licenseStatus.value = "";
     licensePage.value = 1;
+    if (deps.clearRouteQuery?.(["status", "search"])) return;
     void loadLicenses();
   }
 
@@ -186,6 +203,6 @@ export function useLicenses(deps: LicensesDeps) {
     licenseListLoading, licenseListError, licenseSaving, deletingLicenseId,
     showLicenseModal, editingLicense, licenseForm,
     loadLicenses, searchLicenses, changeLicensePage, changeLicensePageSize,
-    resetLicenseFilters, retryLicenseList, openLicenseModal, saveLicense, deleteLicense,
+    resetLicenseFilters, retryLicenseList, syncFiltersFromQuery, openLicenseModal, saveLicense, deleteLicense,
   };
 }

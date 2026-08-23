@@ -1,4 +1,5 @@
 import { ref, type Ref } from "vue";
+import type { LocationQuery } from "vue-router";
 import { pageItems, pageTotal, type PageResult } from "../api";
 import type { Asset, FaultEvent } from "../types";
 import type { RequestFn } from "../types/page-context";
@@ -13,6 +14,7 @@ export interface RepairsDeps {
   selectedAssetIds: Ref<number[]>;
   actionMessage: Ref<string>;
   refreshOpenAssetDetail?: (assetId: number) => Promise<boolean | null>;
+  clearRouteQuery?: (keys: string[]) => boolean;
 }
 
 function nowDateTimeLocal() {
@@ -44,7 +46,7 @@ export function useRepairs(deps: RepairsDeps) {
   const faultAssetOptions = ref<Asset[]>([]);
   const faultAssetLoading = ref(false);
   const faultAssetRequestId = ref(0);
-  const repairForm = ref({ finished_at: "" });
+  const repairForm = ref({ provider: "", started_at: "", finished_at: "", notes: "" });
   const repairListLoading = ref(false);
   const repairListError = ref("");
   const repairRequestId = ref(0);
@@ -105,8 +107,21 @@ export function useRepairs(deps: RepairsDeps) {
   }
   function openRepairModal(fault: FaultEvent) {
     selectedFault.value = fault;
-    repairForm.value = { finished_at: toDateTimeLocal(fault.repair?.finished_at || null) };
+    repairForm.value = {
+      provider: fault.repair?.provider || "",
+      started_at: toDateTimeLocal(fault.repair?.started_at || null),
+      finished_at: toDateTimeLocal(fault.repair?.finished_at || null),
+      notes: fault.repair?.notes || "",
+    };
     showRepairModal.value = true;
+  }
+
+  function repairTimeError() {
+    const startedAt = repairForm.value.started_at.trim();
+    const finishedAt = repairForm.value.finished_at.trim();
+    return startedAt && finishedAt && startedAt > finishedAt
+      ? "维修开始时间不能晚于维修完成时间"
+      : "";
   }
   function currentRepairFilters() {
     return {
@@ -173,6 +188,21 @@ export function useRepairs(deps: RepairsDeps) {
     repairPage.value = 1;
     void loadRepairs();
   }
+
+  function queryValue(query: LocationQuery, key: string): string {
+    const value = query[key];
+    return Array.isArray(value) ? String(value[0] ?? "") : String(value ?? "");
+  }
+
+  function syncFiltersFromQuery(query: LocationQuery) {
+    const status = queryValue(query, "is_closed");
+    repairKeyword.value = queryValue(query, "search");
+    repairStatus.value = status === "true" || status === "false" ? status : "";
+    repairStart.value = "";
+    repairEnd.value = "";
+    repairPage.value = 1;
+  }
+
   function onRepairStatusChange() {
     repairPage.value = 1;
     void loadRepairs();
@@ -197,6 +227,7 @@ export function useRepairs(deps: RepairsDeps) {
     repairStart.value = "";
     repairEnd.value = "";
     repairPage.value = 1;
+    if (deps.clearRouteQuery?.(["is_closed", "search", "start", "end"])) return;
     void loadRepairs();
   }
   function retryRepairList() {
@@ -224,10 +255,21 @@ export function useRepairs(deps: RepairsDeps) {
   }
   async function saveRepair(): Promise<boolean> {
     if (!selectedFault.value || repairSaving.value) return false;
+    const timeError = repairTimeError();
+    if (timeError) {
+      deps.actionMessage.value = timeError;
+      return false;
+    }
     repairSaving.value = true;
     const repairedAssetId = selectedFault.value.asset;
     try {
-      const payload = { finished_at: repairForm.value.finished_at || null, fault: selectedFault.value.id };
+      const payload = {
+        fault: selectedFault.value.id,
+        provider: repairForm.value.provider.trim(),
+        started_at: repairForm.value.started_at || null,
+        finished_at: repairForm.value.finished_at || null,
+        notes: repairForm.value.notes,
+      };
       if (selectedFault.value.repair) {
         await deps.request(`/repair-records/${selectedFault.value.repair.id}/`, { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload) });
       } else {
@@ -279,8 +321,9 @@ export function useRepairs(deps: RepairsDeps) {
     repairRows, repairCount, repairPage, repairPageSize, repairKeyword, repairStatus, repairStart, repairEnd,
     showFaultModal, showRepairModal, selectedFault, faultForm, faultAssetSearch, faultAssetOptions, faultAssetLoading,
     repairListLoading, repairListError, faultSaving, repairSaving,
-    repairForm, openFaultModal, searchFaultAssets, registerFaultFromSelection, openRepairModal, loadRepairs,
+    repairForm, repairTimeError, openFaultModal, searchFaultAssets, registerFaultFromSelection, openRepairModal, loadRepairs,
     searchRepairs, onRepairStatusChange, onRepairDateChange, resetRepairFilters, retryRepairList,
+    syncFiltersFromQuery,
     createFault, saveRepair, exportRepairs, changeRepairPage, changeRepairPageSize,
   };
 }

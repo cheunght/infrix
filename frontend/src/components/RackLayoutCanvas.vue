@@ -51,7 +51,7 @@ function rackStatus(rack: Rack) {
       <el-skeleton :rows="8" animated />
     </div>
     <div v-else-if="rackCanvasError" class="rack-panel-state rack-panel-error" role="alert">
-      <strong>机柜 U 位数据加载失败</strong>
+      <strong>机柜详情加载失败</strong>
       <span>{{ rackCanvasError }}</span>
       <el-button type="primary" plain @click="retryRackView">重新加载</el-button>
     </div>

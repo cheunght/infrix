@@ -1,4 +1,5 @@
 import { computed, reactive, ref, type ComputedRef, type Ref } from "vue";
+import type { LocationQuery } from "vue-router";
 import { ElMessage } from "element-plus";
 import { ApiError, pageItems, pageTotal, type PageResult } from "../api";
 import type { Page } from "../types";
@@ -125,6 +126,7 @@ export interface AssetsDeps {
   tags: Ref<Tag[]>;
   loadRackManagement: () => void | Promise<void>;
   goToLedger: () => void;
+  clearRouteQuery?: (keys: string[]) => boolean;
   showAssetDetail: Ref<boolean>;
   detailAsset: Ref<AssetDetail | null>;
   detailLoading: Ref<boolean>;
@@ -352,6 +354,8 @@ export function useAssets(deps: AssetsDeps) {
     tag: "",
     brand: "",
     model: "",
+    dataCenter: "",
+    warranty: "",
   });
   const assetTagFilter = computed({
     get: () => assetFilters.tag,
@@ -608,6 +612,8 @@ export function useAssets(deps: AssetsDeps) {
     if (assetFilters.tag) params.set("tag", assetFilters.tag);
     if (assetFilters.brand) params.set("brand", assetFilters.brand);
     if (assetFilters.model.trim()) params.set("model", assetFilters.model.trim());
+    if (assetFilters.dataCenter) params.set("data_center", assetFilters.dataCenter);
+    if (assetFilters.warranty) params.set("warranty", assetFilters.warranty);
     for (const filter of appliedCustomFilters.value) {
       if (filter.fieldKey && filter.value.trim()) {
         params.append(`custom__${filter.fieldKey}__${filter.operator}`, filter.value.trim());
@@ -1284,9 +1290,23 @@ export function useAssets(deps: AssetsDeps) {
     assetPage.value = 1;
     return loadAssets();
   }
-  function resetAssetFilters() {
+
+  function queryValue(query: LocationQuery, key: string): string {
+    const value = query[key];
+    return Array.isArray(value) ? String(value[0] ?? "") : String(value ?? "");
+  }
+
+  function syncFiltersFromQuery(query: LocationQuery) {
+    const status = queryValue(query, "status");
+    const dataCenter = queryValue(query, "data_center");
+    const warranty = queryValue(query, "warranty");
+    const validStatuses = new Set(["in_stock", "in_use", "idle", "repair", "retired"]);
+    const validWarranties = new Set(["within_30_days", "expired"]);
+
     assetSearch.value = "";
-    assetFilters.status = "";
+    assetFilters.status = validStatuses.has(status) ? status : "";
+    assetFilters.dataCenter = /^\d+$/.test(dataCenter) && Number(dataCenter) > 0 ? dataCenter : "";
+    assetFilters.warranty = validWarranties.has(warranty) ? warranty : "";
     assetFilters.deviceType = "";
     assetFilters.tag = "";
     assetFilters.brand = "";
@@ -1294,6 +1314,21 @@ export function useAssets(deps: AssetsDeps) {
     draftCustomFilters.value = [];
     appliedCustomFilters.value = [];
     assetPage.value = 1;
+  }
+
+  function resetAssetFilters() {
+    assetSearch.value = "";
+    assetFilters.status = "";
+    assetFilters.deviceType = "";
+    assetFilters.tag = "";
+    assetFilters.brand = "";
+    assetFilters.model = "";
+    assetFilters.dataCenter = "";
+    assetFilters.warranty = "";
+    draftCustomFilters.value = [];
+    appliedCustomFilters.value = [];
+    assetPage.value = 1;
+    if (deps.clearRouteQuery?.(["status", "data_center", "warranty"])) return;
     return loadAssets();
   }
   function changeAssetPage(pageNumber: number) {
@@ -1405,6 +1440,7 @@ export function useAssets(deps: AssetsDeps) {
     confirmImportPreview,
     importErrorText,
     searchLedger,
+    syncFiltersFromQuery,
     resetAssetFilters,
     changeAssetPage,
     changeAssetPageSize,

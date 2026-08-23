@@ -1,8 +1,8 @@
 <script setup lang="ts">
 import { computed, toRefs } from "vue";
-import type { AssetDetail } from "../types";
+import type { AssetDetail, InventoryItem } from "../types";
 import { statusLabel } from "../status";
-import StatusTag from "./StatusTag.vue";
+import StatusTag, { type StatusTagType } from "./StatusTag.vue";
 import DynamicFieldDisplay from "./fields/DynamicFieldDisplay.vue";
 
 const props = defineProps<{
@@ -39,6 +39,38 @@ function makeField(label: string, raw: unknown): DetailField {
   return { label, raw, value: displayValue(raw) };
 }
 
+function fieldsWithContent(fields: DetailField[]): DetailField[] {
+  return fields.filter((field) => hasContent(field.raw));
+}
+
+function formatDateTime(value: string | null): string {
+  if (!value) return "—";
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return value;
+  return date.toLocaleString("zh-CN", {
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+  });
+}
+
+function inventoryStatusType(status: string): StatusTagType {
+  if (status === "normal") return "success";
+  if (status === "pending") return "warning";
+  if (["location_mismatch", "not_found", "info_mismatch", "other"].includes(status)) return "danger";
+  return "info";
+}
+
+function inventoryRecordLabel(record: InventoryItem): string {
+  const resolution = record.resolution_status === "resolved"
+    ? "已处理"
+    : record.resolution_status === "pending"
+      ? "待处理"
+      : "";
+  return [record.status_label, resolution].filter(Boolean).join(" · ");
+}
+
 function networkValue(role: string): string {
   const current = asset.value;
   if (!current) return "";
@@ -72,13 +104,12 @@ const locationFields = computed<DetailField[]>(() => {
   if (!current) return [];
   const rack = current.rack_allocation;
   const dataCenter = rack?.data_center || current.asset_data_center_name || current.data_center;
-  const room = rack?.server_room || current.server_room;
-  const rackCode = rack?.rack_code || current.rack_code;
-  const uRange = rack
-    ? `U${rack.start_u}–U${rack.end_u}（${rack.units}U）`
-    : current.u_range;
+  const room = rack?.server_room;
+  const rackCode = rack?.rack_code;
+  const uRange = rack && rack.start_u != null && rack.end_u != null
+    ? `U${rack.start_u}–U${rack.end_u} (${rack.units}U)`
+    : null;
   return [
-    makeField("上架状态", rack ? "已上架" : hasContent(dataCenter) ? "未上架" : null),
     makeField("数据中心", dataCenter),
     makeField("机房", room),
     makeField("机柜", rackCode),
@@ -107,12 +138,35 @@ const procurementFields = computed<DetailField[]>(() => {
   ];
 });
 
-const hasBasicFields = computed(() => basicFields.value.some((field) => hasContent(field.raw)));
-const hasLocationFields = computed(() => locationFields.value.some((field) => hasContent(field.raw)));
-const hasNetworkFields = computed(() => networkFields.value.some((field) => hasContent(field.raw)));
-const hasProcurementFields = computed(() => procurementFields.value.some((field) => hasContent(field.raw)));
+const visibleBasicFields = computed(() => fieldsWithContent(basicFields.value));
+const visibleLocationFields = computed(() => fieldsWithContent(locationFields.value));
+const visibleNetworkFields = computed(() => fieldsWithContent(networkFields.value));
+const visibleProcurementFields = computed(() => fieldsWithContent(procurementFields.value));
+const hasBasicFields = computed(() => visibleBasicFields.value.length > 0);
+const hasLocationFields = computed(() => visibleLocationFields.value.length > 0);
+const hasNetworkFields = computed(() => visibleNetworkFields.value.length > 0);
 const hasNotes = computed(() => hasContent(asset.value?.notes));
 const inventoryRecords = computed(() => asset.value?.inventory_records || []);
+
+const maintenanceExpiry = computed(() => {
+  const current = asset.value;
+  const maintenance = current?.maintenance_contracts?.[0];
+  return maintenance?.expiry_date || current?.maintenance_expiry_date || null;
+});
+
+const maintenanceState = computed<{ label: string; status: string; type: StatusTagType } | null>(() => {
+  const expiry = maintenanceExpiry.value;
+  const dateText = expiry ? String(expiry).slice(0, 10) : "";
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(dateText)) return null;
+  const expiryDate = new Date(`${dateText}T00:00:00`);
+  if (Number.isNaN(expiryDate.getTime())) return null;
+  const today = new Date();
+  const todayStart = new Date(today.getFullYear(), today.getMonth(), today.getDate());
+  const daysRemaining = Math.ceil((expiryDate.getTime() - todayStart.getTime()) / 86400000);
+  if (daysRemaining < 0) return { label: "已过期", status: "expired", type: "danger" };
+  if (daysRemaining <= 30) return { label: "即将到期", status: "expiring", type: "warning" };
+  return { label: "正常", status: "normal", type: "success" };
+});
 
 type AssetCustomField = NonNullable<AssetDetail["custom_fields"]>[number];
 type DynamicFieldGroup = { name: string; fields: AssetCustomField[] };
@@ -132,7 +186,8 @@ function isHistoricalField(field: AssetCustomField): boolean {
 function groupCurrentFields(fields: AssetCustomField[]): DynamicFieldGroup[] {
   const groups = new Map<string, AssetCustomField[]>();
   for (const field of fields) {
-    const name = field.group?.trim() || "其它";
+    if (!hasContent(field.value)) continue;
+    const name = field.group?.trim() || "其它信息";
     const group = groups.get(name) || [];
     group.push(field);
     groups.set(name, group);
@@ -174,6 +229,15 @@ const historicalFieldGroups = computed<HistoricalFieldGroup[]>(() => {
 
 const hasTags = computed(() => Boolean(asset.value?.tags?.length));
 
+const recentInventoryRecords = computed(() => [...inventoryRecords.value]
+  .filter((record) => Boolean(record.checked_at))
+  .sort((a, b) => {
+    const timeDifference = new Date(b.checked_at || 0).getTime() - new Date(a.checked_at || 0).getTime();
+    return timeDifference || b.id - a.id;
+  })
+  .slice(0, 5));
+const latestInventoryRecord = computed(() => recentInventoryRecords.value[0] || null);
+
 function fieldLabel(field: AssetCustomField): string {
   return field.name || field.key;
 }
@@ -208,7 +272,7 @@ function retryDetail() {
       <section v-if="hasBasicFields" class="asset-detail-section">
         <h3>基本信息</h3>
         <dl class="asset-detail-fields">
-          <template v-for="field in basicFields" :key="field.label">
+          <template v-for="field in visibleBasicFields" :key="field.label">
             <dt>{{ field.label }}</dt>
             <dd>{{ field.value }}</dd>
           </template>
@@ -218,7 +282,7 @@ function retryDetail() {
       <section v-if="hasLocationFields" class="asset-detail-section">
         <h3>位置与归属</h3>
         <dl class="asset-detail-fields">
-          <template v-for="field in locationFields" :key="field.label">
+          <template v-for="field in visibleLocationFields" :key="field.label">
             <dt>{{ field.label }}</dt>
             <dd>{{ field.value }}</dd>
           </template>
@@ -228,20 +292,41 @@ function retryDetail() {
       <section v-if="hasNetworkFields" class="asset-detail-section">
         <h3>网络信息</h3>
         <dl class="asset-detail-fields">
-          <template v-for="field in networkFields" :key="field.label">
+          <template v-for="field in visibleNetworkFields" :key="field.label">
             <dt>{{ field.label }}</dt>
             <dd class="asset-detail-technical">{{ field.value }}</dd>
           </template>
         </dl>
       </section>
 
-      <section v-if="hasProcurementFields" class="asset-detail-section">
+      <section v-if="visibleProcurementFields.length || maintenanceState" class="asset-detail-section">
         <h3>采购与维保</h3>
         <dl class="asset-detail-fields">
-          <template v-for="field in procurementFields" :key="field.label">
+          <template v-for="field in visibleProcurementFields" :key="field.label">
             <dt>{{ field.label }}</dt>
             <dd>{{ field.value }}</dd>
           </template>
+          <template v-if="maintenanceState">
+            <dt>维保状态</dt>
+            <dd class="asset-detail-inline-value">
+              <StatusTag :status="maintenanceState.status" :type="maintenanceState.type" :label="maintenanceState.label" />
+            </dd>
+          </template>
+        </dl>
+      </section>
+
+      <section v-if="latestInventoryRecord" class="asset-detail-section">
+        <h3>业务状态</h3>
+        <dl class="asset-detail-fields">
+          <dt>最近盘点</dt>
+          <dd class="asset-detail-inline-value">
+            <StatusTag
+              :status="latestInventoryRecord.status"
+              :type="inventoryStatusType(latestInventoryRecord.status)"
+              :label="inventoryRecordLabel(latestInventoryRecord)"
+            />
+            <span>{{ formatDateTime(latestInventoryRecord.checked_at) }}</span>
+          </dd>
         </dl>
       </section>
 
@@ -254,17 +339,14 @@ function retryDetail() {
         </div>
       </section>
 
-      <section v-if="currentFieldGroups.length" class="asset-detail-section asset-detail-custom-section">
-        <h3>扩展字段</h3>
-        <div v-for="group in currentFieldGroups" :key="group.name" class="asset-detail-custom-group">
-          <h4>{{ group.name }}</h4>
-          <dl class="asset-detail-fields asset-detail-custom-fields">
-            <template v-for="field in group.fields" :key="field.id">
-              <dt>{{ fieldLabel(field) }}<small v-if="!field.is_active">（已停用）</small></dt>
-              <dd><DynamicFieldDisplay :field="field" :value="field.value" /></dd>
-            </template>
-          </dl>
-        </div>
+      <section v-for="group in currentFieldGroups" :key="group.name" class="asset-detail-section asset-detail-custom-section">
+        <h3>{{ group.name }}</h3>
+        <dl class="asset-detail-fields asset-detail-custom-fields">
+          <template v-for="field in group.fields" :key="field.id">
+            <dt>{{ fieldLabel(field) }}<small v-if="!field.is_active">（已停用）</small></dt>
+            <dd><DynamicFieldDisplay :field="field" :value="field.value" /></dd>
+          </template>
+        </dl>
       </section>
 
       <section v-if="historicalFieldGroups.length" class="asset-detail-section asset-detail-custom-section asset-detail-custom-section--historical">
@@ -285,17 +367,18 @@ function retryDetail() {
         <p class="detail-notes">{{ asset.notes }}</p>
       </section>
 
-      <section v-if="inventoryRecords.length" class="asset-detail-section">
-        <h3>盘点记录</h3>
-        <div class="asset-inventory-history">
-          <div v-for="record in inventoryRecords" :key="record.id" class="asset-inventory-history-item">
-            <div class="asset-inventory-history-head">
-              <strong>{{ record.task_name }}</strong>
-              <StatusTag :status="record.status" :label="record.status_label" />
+      <section v-if="recentInventoryRecords.length" class="asset-detail-section">
+        <h3>最近动态</h3>
+        <div class="asset-detail-activity-list">
+          <div v-for="record in recentInventoryRecords" :key="record.id" class="asset-detail-activity-item">
+            <time>{{ formatDateTime(record.checked_at) }}</time>
+            <div>
+              <strong>盘点结果：{{ record.status_label }}</strong>
+              <span v-if="record.resolution_status === 'resolved'"> · 异常已处理</span>
+              <span v-else-if="record.resolution_status === 'pending'"> · 异常待处理</span>
+              <small v-if="record.task_name">{{ record.task_name }}</small>
+              <p v-if="record.notes">{{ record.notes }}</p>
             </div>
-            <small>{{ record.checked_at ? new Date(record.checked_at).toLocaleString('zh-CN') : '未盘点' }} · {{ record.checked_by_name || '—' }}</small>
-            <p v-if="record.notes">{{ record.notes }}</p>
-            <small v-if="record.actual_rack_code">实际位置：{{ [record.actual_data_center, record.actual_server_room, record.actual_rack_code].filter(Boolean).join(' / ') }} · U{{ record.actual_start_u }}–U{{ record.actual_end_u }}</small>
           </div>
         </div>
       </section>

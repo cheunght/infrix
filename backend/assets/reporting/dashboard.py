@@ -11,6 +11,7 @@ from datetime import timedelta
 from django.db.models import Count
 from django.utils import timezone
 
+from ..license_status import license_status_counts
 from ..models import AuditLog, FaultEvent, InventoryTask, MaintenanceContract, Rack
 from .capacity import build_dashboard_capacity
 from .constants import (
@@ -22,16 +23,15 @@ from .constants import (
 )
 
 
-def build_dashboard_payload(scope):
+def build_dashboard_payload(scope, *, include_faults=True, include_licenses=True):
     """Build the complete backwards-compatible dashboard response."""
     asset_distributions = _build_asset_distributions(scope)
     capacity = build_dashboard_capacity(scope)
     expiry = _build_expiry_data(scope)
-    alerts = _build_alert_data(scope)
     inventory_summary = _build_inventory_summary(scope)
     recent_changes = _build_recent_changes(scope)
 
-    return {
+    payload = {
         "assets": {
             "total": asset_distributions["asset_total"],
             "in_use": asset_distributions["status_counts"].get("in_use", 0),
@@ -49,13 +49,11 @@ def build_dashboard_payload(scope):
             ),
             "device_count": capacity["device_count"],
         },
-        "alerts": {"open_faults": alerts["open_faults"]},
         "expiring": expiry["counts"],
         "status_distribution": asset_distributions["status_distribution"],
         "type_distribution": asset_distributions["type_distribution"],
         "data_center_capacity": capacity["data_center_capacity"],
         "room_capacity": capacity["room_capacity"],
-        "recent_alerts": alerts["recent_alerts"],
         "upcoming_expirations": expiry["upcoming_expirations"],
         "data_centers": {"total": len(capacity["data_center_overview"])},
         "data_center_overview": capacity["data_center_overview"],
@@ -63,6 +61,14 @@ def build_dashboard_payload(scope):
         "inventory_summary": inventory_summary,
         "recent_changes": recent_changes,
     }
+
+    if include_faults:
+        alerts = _build_alert_data(scope)
+        payload["alerts"] = {"open_faults": alerts["open_faults"]}
+        payload["recent_alerts"] = alerts["recent_alerts"]
+    if include_licenses:
+        payload["licenses"] = license_status_counts()
+    return payload
 
 
 def _build_asset_distributions(scope):

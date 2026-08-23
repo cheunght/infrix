@@ -7,12 +7,13 @@ from rest_framework.exceptions import ValidationError as DRFValidationError
 from django.contrib.auth.models import Group, User
 from django.contrib.auth.password_validation import validate_password
 from django.utils import timezone
-from datetime import date, timedelta
+from datetime import date
 from decimal import Decimal, InvalidOperation
 from typing import Any
 import json
 import re
 from .models import AuditLog, Asset, AssetCustomValue, AssetNetworkAddress, AssetTag, Brand, CustomField, CustomFieldOption, DataCenter, DeviceType, FaultEvent, InventoryItem, InventoryTask, MaintenanceContract, ProcurementRecord, Rack, RackUnitAllocation, RepairRecord, ServerRoom, SoftwareLicense, SparePart, SpareStock, SpareStockTransaction, Tag, UserSecurityProfile
+from .license_status import license_status_value
 from .services import apply_asset_custom_values, apply_asset_tags, apply_spare_stock_transaction, configure_asset, inventory_snapshot_location, inventory_task_can_delete, validate_inventory_resolution_request
 from .roles import ROLE_AUDITOR, ROLE_DEFINITIONS, ROLE_NAME_TO_CODE, preset_group_for_code, user_role_code
 
@@ -565,14 +566,7 @@ class SoftwareLicenseSerializer(serializers.ModelSerializer):
     days_remaining = serializers.SerializerMethodField()
 
     def _status(self, obj):
-        today = timezone.localdate()
-        if obj.used_count > obj.authorized_count:
-            return "over_limit"
-        if obj.expiry_date and obj.expiry_date < today:
-            return "expired"
-        if obj.expiry_date and obj.expiry_date <= today + timedelta(days=90):
-            return "expiring"
-        return "normal"
+        return license_status_value(obj)
 
     def get_utilization(self, obj) -> float:
         if not obj.authorized_count:
@@ -975,6 +969,8 @@ class AssetWriteSerializer(serializers.ModelSerializer):
         read_only_fields = ["id", "created_at", "updated_at", "asset_type"]
 
     def validate(self, attrs):
+        if "status_before_repair" in self.initial_data:
+            raise serializers.ValidationError({"status_before_repair": "该字段由维修流程维护"})
         if "category" in self.initial_data:
             raise serializers.ValidationError({"category": "设备分类字段已移除，请使用设备类型"})
         if "asset_type" in self.initial_data:
@@ -995,6 +991,15 @@ class AssetWriteSerializer(serializers.ModelSerializer):
                 raise serializers.ValidationError({"asset_data_center": "停用的数据中心不能用于资产"})
         if "serial_number" in attrs and not attrs["serial_number"]:
             attrs["serial_number"] = None
+        if "status" in attrs:
+            requested_status = attrs["status"]
+            if requested_status == "repair" and (not self.instance or self.instance.status != "repair"):
+                raise serializers.ValidationError({"status": "维修中状态由故障维修流程维护，不能手工设置"})
+            if self.instance and requested_status != "repair" and FaultEvent.objects.filter(
+                asset_id=self.instance.pk,
+                is_closed=False,
+            ).exists():
+                raise serializers.ValidationError({"status": "存在未关闭故障时，资产状态由维修流程维护"})
         return attrs
 
     def create(self, validated_data):
@@ -1484,19 +1489,35 @@ class FaultEventSerializer(serializers.ModelSerializer):
         repair = getattr(obj, "repair", None)
         return RepairRecordSerializer(repair).data if repair else None
 
+    def validate(self, attrs):
+        if "is_closed" in self.initial_data:
+            raise serializers.ValidationError({"is_closed": "故障关闭状态由维修完成时间维护"})
+        if "resolved_at" in self.initial_data:
+            raise serializers.ValidationError({"resolved_at": "故障解决时间由维修完成时间维护"})
+        return attrs
+
     class Meta:
         model = FaultEvent
         fields = ["id", "created_at", "updated_at", "asset", "asset_no", "asset_name", "occurred_at", "reported_at", "resolved_at", "reason", "description", "is_closed", "repair"]
+        read_only_fields = ["id", "created_at", "updated_at", "asset_no", "asset_name", "resolved_at", "is_closed", "repair"]
 
 
 class RepairRecordSerializer(serializers.ModelSerializer):
     def validate(self, attrs):
-        unsupported = {key for key in ("cost", "provider", "started_at", "notes") if key in self.initial_data}
+        unsupported = {key for key in ("cost",) if key in self.initial_data}
         if unsupported:
-            raise serializers.ValidationError({key: "维修记录只维护完成时间" for key in sorted(unsupported)})
+            raise serializers.ValidationError({key: "维修费用暂不支持通过当前维修记录接口维护" for key in sorted(unsupported)})
+
+        started_at = attrs.get("started_at", self.instance.started_at if self.instance else None)
+        finished_at = attrs.get("finished_at", self.instance.finished_at if self.instance else None)
+        if started_at and finished_at and started_at > finished_at:
+            raise serializers.ValidationError({
+                "started_at": "维修开始时间不能晚于维修完成时间",
+                "finished_at": "维修完成时间不能早于维修开始时间",
+            })
         return attrs
 
     class Meta:
         model = RepairRecord
         fields = ["id", "fault", "provider", "started_at", "finished_at", "notes", "created_at", "updated_at"]
-        read_only_fields = ["provider", "started_at", "notes"]
+        read_only_fields = ["id", "created_at", "updated_at"]

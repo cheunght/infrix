@@ -36,7 +36,7 @@ export function useSpareParts(deps: SparePartsDeps) {
   const spareRooms = ref<ServerRoom[]>([]);
   const spareSearch = ref("");
   const spareType = ref("");
-  const spareActive = ref("true");
+  const spareActive = ref(deps.can("spares.manage") ? "all" : "true");
   const spareListDataCenter = ref("");
   const spareListRoom = ref("");
   const spareDataCenter = ref("");
