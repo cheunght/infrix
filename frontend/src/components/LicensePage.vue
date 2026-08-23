@@ -36,35 +36,38 @@ const licenseHasFilters = computed(
 </script>
 
 <template>
-  <div class="itam-page">
-    <PageContainer>
+  <PageContainer class="itam-page">
       <template #toolbar>
         <PageToolbar>
-        <SearchField
-          class="itam-filter-search"
-          v-model="licenseKeyword"
-          placeholder="搜索软件名称、厂商或许可类型"
-          aria-label="搜索许可证"
-          :loading="licenseListLoading"
-          @search="searchLicenses"
-        />
-        <el-select
-          v-model="licenseStatus"
-          class="itam-filter-select"
-          placeholder="全部状态"
-          clearable
-          @change="searchLicenses"
-        >
-          <el-option label="正常" value="normal" />
-          <el-option label="即将到期" value="expiring" />
-          <el-option label="已过期" value="expired" />
-          <el-option label="超授权" value="over_limit" />
-        </el-select>
+        <template #search>
+          <SearchField
+            v-model="licenseKeyword"
+            placeholder="搜索软件名称、厂商或许可类型"
+            aria-label="搜索许可证"
+            :loading="licenseListLoading"
+            @search="searchLicenses"
+          />
+        </template>
+        <template #primary-filter>
+          <el-select
+            v-model="licenseStatus"
+            placeholder="全部状态"
+            clearable
+            @change="searchLicenses"
+          >
+            <el-option label="正常" value="normal" />
+            <el-option label="即将到期" value="expiring" />
+            <el-option label="已过期" value="expired" />
+            <el-option label="超授权" value="over_limit" />
+          </el-select>
+        </template>
+        <template #extra-filter>
+          <el-button class="toolbar-secondary-action" :disabled="licenseListLoading" @click="resetLicenseFilters">重置</el-button>
+        </template>
         <template #actions>
-          <el-button v-if="can('licenses.manage')" type="primary" @click="openLicenseModal()">
-            新增许可证
+          <el-button v-if="can('licenses.manage')" class="page-primary-action" type="primary" @click="openLicenseModal()">
+            新增许可
           </el-button>
-          <el-button :disabled="licenseListLoading" @click="resetLicenseFilters">重置</el-button>
         </template>
         </PageToolbar>
       </template>
@@ -170,6 +173,5 @@ const licenseHasFilters = computed(
           </el-table>
         </PagedTable>
       </PageContent>
-    </PageContainer>
-  </div>
+  </PageContainer>
 </template>

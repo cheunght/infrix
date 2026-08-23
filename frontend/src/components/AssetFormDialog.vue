@@ -35,6 +35,9 @@ const {
   retryAssetCustomSchema,
   updateAssetCustomFieldValue,
   tags,
+  tagListLoading,
+  tagListError,
+  retryTagList,
   saveAsset,
 } = context;
 
@@ -52,6 +55,14 @@ const dynamicFieldGroups = computed<DynamicFieldGroup[]>(() => {
     groups.set(groupName, fields);
   }
   return Array.from(groups, ([name, fields]) => ({ name, fields }));
+});
+
+const selectableTags = computed<Tag[]>(() => {
+  const selectedIds = new Set(assetForm.value.tags.map(String));
+  const currentTags = (editingAsset.value?.tags || []) as Tag[];
+  const merged = new Map<number, Tag>();
+  for (const tag of [...tags.value, ...currentTags]) merged.set(tag.id, tag);
+  return Array.from(merged.values()).filter((tag) => tag.is_active || selectedIds.has(String(tag.id)));
 });
 
 const requiredRule = (label: string) => ({
@@ -293,11 +304,21 @@ watch(showAssetModal, (open) => {
         <el-form-item label="使用人" :error="fieldError('owner_name')"><el-input v-model="assetForm.owner_name" /></el-form-item>
       </div>
 
-      <el-divider v-if="tags.length" content-position="left">标签</el-divider>
-      <el-form-item v-if="tags.length" label="标签" class="asset-form-full" :error="fieldError('tags')">
-        <el-select v-model="assetForm.tags" multiple clearable filterable placeholder="请选择标签">
-          <el-option v-for="tag in tags.filter((item: Tag) => item.is_active || assetForm.tags.includes(String(item.id)))" :key="tag.id" :label="tag.name" :value="String(tag.id)" />
+      <el-divider content-position="left">标签</el-divider>
+      <el-form-item label="标签" class="asset-form-full" :error="fieldError('tags')">
+        <el-select v-model="assetForm.tags" multiple clearable filterable :loading="tagListLoading" :disabled="tagListLoading" placeholder="请选择标签">
+          <el-option
+            v-for="tag in selectableTags"
+            :key="tag.id"
+            :label="tag.is_active ? tag.name : `${tag.name}（已停用）`"
+            :value="String(tag.id)"
+          />
         </el-select>
+        <div v-if="tagListError" class="asset-form-tag-state asset-form-tag-state--error">
+          <span>{{ tagListError }}</span>
+          <el-button link type="primary" :disabled="tagListLoading" @click="retryTagList">重试</el-button>
+        </div>
+        <div v-else-if="!tagListLoading && !selectableTags.length" class="asset-form-tag-state">暂无可用标签，请先在标签管理中维护。</div>
       </el-form-item>
       <el-divider v-if="assetCustomSchemaLoading || assetCustomSchemaError || dynamicFieldGroups.length" content-position="left">扩展字段</el-divider>
       <div v-if="assetCustomSchemaLoading" class="asset-custom-schema-state">

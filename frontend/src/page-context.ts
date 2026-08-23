@@ -93,7 +93,7 @@ export interface DashboardContext {
 export interface AssetFilters {
   status: string;
   deviceType: string;
-  tag: string;
+  tag: string[];
   brand: string;
   model: string;
   dataCenter: string;
@@ -118,7 +118,7 @@ export interface AssetLedgerContext {
   searchLedger: () => void | Promise<void>;
   assetFilters: AssetFilters;
   resetAssetFilters: () => void | Promise<void>;
-  assetTagFilter: Ref<string>;
+  assetTagFilter: Ref<string[]>;
   draftCustomFilters: Ref<AssetCustomFilter[]>;
   appliedCustomFilters: Ref<AssetCustomFilter[]>;
   applyAssetCustomFilters: (filters: AssetCustomFilter[]) => void | Promise<void>;
@@ -130,6 +130,9 @@ export interface AssetLedgerContext {
   deviceTypes: Ref<DictionaryItem[]>;
   dataCenters: Ref<DataCenter[]>;
   tags: Ref<Tag[]>;
+  tagListLoading: Ref<boolean>;
+  tagListError: Ref<string>;
+  retryTagList: () => void | Promise<boolean>;
   assetColumnOptions: AssetLedgerColumnOption[];
   assetDynamicColumnOptions: ComputedRef<AssetLedgerColumnOption[]>;
   visibleAssetColumns: Ref<string[]>;
@@ -188,6 +191,9 @@ export interface AssetFormContext {
   assetCustomFieldSchema: Ref<CustomFieldSchema[]>;
   updateAssetCustomFieldValue: (key: string, value: unknown) => void;
   tags: Ref<Tag[]>;
+  tagListLoading: Ref<boolean>;
+  tagListError: Ref<string>;
+  retryTagList: () => void | Promise<boolean>;
   saveAsset: () => void | Promise<void>;
 }
 

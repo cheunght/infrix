@@ -6,7 +6,7 @@ withDefaults(
   }>(),
   {
     surface: false,
-    minHeight: "480px",
+    minHeight: "0px",
   },
 );
 </script>

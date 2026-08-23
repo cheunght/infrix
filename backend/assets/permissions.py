@@ -28,6 +28,18 @@ class CanViewAssetCustomFieldSchema(BasePermission):
         )
 
 
+class CanViewAssetTagsRuntime(BasePermission):
+    """Allow asset users to read tags without granting tag administration."""
+
+    message = "当前角色没有读取资产标签的权限"
+
+    def has_permission(self, request, view):
+        return any(
+            user_has_capability(request.user, capability)
+            for capability in ("tags.view", "tags.manage", "assets.view", "assets.manage")
+        )
+
+
 class IsSystemAdministrator(BasePermission):
     message = "仅系统管理员可以执行此操作"
 

@@ -7,27 +7,36 @@
   --space-lg: var(--space-4, 16px);
   --space-xl: var(--space-5, 24px);
   --space-2xl: var(--space-6, 32px);
+  --page-section-gap: 16px;
+  --page-toolbar-gap: 12px;
   --page-header-min-height: 48px;
   --page-tabs-height: 44px;
-  --page-toolbar-min-height: 56px;
-  --content-radius: var(--radius-md, 8px);
-  --page-content-min-height: 480px;
+  --page-toolbar-height: 36px;
+  --page-toolbar-min-height: var(--page-toolbar-height);
+  --page-primary-action-width: 104px;
+  --page-primary-action-height: 36px;
+  --panel-radius: var(--radius-md, 8px);
+  --content-radius: var(--panel-radius);
+  --page-content-min-height: 0px;
 }
 
 .page-container {
+  box-sizing: border-box;
   display: flex;
   min-width: 0;
   width: 100%;
+  max-width: 100%;
   flex-direction: column;
+  gap: var(--page-section-gap);
   margin: 0;
-  padding: 0;
+  padding: 0 var(--page-padding-x);
 }
 
 .page-container__header,
 .page-container__subnav,
 .page-container__toolbar {
   min-width: 0;
-  margin: 0 0 var(--space-lg);
+  margin: 0;
 }
 
 .page-container__body {
@@ -39,34 +48,11 @@
   min-width: 0;
 }
 
-/* When a page has both secondary navigation and filters, keep them in the
-   same control band as a no-tab page.  This gives every list page the same
-   header-to-content baseline without inserting an empty placeholder row. */
+/* Keep the optional compatibility class on the same vertical rhythm as every
+   other page.  It must not create a special grid that changes the baseline. */
 .page-container--compact-controls {
-  display: grid;
-  grid-template-columns: max-content minmax(0, 1fr);
-  column-gap: var(--space-lg);
-  row-gap: var(--space-lg);
-  align-items: end;
-}
-
-.page-container--compact-controls > .page-container__header,
-.page-container--compact-controls > .page-container__body {
-  grid-column: 1 / -1;
-}
-
-.page-container--compact-controls > .page-container__subnav,
-.page-container--compact-controls > .page-container__toolbar {
-  min-width: 0;
-  margin: 0;
-}
-
-.page-container--compact-controls > .page-container__subnav {
-  align-self: end;
-}
-
-.page-container--compact-controls > .page-container__toolbar {
-  width: 100%;
+  display: flex;
+  flex-direction: column;
 }
 
 /* The legacy stylesheet contains a naked `header { margin-bottom: 28px; }`
@@ -131,8 +117,9 @@ header.page-header.page-header--compact {
 
 .page-tabs-row {
   display: flex;
-  align-items: stretch;
+  align-items: center;
   gap: var(--space-lg);
+  height: var(--page-tabs-height);
   min-width: 0;
 }
 
@@ -146,7 +133,8 @@ header.page-header.page-header--compact {
   flex: 0 0 auto;
   align-items: center;
   gap: var(--space-sm);
-  padding-bottom: 6px;
+  min-height: var(--page-tabs-height);
+  padding: 0;
 }
 
 .page-tabs {
@@ -179,23 +167,159 @@ header.page-header.page-header--compact {
   background-color: var(--itam-primary-blue, #2563eb);
 }
 
-.page-toolbar {
-  min-height: var(--page-toolbar-min-height);
+/* A toolbar is a stable six-slot rail.  The empty tracks are intentional;
+   controls never reflow left just because a page has fewer filters. */
+.page-toolbar,
+.ep-main .page-toolbar {
+  box-sizing: border-box;
+  display: grid;
+  grid-template-columns: 320px 160px 160px 120px minmax(0, 1fr) 104px;
+  column-gap: var(--page-toolbar-gap);
+  row-gap: var(--page-toolbar-gap);
+  align-items: center;
+  width: 100%;
+  min-height: var(--page-toolbar-height);
+  height: var(--page-toolbar-height);
   margin: 0;
-  flex-wrap: nowrap;
+  padding: 0;
 }
 
-.page-toolbar > .ep-toolbar-spacer {
-  flex: 1 1 auto;
+.page-toolbar > .toolbar-slot {
+  box-sizing: border-box;
+  min-width: 0;
+  width: 100%;
 }
 
-.page-toolbar > .ep-toolbar-actions {
+.page-toolbar > .toolbar-search { grid-column: 1; }
+.page-toolbar > .toolbar-filter-primary { grid-column: 2; }
+.page-toolbar > .toolbar-filter-secondary { grid-column: 3; }
+.page-toolbar > .toolbar-filter-extra { grid-column: 4; overflow: visible; }
+.page-toolbar > .toolbar-spacer {
+  grid-column: 5;
+  min-width: 0;
+}
+.page-toolbar > .toolbar-primary-action {
+  grid-column: 6;
+  justify-self: end;
+  width: var(--page-primary-action-width);
+  overflow: visible;
+}
+
+.page-toolbar__actions {
   display: flex;
-  flex: 0 0 auto;
+  width: var(--page-primary-action-width);
+  min-width: 0;
+  align-items: center;
+  justify-content: flex-end;
+  gap: var(--space-sm);
+}
+
+.page-toolbar .el-button + .el-button,
+.page-toolbar .el-upload + .el-button,
+.page-toolbar .el-button + .el-upload {
+  margin-left: 0;
+}
+
+.toolbar-legacy {
+  grid-column: 1 / -1;
+  min-width: 0;
+}
+
+.toolbar-slot > .itam-search-field,
+.toolbar-slot > .el-input,
+.toolbar-slot > .el-select,
+.toolbar-slot > .el-date-editor,
+.toolbar-slot > .el-button,
+.toolbar-slot > .el-popover {
+  box-sizing: border-box;
+  width: 100%;
+  max-width: 100%;
+  min-width: 0;
+}
+
+.toolbar-search > .itam-search-field {
+  flex: 0 0 320px !important;
+  width: 320px !important;
+  max-width: 320px !important;
+  min-width: 320px !important;
+}
+
+.toolbar-filter-primary > .el-select,
+.toolbar-filter-secondary > .el-select,
+.toolbar-filter-primary > .el-date-editor,
+.toolbar-filter-secondary > .el-date-editor {
+  flex: 0 0 160px !important;
+  width: 160px !important;
+  max-width: 160px !important;
+  min-width: 160px !important;
+}
+
+.toolbar-filter-extra > .el-button,
+.toolbar-extra-action {
+  flex: 0 0 120px;
+  width: 120px;
+  min-width: 120px;
+  max-width: 120px;
+}
+
+.toolbar-extra-group {
+  display: flex;
+  width: max-content;
+  min-width: 0;
   align-items: center;
   gap: var(--space-sm);
+}
+
+.toolbar-extra-panel {
+  display: grid;
   min-width: 0;
-  margin-left: auto;
+  gap: var(--space-sm);
+}
+
+.toolbar-extra-popover-actions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  flex-wrap: wrap;
+  gap: var(--space-sm);
+  padding-top: var(--space-sm);
+  border-top: 1px solid var(--el-border-color-lighter);
+}
+
+.toolbar-extra-panel > .el-select,
+.toolbar-extra-panel > .el-date-editor,
+.toolbar-extra-panel > .el-input {
+  width: 100%;
+  min-width: 0;
+}
+
+.toolbar-secondary-action {
+  flex: 0 0 auto;
+  white-space: nowrap;
+}
+
+/* The first-level create action is a page-layout primitive. */
+.page-primary-action.el-button {
+  box-sizing: border-box;
+  flex: 0 0 var(--page-primary-action-width);
+  width: var(--page-primary-action-width);
+  min-width: var(--page-primary-action-width);
+  max-width: var(--page-primary-action-width);
+  height: var(--page-primary-action-height);
+  min-height: var(--page-primary-action-height);
+  margin: 0 !important;
+  padding: 0 12px !important;
+  border-radius: var(--itam-control-radius, 7px);
+  font-size: 14px;
+  font-weight: 500;
+  line-height: 1;
+  justify-content: center;
+  text-align: center;
+  white-space: nowrap;
+}
+
+.page-primary-action .el-icon {
+  display: none;
 }
 
 .page-content {
@@ -270,30 +394,49 @@ header.page-header.page-header--compact {
   min-width: 0;
 }
 
-@media (max-width: 1100px) {
-  .page-container--compact-controls {
-    display: flex;
-    flex-direction: column;
-    gap: 0;
+@media (max-width: 1199px) {
+  .page-toolbar,
+  .ep-main .page-toolbar {
+    grid-template-columns: minmax(0, 1fr) 160px 160px 120px;
+    grid-template-rows: var(--page-toolbar-height) var(--page-toolbar-height);
+    height: auto;
+    min-height: var(--page-toolbar-height);
   }
 
-  .page-container--compact-controls > .page-container__subnav,
-  .page-container--compact-controls > .page-container__toolbar {
-    width: 100%;
-    margin-bottom: var(--space-lg);
+  .page-toolbar > .toolbar-search {
+    grid-column: 1;
+    grid-row: 1;
   }
 
-  .page-toolbar {
-    flex-wrap: wrap;
+  .page-toolbar > .toolbar-filter-primary {
+    grid-column: 2;
+    grid-row: 1;
   }
 
-  .page-toolbar > .ep-toolbar-spacer {
+  .page-toolbar > .toolbar-filter-secondary {
+    grid-column: 3;
+    grid-row: 1;
+  }
+
+  .page-toolbar > .toolbar-filter-extra {
+    grid-column: 4;
+    grid-row: 1;
+  }
+
+  .page-toolbar > .toolbar-spacer {
     display: none;
   }
 
-  .page-toolbar > .ep-toolbar-actions {
-    width: auto;
-    margin-left: auto;
+  .page-toolbar > .toolbar-primary-action {
+    grid-column: 4;
+    grid-row: 2;
+  }
+
+  .toolbar-search > .itam-search-field {
+    flex: 1 1 auto !important;
+    width: 100% !important;
+    max-width: none !important;
+    min-width: 0 !important;
   }
 }
 
@@ -303,13 +446,39 @@ header.page-header.page-header--compact {
     flex-direction: column;
   }
 
-  .page-header__actions,
-  .page-toolbar > .ep-toolbar-actions {
-    width: 100%;
+  .page-toolbar,
+  .ep-main .page-toolbar {
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-rows: none;
+    height: auto;
   }
 
-  .page-toolbar > .ep-toolbar-actions {
-    justify-content: flex-end;
+  .page-toolbar > .toolbar-slot {
+    grid-column: 1;
+    grid-row: auto;
+  }
+
+  .page-toolbar > .toolbar-primary-action {
+    justify-self: end;
+  }
+
+  .toolbar-search > .itam-search-field,
+  .toolbar-filter-primary > .el-select,
+  .toolbar-filter-secondary > .el-select,
+  .toolbar-filter-primary > .el-date-editor,
+  .toolbar-filter-secondary > .el-date-editor {
+    width: 100% !important;
+    max-width: none !important;
+    min-width: 0 !important;
+  }
+
+  .toolbar-extra-group {
+    max-width: 100%;
+    flex-wrap: wrap;
+  }
+
+  .page-header__actions {
+    width: 100%;
   }
 
   .page-tabs .el-tabs__item {
@@ -318,6 +487,8 @@ header.page-header.page-header--compact {
 
   .page-tabs-row {
     align-items: flex-start;
+    height: auto;
+    min-height: var(--page-tabs-height);
     flex-wrap: wrap;
     gap: var(--space-sm) var(--space-lg);
   }
@@ -341,8 +512,128 @@ header.page-header.page-header--compact {
   .page-content--surface {
     padding: var(--space-md);
   }
+}
 
-  .page-toolbar > .ep-toolbar-actions {
-    justify-content: flex-start;
+/* -------------------------------------------------------------------------
+   App Shell / routed page baseline
+   -------------------------------------------------------------------------
+   The shell owns the viewport and the horizontal page edge.  Routed pages
+   only own their internal sequence: tabs, toolbar, then content.  Keeping
+   the scroll container here prevents each page from inventing its own
+   height, padding, or top offset.
+   ------------------------------------------------------------------------- */
+.shell {
+  box-sizing: border-box;
+  width: 100%;
+  height: 100dvh;
+  min-height: 100dvh;
+  overflow: hidden;
+}
+
+.ep-sidebar {
+  box-sizing: border-box;
+  height: 100dvh;
+  min-height: 0;
+  overflow-x: hidden;
+  overflow-y: auto;
+}
+
+.ep-main {
+  box-sizing: border-box;
+  display: flex;
+  flex: 1 1 auto;
+  width: auto;
+  height: 100dvh;
+  min-height: 0;
+  flex-direction: column;
+  padding: 0;
+  overflow-x: hidden;
+  overflow-y: auto;
+  scrollbar-gutter: stable;
+}
+
+.app-header {
+  box-sizing: border-box;
+  flex: 0 0 var(--header-height);
+  width: 100%;
+  height: var(--header-height);
+  min-height: var(--header-height);
+  margin: 0;
+  padding: 0 var(--page-padding-x);
+}
+
+.app-route-shell {
+  position: relative;
+  flex: 0 0 auto;
+  width: 100%;
+  min-width: 0;
+  min-height: 0;
+  padding-top: var(--page-section-gap);
+}
+
+.app-route-view,
+.app-route-shell > .api-error-alert {
+  min-width: 0;
+  max-width: 100%;
+}
+
+.app-route-shell > .api-error-alert {
+  margin: 0 var(--page-padding-x) var(--page-section-gap);
+}
+
+.page-container {
+  flex: 0 0 auto;
+}
+
+.page-content,
+.paged-table {
+  min-height: 0;
+}
+
+@media (max-width: 900px) {
+  .app-header {
+    flex-basis: auto;
+    height: auto;
+    min-height: var(--header-height);
+    align-items: center;
+    flex-wrap: wrap;
+  }
+
+  .app-header .header-tools {
+    width: auto;
+    margin-top: 0;
+  }
+}
+
+@media (max-width: 760px) {
+  .app-header {
+    padding-inline: var(--page-padding-x);
+  }
+
+  .app-header .header-tools {
+    width: auto;
+    margin-top: 0;
+  }
+
+  .page-container {
+    padding-inline: var(--page-padding-x);
+  }
+}
+
+@media (max-width: 560px) {
+  .app-header {
+    padding-inline: 14px;
+  }
+
+  .app-header .header-tools {
+    width: 100%;
+  }
+
+  .page-container {
+    padding-inline: 14px;
+  }
+
+  .app-route-shell > .api-error-alert {
+    margin-inline: 14px;
   }
 }

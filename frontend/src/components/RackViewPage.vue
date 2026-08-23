@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, ref, watch } from "vue";
-import { ArrowRight, Box, MoreFilled } from "@element-plus/icons-vue";
+import { ArrowRight, Box, Filter, MoreFilled } from "@element-plus/icons-vue";
 import RackAssetInspector from "./RackAssetInspector.vue";
 import RackFormDialog from "./RackFormDialog.vue";
 import RackLayoutCanvas from "./RackLayoutCanvas.vue";
@@ -218,72 +218,65 @@ function handleCurrentRackCommand(command: string) {
 
 <template>
   <div class="itam-page racks-page facility-management-page">
-    <PageContainer class="racks-module-page" :toolbar-visible="rackSection !== 'rooms'">
+    <PageContainer class="racks-module-page">
       <template #toolbar>
-        <PageToolbar class="racks-resource-toolbar">
-          <el-select
-            v-model="selectedDataCenter"
-            class="resource-toolbar-select"
-            placeholder="数据中心"
-            aria-label="按数据中心筛选机柜"
-            clearable
-            @change="context.changeDataCenter"
-          >
-            <el-option label="全部数据中心" value="" />
-            <el-option
-              v-for="center in dataCenters"
-              :key="center.id"
-              :label="center.name"
-              :value="String(center.id)"
+        <PageToolbar>
+          <template v-if="rackSection !== 'rooms'" #search>
+            <SearchField
+              v-model="selectedRack"
+              placeholder="搜索机柜"
+              aria-label="搜索机柜名称或编号"
+              @search="context.changeRackFilter"
             />
-          </el-select>
-          <el-select
-            v-model="selectedRoom"
-            class="resource-toolbar-select"
-            placeholder="机房"
-            aria-label="选择机房"
-            :disabled="!roomOptions.length"
-            @change="changeViewRoom"
-          >
-            <el-option label="全部机房" value="" />
-            <el-option
-              v-for="room in roomOptions"
-              :key="room.id"
-              :label="room.name"
-              :value="room.id"
-            />
-          </el-select>
-          <SearchField
-            v-model="selectedRack"
-            class="resource-toolbar-search"
-            placeholder="搜索机柜"
-            aria-label="搜索机柜名称或编号"
-            @search="context.changeRackFilter"
-          />
-          <el-select
-            v-model="selectedRackDeviceType"
-            class="resource-toolbar-select resource-toolbar-select--device"
-            placeholder="设备类型"
-            aria-label="按设备类型筛选机柜"
-            clearable
-            @change="context.changeRackFilter"
-          >
-            <el-option label="全部设备类型" value="" />
-            <el-option
-              v-for="deviceType in deviceTypes"
-              :key="deviceType.id"
-              :label="deviceType.name"
-              :value="deviceType.name"
-            />
-          </el-select>
-          <template #actions>
-            <el-button
-              v-if="viewRoom && can('racks.manage')"
-              type="primary"
-              plain
-              @click="context.openRackModal(undefined, viewRoom)"
+          </template>
+          <template v-if="rackSection !== 'rooms'" #primary-filter>
+            <el-select
+              v-model="selectedDataCenter"
+              placeholder="数据中心"
+              aria-label="按数据中心筛选机柜"
+              clearable
+              @change="context.changeDataCenter"
             >
-              新增机柜
+              <el-option label="全部数据中心" value="" />
+              <el-option
+                v-for="center in dataCenters"
+                :key="center.id"
+                :label="center.name"
+                :value="String(center.id)"
+              />
+            </el-select>
+          </template>
+          <template v-if="rackSection !== 'rooms'" #secondary-filter>
+            <el-select
+              v-model="selectedRoom"
+              placeholder="机房"
+              aria-label="选择机房"
+              :disabled="!roomOptions.length"
+              @change="changeViewRoom"
+            >
+              <el-option label="全部机房" value="" />
+              <el-option
+                v-for="room in roomOptions"
+                :key="room.id"
+                :label="room.name"
+                :value="room.id"
+              />
+            </el-select>
+          </template>
+          <template v-if="rackSection !== 'rooms'" #extra-filter>
+            <el-popover placement="bottom-start" :width="320" trigger="click">
+              <template #reference><el-button class="toolbar-extra-action" :icon="Filter">更多筛选</el-button></template>
+              <div class="toolbar-extra-panel">
+                <el-select v-model="selectedRackDeviceType" placeholder="设备类型" aria-label="按设备类型筛选机柜" clearable @change="context.changeRackFilter">
+                  <el-option label="全部设备类型" value="" />
+                  <el-option v-for="deviceType in deviceTypes" :key="deviceType.id" :label="deviceType.name" :value="deviceType.name" />
+                </el-select>
+              </div>
+            </el-popover>
+          </template>
+          <template #actions>
+            <el-button v-if="can('racks.manage')" class="page-primary-action" type="primary" @click="context.openRoomModal()">
+              新增机房
             </el-button>
           </template>
         </PageToolbar>
@@ -301,12 +294,6 @@ function handleCurrentRackCommand(command: string) {
                 <div class="resource-panel-heading">
                   <strong>机房列表</strong>
                 </div>
-                <el-button
-                  v-if="can('racks.manage')"
-                  type="primary"
-                  size="small"
-                  @click="context.openRoomModal()"
-                >新增</el-button>
               </div>
             </template>
             <div class="resource-room-master-controls">

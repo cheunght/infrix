@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed, ref } from "vue";
+import { Filter } from "@element-plus/icons-vue";
 import PagedTable from "./PagedTable.vue";
 import SearchField from "./SearchField.vue";
 import CustomFieldSettingsPage from "./CustomFieldSettingsPage.vue";
@@ -80,6 +81,12 @@ const dictionaryTabs = computed(() =>
 const canManageCurrentDictionary = computed(() =>
   can(dictionarySection.value === "data-centers" ? "racks.manage" : "settings.manage"),
 );
+const dictionaryPrimaryLabel = computed(() => {
+  if (dictionarySection.value === "brands") return "新增品牌";
+  if (dictionarySection.value === "device-types") return "新增类型";
+  if (dictionarySection.value === "data-centers") return "新增中心";
+  return "新增字典";
+});
 const hasDictionaryFilters = computed(() => Boolean(dictionarySearch.value.trim()));
 const hasUserSearch = computed(() => Boolean(userSearch.value.trim()));
 const hasAuditFilters = computed(() => Boolean(
@@ -145,23 +152,24 @@ function clearAuditFilters() {
     <PageContainer v-else-if="settingsSection === 'dictionaries'">
       <template #subnav>
         <PageTabs v-model="dictionarySection" :items="dictionaryTabs" @update:model-value="() => loadDictionaries()">
-          <template #actions>
-            <el-button type="primary" :disabled="!canManageCurrentDictionary || dictionarySaving" @click="openDictionaryModal()">
-              新增{{ currentDictionaryLabel }}
-            </el-button>
-          </template>
         </PageTabs>
       </template>
       <template #toolbar>
         <PageToolbar>
-          <SearchField
-            class="itam-filter-search"
-            v-model="dictionarySearch"
-            :loading="dictionaryLoading"
-            :placeholder="`搜索${currentDictionaryLabel}`"
-            :aria-label="`搜索${currentDictionaryLabel}`"
-            @search="() => loadDictionaries()"
-          />
+          <template #search>
+            <SearchField
+              v-model="dictionarySearch"
+              :loading="dictionaryLoading"
+              :placeholder="`搜索${currentDictionaryLabel}`"
+              :aria-label="`搜索${currentDictionaryLabel}`"
+              @search="() => loadDictionaries()"
+            />
+          </template>
+          <template #actions>
+            <el-button v-if="canManageCurrentDictionary" class="page-primary-action" type="primary" :loading="dictionarySaving" :disabled="dictionarySaving" @click="openDictionaryModal()">
+              {{ dictionaryPrimaryLabel }}
+            </el-button>
+          </template>
         </PageToolbar>
       </template>
       <PageContent surface>
@@ -205,25 +213,25 @@ function clearAuditFilters() {
       </PageContent>
     </PageContainer>
 
-    <PageContainer v-else-if="settingsSection === 'organization' && isAdmin" :toolbar-visible="organizationTab === 'users'">
+    <PageContainer v-else-if="settingsSection === 'organization' && isAdmin">
       <template #subnav>
-        <PageTabs v-model="organizationTab" :items="organizationTabs">
-          <template #actions>
-            <el-button v-if="organizationTab === 'users'" type="primary" :disabled="userSaving" @click="openUserModal()">新增用户</el-button>
-          </template>
-        </PageTabs>
+        <PageTabs v-model="organizationTab" :items="organizationTabs" />
       </template>
-      <template #toolbar v-if="organizationTab === 'users'">
+      <template #toolbar>
         <PageToolbar>
-          <SearchField
-            class="itam-filter-search"
-            v-model="userSearch"
-            :loading="organizationLoading"
-            :disabled="organizationLoading"
-            placeholder="搜索用户名、姓名或邮箱"
-            aria-label="搜索用户账号"
-            @search="searchUsers"
-          />
+          <template v-if="organizationTab === 'users'" #search>
+            <SearchField
+              v-model="userSearch"
+              :loading="organizationLoading"
+              :disabled="organizationLoading"
+              placeholder="搜索用户名、姓名或邮箱"
+              aria-label="搜索用户账号"
+              @search="searchUsers"
+            />
+          </template>
+          <template v-if="organizationTab === 'users'" #actions>
+            <el-button class="page-primary-action" type="primary" :loading="userSaving" :disabled="userSaving" @click="openUserModal()">新增用户</el-button>
+          </template>
         </PageToolbar>
       </template>
       <PageContent surface>
@@ -277,15 +285,28 @@ function clearAuditFilters() {
     <PageContainer v-else-if="settingsSection === 'audit' && can('audit.view')">
       <template #toolbar>
         <PageToolbar>
-          <SearchField class="itam-filter-search" v-model="auditFilters.search" :loading="auditListLoading" placeholder="操作者、资源或编号" aria-label="搜索操作日志" @search="searchAuditLogs" />
-          <el-select class="itam-filter-select" v-model="auditFilters.resource_type" placeholder="全部资源" clearable :disabled="auditListLoading" @change="searchAuditLogs">
-            <el-option v-for="item in auditResourceOptions" :key="item.value" :label="item.label" :value="item.value" />
-          </el-select>
-          <el-select class="itam-filter-select" v-model="auditFilters.action" placeholder="全部动作" clearable :disabled="auditListLoading" @change="searchAuditLogs">
-            <el-option v-for="item in auditActionOptions" :key="item.value" :label="item.label" :value="item.value" />
-          </el-select>
-          <el-date-picker class="itam-filter-date" v-model="auditFilters.start" type="date" value-format="YYYY-MM-DD" placeholder="开始日期" :disabled="auditListLoading" @change="searchAuditLogs" />
-          <el-date-picker class="itam-filter-date" v-model="auditFilters.end" type="date" value-format="YYYY-MM-DD" placeholder="结束日期" :disabled="auditListLoading" @change="searchAuditLogs" />
+          <template #search>
+            <SearchField v-model="auditFilters.search" :loading="auditListLoading" placeholder="操作者、资源或编号" aria-label="搜索操作日志" @search="searchAuditLogs" />
+          </template>
+          <template #primary-filter>
+            <el-select v-model="auditFilters.resource_type" placeholder="全部资源" clearable :disabled="auditListLoading" @change="searchAuditLogs">
+              <el-option v-for="item in auditResourceOptions" :key="item.value" :label="item.label" :value="item.value" />
+            </el-select>
+          </template>
+          <template #secondary-filter>
+            <el-select v-model="auditFilters.action" placeholder="全部动作" clearable :disabled="auditListLoading" @change="searchAuditLogs">
+              <el-option v-for="item in auditActionOptions" :key="item.value" :label="item.label" :value="item.value" />
+            </el-select>
+          </template>
+          <template #extra-filter>
+            <el-popover placement="bottom-start" :width="360" trigger="click">
+              <template #reference><el-button class="toolbar-extra-action" :icon="Filter">更多筛选</el-button></template>
+              <div class="toolbar-extra-panel">
+                <el-date-picker v-model="auditFilters.start" type="date" value-format="YYYY-MM-DD" placeholder="开始日期" :disabled="auditListLoading" @change="searchAuditLogs" />
+                <el-date-picker v-model="auditFilters.end" type="date" value-format="YYYY-MM-DD" placeholder="结束日期" :disabled="auditListLoading" @change="searchAuditLogs" />
+              </div>
+            </el-popover>
+          </template>
         </PageToolbar>
       </template>
       <PageContent surface>

@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed } from "vue";
-import { Download, Warning } from "@element-plus/icons-vue";
+import { Download, Filter } from "@element-plus/icons-vue";
 import PagedTable from "./PagedTable.vue";
 import SearchField from "./SearchField.vue";
 import PageContainer from "./page/PageContainer.vue";
@@ -42,21 +42,35 @@ const hasRepairFilters = computed(() => Boolean(
 </script>
 
 <template>
-  <div class="itam-page repair-page">
-    <PageContainer>
+  <PageContainer class="itam-page repair-page">
       <template #toolbar>
         <PageToolbar>
-          <SearchField class="itam-filter-search" v-model="repairKeyword" placeholder="搜索资产编号、名称、故障原因" aria-label="搜索故障" @search="searchRepairs" />
-          <el-select class="itam-filter-select" v-model="repairStatus" placeholder="全部状态" clearable @change="onRepairStatusChange">
-            <el-option label="未关闭" value="false" />
-            <el-option label="已关闭" value="true" />
-          </el-select>
-          <el-date-picker class="itam-filter-date" v-model="repairStart" type="date" value-format="YYYY-MM-DD" placeholder="开始日期" @change="onRepairDateChange" />
-          <el-date-picker class="itam-filter-date" v-model="repairEnd" type="date" value-format="YYYY-MM-DD" placeholder="结束日期" @change="onRepairDateChange" />
+          <template #search>
+            <SearchField v-model="repairKeyword" placeholder="搜索资产编号、名称、故障原因" aria-label="搜索故障" @search="searchRepairs" />
+          </template>
+          <template #primary-filter>
+            <el-select v-model="repairStatus" placeholder="全部状态" clearable @change="onRepairStatusChange">
+              <el-option label="未关闭" value="false" />
+              <el-option label="已关闭" value="true" />
+            </el-select>
+          </template>
+          <template #extra-filter>
+            <div class="toolbar-extra-group">
+              <el-popover placement="bottom-start" :width="360" trigger="click">
+                <template #reference><el-button class="toolbar-extra-action" :icon="Filter">更多筛选</el-button></template>
+                <div class="toolbar-extra-panel">
+                  <el-date-picker v-model="repairStart" type="date" value-format="YYYY-MM-DD" placeholder="开始日期" @change="onRepairDateChange" />
+                  <el-date-picker v-model="repairEnd" type="date" value-format="YYYY-MM-DD" placeholder="结束日期" @change="onRepairDateChange" />
+                  <div class="toolbar-extra-popover-actions">
+                    <el-button class="toolbar-secondary-action" @click="resetRepairFilters">重置</el-button>
+                    <el-button v-if="can('faults.export')" class="toolbar-secondary-action" :icon="Download" @click="exportRepairs">导出维修记录</el-button>
+                  </div>
+                </div>
+              </el-popover>
+            </div>
+          </template>
           <template #actions>
-            <el-button v-if="can('faults.manage')" type="primary" :icon="Warning" @click="openFaultModal()">登记故障</el-button>
-            <el-button @click="resetRepairFilters">重置</el-button>
-            <el-button v-if="can('faults.export')" :icon="Download" @click="exportRepairs">导出维修记录</el-button>
+            <el-button v-if="can('faults.manage')" class="page-primary-action" type="primary" @click="openFaultModal()">新增故障</el-button>
           </template>
         </PageToolbar>
       </template>
@@ -122,6 +136,5 @@ const hasRepairFilters = computed(() => Boolean(
           </el-table>
         </PagedTable>
       </PageContent>
-    </PageContainer>
-  </div>
+  </PageContainer>
 </template>

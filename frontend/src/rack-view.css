@@ -407,11 +407,15 @@
 .rack-view-layout {
   grid-template-columns: minmax(208px, 236px) minmax(0, 1fr);
   gap: 18px;
-  /* The filter row now has its own divider and breathing room.  Give the
-     U-position workspace the corresponding extra height so every rack body
-     remains visible after the canvas scrollbar is removed. */
-  height: calc(100vh - 190px);
-  min-height: 560px;
+  /* Legacy canvas layout: viewport sizing stays local to the workspace. */
+  height: max(
+    420px,
+    calc(
+      100dvh - var(--header-height) - (var(--page-section-gap) * 2) -
+        var(--page-toolbar-height) - var(--page-padding-y)
+    )
+  );
+  min-height: 0;
 }
 
 .rack-view-layout.has-inspector {
@@ -986,22 +990,6 @@
   min-width: 0;
 }
 
-.racks-resource-toolbar {
-  min-width: 0;
-}
-
-.racks-resource-toolbar .resource-toolbar-select {
-  width: clamp(130px, 14vw, 168px);
-}
-
-.racks-resource-toolbar .resource-toolbar-select--device {
-  width: clamp(136px, 15vw, 176px);
-}
-
-.racks-resource-toolbar .resource-toolbar-search {
-  width: clamp(180px, 20vw, 230px);
-}
-
 .resource-workspace {
   display: grid;
   grid-template-columns: minmax(250px, .75fr) minmax(0, 1.75fr);
@@ -1012,6 +1000,15 @@
 
 .resource-workspace--rack {
   --rack-unit-height: 14px;
+  /* Only this concrete workspace reserves viewport height. */
+  height: max(
+    420px,
+    calc(
+      100dvh - var(--header-height) - (var(--page-section-gap) * 2) -
+        var(--page-toolbar-height) - var(--page-padding-y)
+    )
+  );
+  min-height: 0;
 }
 
 .resource-panel {
@@ -1781,6 +1778,10 @@
 }
 
 @media (max-width: 1000px) {
+  .resource-workspace--rack {
+    height: auto;
+  }
+
   .resource-workspace {
     grid-template-columns: 1fr;
   }
@@ -1795,28 +1796,6 @@
 }
 
 @media (max-width: 720px) {
-  .racks-resource-toolbar {
-    flex-wrap: wrap;
-    min-height: 0;
-  }
-
-  .racks-resource-toolbar .resource-toolbar-select,
-  .racks-resource-toolbar .resource-toolbar-select--device,
-  .racks-resource-toolbar .resource-toolbar-search {
-    width: min(100%, 220px);
-    flex: 1 1 180px;
-  }
-
-  .racks-resource-toolbar > .ep-toolbar-spacer {
-    display: none;
-  }
-
-  .racks-resource-toolbar > .ep-toolbar-actions {
-    width: 100%;
-    margin-left: 0;
-    justify-content: flex-end;
-  }
-
   .resource-detail-header {
     align-items: flex-start;
   }
@@ -1832,24 +1811,6 @@
 }
 
 @media (max-width: 520px) {
-  .page-container--compact-controls {
-    display: flex;
-    flex-direction: column;
-    gap: 10px;
-  }
-
-  .racks-module-page .page-container__subnav,
-  .racks-module-page .page-container__toolbar {
-    width: 100%;
-  }
-
-  .racks-resource-toolbar .resource-toolbar-select,
-  .racks-resource-toolbar .resource-toolbar-select--device,
-  .racks-resource-toolbar .resource-toolbar-search {
-    width: 100%;
-    flex-basis: 100%;
-  }
-
   .resource-detail-header {
     flex-direction: column;
   }

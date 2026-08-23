@@ -29,14 +29,18 @@ async function submitTag() {
   <PageContainer>
     <template #toolbar>
       <PageToolbar>
-        <SearchField class="itam-filter-search" v-model="c.tagSearch" :loading="c.tagListLoading" placeholder="搜索标签" aria-label="搜索标签" @search="c.loadTags()" />
-        <el-select class="itam-filter-select" v-model="c.tagActive" :disabled="c.tagListLoading" @change="c.loadTags()">
-          <el-option label="全部状态" value="all" />
-          <el-option label="启用" value="true" />
-          <el-option label="停用" value="false" />
-        </el-select>
+        <template #search>
+          <SearchField v-model="c.tagSearch" :loading="c.tagListLoading" placeholder="搜索标签" aria-label="搜索标签" @search="c.loadTags()" />
+        </template>
+        <template #primary-filter>
+          <el-select v-model="c.tagActive" :disabled="c.tagListLoading" @change="c.loadTags()">
+            <el-option label="全部状态" value="all" />
+            <el-option label="启用" value="true" />
+            <el-option label="停用" value="false" />
+          </el-select>
+        </template>
         <template #actions>
-          <el-button type="primary" :disabled="!c.can('tags.manage') || c.tagSaving" @click="c.openTagModal()">新增标签</el-button>
+          <el-button v-if="c.can('tags.manage')" class="page-primary-action" type="primary" :disabled="c.tagSaving" @click="c.openTagModal()">新增标签</el-button>
         </template>
       </PageToolbar>
     </template>

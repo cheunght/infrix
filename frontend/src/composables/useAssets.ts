@@ -351,7 +351,7 @@ export function useAssets(deps: AssetsDeps) {
   const assetFilters = reactive<AssetFilters>({
     status: "",
     deviceType: "",
-    tag: "",
+    tag: [],
     brand: "",
     model: "",
     dataCenter: "",
@@ -359,7 +359,7 @@ export function useAssets(deps: AssetsDeps) {
   });
   const assetTagFilter = computed({
     get: () => assetFilters.tag,
-    set: (value: string) => {
+    set: (value: string[]) => {
       assetFilters.tag = value;
     },
   });
@@ -609,7 +609,7 @@ export function useAssets(deps: AssetsDeps) {
     if (assetSearch.value.trim()) params.set("search", assetSearch.value.trim());
     if (assetFilters.status) params.set("status", assetFilters.status);
     if (assetFilters.deviceType) params.set("device_type", assetFilters.deviceType);
-    if (assetFilters.tag) params.set("tag", assetFilters.tag);
+    if (assetFilters.tag.length) params.set("tags", assetFilters.tag.join(","));
     if (assetFilters.brand) params.set("brand", assetFilters.brand);
     if (assetFilters.model.trim()) params.set("model", assetFilters.model.trim());
     if (assetFilters.dataCenter) params.set("data_center", assetFilters.dataCenter);
@@ -856,7 +856,9 @@ export function useAssets(deps: AssetsDeps) {
         maintenance_contract_no: maintenance?.contract_no || "",
         maintenance_start_date: maintenance?.start_date || "",
         maintenance_expiry_date: maintenance?.expiry_date || "",
-        tags: (detail.tags || []).map((tag) => String(tag.id)),
+        tags: (detail.tags || [])
+          .filter((tag) => !clone || tag.is_active)
+          .map((tag) => String(tag.id)),
         custom_values: historyValues,
       };
       await loadAssetCustomSchema(detail.device_type ? String(detail.device_type) : "");
@@ -1296,10 +1298,21 @@ export function useAssets(deps: AssetsDeps) {
     return Array.isArray(value) ? String(value[0] ?? "") : String(value ?? "");
   }
 
+  function queryList(query: LocationQuery, key: string): string[] {
+    const raw = query[key];
+    const values = Array.isArray(raw) ? raw : [raw];
+    return values
+      .flatMap((value) => String(value ?? "").split(","))
+      .map((value) => value.trim())
+      .filter((value) => /^\d+$/.test(value) && Number(value) > 0)
+      .filter((value, index, all) => all.indexOf(value) === index);
+  }
+
   function syncFiltersFromQuery(query: LocationQuery) {
     const status = queryValue(query, "status");
     const dataCenter = queryValue(query, "data_center");
     const warranty = queryValue(query, "warranty");
+    const tagIds = queryList(query, "tags");
     const validStatuses = new Set(["in_stock", "in_use", "idle", "repair", "retired"]);
     const validWarranties = new Set(["within_30_days", "expired"]);
 
@@ -1308,7 +1321,7 @@ export function useAssets(deps: AssetsDeps) {
     assetFilters.dataCenter = /^\d+$/.test(dataCenter) && Number(dataCenter) > 0 ? dataCenter : "";
     assetFilters.warranty = validWarranties.has(warranty) ? warranty : "";
     assetFilters.deviceType = "";
-    assetFilters.tag = "";
+    assetFilters.tag = tagIds;
     assetFilters.brand = "";
     assetFilters.model = "";
     draftCustomFilters.value = [];
@@ -1320,7 +1333,7 @@ export function useAssets(deps: AssetsDeps) {
     assetSearch.value = "";
     assetFilters.status = "";
     assetFilters.deviceType = "";
-    assetFilters.tag = "";
+    assetFilters.tag = [];
     assetFilters.brand = "";
     assetFilters.model = "";
     assetFilters.dataCenter = "";
@@ -1328,7 +1341,7 @@ export function useAssets(deps: AssetsDeps) {
     draftCustomFilters.value = [];
     appliedCustomFilters.value = [];
     assetPage.value = 1;
-    if (deps.clearRouteQuery?.(["status", "data_center", "warranty"])) return;
+    if (deps.clearRouteQuery?.(["status", "data_center", "warranty", "tags"])) return;
     return loadAssets();
   }
   function changeAssetPage(pageNumber: number) {

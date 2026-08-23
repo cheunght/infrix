@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, nextTick, ref, watch } from "vue";
 import type { FormInstance, FormRules } from "element-plus";
-import { List, Loading, MoreFilled, Plus } from "@element-plus/icons-vue";
+import { Filter, List, Loading, MoreFilled } from "@element-plus/icons-vue";
 import PagedTable from "./PagedTable.vue";
 import SearchField from "./SearchField.vue";
 import PageContainer from "./page/PageContainer.vue";
@@ -147,14 +147,31 @@ watch(showSpareOperationModal, (open, wasOpen) => { if (!open && wasOpen) refres
   <div class="itam-page spare-page">
     <PageContainer>
       <template #toolbar>
-        <PageToolbar class="spare-page-toolbar">
-          <SearchField class="itam-filter-search" v-model="spareSearch" placeholder="搜索备件名称、类型、品牌或型号" aria-label="搜索备件" :loading="spareListLoading" @search="searchSpareParts" />
-          <el-select class="itam-filter-select" v-model="spareType" placeholder="全部类型" clearable @change="searchSpareParts"><el-option v-for="item in partTypes" :key="item.value" :label="item.label" :value="item.value" /></el-select>
-          <el-select class="itam-filter-select" v-model="spareListDataCenter" placeholder="全部数据中心" clearable @change="onSpareListDataCenterChange"><el-option v-for="center in activeDataCenters" :key="center.id" :label="center.name" :value="String(center.id)" /></el-select>
-          <el-select class="itam-filter-select" v-model="spareListRoom" placeholder="全部机房" clearable @change="searchSpareParts"><el-option v-for="room in roomsFor(spareListDataCenter)" :key="room.id" :label="room.name" :value="String(room.id)" /></el-select>
+        <PageToolbar>
+          <template #search>
+            <SearchField v-model="spareSearch" placeholder="搜索备件名称、类型、品牌或型号" aria-label="搜索备件" :loading="spareListLoading" @search="searchSpareParts" />
+          </template>
+          <template #primary-filter>
+            <el-select v-model="spareType" placeholder="全部类型" clearable @change="searchSpareParts"><el-option v-for="item in partTypes" :key="item.value" :label="item.label" :value="item.value" /></el-select>
+          </template>
+          <template #secondary-filter>
+            <el-select v-model="spareListDataCenter" placeholder="全部数据中心" clearable @change="onSpareListDataCenterChange"><el-option v-for="center in activeDataCenters" :key="center.id" :label="center.name" :value="String(center.id)" /></el-select>
+          </template>
+          <template #extra-filter>
+            <div class="toolbar-extra-group">
+              <el-popover placement="bottom-start" :width="320" trigger="click">
+                <template #reference><el-button class="toolbar-extra-action" :icon="Filter">更多筛选</el-button></template>
+                <div class="toolbar-extra-panel">
+                  <el-select v-model="spareListRoom" placeholder="全部机房" clearable @change="searchSpareParts"><el-option v-for="room in roomsFor(spareListDataCenter)" :key="room.id" :label="room.name" :value="String(room.id)" /></el-select>
+                  <div class="toolbar-extra-popover-actions">
+                    <el-button class="toolbar-secondary-action" :disabled="spareListLoading" @click="resetSpareFilters">重置</el-button>
+                  </div>
+                </div>
+              </el-popover>
+            </div>
+          </template>
           <template #actions>
-            <el-button v-if="can('spares.manage')" type="primary" :icon="Plus" @click="openSparePartModal()">新增备件</el-button>
-            <el-button :disabled="spareListLoading" @click="resetSpareFilters">重置</el-button>
+            <el-button v-if="can('spares.manage')" class="page-primary-action" type="primary" @click="openSparePartModal()">新增备件</el-button>
           </template>
         </PageToolbar>
       </template>
@@ -240,10 +257,6 @@ watch(showSpareOperationModal, (open, wasOpen) => { if (!open && wasOpen) refres
 
 <style scoped>
 .spare-list-content { min-width: 0; }
-.spare-page-toolbar { flex-wrap: nowrap; }
-.spare-page-toolbar :deep(.itam-filter-search) { min-width: 220px; flex: 1 1 320px; }
-.spare-page-toolbar :deep(.itam-filter-select) { min-width: 130px; flex: 0 1 160px; }
-.spare-page-toolbar :deep(.ep-toolbar-actions) { flex: 0 0 auto; white-space: nowrap; }
 .spare-list-error,
 .spare-inline-error {
   display: flex;
@@ -275,14 +288,6 @@ watch(showSpareOperationModal, (open, wasOpen) => { if (!open && wasOpen) refres
 .spare-inline-error { justify-content: flex-start; margin: 8px 0 0; padding: 8px 10px; }
 .spare-inline-error .el-button { margin-left: auto; }
 .spare-transaction-error { margin-bottom: 12px; }
-
-@media (min-width: 1101px) and (max-width: 1450px) {
-  .spare-page-toolbar :deep(.itam-filter-search) { flex-basis: 320px !important; width: 320px !important; max-width: 320px !important; }
-}
-
-@media (max-width: 1100px) {
-  .spare-page-toolbar { flex-wrap: wrap; }
-}
 
 @media (max-width: 640px) {
   .spare-list-error, .spare-inline-error { align-items: flex-start; flex-direction: column; }

@@ -2,7 +2,7 @@
 <script setup lang="ts">
 import { computed } from "vue";
 import { ElMessage } from "element-plus";
-import { Delete, Download, Filter, MoreFilled, Operation, Plus, Upload } from "@element-plus/icons-vue";
+import { Delete, Download, Filter, MoreFilled, Operation, Upload } from "@element-plus/icons-vue";
 import type { Asset, AssetCustomFilter, CustomFieldFilterOperator, CustomFieldSchema } from "../types";
 import PagedTable from "./PagedTable.vue";
 import SearchField from "./SearchField.vue";
@@ -49,6 +49,7 @@ const {
   assetFilterCustomSchemaLoading,
   assetFilterCustomSchemaError,
   retryAssetFilterCustomSchema,
+  tagListLoading,
   can,
   openNewAssetModal,
   selectedAssetIds,
@@ -87,7 +88,7 @@ const hasAssetFilters = computed(() => Boolean(
   assetSearch.value.trim() ||
   assetFilters.status ||
   assetFilters.deviceType ||
-  assetFilters.tag ||
+  assetFilters.tag.length ||
   assetFilters.brand ||
   assetFilters.model.trim() ||
   assetFilters.dataCenter ||
@@ -248,28 +249,35 @@ function handleToolbarAction(command: string) {
 </script>
 
 <template>
-  <div class="itam-page">
-    <PageContainer>
+  <PageContainer class="itam-page">
       <template #toolbar>
-        <PageToolbar class="asset-ledger-toolbar">
-          <div class="asset-toolbar-filters">
+        <PageToolbar>
+          <template #search>
             <SearchField
-              class="asset-toolbar-search"
               v-model="assetSearch"
               placeholder="搜索资产编号、名称、SN、IP 等"
               aria-label="搜索资产"
               @search="searchLedger"
             />
+          </template>
+          <template #primary-filter>
             <el-select
-              class="asset-toolbar-filter"
               v-model="assetFilters.tag"
+              multiple
               clearable
               filterable
+              collapse-tags
+              collapse-tags-tooltip
+              :max-collapse-tags="2"
+              :loading="tagListLoading"
               placeholder="标签"
               @change="searchLedger"
             >
-              <el-option v-for="tag in activeTags" :key="tag.id" :label="tag.name" :value="tag.name" />
+              <el-option v-for="tag in activeTags" :key="tag.id" :label="tag.name" :value="String(tag.id)" />
             </el-select>
+          </template>
+          <template #extra-filter>
+            <div class="toolbar-extra-group">
             <el-popover
               placement="bottom-start"
               :width="680"
@@ -277,7 +285,7 @@ function handleToolbarAction(command: string) {
               popper-class="asset-ledger-filter-popover"
               @show="syncDraftCustomFilters"
             >
-              <template #reference><el-button class="asset-toolbar-more" :icon="Filter">更多筛选</el-button></template>
+              <template #reference><el-button class="toolbar-extra-action asset-toolbar-more" :icon="Filter">更多筛选</el-button></template>
               <div class="asset-ledger-advanced-filters">
                 <el-form label-position="top">
                   <el-form-item label="品牌">
@@ -367,52 +375,56 @@ function handleToolbarAction(command: string) {
                     </div>
                   </template>
                 </section>
+                <el-divider />
+                <div class="asset-toolbar-popover-actions">
+                  <el-button class="toolbar-secondary-action" @click="resetAssetFilters">重置</el-button>
+                  <div class="asset-toolbar-table-actions">
+                    <el-popover placement="bottom" :width="300" trigger="click">
+                      <template #reference><el-button :icon="Operation">显示列</el-button></template>
+                      <div class="ep-column-list">
+                        <div class="asset-column-section">
+                          <div class="asset-column-section__title">基础字段</div>
+                          <el-checkbox v-for="column in assetColumnOptions" :key="column.key" :model-value="visibleAssetColumns.includes(column.key)" :disabled="column.required" :title="column.required ? '核心字段不可隐藏' : undefined" @change="toggleAssetColumn(column.key)">{{ column.label }}<span v-if="column.required" class="asset-ledger-column-fixed">（固定）</span></el-checkbox>
+                        </div>
+                        <div class="asset-column-section">
+                          <div class="asset-column-section__title">扩展字段</div>
+                          <div v-if="assetListCustomSchemaLoading" class="asset-column-section__state">正在加载扩展列配置…</div>
+                          <div v-else-if="assetListCustomSchemaError" class="asset-column-section__state asset-column-section__state--error">
+                            <span>扩展列配置加载失败</span>
+                            <el-button link type="primary" @click="retryAssetListCustomSchema">重试</el-button>
+                          </div>
+                          <template v-else>
+                            <el-checkbox v-for="column in assetDynamicColumnOptions" :key="column.key" :model-value="visibleAssetColumns.includes(column.key)" :disabled="dynamicColumnDisabled(column.key)" :title="[column.scopeLabel, column.field?.help_text].filter(Boolean).join(' · ') || undefined" @change="toggleAssetColumn(column.key)">
+                              <span>{{ column.label }}</span>
+                              <span v-if="column.scopeLabel" class="asset-column-option-scope">（{{ column.scopeLabel }}）</span>
+                            </el-checkbox>
+                            <div v-if="!assetDynamicColumnOptions.length" class="asset-column-section__state">暂无可配置的扩展列</div>
+                          </template>
+                        </div>
+                        <el-button link type="primary" @click="resetAssetColumns">恢复默认</el-button>
+                      </div>
+                    </el-popover>
+                    <el-button v-if="can('assets.export')" :icon="Download" @click="exportAssets">{{ exportLabel }}</el-button>
+                    <el-upload v-if="can('assets.import')" accept=".csv,text/csv" :auto-upload="false" :show-file-list="false" :on-change="onElementUploadChange"><el-button :icon="Upload">导入资产</el-button></el-upload>
+                    <el-dropdown v-if="can('assets.import') || can('faults.manage') || can('assets.manage')" trigger="click" @command="handleToolbarAction">
+                      <el-button :icon="MoreFilled">更多操作</el-button>
+                      <template #dropdown>
+                        <el-dropdown-menu>
+                          <el-dropdown-item v-if="can('assets.import')" command="template">导入模板</el-dropdown-item>
+                          <el-dropdown-item v-if="can('faults.manage')" command="fault" :disabled="selectedAssetIds.length !== 1">登记故障</el-dropdown-item>
+                          <el-dropdown-item v-if="can('assets.manage')" command="delete" :disabled="!selectedAssetIds.length" divided>批量删除</el-dropdown-item>
+                        </el-dropdown-menu>
+                      </template>
+                    </el-dropdown>
+                  </div>
+                </div>
               </div>
             </el-popover>
-          </div>
-          <div class="asset-toolbar-actions">
-            <el-button v-if="can('assets.manage')" type="primary" :icon="Plus" @click="openNewAssetModal">新增资产</el-button>
-            <el-button @click="resetAssetFilters">重置</el-button>
-            <div class="asset-toolbar-table-actions">
-              <el-popover placement="bottom" :width="300" trigger="click">
-                <template #reference><el-button :icon="Operation">显示列</el-button></template>
-                <div class="ep-column-list">
-                  <div class="asset-column-section">
-                    <div class="asset-column-section__title">基础字段</div>
-                    <el-checkbox v-for="column in assetColumnOptions" :key="column.key" :model-value="visibleAssetColumns.includes(column.key)" :disabled="column.required" :title="column.required ? '核心字段不可隐藏' : undefined" @change="toggleAssetColumn(column.key)">{{ column.label }}<span v-if="column.required" class="asset-ledger-column-fixed">（固定）</span></el-checkbox>
-                  </div>
-                  <div class="asset-column-section">
-                    <div class="asset-column-section__title">扩展字段</div>
-                    <div v-if="assetListCustomSchemaLoading" class="asset-column-section__state">正在加载扩展列配置…</div>
-                    <div v-else-if="assetListCustomSchemaError" class="asset-column-section__state asset-column-section__state--error">
-                      <span>扩展列配置加载失败</span>
-                      <el-button link type="primary" @click="retryAssetListCustomSchema">重试</el-button>
-                    </div>
-                    <template v-else>
-                      <el-checkbox v-for="column in assetDynamicColumnOptions" :key="column.key" :model-value="visibleAssetColumns.includes(column.key)" :disabled="dynamicColumnDisabled(column.key)" :title="[column.scopeLabel, column.field?.help_text].filter(Boolean).join(' · ') || undefined" @change="toggleAssetColumn(column.key)">
-                        <span>{{ column.label }}</span>
-                        <span v-if="column.scopeLabel" class="asset-column-option-scope">（{{ column.scopeLabel }}）</span>
-                      </el-checkbox>
-                      <div v-if="!assetDynamicColumnOptions.length" class="asset-column-section__state">暂无可配置的扩展列</div>
-                    </template>
-                  </div>
-                  <el-button link type="primary" @click="resetAssetColumns">恢复默认</el-button>
-                </div>
-              </el-popover>
-              <el-button v-if="can('assets.export')" :icon="Download" @click="exportAssets">{{ exportLabel }}</el-button>
-              <el-upload v-if="can('assets.import')" accept=".csv,text/csv" :auto-upload="false" :show-file-list="false" :on-change="onElementUploadChange"><el-button :icon="Upload">导入资产</el-button></el-upload>
-              <el-dropdown v-if="can('assets.import') || can('faults.manage') || can('assets.manage')" trigger="click" @command="handleToolbarAction">
-                <el-button :icon="MoreFilled">更多操作</el-button>
-                <template #dropdown>
-                  <el-dropdown-menu>
-                    <el-dropdown-item v-if="can('assets.import')" command="template">导入模板</el-dropdown-item>
-                    <el-dropdown-item v-if="can('faults.manage')" command="fault" :disabled="selectedAssetIds.length !== 1">登记故障</el-dropdown-item>
-                    <el-dropdown-item v-if="can('assets.manage')" command="delete" :disabled="!selectedAssetIds.length" divided>批量删除</el-dropdown-item>
-                  </el-dropdown-menu>
-                </template>
-              </el-dropdown>
             </div>
-          </div>
+          </template>
+          <template #actions>
+            <el-button v-if="can('assets.manage')" class="page-primary-action" type="primary" @click="openNewAssetModal">新增资产</el-button>
+          </template>
         </PageToolbar>
       </template>
       <PageContent surface>
@@ -509,6 +521,5 @@ function handleToolbarAction(command: string) {
           </el-table>
         </PagedTable>
       </PageContent>
-    </PageContainer>
-  </div>
+  </PageContainer>
 </template>

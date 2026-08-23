@@ -227,7 +227,6 @@ const historicalFieldGroups = computed<HistoricalFieldGroup[]>(() => {
   return Array.from(groups.values());
 });
 
-const hasTags = computed(() => Boolean(asset.value?.tags?.length));
 
 const recentInventoryRecords = computed(() => [...inventoryRecords.value]
   .filter((record) => Boolean(record.checked_at))
@@ -330,13 +329,14 @@ function retryDetail() {
         </dl>
       </section>
 
-      <section v-if="hasTags" class="asset-detail-section">
+      <section v-if="asset" class="asset-detail-section">
         <h3>标签</h3>
         <div v-if="asset.tags?.length" class="asset-detail-tags">
           <el-tag v-for="tag in asset.tags" :key="tag.id" size="small" :type="tag.is_active ? undefined : 'info'">
-            {{ tag.name }}
+            {{ tag.name }}<template v-if="!tag.is_active">（已停用）</template>
           </el-tag>
         </div>
+        <span v-else class="asset-detail-empty-value">—</span>
       </section>
 
       <section v-for="group in currentFieldGroups" :key="group.name" class="asset-detail-section asset-detail-custom-section">

@@ -45,7 +45,7 @@ from .services import (
 from .inventory import get_inventory_scope_assets
 from .license_status import filter_licenses_by_status, license_status_counts
 from .audit import asset_audit_snapshot, asset_custom_value_changes, model_snapshot, write_audit_log
-from .permissions import BusinessRolePermission, CanExportAssets, CanExportFaults, CanExportInventory, CanExportRacks, CanImportAssets, CanManageInventory, CanViewAssetCustomFieldSchema, CanViewAuditLog, CanViewDashboard, CanViewInventory, CanViewLicenses, IsSystemAdministrator
+from .permissions import BusinessRolePermission, CanExportAssets, CanExportFaults, CanExportInventory, CanExportRacks, CanImportAssets, CanManageInventory, CanViewAssetCustomFieldSchema, CanViewAssetTagsRuntime, CanViewAuditLog, CanViewDashboard, CanViewInventory, CanViewLicenses, IsSystemAdministrator
 from .roles import ROLE_DEFINITIONS, ROLE_NAME_TO_CODE, user_capabilities, user_has_capability, user_role_code
 from .reporting import (
     DashboardScopeError,
@@ -205,7 +205,13 @@ class AssetViewSet(AuditedModelViewSetMixin, viewsets.ModelViewSet):
                 name="tag",
                 type=OpenApiTypes.STR,
                 required=False,
-                description="按标签名称筛选资产。",
+                description="兼容旧版：按单个标签名称筛选资产。",
+            ),
+            OpenApiParameter(
+                name="tags",
+                type=OpenApiTypes.STR,
+                required=False,
+                description="按标签 ID 筛选资产，支持逗号分隔或重复参数；多个标签为 OR（命中任一标签）。",
             ),
             OpenApiParameter(
                 name="data_center",
@@ -273,6 +279,9 @@ class AssetViewSet(AuditedModelViewSetMixin, viewsets.ModelViewSet):
                     )
                 )
         tag = self.request.query_params.get("tag", "").strip()
+        tag_ids = self._tag_filter_ids()
+        if tag_ids:
+            queryset = queryset.filter(asset_tags__tag_id__in=tag_ids)
         if tag:
             queryset = queryset.filter(asset_tags__tag__name__iexact=tag)
         data_center = self.request.query_params.get("data_center", "").strip()
@@ -319,9 +328,29 @@ class AssetViewSet(AuditedModelViewSetMixin, viewsets.ModelViewSet):
             else:
                 values = values.filter(_custom_filter_multiselect_membership(value))
             queryset = queryset.filter(Exists(values))
-        if tag:
+        if tag or tag_ids:
             queryset = queryset.distinct()
         return queryset
+
+    def _tag_filter_ids(self):
+        """Parse the multi-tag filter while retaining the legacy name filter."""
+        raw_values = self.request.query_params.getlist("tags")
+        if not raw_values:
+            return []
+        values = []
+        invalid = []
+        for raw_value in raw_values:
+            for part in str(raw_value).split(","):
+                value = part.strip()
+                if not value:
+                    continue
+                if not value.isdigit() or int(value) <= 0:
+                    invalid.append(value)
+                    continue
+                values.append(int(value))
+        if invalid:
+            raise DRFValidationError({"tags": "标签筛选参数必须是正整数 ID"})
+        return list(dict.fromkeys(values))
 
     def _validated_custom_filters(self):
         raw_conditions = [
@@ -813,6 +842,11 @@ class TagViewSet(AuditedModelViewSetMixin, viewsets.ModelViewSet):
     filterset_fields = ["is_active"]
     search_fields = ["name"]
     ordering_fields = ["name", "created_at", "updated_at"]
+
+    def get_permissions(self):
+        if self.action in {"list", "retrieve"} or self.request.method in {"GET", "HEAD", "OPTIONS"}:
+            return [CanViewAssetTagsRuntime()]
+        return super().get_permissions()
 
     def get_queryset(self):
         queryset = super().get_queryset()

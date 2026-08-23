@@ -39,6 +39,12 @@
   --header-height: 64px;
   --page-padding-inline: 24px;
   --page-padding-block: 20px;
+  --page-section-gap: 16px;
+  --page-toolbar-gap: 12px;
+  --page-tabs-height: 44px;
+  --page-toolbar-height: 36px;
+  --panel-radius: var(--radius-md);
+  --page-content-min-height: 0px;
   --space-1: 4px;
   --space-2: 8px;
   --space-3: 12px;
@@ -83,7 +89,7 @@ body {
   background: var(--itam-page-bg);
 }
 .shell {
-  min-height: 100vh;
+  min-height: 100dvh;
 }
 .ep-sidebar {
   position: relative;
@@ -252,7 +258,7 @@ body {
 }
 .ep-main {
   min-width: 0;
-  padding: 0 var(--page-padding-inline) var(--page-padding-block);
+  padding: 0;
   background: var(--itam-page-bg);
   scrollbar-gutter: stable;
 }
@@ -262,7 +268,7 @@ body {
   justify-content: space-between;
   height: var(--header-height);
   padding: 0;
-  margin-bottom: 18px;
+  margin: 0;
   background: transparent;
 }
 .app-header h1 {
@@ -280,12 +286,12 @@ body {
 .ep-user-name {
   margin-left: 8px;
 }
-.ep-toolbar .el-input,
-.ep-toolbar .el-select,
-.ep-toolbar .el-date-editor {
+.ep-toolbar:not(.page-toolbar) .el-input,
+.ep-toolbar:not(.page-toolbar) .el-select,
+.ep-toolbar:not(.page-toolbar) .el-date-editor {
   max-width: 320px;
 }
-.ep-toolbar .el-date-editor {
+.ep-toolbar:not(.page-toolbar) .el-date-editor {
   width: 160px;
 }
 .form-grid .el-form-item,
@@ -490,12 +496,12 @@ body {
   background: var(--el-color-primary-light-9);
 }
 
-.ep-main .ep-toolbar {
+.ep-main .ep-toolbar:not(.page-toolbar) {
   gap: var(--itam-control-gap);
   row-gap: 8px;
 }
 
-.ep-main .ep-toolbar > .itam-search-field {
+.ep-main .ep-toolbar:not(.page-toolbar) > .itam-search-field {
   flex: 0 1 390px;
 }
 
@@ -554,14 +560,14 @@ body {
 }
 
 @media (max-width: 900px) {
-  .ep-main .ep-toolbar > .itam-search-field,
+  .ep-main .ep-toolbar:not(.page-toolbar) > .itam-search-field,
   .ep-main .itam-search-field {
     flex: 1 1 100%;
     width: 100%;
     max-width: none;
   }
 
-  .ep-main .ep-toolbar .ep-toolbar-spacer {
+  .ep-main .ep-toolbar:not(.page-toolbar) .ep-toolbar-spacer {
     display: none;
   }
 }
@@ -571,8 +577,8 @@ body {
     padding: 0 14px 16px;
   }
 
-  .ep-main .ep-toolbar > .el-select,
-  .ep-main .ep-toolbar > .el-date-editor {
+  .ep-main .ep-toolbar:not(.page-toolbar) > .el-select,
+  .ep-main .ep-toolbar:not(.page-toolbar) > .el-date-editor {
     flex: 1 1 160px;
     max-width: none;
   }
@@ -588,10 +594,10 @@ body {
 }
 
 @media (max-width: 560px) {
-  .ep-main .ep-toolbar > .el-select,
-  .ep-main .ep-toolbar > .el-date-editor,
-  .ep-main .ep-toolbar > .el-button,
-  .ep-main .ep-toolbar > .el-upload {
+  .ep-main .ep-toolbar:not(.page-toolbar) > .el-select,
+  .ep-main .ep-toolbar:not(.page-toolbar) > .el-date-editor,
+  .ep-main .ep-toolbar:not(.page-toolbar) > .el-button,
+  .ep-main .ep-toolbar:not(.page-toolbar) > .el-upload {
     flex: 1 1 100%;
     width: 100%;
     max-width: none;
@@ -673,7 +679,7 @@ body {
   padding-top: 0;
 }
 
-.ep-toolbar {
+.ep-toolbar:not(.page-toolbar) {
   display: flex;
   align-items: center;
   gap: 10px;
@@ -681,14 +687,14 @@ body {
 }
 /* Separate page-level filters/actions from the table below. Card-header
    toolbars are not adjacent to a table and therefore remain unchanged. */
-.ep-main .ep-toolbar + .el-table,
-.ep-main .ep-toolbar + .table-scroll {
+.ep-main .ep-toolbar:not(.page-toolbar) + .el-table,
+.ep-main .ep-toolbar:not(.page-toolbar) + .table-scroll {
   margin-top: 16px;
 }
-.ep-toolbar .el-input {
+.ep-toolbar:not(.page-toolbar) .el-input {
   width: 320px;
 }
-.ep-toolbar .el-select {
+.ep-toolbar:not(.page-toolbar) .el-select {
   width: 160px;
 }
 .ep-toolbar-spacer {
@@ -739,9 +745,9 @@ body {
 }
 
 @media (max-width: 760px) {
-  .ep-toolbar .el-input,
-  .ep-toolbar .el-select,
-  .ep-toolbar .el-date-editor {
+  .ep-toolbar:not(.page-toolbar) .el-input,
+  .ep-toolbar:not(.page-toolbar) .el-select,
+  .ep-toolbar:not(.page-toolbar) .el-date-editor {
     width: 100%;
   }
   .ep-toolbar-spacer {
@@ -1046,12 +1052,12 @@ body {
   border-radius: 0 var(--itam-control-radius) var(--itam-control-radius) 0;
 }
 
-.ep-main .ep-toolbar {
+.ep-main .ep-toolbar:not(.page-toolbar) {
   gap: var(--itam-control-gap);
   row-gap: 8px;
 }
 
-.ep-main .ep-toolbar > .itam-search-field {
+.ep-main .ep-toolbar:not(.page-toolbar) > .itam-search-field {
   flex: 0 1 390px;
 }
 
@@ -1068,7 +1074,7 @@ body {
 }
 
 @media (max-width: 900px) {
-  .ep-main .ep-toolbar > .itam-search-field {
+  .ep-main .ep-toolbar:not(.page-toolbar) > .itam-search-field {
     flex: 1 1 100%;
     width: 100%;
     max-width: none;
@@ -1311,6 +1317,8 @@ body {
   display: flex;
   flex-wrap: wrap;
   gap: 6px;
+  max-height: 88px;
+  overflow-y: auto;
 }
 
 .asset-detail-custom-fields {
@@ -1861,7 +1869,7 @@ body {
   --itam-button-danger-border: #fecaca;
 }
 
-.ep-main .ep-toolbar {
+.ep-main .ep-toolbar:not(.page-toolbar) {
   flex-wrap: nowrap;
   align-items: center;
 }
@@ -2150,7 +2158,7 @@ body {
 }
 
 @media (max-width: 1100px) {
-  .ep-main .ep-toolbar {
+  .ep-main .ep-toolbar:not(.page-toolbar) {
     flex-wrap: wrap;
   }
 
@@ -2967,9 +2975,9 @@ body {
    can still decide their grouping, but the controls themselves share one
    predictable desktop size and one responsive collapse rule. */
 :root {
-  --itam-filter-search-width: 360px;
+  --itam-filter-search-width: 320px;
   --itam-filter-select-width: 160px;
-  --itam-filter-date-width: 180px;
+  --itam-filter-date-width: 160px;
 }
 
 .ep-main .itam-filter-search,
@@ -2978,7 +2986,7 @@ body {
   flex: 0 1 var(--itam-filter-search-width) !important;
   width: var(--itam-filter-search-width) !important;
   max-width: var(--itam-filter-search-width) !important;
-  min-width: 220px !important;
+  min-width: 0 !important;
 }
 
 .ep-main .itam-filter-select {
@@ -3023,7 +3031,7 @@ body {
   box-sizing: border-box;
 }
 
-.ep-main .ep-toolbar {
+.ep-main .ep-toolbar:not(.page-toolbar) {
   /* Keep desktop toolbars on one line.  Dense pages can still opt into
      wrapping at the responsive breakpoint below. */
   flex-wrap: nowrap;
@@ -3039,7 +3047,7 @@ body {
 @media (min-width: 1101px) {
   /* Keep the compact filter bars on one desktop row.  At narrower widths the
      responsive rule below deliberately allows the controls to wrap. */
-  .ep-main .ep-toolbar {
+  .ep-main .ep-toolbar:not(.page-toolbar) {
     flex-wrap: nowrap;
     white-space: nowrap;
   }
@@ -3263,7 +3271,7 @@ body {
 }
 
 @media (max-width: 1100px) {
-  .ep-main .ep-toolbar {
+  .ep-main .ep-toolbar:not(.page-toolbar) {
     flex-wrap: wrap;
   }
 }
@@ -3387,19 +3395,6 @@ body,
   margin-left: 0;
 }
 
-/* Asset ledger toolbar: keep filtering and asset actions in explicit groups.
-   This is intentionally page-scoped so the shared toolbar contract remains
-   unchanged for the other list pages. */
-.ep-main .asset-ledger-toolbar {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
-  align-items: center;
-  gap: var(--space-sm, 8px);
-  min-width: 0;
-  flex-wrap: initial;
-}
-
-.asset-toolbar-filters,
 .asset-toolbar-actions,
 .asset-toolbar-table-actions {
   display: flex;
@@ -3408,36 +3403,13 @@ body,
   gap: var(--space-sm, 8px);
 }
 
-.asset-toolbar-filters {
-  flex: 1 1 auto;
-  flex-wrap: nowrap;
-}
-
 .asset-toolbar-actions {
   justify-content: flex-end;
-  flex-wrap: nowrap;
+  flex-wrap: wrap;
 }
 
 .asset-toolbar-table-actions {
   flex-wrap: nowrap;
-}
-
-.ep-main .asset-toolbar-search {
-  flex: 0 1 280px;
-  width: 280px;
-  min-width: 220px;
-  max-width: 300px;
-}
-
-.ep-main .asset-toolbar-filter {
-  flex: 0 1 150px;
-  width: 150px;
-  min-width: 130px;
-  max-width: 180px;
-}
-
-.asset-toolbar-more {
-  flex: 0 0 auto;
 }
 
 .asset-ledger-advanced-filters {
@@ -3581,46 +3553,7 @@ body,
   font-weight: 500;
 }
 
-@media (max-width: 1100px) {
-  .ep-main .asset-ledger-toolbar {
-    grid-template-columns: minmax(0, 1fr);
-  }
-
-  .asset-toolbar-actions {
-    justify-content: flex-end;
-  }
-}
-
-@media (max-width: 900px) {
-  .asset-toolbar-filters,
-  .asset-toolbar-actions {
-    width: 100%;
-  }
-
-  .asset-toolbar-actions {
-    justify-content: flex-start;
-    flex-wrap: wrap;
-  }
-
-  .asset-toolbar-filters {
-    flex-wrap: wrap;
-  }
-
-  .ep-main .asset-toolbar-search {
-    flex: 1 1 100%;
-    width: 100%;
-    max-width: none;
-  }
-}
-
 @media (max-width: 640px) {
-  .ep-main .asset-toolbar-filter,
-  .asset-toolbar-more {
-    flex: 1 1 100%;
-    width: 100%;
-    max-width: none;
-  }
-
   .asset-toolbar-table-actions {
     width: 100%;
     flex-wrap: wrap;
@@ -3841,6 +3774,21 @@ body,
 
 .asset-form-dialog .asset-form-full {
   grid-column: 1 / -1;
+}
+
+.asset-form-tag-state {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 6px;
+  color: var(--el-text-color-secondary);
+  font-size: 12px;
+  line-height: 18px;
+}
+
+.asset-form-tag-state--error {
+  color: var(--el-color-danger);
 }
 
 .asset-form-dialog .asset-form-grid .el-input,

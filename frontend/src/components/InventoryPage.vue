@@ -7,7 +7,7 @@ import {
   DataAnalysis,
   Delete,
   Download,
-  Plus,
+  Filter,
   Refresh,
   Warning,
 } from "@element-plus/icons-vue";
@@ -195,21 +195,38 @@ onMounted(async () => {
     <PageContainer v-if="!activeTask">
       <template #toolbar>
         <PageToolbar>
-          <SearchField class="itam-filter-search" v-model="taskSearch" placeholder="搜索盘点任务、数据中心或盘点人" aria-label="搜索盘点任务" @search="() => { taskPage = 1; loadTasks(); }" />
-          <el-select class="itam-filter-select" v-model="taskStatus" placeholder="全部状态" clearable @change="() => { taskPage = 1; loadTasks(); }">
-            <el-option v-for="item in taskStatusOptions" :key="item.value" :label="item.label" :value="item.value" />
-          </el-select>
-          <el-select class="itam-filter-select" v-model="taskDataCenter" placeholder="全部数据中心" clearable @change="() => { taskRoom = ''; taskPage = 1; loadTasks(); }">
-            <el-option v-for="center in activeDataCenters" :key="center.id" :label="center.name" :value="String(center.id)" />
-          </el-select>
-          <el-select class="itam-filter-select" v-model="taskRoom" placeholder="全部机房" clearable @change="() => { taskPage = 1; loadTasks(); }">
-            <el-option v-for="room in taskFilterRooms" :key="room.id" :label="room.name" :value="String(room.id)" />
-          </el-select>
+          <template #search>
+            <SearchField v-model="taskSearch" placeholder="搜索盘点任务、数据中心或盘点人" aria-label="搜索盘点任务" @search="() => { taskPage = 1; loadTasks(); }" />
+          </template>
+          <template #primary-filter>
+            <el-select v-model="taskStatus" placeholder="全部状态" clearable @change="() => { taskPage = 1; loadTasks(); }">
+              <el-option v-for="item in taskStatusOptions" :key="item.value" :label="item.label" :value="item.value" />
+            </el-select>
+          </template>
+          <template #secondary-filter>
+            <el-select v-model="taskDataCenter" placeholder="全部数据中心" clearable @change="() => { taskRoom = ''; taskPage = 1; loadTasks(); }">
+              <el-option v-for="center in activeDataCenters" :key="center.id" :label="center.name" :value="String(center.id)" />
+            </el-select>
+          </template>
+          <template #extra-filter>
+            <div class="toolbar-extra-group">
+              <el-popover placement="bottom-start" :width="320" trigger="click">
+                <template #reference><el-button class="toolbar-extra-action" :icon="Filter">更多筛选</el-button></template>
+                <div class="toolbar-extra-panel">
+                  <el-select v-model="taskRoom" placeholder="全部机房" clearable @change="() => { taskPage = 1; loadTasks(); }">
+                    <el-option v-for="room in taskFilterRooms" :key="room.id" :label="room.name" :value="String(room.id)" />
+                  </el-select>
+                  <div class="toolbar-extra-popover-actions">
+                    <el-button class="toolbar-secondary-action" :icon="Refresh" @click="resetTaskFilters">重置</el-button>
+                  </div>
+                </div>
+              </el-popover>
+            </div>
+          </template>
           <template #actions>
-            <el-button v-if="can('inventory.manage')" type="primary" :icon="Plus" :loading="taskCreating" @click="openNewTask">
-              新建盘点任务
+            <el-button v-if="can('inventory.manage')" class="page-primary-action" type="primary" :loading="taskCreating" :disabled="taskCreating" @click="openNewTask">
+              新增盘点
             </el-button>
-            <el-button :icon="Refresh" @click="resetTaskFilters">重置</el-button>
           </template>
         </PageToolbar>
       </template>
@@ -290,11 +307,21 @@ onMounted(async () => {
         </PageSection>
         <PageSection title="盘点设备">
           <PageToolbar>
-            <SearchField class="itam-filter-search" v-model="itemSearch" placeholder="搜索资产编号、SN、IP或名称" aria-label="搜索盘点设备" @search="() => { itemPage = 1; loadItems(); }" />
-            <el-select class="itam-filter-select" v-model="itemStatus" placeholder="全部盘点结果" clearable @change="() => { itemPage = 1; loadItems(); }"><el-option v-for="item in itemStatusOptions" :key="item.value" :label="item.label" :value="item.value" /></el-select>
-            <el-select class="itam-filter-select" v-model="itemResolutionStatus" placeholder="全部处理状态" clearable @change="() => { itemPage = 1; loadItems(); }"><el-option v-for="item in itemResolutionStatusOptions" :key="item.value" :label="item.label" :value="item.value" /></el-select>
-            <el-button :type="itemStatus === 'pending' ? 'primary' : 'default'" :plain="itemStatus !== 'pending'" @click="filterPendingItems">仅看未盘点</el-button>
-            <el-button :icon="Refresh" @click="resetItemFilters">重置</el-button>
+            <template #search>
+              <SearchField v-model="itemSearch" placeholder="搜索资产编号、SN、IP或名称" aria-label="搜索盘点设备" @search="() => { itemPage = 1; loadItems(); }" />
+            </template>
+            <template #primary-filter>
+              <el-select v-model="itemStatus" placeholder="全部盘点结果" clearable @change="() => { itemPage = 1; loadItems(); }"><el-option v-for="item in itemStatusOptions" :key="item.value" :label="item.label" :value="item.value" /></el-select>
+            </template>
+            <template #secondary-filter>
+              <el-select v-model="itemResolutionStatus" placeholder="全部处理状态" clearable @change="() => { itemPage = 1; loadItems(); }"><el-option v-for="item in itemResolutionStatusOptions" :key="item.value" :label="item.label" :value="item.value" /></el-select>
+            </template>
+            <template #extra-filter>
+              <div class="toolbar-extra-group">
+                <el-button class="toolbar-secondary-action" :type="itemStatus === 'pending' ? 'primary' : 'default'" :plain="itemStatus !== 'pending'" @click="filterPendingItems">仅看未盘点</el-button>
+                <el-button class="toolbar-secondary-action" :icon="Refresh" @click="resetItemFilters">重置</el-button>
+              </div>
+            </template>
           </PageToolbar>
           <div v-if="selectedBatchItems.length" class="inventory-batch-bar">
             <span>已选择 {{ selectedBatchItems.length }} 项</span>

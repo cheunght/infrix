@@ -1314,11 +1314,13 @@ const overlayAssetDetail = {
           >
         </div></el-header
       >
-      <ApiErrorAlert :message="pageError" />
       <div class="app-route-shell" v-loading="loading" :aria-busy="loading ? 'true' : 'false'">
-        <router-view v-slot="{ Component }">
-          <component :is="Component" :context="pageContext" />
-        </router-view>
+        <ApiErrorAlert :message="pageError" />
+        <div class="app-route-view">
+          <router-view v-slot="{ Component }">
+            <component :is="Component" :context="pageContext" />
+          </router-view>
+        </div>
       </div>
       <GlobalOverlayHost
         :asset-context="pageContext"

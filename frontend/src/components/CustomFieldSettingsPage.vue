@@ -209,14 +209,18 @@ async function submitCustomFieldOption() {
   <PageContainer>
     <template #toolbar>
       <PageToolbar>
-        <el-select class="itam-filter-select" v-model="c.customFieldDeviceType" placeholder="全部设备类型" clearable :disabled="c.customFieldListLoading" @change="c.loadCustomFields()">
-          <el-option v-for="item in c.deviceTypes" :key="item.id" :label="item.name" :value="String(item.id)" />
-        </el-select>
-        <el-select class="itam-filter-select" v-model="c.customFieldActive" placeholder="状态" :disabled="c.customFieldListLoading" @change="c.loadCustomFields()">
-          <el-option label="全部状态" value="all" /><el-option label="启用" value="true" /><el-option label="停用" value="false" />
-        </el-select>
+        <template #primary-filter>
+          <el-select v-model="c.customFieldDeviceType" placeholder="全部设备类型" clearable :disabled="c.customFieldListLoading" @change="c.loadCustomFields()">
+            <el-option v-for="item in c.deviceTypes" :key="item.id" :label="item.name" :value="String(item.id)" />
+          </el-select>
+        </template>
+        <template #secondary-filter>
+          <el-select v-model="c.customFieldActive" placeholder="状态" :disabled="c.customFieldListLoading" @change="c.loadCustomFields()">
+            <el-option label="全部状态" value="all" /><el-option label="启用" value="true" /><el-option label="停用" value="false" />
+          </el-select>
+        </template>
         <template #actions>
-          <el-button type="primary" :disabled="!c.can('custom_fields.manage') || c.customFieldSaving" @click="openCreateCustomField">新增字段</el-button>
+          <el-button v-if="c.can('custom_fields.manage')" class="page-primary-action" type="primary" :disabled="c.customFieldSaving" @click="openCreateCustomField">新增字段</el-button>
         </template>
       </PageToolbar>
     </template>
