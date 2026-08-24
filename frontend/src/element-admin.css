@@ -52,6 +52,9 @@
   --space-5: 24px;
   --space-6: 32px;
   --control-height: 36px;
+  --dialog-padding-x: 24px;
+  --dialog-padding-y: 20px;
+  --dialog-section-gap: 24px;
   --page-title-size: 20px;
   --page-description-size: 13px;
   --section-title-size: 16px;
@@ -294,8 +297,7 @@ body {
 .ep-toolbar:not(.page-toolbar) .el-date-editor {
   width: 160px;
 }
-.form-grid .el-form-item,
-.license-form-grid .el-form-item {
+.form-grid .el-form-item {
   min-width: 0;
 }
 .form-grid .el-input,
@@ -961,6 +963,89 @@ body {
   margin: 14px 0;
 }
 
+.asset-import-steps {
+  margin: -4px 0 18px;
+}
+
+.asset-import-alert {
+  margin: 14px 0;
+}
+
+.asset-import-upload {
+  width: 100%;
+}
+
+.asset-import-upload .el-upload-dragger {
+  min-height: 188px;
+  padding: 38px 24px;
+  border-radius: 10px;
+}
+
+.asset-import-upload__icon {
+  color: var(--itam-primary-blue);
+  font-size: 30px;
+  line-height: 1;
+}
+
+.asset-import-upload__title {
+  margin-top: 12px;
+  color: var(--el-text-color-primary);
+  font-size: 16px;
+  font-weight: 600;
+}
+
+.asset-import-upload__hint,
+.asset-import-upload__actions span {
+  color: var(--el-text-color-secondary);
+  font-size: 13px;
+}
+
+.asset-import-upload__hint {
+  margin-top: 8px;
+}
+
+.asset-import-upload__actions {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-top: 12px;
+}
+
+.asset-import-file-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  margin-bottom: 14px;
+  padding: 10px 12px;
+  border: 1px solid var(--el-border-color-lighter);
+  border-radius: 8px;
+  background: var(--el-fill-color-lighter);
+}
+
+.asset-import-file-bar > div {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  min-width: 0;
+}
+
+.asset-import-file-bar strong {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.asset-import-file-bar span {
+  flex: 0 0 auto;
+  color: var(--el-text-color-secondary);
+  font-size: 12px;
+}
+
+.import-preview-filter {
+  margin-left: auto;
+}
+
 .import-preview-changes,
 .import-preview-errors {
   line-height: 1.55;
@@ -969,6 +1054,10 @@ body {
 
 .import-preview-errors {
   color: var(--el-color-danger);
+}
+
+.import-preview-errors--summary {
+  cursor: help;
 }
 
 .import-preview-label {
@@ -1313,6 +1402,95 @@ body {
   gap: 8px;
 }
 
+.asset-depreciation-status-row {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 12px;
+  color: var(--el-text-color-secondary);
+  font-size: 13px;
+}
+
+.asset-depreciation-status-row strong {
+  color: var(--el-text-color-primary);
+  font-weight: 600;
+}
+
+.asset-depreciation-metrics {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px 14px;
+}
+
+.asset-depreciation-metric {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+}
+
+.asset-depreciation-metric span,
+.asset-depreciation-progress__heading span,
+.asset-depreciation-progress__detail {
+  color: var(--el-text-color-secondary);
+  font-size: 12px;
+  line-height: 18px;
+}
+
+.asset-depreciation-metric strong {
+  color: var(--el-text-color-primary);
+  font-size: 14px;
+  font-variant-numeric: tabular-nums;
+  line-height: 20px;
+}
+
+.asset-depreciation-progress {
+  margin-top: 14px;
+}
+
+.asset-depreciation-progress__heading {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 6px;
+}
+
+.asset-depreciation-progress__heading strong {
+  color: var(--el-text-color-primary);
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+}
+
+.asset-depreciation-progress__track {
+  height: 6px;
+  overflow: hidden;
+  border-radius: 999px;
+  background: var(--el-fill-color-light);
+}
+
+.asset-depreciation-progress__track span {
+  display: block;
+  height: 100%;
+  border-radius: inherit;
+  background: var(--el-color-primary);
+  transition: width 180ms ease;
+}
+
+.asset-depreciation-progress__detail {
+  display: block;
+  margin-top: 5px;
+  font-variant-numeric: tabular-nums;
+}
+
+.asset-depreciation-config {
+  margin-top: 14px;
+}
+
+.asset-depreciation-empty {
+  color: var(--el-text-color-secondary);
+  font-size: 13px;
+}
+
 .asset-detail-tags {
   display: flex;
   flex-wrap: wrap;
@@ -1465,6 +1643,10 @@ body {
   .asset-detail-fields {
     grid-template-columns: 84px minmax(0, 1fr);
     gap: 8px 10px;
+  }
+
+  .asset-depreciation-metrics {
+    grid-template-columns: minmax(0, 1fr);
   }
 
   .asset-detail-activity-item {
@@ -3204,27 +3386,6 @@ body {
   line-height: var(--control-height);
 }
 
-/* User account dialog: keep the reference layout (fixed labels on the left,
-   full-width Element Plus controls on the right) without changing the other
-   dialogs in the application. */
-.user-account-dialog {
-  max-width: calc(100vw - 32px);
-}
-
-.user-account-dialog .el-dialog__body {
-  padding: 22px 28px 18px;
-}
-
-.user-account-form .el-form-item {
-  margin-bottom: 18px;
-}
-
-.user-account-form .el-form-item__label {
-  color: #35445c;
-  font-size: 15px;
-  font-weight: 500;
-}
-
 .user-account-form .el-input,
 .user-account-form .el-select,
 .user-account-form .user-account-role {
@@ -3240,33 +3401,53 @@ body {
   min-height: var(--itam-control-height);
 }
 
-.user-account-divider {
-  margin: 6px 0 20px;
+.user-more-action {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
 }
 
-.user-account-dialog .el-dialog__footer {
-  padding-top: 10px;
+.user-reset-alert {
+  margin-bottom: 18px;
+}
+
+.profile-readonly-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 1px;
+  overflow: hidden;
+  border: 1px solid var(--el-border-color-lighter);
+  border-radius: 7px;
+}
+
+.profile-readonly-grid > div {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+  padding: 11px 13px;
+  background: var(--el-fill-color-lighter);
+}
+
+.profile-readonly-grid span {
+  color: var(--el-text-color-secondary);
+  font-size: 12px;
+}
+
+.profile-readonly-grid strong {
+  min-width: 0;
+  color: var(--el-text-color-primary);
+  font-size: 13px;
+  font-weight: 600;
+  overflow-wrap: anywhere;
+}
+
+.profile-state {
+  min-height: 180px;
 }
 
 @media (max-width: 560px) {
-  .user-account-dialog .el-dialog__body {
-    padding: 18px 16px 12px;
-  }
-
-  .user-account-form.el-form--label-left .el-form-item {
-    display: block;
-  }
-
-  .user-account-form.el-form--label-left .el-form-item__label {
-    display: block;
-    width: auto !important;
-    height: auto;
-    margin-bottom: 6px;
-    line-height: 1.4;
-  }
-
-  .user-account-form.el-form--label-left .el-form-item__content {
-    margin-left: 0 !important;
+  .profile-readonly-grid {
+    grid-template-columns: 1fr;
   }
 }
 
@@ -3312,6 +3493,209 @@ body {
   .ep-main .ep-toolbar-actions {
     width: 100%;
     margin-left: 0;
+  }
+}
+
+/* App-shell global search.  The input keeps the shared control geometry while
+   the result surface is allowed to be wider than the field for readable
+   cross-module context. */
+.ep-main .global-search {
+  position: relative;
+  flex: 0 1 var(--itam-filter-search-width) !important;
+  width: var(--itam-filter-search-width) !important;
+  max-width: var(--itam-filter-search-width) !important;
+  min-width: 0 !important;
+}
+
+.ep-main .global-search-input {
+  width: 100%;
+}
+
+.global-search-loading {
+  color: var(--itam-primary-blue);
+}
+
+.global-search-panel {
+  position: absolute;
+  top: calc(100% + 8px);
+  right: 0;
+  z-index: 20;
+  width: min(520px, calc(100vw - (var(--page-padding-inline) * 2)));
+  max-height: min(560px, calc(100vh - var(--header-height) - 24px));
+  overflow-y: auto;
+  padding: 8px;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-lg);
+  background: var(--color-surface);
+  box-shadow: var(--shadow-overlay);
+}
+
+.global-search-panel__header,
+.global-search-section__header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.global-search-panel__header {
+  min-height: 34px;
+  padding: 0 10px;
+  color: var(--color-text-primary);
+  font-size: var(--caption-size);
+  font-weight: 600;
+  letter-spacing: 0.02em;
+}
+
+.global-search-panel__status {
+  color: var(--color-text-muted);
+  font-weight: 400;
+}
+
+.global-search-panel__loading,
+.global-search-panel__empty {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  min-height: 48px;
+  padding: 12px 16px;
+  color: var(--color-text-muted);
+  font-size: var(--caption-size);
+}
+
+.global-search-section {
+  padding: 6px 0;
+}
+
+.global-search-section + .global-search-section {
+  border-top: 1px solid var(--color-border-soft);
+}
+
+.global-search-section__header {
+  min-height: 32px;
+  padding: 0 10px;
+  color: var(--color-text-secondary);
+  font-size: var(--caption-size);
+  font-weight: 600;
+}
+
+.global-search-section__header button {
+  border: 0;
+  background: transparent;
+  color: var(--color-brand-primary);
+  cursor: pointer;
+  font: inherit;
+  font-weight: 500;
+  padding: 3px 0;
+}
+
+.global-search-section__header button:hover,
+.global-search-section__header button:focus-visible {
+  color: var(--color-brand-primary-hover);
+  text-decoration: underline;
+}
+
+.global-search-result {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  width: 100%;
+  gap: 10px;
+  min-height: 58px;
+  padding: 9px 10px;
+  border: 1px solid transparent;
+  border-radius: var(--radius-md);
+  background: transparent;
+  color: var(--color-text-primary);
+  cursor: pointer;
+  text-align: left;
+  font: inherit;
+}
+
+.global-search-result:hover,
+.global-search-result.is-active {
+  border-color: var(--color-border-soft);
+  background: var(--color-brand-primary-soft);
+}
+
+.global-search-result:focus-visible {
+  outline: 2px solid var(--color-brand-primary);
+  outline-offset: -2px;
+}
+
+.global-search-result__marker {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 38px;
+  height: 24px;
+  padding: 0 7px;
+  border-radius: var(--radius-sm);
+  font-size: 11px;
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.global-search-result__marker--asset {
+  background: var(--color-brand-primary-soft);
+  color: var(--color-brand-primary);
+}
+
+.global-search-result__marker--rack {
+  background: var(--el-fill-color-light);
+  color: var(--color-text-secondary);
+}
+
+.global-search-result__marker--fault {
+  background: var(--el-color-danger-light-9);
+  color: var(--color-danger);
+}
+
+.global-search-result__body {
+  display: grid;
+  min-width: 0;
+  gap: 3px;
+}
+
+.global-search-result__body strong,
+.global-search-result__body small {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.global-search-result__body strong {
+  color: var(--color-text-primary);
+  font-size: var(--body-size);
+  font-weight: 600;
+}
+
+.global-search-result__body small {
+  color: var(--color-text-muted);
+  font-size: var(--caption-size);
+  line-height: 1.4;
+}
+
+.global-search-result__arrow {
+  color: var(--color-text-muted);
+  font-size: 15px;
+}
+
+.global-search-section__error {
+  padding: 8px 10px;
+  color: var(--color-danger);
+  font-size: var(--caption-size);
+}
+
+@media (max-width: 900px) {
+  .ep-main .global-search {
+    width: 100% !important;
+    max-width: none !important;
+  }
+
+  .global-search-panel {
+    width: min(520px, calc(100vw - 28px));
   }
 }
 
@@ -3740,42 +4124,6 @@ body,
   }
 }
 
-/* Asset editor: keep the dialog shell stable while the form body scrolls. */
-.asset-form-dialog .el-dialog__body {
-  max-height: min(calc(88vh - 140px), 680px);
-  overflow-y: auto;
-  overflow-x: hidden;
-  padding: 8px 24px 24px;
-}
-
-.asset-form-dialog .el-dialog__footer {
-  position: sticky;
-  bottom: 0;
-  z-index: 1;
-  display: flex;
-  justify-content: flex-end;
-  gap: 8px;
-  margin: 0;
-  padding: 14px 24px 18px;
-  background: var(--el-bg-color-overlay);
-  border-top: 1px solid var(--el-border-color-lighter);
-}
-
-.asset-form-dialog .asset-form-grid {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 4px 16px;
-}
-
-.asset-form-dialog .asset-form-grid > .el-form-item,
-.asset-form-dialog .asset-form-full {
-  min-width: 0;
-}
-
-.asset-form-dialog .asset-form-full {
-  grid-column: 1 / -1;
-}
-
 .asset-form-tag-state {
   display: flex;
   align-items: center;
@@ -3791,27 +4139,25 @@ body,
   color: var(--el-color-danger);
 }
 
-.asset-form-dialog .asset-form-grid .el-input,
-.asset-form-dialog .asset-form-grid .el-select,
-.asset-form-dialog .asset-form-grid .el-date-editor,
-.asset-form-dialog .asset-form-grid .el-input-number,
-.asset-form-dialog .asset-form-full .el-input,
-.asset-form-dialog .asset-form-full .el-select,
-.asset-form-dialog .asset-form-full .el-date-editor {
-  width: 100%;
+.asset-depreciation-toggle {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 12px;
 }
 
-.asset-form-dialog .el-divider {
-  margin: 18px 0 14px;
+.asset-depreciation-unit {
+  margin-left: 8px;
+  color: var(--el-text-color-secondary);
+  font-size: 13px;
 }
 
-.asset-form-dialog .el-divider:first-child {
-  margin-top: 4px;
-}
-
-.asset-form-loading {
-  min-height: 420px;
-  padding: 12px 4px;
+.asset-depreciation-help {
+  display: block;
+  margin-top: 5px;
+  color: var(--el-text-color-secondary);
+  font-size: 12px;
+  line-height: 18px;
 }
 
 .asset-form-load-error {
@@ -3856,21 +4202,256 @@ body,
   margin-top: 10px;
 }
 
-@media (max-width: 760px) {
-  .asset-form-dialog .el-dialog__body {
-    max-height: 66vh;
-    padding: 6px 16px 20px;
+/* Shared CRUD form dialog shell. Business components own their fields and
+   validation; this layer only establishes the same frame and rhythm. */
+.form-dialog {
+  width: min(var(--form-dialog-width, 720px), calc(100vw - 48px));
+  max-width: calc(100vw - 48px);
+  max-height: 82vh;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.form-dialog--small {
+  --form-dialog-width: 520px;
+}
+
+.form-dialog--medium {
+  --form-dialog-width: 720px;
+}
+
+.form-dialog--large {
+  --form-dialog-width: 960px;
+}
+
+.form-dialog--small .form-dialog__grid {
+  grid-template-columns: minmax(0, 1fr);
+}
+
+.form-dialog .el-dialog__header {
+  flex: 0 0 auto;
+  margin-right: 0;
+  padding: 0;
+  border-bottom: 1px solid var(--color-border-soft);
+}
+
+.form-dialog__header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+  min-height: 72px;
+  padding: 20px var(--dialog-padding-x) 16px;
+}
+
+.form-dialog__heading {
+  min-width: 0;
+}
+
+.form-dialog__heading h2 {
+  margin: 0;
+  color: var(--color-text-primary);
+  font-size: 18px;
+  font-weight: 600;
+  line-height: 24px;
+}
+
+.form-dialog__description {
+  max-width: 680px;
+  margin: 4px 0 0;
+  color: var(--color-text-secondary);
+  font-size: 13px;
+  line-height: 18px;
+}
+
+.form-dialog__close {
+  flex: 0 0 auto;
+  width: 32px;
+  height: 32px;
+  margin: -4px -8px 0 0;
+  color: var(--color-text-muted);
+}
+
+.form-dialog__close:hover,
+.form-dialog__close:focus-visible {
+  color: var(--color-text-primary);
+  background: var(--color-border-soft);
+}
+
+.form-dialog .el-dialog__body {
+  flex: 1 1 auto;
+  min-height: 0;
+  max-height: none;
+  padding: 0;
+  overflow-x: hidden;
+  overflow-y: auto;
+}
+
+.form-dialog__body {
+  min-width: 0;
+  padding: var(--dialog-padding-y) var(--dialog-padding-x);
+}
+
+.form-dialog__body > .el-form,
+.form-dialog__body > form {
+  min-width: 0;
+}
+
+.form-dialog__alert {
+  margin-bottom: 16px;
+}
+
+.form-dialog__loading {
+  min-height: 260px;
+}
+
+.form-dialog .el-dialog__footer {
+  flex: 0 0 auto;
+  padding: 0;
+  border-top: 0;
+}
+
+.form-dialog__footer {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 12px;
+  padding: 16px var(--dialog-padding-x);
+  border-top: 1px solid var(--color-border-soft);
+  background: var(--color-surface);
+}
+
+.form-dialog__footer .el-button {
+  min-width: 88px;
+  height: var(--control-height);
+  margin-left: 0 !important;
+}
+
+.form-dialog__footer .el-button--primary {
+  min-width: 104px;
+}
+
+.form-dialog .el-form-item {
+  min-width: 0;
+  margin-bottom: 0;
+}
+
+.form-dialog .el-form-item__label {
+  height: auto;
+  margin-bottom: 6px;
+  color: var(--color-text-secondary);
+  font-size: 13px;
+  font-weight: 500;
+  line-height: 20px;
+}
+
+.form-dialog .el-form-item__content {
+  min-width: 0;
+  line-height: var(--control-height);
+}
+
+.form-dialog .el-input,
+.form-dialog .el-select,
+.form-dialog .el-date-editor,
+.form-dialog .el-input-number,
+.form-dialog .el-color-picker {
+  width: 100%;
+}
+
+.form-dialog__section + .form-dialog__section {
+  margin-top: var(--dialog-section-gap);
+}
+
+.form-dialog__section-title {
+  margin: 0 0 12px;
+  padding-bottom: 8px;
+  color: var(--color-text-primary);
+  border-bottom: 1px solid var(--color-border-soft);
+  font-size: 15px;
+  font-weight: 600;
+  line-height: 20px;
+}
+
+.form-dialog__section-title + .form-dialog__grid,
+.form-dialog__section-title + .el-form-item {
+  margin-top: 0;
+}
+
+.form-dialog__subsection-title {
+  margin: 16px 0 12px;
+  color: var(--color-text-secondary);
+  font-size: 13px;
+  font-weight: 600;
+  line-height: 20px;
+}
+
+.form-dialog__grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 16px 24px;
+}
+
+.form-dialog__grid > *,
+.form-dialog__field--full,
+.form-dialog__span-2 {
+  min-width: 0;
+}
+
+.form-dialog__field--full,
+.form-dialog__span-2 {
+  grid-column: 1 / -1;
+}
+
+.form-dialog__error {
+  margin: 8px 0 0;
+  color: var(--color-danger);
+  font-size: 12px;
+  line-height: 18px;
+}
+
+.form-dialog__hint {
+  margin: 8px 0 0;
+  color: var(--color-text-muted);
+  font-size: 12px;
+  line-height: 18px;
+}
+
+.form-dialog__section .el-divider {
+  margin: 0 0 12px;
+}
+
+@media (max-width: 768px) {
+  .form-dialog {
+    width: calc(100vw - 24px);
+    max-width: calc(100vw - 24px);
   }
 
-  .asset-form-dialog .el-dialog__footer {
-    padding: 12px 16px 14px;
-  }
-
-  .asset-form-dialog .asset-form-grid {
+  .form-dialog__grid {
     grid-template-columns: minmax(0, 1fr);
   }
 
-  .asset-form-dialog .asset-form-full {
+  .form-dialog__field--full,
+  .form-dialog__span-2 {
     grid-column: auto;
+  }
+}
+
+@media (max-width: 560px) {
+  .form-dialog__header,
+  .form-dialog__body,
+  .form-dialog__footer {
+    padding-right: 16px;
+    padding-left: 16px;
+  }
+
+  .form-dialog__header {
+    min-height: 64px;
+    padding-top: 16px;
+    padding-bottom: 12px;
+  }
+
+  .form-dialog .el-dialog__body {
+    max-height: none;
   }
 }

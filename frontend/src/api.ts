@@ -21,7 +21,7 @@ const FIELD_LABELS: Record<string, string> = {
   asset_no: "资产编号",
   name: "名称",
   asset_type: "设备类型",
-  brand: "品牌",
+  manufacturer: "厂商",
   device_type: "设备类型",
   serial_number: "序列号",
   configuration: "关联信息",
@@ -64,10 +64,29 @@ export class ApiError extends Error {
   }
 }
 
+export function isAbortError(error: unknown): boolean {
+  return Boolean(
+    error &&
+      typeof error === "object" &&
+      "name" in error &&
+      (error as { name?: unknown }).name === "AbortError",
+  );
+}
+
 export type DownloadOptions = RequestInit & {
   filename?: string;
   onUnauthorized?: () => void;
 };
+
+/** Remove list-only controls before an export request is sent. */
+export function buildExportQuery(params: URLSearchParams): string {
+  const exportParams = new URLSearchParams(params);
+  exportParams.delete("page");
+  exportParams.delete("page_size");
+  exportParams.delete("compact");
+  exportParams.delete("custom_columns");
+  return exportParams.toString();
+}
 
 /** Download an authenticated file without navigating away from the SPA. */
 export async function downloadFile(path: string, options: DownloadOptions = {}): Promise<void> {
@@ -93,8 +112,16 @@ export async function downloadFile(path: string, options: DownloadOptions = {}):
   const blob = await response.blob();
   const disposition = response.headers.get("Content-Disposition") || "";
   const encodedName = disposition.match(/filename\*=UTF-8''([^;]+)/i)?.[1];
-  const plainName = disposition.match(/filename="?([^";]+)"?/i)?.[1];
-  const resolvedName = filename || (encodedName ? decodeURIComponent(encodedName) : plainName) || "download";
+  const plainName = disposition.match(/filename(?!\*)="?([^";]+)"?/i)?.[1];
+  let serverFilename = plainName;
+  if (encodedName) {
+    try {
+      serverFilename = decodeURIComponent(encodedName);
+    } catch {
+      // Fall back to the ASCII filename when a malformed header is returned.
+    }
+  }
+  const resolvedName = serverFilename || filename || "download";
   const url = URL.createObjectURL(blob);
   const anchor = document.createElement("a");
   anchor.href = url;

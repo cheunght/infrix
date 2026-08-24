@@ -40,6 +40,25 @@ class CanViewAssetTagsRuntime(BasePermission):
         )
 
 
+class CanViewManufacturerRuntime(BasePermission):
+    """Allow business forms to read manufacturers without granting dictionary CRUD."""
+
+    message = "当前角色没有读取厂商的权限"
+
+    def has_permission(self, request, view):
+        return any(
+            user_has_capability(request.user, capability)
+            for capability in (
+                "assets.view",
+                "assets.manage",
+                "licenses.view",
+                "licenses.manage",
+                "settings.view",
+                "settings.manage",
+            )
+        )
+
+
 class IsSystemAdministrator(BasePermission):
     message = "仅系统管理员可以执行此操作"
 
@@ -48,10 +67,10 @@ class IsSystemAdministrator(BasePermission):
 
 
 class CanImportAssets(BasePermission):
-    message = "当前角色没有导入资产的权限"
+    message = "当前角色没有资产管理权限"
 
     def has_permission(self, request, view):
-        return user_has_capability(request.user, "assets.import")
+        return user_has_capability(request.user, "assets.manage")
 
 
 class CanExportAssets(BasePermission):
@@ -73,6 +92,20 @@ class CanExportFaults(BasePermission):
 
     def has_permission(self, request, view):
         return user_has_capability(request.user, "faults.export")
+
+
+class CanExportLicenses(BasePermission):
+    message = "当前角色没有导出软件许可的权限"
+
+    def has_permission(self, request, view):
+        return user_has_capability(request.user, "licenses.export")
+
+
+class CanExportSpares(BasePermission):
+    message = "当前角色没有导出备件的权限"
+
+    def has_permission(self, request, view):
+        return user_has_capability(request.user, "spares.export")
 
 
 class CanViewAuditLog(BasePermission):

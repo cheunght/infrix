@@ -1,7 +1,7 @@
 import { computed, reactive, ref, type ComputedRef, type Ref } from "vue";
 import type { LocationQuery } from "vue-router";
 import { ElMessage } from "element-plus";
-import { ApiError, pageItems, pageTotal, type PageResult } from "../api";
+import { ApiError, buildExportQuery, isAbortError, pageItems, pageTotal, type PageResult } from "../api";
 import type { Page } from "../types";
 import type {
   Asset,
@@ -17,13 +17,20 @@ import type {
   Tag,
 } from "../types";
 import type { AssetFilters, AssetFormState, RequestFn } from "../types/page-context";
+import {
+  DEPRECIATION_METHOD_STRAIGHT_LINE,
+  depreciationStatusLabel,
+  formatMoneyDecimalString,
+  percentageToRate,
+  rateToPercentageText,
+} from "../depreciation";
 
 export type StaticAssetColumnKey =
   | "asset_no"
   | "name"
   | "asset_type"
-  | "brand"
-  | "brand_model"
+  | "manufacturer"
+  | "manufacturer_model"
   | "purpose"
   | "status"
   | "serial_number"
@@ -38,6 +45,9 @@ export type StaticAssetColumnKey =
   | "purchase_date"
   | "supplier"
   | "purchase_order_no"
+  | "depreciation_net_book_value"
+  | "depreciation_accumulated_depreciation"
+  | "depreciation_status"
   | "maintenance_provider"
   | "maintenance_expiry_date"
   | "notes";
@@ -94,6 +104,10 @@ export type ImportPreviewRow = {
   line: number;
   asset_no: string;
   name: string;
+  device_type: string;
+  location: string;
+  depreciation?: string;
+  valid: boolean;
   action: "create" | "conflict" | "error";
   changes: ImportPreviewChange[];
   errors: ImportPreviewError[];
@@ -101,13 +115,17 @@ export type ImportPreviewRow = {
 export type ImportPreview = {
   filename: string;
   total: number;
+  valid: number;
+  invalid: number;
   summary: { ready: number; conflicts: number; errors: number };
   rows: ImportPreviewRow[];
 };
 export type ImportResult = {
   created: number;
+  total: number;
   errors: Array<{ line: number; detail: unknown }>;
 };
+export type ImportStep = "upload" | "preview" | "result";
 
 export interface AssetsDeps {
   request: RequestFn;
@@ -121,7 +139,7 @@ export interface AssetsDeps {
   dataCenters: Ref<DataCenter[]>;
   serverRooms: Ref<ServerRoom[]>;
   racks: Ref<Rack[]>;
-  brands: Ref<DictionaryItem[]>;
+  manufacturers: Ref<DictionaryItem[]>;
   deviceTypes: Ref<DictionaryItem[]>;
   tags: Ref<Tag[]>;
   loadRackManagement: () => void | Promise<void>;
@@ -140,9 +158,9 @@ const defaultColumns: AssetColumnOption[] = [
   { key: "asset_type", label: "设备类型", defaultVisible: true },
   { key: "status", label: "状态", defaultVisible: true, required: true },
   { key: "rack_code", label: "位置", defaultVisible: true },
-  { key: "brand_model", label: "型号", defaultVisible: true },
+  { key: "manufacturer_model", label: "型号", defaultVisible: true },
   { key: "maintenance_expiry_date", label: "保修到期", defaultVisible: true },
-  { key: "brand", label: "品牌" },
+  { key: "manufacturer", label: "厂商" },
   { key: "purpose", label: "用途" },
   { key: "serial_number", label: "序列号" },
   { key: "owner_name", label: "使用人" },
@@ -154,6 +172,9 @@ const defaultColumns: AssetColumnOption[] = [
   { key: "purchase_date", label: "采购日期" },
   { key: "supplier", label: "供应商" },
   { key: "purchase_order_no", label: "采购单号" },
+  { key: "depreciation_net_book_value", label: "当前净值", width: 140 },
+  { key: "depreciation_accumulated_depreciation", label: "累计折旧", width: 140 },
+  { key: "depreciation_status", label: "折旧状态", width: 110 },
   { key: "maintenance_provider", label: "维保厂商" },
   { key: "notes", label: "备注" },
 ];
@@ -188,10 +209,10 @@ function emptyAssetForm(): AssetFormState {
     asset_no: "",
     name: "",
     asset_type: "",
-    brand: "",
+    manufacturer_id: "",
     model: "",
     device_type: "",
-    brand_model: "",
+    manufacturer_model: "",
     serial_number: "",
     purpose: "",
     status: "in_stock",
@@ -212,6 +233,10 @@ function emptyAssetForm(): AssetFormState {
     supplier: "",
     purchase_order_no: "",
     purchase_amount: "",
+    depreciation_enabled: false,
+    depreciation_start_date: "",
+    depreciation_years: null,
+    residual_rate: "",
     maintenance_provider: "",
     maintenance_contract_no: "",
     maintenance_start_date: "",
@@ -238,23 +263,14 @@ function loadSavedColumns(): AssetColumnKey[] {
   );
 }
 
-function isAbortError(error: unknown): boolean {
-  return Boolean(
-    error &&
-      typeof error === "object" &&
-      "name" in error &&
-      (error as { name?: string }).name === "AbortError",
-  );
-}
-
 const assetFormFieldNames = new Set([
   "asset_no",
   "name",
   "asset_type",
-  "brand",
+  "manufacturer",
   "model",
   "device_type",
-  "brand_model",
+  "manufacturer_model",
   "serial_number",
   "purpose",
   "status",
@@ -274,6 +290,11 @@ const assetFormFieldNames = new Set([
   "supplier",
   "purchase_order_no",
   "purchase_amount",
+  "depreciation_enabled",
+  "depreciation_start_date",
+  "depreciation_years",
+  "residual_rate",
+  "depreciation_method",
   "maintenance_provider",
   "maintenance_contract_no",
   "maintenance_start_date",
@@ -352,7 +373,7 @@ export function useAssets(deps: AssetsDeps) {
     status: "",
     deviceType: "",
     tag: [],
-    brand: "",
+    manufacturer: "",
     model: "",
     dataCenter: "",
     warranty: "",
@@ -372,9 +393,9 @@ export function useAssets(deps: AssetsDeps) {
   const assetFilterCustomSchemaRequestId = ref(0);
   let assetFilterCustomSchemaController: AbortController | null = null;
   let assetFilterCustomSchemaPromise: Promise<boolean> | null = null;
-  const assetLookup = ref("");
   const assetListLoading = ref(false);
   const assetListError = ref("");
+  const exportingAssets = ref(false);
   const visibleAssetColumns = ref<AssetColumnKey[]>(loadSavedColumns());
   const assetListCustomFieldSchema = ref<CustomFieldSchema[]>([]);
   const assetListCustomSchemaLoading = ref(false);
@@ -394,6 +415,7 @@ export function useAssets(deps: AssetsDeps) {
   const assetFormSaving = ref(false);
   const assetFormFieldErrors = ref<Record<string, string>>({});
   const assetFormRequestId = ref(0);
+  const depreciationStartTouched = ref(false);
   const assetCustomSchemaLoading = ref(false);
   const assetCustomSchemaError = ref("");
   const assetCustomSchemaRequestId = ref(0);
@@ -408,10 +430,15 @@ export function useAssets(deps: AssetsDeps) {
   });
 
   const importFile = ref<File | null>(null);
-  const showImportPreview = ref(false);
+  const showImportDialog = ref(false);
+  const importStep = ref<ImportStep>("upload");
   const importPreview = ref<ImportPreview | null>(null);
-  const showImportResult = ref(false);
-  const importResult = ref<ImportResult>({ created: 0, errors: [] });
+  const importPreviewFilter = ref<"all" | "errors">("all");
+  const importPreviewError = ref("");
+  const importPreviewing = ref(false);
+  const importing = ref(false);
+  const importResult = ref<ImportResult>({ created: 0, total: 0, errors: [] });
+  let importController: AbortController | null = null;
   const detailRequestId = ref(0);
   const detailAssetId = ref<number | null>(null);
 
@@ -441,9 +468,9 @@ export function useAssets(deps: AssetsDeps) {
         String(rack.room) === assetForm.value.server_room_id,
     ),
   );
-  const activeBrands = computed(() => {
-    const current = deps.brands.value.find((item) => String(item.id) === assetForm.value.brand);
-    return deps.brands.value.filter((item) => item.is_active || item.id === current?.id);
+  const activeManufacturers = computed(() => {
+    const current = deps.manufacturers.value.find((item) => String(item.id) === assetForm.value.manufacturer_id);
+    return deps.manufacturers.value.filter((item) => item.is_active || item.id === current?.id);
   });
   const activeDeviceTypes = computed(() => {
     const current = deps.deviceTypes.value.find((item) => String(item.id) === assetForm.value.device_type);
@@ -593,24 +620,18 @@ export function useAssets(deps: AssetsDeps) {
     return message ? `筛选条件无效：${message}` : "";
   }
 
-  async function loadAssets(version = deps.beginLoad()): Promise<void> {
-    if (!deps.authenticated.value) return;
-    ensureAssetListCustomSchema();
-    ensureAssetFilterCustomSchema();
-    if (deps.isCurrentLoad(version)) {
-      assetListLoading.value = true;
-      assetListError.value = "";
+  function assetQueryParams(includePagination = true) {
+    const params = new URLSearchParams();
+    if (includePagination) {
+      params.set("page", String(assetPage.value));
+      params.set("page_size", String(assetPageSize.value));
+      params.set("compact", "1");
     }
-    const params = new URLSearchParams({
-      page: String(assetPage.value),
-      page_size: String(assetPageSize.value),
-      compact: "1",
-    });
     if (assetSearch.value.trim()) params.set("search", assetSearch.value.trim());
     if (assetFilters.status) params.set("status", assetFilters.status);
     if (assetFilters.deviceType) params.set("device_type", assetFilters.deviceType);
     if (assetFilters.tag.length) params.set("tags", assetFilters.tag.join(","));
-    if (assetFilters.brand) params.set("brand", assetFilters.brand);
+    if (assetFilters.manufacturer) params.set("manufacturer", assetFilters.manufacturer);
     if (assetFilters.model.trim()) params.set("model", assetFilters.model.trim());
     if (assetFilters.dataCenter) params.set("data_center", assetFilters.dataCenter);
     if (assetFilters.warranty) params.set("warranty", assetFilters.warranty);
@@ -619,8 +640,22 @@ export function useAssets(deps: AssetsDeps) {
         params.append(`custom__${filter.fieldKey}__${filter.operator}`, filter.value.trim());
       }
     }
-    const requestedCustomColumns = selectedAssetCustomColumnKeys();
-    if (requestedCustomColumns.length) params.set("custom_columns", requestedCustomColumns.join(","));
+    if (includePagination) {
+      const requestedCustomColumns = selectedAssetCustomColumnKeys();
+      if (requestedCustomColumns.length) params.set("custom_columns", requestedCustomColumns.join(","));
+    }
+    return params;
+  }
+
+  async function loadAssets(version = deps.beginLoad()): Promise<void> {
+    if (!deps.authenticated.value) return;
+    ensureAssetListCustomSchema();
+    ensureAssetFilterCustomSchema();
+    if (deps.isCurrentLoad(version)) {
+      assetListLoading.value = true;
+      assetListError.value = "";
+    }
+    const params = assetQueryParams();
     try {
       const payload = await deps.request<PageResult<Asset> | Asset[]>(`/assets/?${params.toString()}`);
       if (!payload || !deps.isCurrentLoad(version)) return;
@@ -776,7 +811,7 @@ export function useAssets(deps: AssetsDeps) {
       const asset = await deps.request<AssetDetail>(`/assets/${assetId}/`);
       if (requestId === detailRequestId.value) deps.detailAsset.value = asset;
     } catch (error) {
-      if (requestId === detailRequestId.value) {
+      if (requestId === detailRequestId.value && !isAbortError(error)) {
         deps.detailError.value = error instanceof Error ? error.message : "资产详情加载失败";
       }
     } finally {
@@ -808,6 +843,7 @@ export function useAssets(deps: AssetsDeps) {
     assetModalMode.value = clone ? "clone" : "edit";
     editingAsset.value = clone ? null : ({ id: assetId } as Asset);
     assetForm.value = emptyAssetForm();
+    depreciationStartTouched.value = false;
     assetCustomFieldHistoryValues.value = {};
     assetCustomFieldUserEditedKeys.clear();
     resetAssetCustomSchemaState();
@@ -828,10 +864,10 @@ export function useAssets(deps: AssetsDeps) {
         asset_no: detail.asset_no,
         name: detail.name,
         asset_type: detail.asset_type,
-        brand: detail.brand ? String(detail.brand) : "",
-        model: detail.model_name || detail.brand_model || "",
+        manufacturer_id: detail.manufacturer ? String(detail.manufacturer) : "",
+        model: detail.model_name || detail.manufacturer_model || "",
         device_type: detail.device_type ? String(detail.device_type) : "",
-        brand_model: detail.brand_model || "",
+        manufacturer_model: detail.manufacturer_model || "",
         serial_number: detail.serial_number || "",
         purpose: detail.purpose || "",
         status: detail.status,
@@ -852,6 +888,15 @@ export function useAssets(deps: AssetsDeps) {
         supplier: procurement?.supplier || "",
         purchase_order_no: procurement?.order_no || "",
         purchase_amount: procurement?.amount || "",
+        depreciation_enabled: Boolean(
+          detail.depreciation_start_date &&
+          detail.depreciation_years != null &&
+          detail.residual_rate != null &&
+          detail.depreciation_method,
+        ),
+        depreciation_start_date: detail.depreciation_start_date || "",
+        depreciation_years: detail.depreciation_years ?? null,
+        residual_rate: rateToPercentageText(detail.residual_rate) || "",
         maintenance_provider: maintenance?.provider || "",
         maintenance_contract_no: maintenance?.contract_no || "",
         maintenance_start_date: maintenance?.start_date || "",
@@ -861,6 +906,7 @@ export function useAssets(deps: AssetsDeps) {
           .map((tag) => String(tag.id)),
         custom_values: historyValues,
       };
+      depreciationStartTouched.value = Boolean(detail.depreciation_start_date);
       await loadAssetCustomSchema(detail.device_type ? String(detail.device_type) : "");
       if (requestId !== assetFormRequestId.value) return;
       editingAsset.value = clone ? null : detail;
@@ -879,7 +925,7 @@ export function useAssets(deps: AssetsDeps) {
         assetForm.value.oob_ip = "";
       }
     } catch (error) {
-      if (requestId === assetFormRequestId.value) {
+      if (requestId === assetFormRequestId.value && !isAbortError(error)) {
         assetFormLoadError.value = error instanceof Error ? error.message : "资产信息加载失败";
         deps.actionMessage.value = assetFormLoadError.value;
       }
@@ -896,6 +942,7 @@ export function useAssets(deps: AssetsDeps) {
     editingAsset.value = null;
     assetModalMode.value = "new";
     assetForm.value = emptyAssetForm();
+    depreciationStartTouched.value = false;
     assetCustomFieldHistoryValues.value = {};
     assetCustomFieldUserEditedKeys.clear();
     resetAssetCustomSchemaState();
@@ -905,7 +952,7 @@ export function useAssets(deps: AssetsDeps) {
       await deps.loadRackManagement();
       await loadAssetCustomSchema("");
     } catch (error) {
-      if (requestId === assetFormRequestId.value) {
+      if (requestId === assetFormRequestId.value && !isAbortError(error)) {
         assetFormLoadError.value = error instanceof Error ? error.message : "资产关联数据加载失败";
         deps.actionMessage.value = assetFormLoadError.value;
       }
@@ -916,6 +963,22 @@ export function useAssets(deps: AssetsDeps) {
 
   function clearAssetFormErrors() {
     assetFormFieldErrors.value = {};
+  }
+
+  function syncDepreciationStartFromPurchase() {
+    if (assetForm.value.depreciation_enabled && !depreciationStartTouched.value) {
+      assetForm.value.depreciation_start_date = assetForm.value.purchase_date || "";
+    }
+  }
+
+  function enableDepreciation() {
+    if (assetForm.value.depreciation_years == null) assetForm.value.depreciation_years = 5;
+    if (!assetForm.value.residual_rate.trim()) assetForm.value.residual_rate = "5";
+    syncDepreciationStartFromPurchase();
+  }
+
+  function markDepreciationStartTouched() {
+    depreciationStartTouched.value = true;
   }
 
   async function retryAssetFormLoad() {
@@ -935,8 +998,20 @@ export function useAssets(deps: AssetsDeps) {
   async function saveAsset() {
     if (assetFormSaving.value || assetCustomSchemaLoading.value || assetCustomSchemaError.value) return;
     const editingAssetId = editingAsset.value?.id || null;
-    assetFormSaving.value = true;
     assetFormFieldErrors.value = {};
+    const existingDepreciation = Boolean(
+      editingAsset.value && (
+        editingAsset.value.depreciation_start_date ||
+        editingAsset.value.depreciation_years != null ||
+        editingAsset.value.residual_rate != null ||
+        editingAsset.value.depreciation_method
+      ),
+    );
+    if (existingDepreciation && !assetForm.value.depreciation_enabled) {
+      const confirmed = await deps.confirmAction("确认清除当前资产的折旧配置？\n仅清除折旧配置，不影响采购金额和历史审计。");
+      if (!confirmed) return;
+    }
+    assetFormSaving.value = true;
     try {
       const {
         asset_type: _assetType,
@@ -954,6 +1029,10 @@ export function useAssets(deps: AssetsDeps) {
         supplier,
         purchase_order_no,
         purchase_amount,
+        depreciation_enabled,
+        depreciation_start_date,
+        depreciation_years,
+        residual_rate,
         model,
         maintenance_provider,
         maintenance_contract_no,
@@ -965,6 +1044,19 @@ export function useAssets(deps: AssetsDeps) {
         ...asset
       } = assetForm.value;
       const submittedCustomValues = currentCustomValuesForSubmit(custom_values || {});
+      const depreciation = depreciation_enabled
+        ? {
+            depreciation_start_date: depreciation_start_date || null,
+            depreciation_years,
+            residual_rate: percentageToRate(residual_rate),
+            depreciation_method: DEPRECIATION_METHOD_STRAIGHT_LINE,
+          }
+        : {
+            depreciation_start_date: null,
+            depreciation_years: null,
+            residual_rate: null,
+            depreciation_method: null,
+          };
       if (
         rack_mounted &&
         [data_center, server_room_id, rack_id, rack_start_u, rack_end_u].some(
@@ -981,9 +1073,10 @@ export function useAssets(deps: AssetsDeps) {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           ...asset,
+          ...depreciation,
           asset_data_center: asset_data_center || null,
-          brand_model: model || "",
-          brand: asset.brand || null,
+          manufacturer_model: model || "",
+          manufacturer_id: asset.manufacturer_id ? Number(asset.manufacturer_id) : null,
           model: model || "",
           device_type: asset.device_type || null,
           tags: (tags || []).map((value) => Number(value)).filter((value) => Number.isFinite(value)),
@@ -1013,6 +1106,7 @@ export function useAssets(deps: AssetsDeps) {
       deps.actionMessage.value = editingAsset.value ? "资产及关联信息已更新" : "资产及关联信息已保存";
       editingAsset.value = null;
       assetForm.value = emptyAssetForm();
+      depreciationStartTouched.value = false;
       assetCustomFieldHistoryValues.value = {};
       assetCustomFieldUserEditedKeys.clear();
       await loadAssets();
@@ -1082,12 +1176,15 @@ export function useAssets(deps: AssetsDeps) {
   }
 
   async function exportAssets() {
-    const params = new URLSearchParams();
-    if (selectedAssetIds.value.length) params.set("ids", selectedAssetIds.value.join(","));
+    if (exportingAssets.value) return;
+    exportingAssets.value = true;
+    const query = buildExportQuery(assetQueryParams(false));
     try {
-      await deps.download(`/reports/assets/export/${params.toString() ? `?${params.toString()}` : ""}`, "assets.xlsx");
+      await deps.download(`/reports/assets/export/${query ? `?${query}` : ""}`, "资产台账.xlsx");
     } catch (error) {
-      deps.actionMessage.value = error instanceof Error ? error.message : "资产导出失败";
+      deps.actionMessage.value = error instanceof Error ? error.message : "导出失败，请稍后重试";
+    } finally {
+      exportingAssets.value = false;
     }
   }
 
@@ -1126,12 +1223,13 @@ export function useAssets(deps: AssetsDeps) {
     };
     const procurement = asset.procurement_records?.[0];
     const maintenance = asset.maintenance_contracts?.[0];
+    const depreciation = asset.depreciation;
     const values: Record<StaticAssetColumnKey, string> = {
       asset_no: asset.asset_no,
       name: asset.name,
       asset_type: asset.device_type_name || asset.asset_type || "—",
-      brand: asset.brand_name || "—",
-      brand_model: asset.model || asset.brand_model || "—",
+      manufacturer: asset.manufacturer_name || "—",
+      manufacturer_model: asset.model || asset.manufacturer_model || "—",
       purpose: asset.purpose || "—",
       status: deps.statusLabel(asset.status),
       serial_number: asset.serial_number || "—",
@@ -1146,6 +1244,9 @@ export function useAssets(deps: AssetsDeps) {
       purchase_date: asset.purchase_date || procurement?.purchase_date || "—",
       supplier: asset.supplier || procurement?.supplier || "—",
       purchase_order_no: asset.purchase_order_no || procurement?.order_no || "—",
+      depreciation_net_book_value: formatMoneyDecimalString(depreciation?.net_book_value),
+      depreciation_accumulated_depreciation: formatMoneyDecimalString(depreciation?.accumulated_depreciation),
+      depreciation_status: depreciationStatusLabel(depreciation?.status || "unconfigured"),
       maintenance_provider: asset.maintenance_provider || maintenance?.provider || "—",
       maintenance_expiry_date: asset.maintenance_expiry_date || maintenance?.expiry_date || "—",
       notes: asset.notes || "—",
@@ -1160,51 +1261,99 @@ export function useAssets(deps: AssetsDeps) {
   }
   function importErrorText(detail: unknown) { return formatImportError(detail); }
 
-  async function importAssets(): Promise<boolean> {
-    if (!importFile.value) return false;
-    const form = new FormData();
-    form.append("file", importFile.value);
-    try {
-      const result = await deps.request<ImportResult>("/assets/import/", { method: "POST", body: form });
-      importResult.value = result;
-      showImportResult.value = result.errors.length > 0;
-      const details = result.errors.slice(0, 3).map((item) => `第${item.line}行：${formatImportError(item.detail)}`).join("；");
-      deps.actionMessage.value = `导入完成：成功 ${result.created} 条，失败 ${result.errors.length} 条${details ? `。${details}` : ""}`;
-      importFile.value = null;
-      await loadAssets();
-      return true;
-    } catch (error) {
-      deps.actionMessage.value = error instanceof Error ? error.message : "导入失败";
-      return false;
-    }
+  function resetImportState() {
+    importController?.abort();
+    importController = null;
+    importFile.value = null;
+    importStep.value = "upload";
+    importPreview.value = null;
+    importPreviewFilter.value = "all";
+    importPreviewError.value = "";
+    importResult.value = { created: 0, total: 0, errors: [] };
+  }
+  function openImportDialog() {
+    if (importPreviewing.value || importing.value) return;
+    resetImportState();
+    showImportDialog.value = true;
+  }
+  function closeImportDialog() {
+    if (importPreviewing.value || importing.value) return;
+    showImportDialog.value = false;
+    resetImportState();
+  }
+  function chooseAnotherImportFile() {
+    if (importPreviewing.value || importing.value) return;
+    importFile.value = null;
+    importStep.value = "upload";
+    importPreview.value = null;
+    importPreviewFilter.value = "all";
+    importPreviewError.value = "";
   }
   async function onElementUploadChange(file: { raw?: File }) {
-    importFile.value = file.raw || null;
-    if (importFile.value) await previewImport();
+    const selected = file.raw || null;
+    if (!selected || importPreviewing.value || importing.value) return;
+    importFile.value = selected;
+    importPreview.value = null;
+    importPreviewFilter.value = "all";
+    importPreviewError.value = "";
+    await previewImport();
   }
   async function previewImport() {
     if (!importFile.value) return;
     const form = new FormData();
     form.append("file", importFile.value);
+    importController?.abort();
+    importController = new AbortController();
+    importPreviewing.value = true;
+    importPreviewError.value = "";
     try {
-      const preview = await deps.request<ImportPreview>("/assets/import/preview/", { method: "POST", body: form });
+      const preview = await deps.request<ImportPreview>("/assets/import/preview/", { method: "POST", body: form, signal: importController.signal });
       importPreview.value = preview;
-      showImportPreview.value = true;
-      deps.actionMessage.value = `预览完成：可导入 ${preview.summary.ready} 条，冲突 ${preview.summary.conflicts} 条，错误 ${preview.summary.errors} 条`;
+      importStep.value = "preview";
+      deps.actionMessage.value = `预览完成：可导入 ${preview.valid} 条，异常 ${preview.invalid} 条`;
     } catch (error) {
-      deps.actionMessage.value = error instanceof Error ? error.message : "导入预览失败";
+      if (isAbortError(error)) return;
+      importPreviewError.value = error instanceof Error ? error.message : "导入文件预览失败，请检查文件后重试";
+      deps.actionMessage.value = importPreviewError.value;
+    } finally {
+      importPreviewing.value = false;
+      importController = null;
     }
   }
-  function cancelImportPreview() {
-    showImportPreview.value = false;
-    importPreview.value = null;
-    importFile.value = null;
-  }
+  const filteredImportRows = computed(() => {
+    if (!importPreview.value || importPreviewFilter.value === "all") return importPreview.value?.rows || [];
+    return importPreview.value.rows.filter((row) => !row.valid);
+  });
   async function confirmImportPreview() {
-    if (!importPreview.value?.summary.ready || !importFile.value) return;
-    if (await importAssets()) {
-      showImportPreview.value = false;
-      importPreview.value = null;
+    if (!importPreview.value?.valid || importPreview.value.invalid || !importFile.value || importing.value) return;
+    const form = new FormData();
+    form.append("file", importFile.value);
+    importController?.abort();
+    importController = new AbortController();
+    importing.value = true;
+    importPreviewError.value = "";
+    try {
+      const result = await deps.request<ImportResult>("/assets/import/", { method: "POST", body: form, signal: importController.signal });
+      importResult.value = result;
+      importStep.value = "result";
+      deps.actionMessage.value = `导入完成：成功导入 ${result.created} 条资产`;
+      await loadAssets();
+    } catch (error) {
+      if (isAbortError(error)) return;
+      const details = error instanceof ApiError ? error.details : null;
+      if (details && typeof details === "object" && "preview" in details) {
+        const latest = (details as { preview?: ImportPreview }).preview;
+        if (latest) {
+          importPreview.value = latest;
+          importStep.value = "preview";
+          importPreviewFilter.value = latest.invalid ? "errors" : "all";
+        }
+      }
+      importPreviewError.value = error instanceof Error ? error.message : "确认导入失败，请检查预览结果后重试";
+      deps.actionMessage.value = importPreviewError.value;
+    } finally {
+      importing.value = false;
+      importController = null;
     }
   }
   async function copyImportErrors() {
@@ -1225,14 +1374,12 @@ export function useAssets(deps: AssetsDeps) {
     link.click();
     URL.revokeObjectURL(url);
   }
-  function downloadImportTemplate() {
-    const csv = "\ufeffasset_no,name,device_type,brand,model,asset_type,brand_model,serial_number,purpose,status,owner_name,notes,tags,data_center,server_room,rack_code,rack_total_u,rack_start_u,rack_end_u,business_ip,management_ip,oob_ip,purchase_date,supplier,purchase_order_no,purchase_amount,maintenance_provider,maintenance_contract_no,maintenance_start_date,maintenance_expiry_date\nIT-0001,示例服务器,服务器,示例品牌,示例型号,,旧型号字段,SN001,业务用途,in_stock,张三,备注,核心业务,上海数据中心,A机房,F-01,45,20,22,10.0.0.10,10.0.1.10,10.0.2.10,2026-01-01,示例供应商,PO-001,10000,示例维保商,MT-001,2026-01-01,2027-01-01\n";
-    const url = URL.createObjectURL(new Blob([csv], { type: "text/csv;charset=utf-8" }));
-    const link = document.createElement("a");
-    link.href = url;
-    link.download = "asset-import-template.csv";
-    link.click();
-    URL.revokeObjectURL(url);
+  async function downloadImportTemplate() {
+    try {
+      await deps.download("/assets/import/template/", "asset-import-template.xlsx");
+    } catch (error) {
+      if (!isAbortError(error)) deps.actionMessage.value = error instanceof Error ? error.message : "导入模板下载失败";
+    }
   }
   async function syncAssetDeviceType() {
     const deviceType = deps.deviceTypes.value.find((item) => String(item.id) === assetForm.value.device_type);
@@ -1309,6 +1456,7 @@ export function useAssets(deps: AssetsDeps) {
   }
 
   function syncFiltersFromQuery(query: LocationQuery) {
+    assetSearch.value = queryValue(query, "search");
     const status = queryValue(query, "status");
     const dataCenter = queryValue(query, "data_center");
     const warranty = queryValue(query, "warranty");
@@ -1316,17 +1464,10 @@ export function useAssets(deps: AssetsDeps) {
     const validStatuses = new Set(["in_stock", "in_use", "idle", "repair", "retired"]);
     const validWarranties = new Set(["within_30_days", "expired"]);
 
-    assetSearch.value = "";
     assetFilters.status = validStatuses.has(status) ? status : "";
     assetFilters.dataCenter = /^\d+$/.test(dataCenter) && Number(dataCenter) > 0 ? dataCenter : "";
     assetFilters.warranty = validWarranties.has(warranty) ? warranty : "";
-    assetFilters.deviceType = "";
     assetFilters.tag = tagIds;
-    assetFilters.brand = "";
-    assetFilters.model = "";
-    draftCustomFilters.value = [];
-    appliedCustomFilters.value = [];
-    assetPage.value = 1;
   }
 
   function resetAssetFilters() {
@@ -1334,14 +1475,14 @@ export function useAssets(deps: AssetsDeps) {
     assetFilters.status = "";
     assetFilters.deviceType = "";
     assetFilters.tag = [];
-    assetFilters.brand = "";
+    assetFilters.manufacturer = "";
     assetFilters.model = "";
     assetFilters.dataCenter = "";
     assetFilters.warranty = "";
     draftCustomFilters.value = [];
     appliedCustomFilters.value = [];
     assetPage.value = 1;
-    if (deps.clearRouteQuery?.(["status", "data_center", "warranty", "tags"])) return;
+    if (deps.clearRouteQuery?.(["search", "status", "data_center", "warranty", "tags"])) return;
     return loadAssets();
   }
   function changeAssetPage(pageNumber: number) {
@@ -1353,30 +1494,6 @@ export function useAssets(deps: AssetsDeps) {
     assetPage.value = 1;
     return loadAssets();
   }
-  async function lookupAsset() {
-    const query = assetLookup.value.trim();
-    if (!query) return;
-    try {
-      const params = new URLSearchParams({ search: query, page_size: "100", compact: "1" });
-      const requestedCustomColumns = selectedAssetCustomColumnKeys();
-      if (requestedCustomColumns.length) params.set("custom_columns", requestedCustomColumns.join(","));
-      const payload = await deps.request<PageResult<Asset> | Asset[]>(`/assets/?${params.toString()}`);
-      const matches = pageItems(payload);
-      if (matches.length === 1) {
-        await openAssetDetail(matches[0].id);
-        return;
-      }
-      assetSearch.value = query;
-      assetPage.value = 1;
-      assets.value = matches;
-      assetCount.value = matches.length;
-      deps.actionMessage.value = matches.length ? `找到 ${matches.length} 项资产` : `未找到资产标签“${query}”`;
-      deps.goToLedger();
-    } catch (error) {
-      deps.actionMessage.value = error instanceof Error ? error.message : "资产查询失败";
-    }
-  }
-
   return {
     assets,
     selectedAssetIds,
@@ -1386,6 +1503,7 @@ export function useAssets(deps: AssetsDeps) {
     assetSearch,
     assetFilters,
     assetListLoading,
+    exportingAssets,
     assetListError,
     assetTagFilter,
     draftCustomFilters,
@@ -1395,7 +1513,6 @@ export function useAssets(deps: AssetsDeps) {
     assetFilterCustomSchemaLoading,
     assetFilterCustomSchemaError,
     retryAssetFilterCustomSchema,
-    assetLookup,
     assetColumnOptions: defaultColumns,
     assetDynamicColumnOptions,
     visibleAssetColumns,
@@ -1414,12 +1531,16 @@ export function useAssets(deps: AssetsDeps) {
     assetFormLoadError,
     assetFormSaving,
     assetFormFieldErrors,
+    depreciationStartTouched,
     assetCustomFieldSchema,
     assetCustomSchemaLoading,
     assetCustomSchemaError,
     retryAssetCustomSchema,
+    enableDepreciation,
+    markDepreciationStartTouched,
+    syncDepreciationStartFromPurchase,
     updateAssetCustomFieldValue,
-    activeBrands,
+    manufacturerOptions: activeManufacturers,
     activeDeviceTypes,
     activeDataCenters,
     assetRoomOptions,
@@ -1442,14 +1563,22 @@ export function useAssets(deps: AssetsDeps) {
     exportAssets,
     assetValue,
     downloadImportTemplate,
+    importFile,
+    showImportDialog,
+    importStep,
+    importPreviewFilter,
+    importPreviewError,
+    importPreviewing,
+    importing,
     onElementUploadChange,
-    showImportPreview,
     importPreview,
-    showImportResult,
+    filteredImportRows,
     importResult,
     copyImportErrors,
     downloadImportErrors,
-    cancelImportPreview,
+    openImportDialog,
+    closeImportDialog,
+    chooseAnotherImportFile,
     confirmImportPreview,
     importErrorText,
     searchLedger,
@@ -1457,7 +1586,6 @@ export function useAssets(deps: AssetsDeps) {
     resetAssetFilters,
     changeAssetPage,
     changeAssetPageSize,
-    lookupAsset,
     syncAssetDeviceType,
     changeAssetDataCenter,
     changeAssetRoom,

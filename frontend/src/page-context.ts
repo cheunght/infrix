@@ -38,10 +38,10 @@ export interface AssetFormState {
   asset_no: string;
   name: string;
   asset_type: string;
-  brand: string;
+  manufacturer_id: string;
   model: string;
   device_type: string;
-  brand_model: string;
+  manufacturer_model: string;
   serial_number: string;
   purpose: string;
   status: string;
@@ -62,6 +62,10 @@ export interface AssetFormState {
   supplier: string;
   purchase_order_no: string;
   purchase_amount: string;
+  depreciation_enabled: boolean;
+  depreciation_start_date: string;
+  depreciation_years: number | null;
+  residual_rate: string;
   maintenance_provider: string;
   maintenance_contract_no: string;
   maintenance_start_date: string;
@@ -94,7 +98,7 @@ export interface AssetFilters {
   status: string;
   deviceType: string;
   tag: string[];
-  brand: string;
+  manufacturer: string;
   model: string;
   dataCenter: string;
   warranty: string;
@@ -114,6 +118,7 @@ export interface AssetLedgerContext {
   loading: Ref<boolean>;
   assetListLoading: Ref<boolean>;
   assetListError: Ref<string>;
+  exportingAssets: Ref<boolean>;
   assetSearch: Ref<string>;
   searchLedger: () => void | Promise<void>;
   assetFilters: AssetFilters;
@@ -126,7 +131,7 @@ export interface AssetLedgerContext {
   assetFilterCustomSchemaLoading: Ref<boolean>;
   assetFilterCustomSchemaError: Ref<string>;
   retryAssetFilterCustomSchema: () => void | Promise<void>;
-  brands: Ref<DictionaryItem[]>;
+  manufacturers: Ref<DictionaryItem[]>;
   deviceTypes: Ref<DictionaryItem[]>;
   dataCenters: Ref<DataCenter[]>;
   tags: Ref<Tag[]>;
@@ -148,8 +153,8 @@ export interface AssetLedgerContext {
   deleteSelectedAssets: () => void | Promise<void>;
   exportAssets: () => void | Promise<void>;
   registerFaultFromSelection: () => void | Promise<void>;
-  downloadImportTemplate: () => void;
-  onElementUploadChange: (file: { raw?: File }) => void | Promise<void>;
+  downloadImportTemplate: () => void | Promise<void>;
+  openImportDialog: () => void;
   assets: Ref<Asset[]>;
   handleElementAssetSelection: (rows: Asset[]) => void;
   openAssetDetail: (assetId: number) => void | Promise<void>;
@@ -178,9 +183,13 @@ export interface AssetFormContext {
   assetCustomSchemaLoading: Ref<boolean>;
   assetCustomSchemaError: Ref<string>;
   retryAssetCustomSchema: () => void | Promise<void>;
+  depreciationStartTouched: Ref<boolean>;
+  enableDepreciation: () => void;
+  markDepreciationStartTouched: () => void;
+  syncDepreciationStartFromPurchase: () => void;
   activeDeviceTypes: ComputedRef<DictionaryItem[]>;
   syncAssetDeviceType: () => void | Promise<void>;
-  activeBrands: ComputedRef<DictionaryItem[]>;
+  manufacturerOptions: ComputedRef<DictionaryItem[]>;
   activeDataCenters: ComputedRef<DataCenter[]>;
   changeAssetDataCenter: () => void | Promise<void>;
   assetRoomOptions: Ref<ServerRoom[]>;
@@ -338,11 +347,16 @@ export interface LicenseContext {
   loading: Ref<boolean>;
   licenseListLoading: Ref<boolean>;
   licenseListError: Ref<string>;
+  exportingLicenses: Ref<boolean>;
   licenseKeyword: Ref<string>;
   searchLicenses: () => void | Promise<void>;
   licenseStatus: Ref<string>;
+  licenseManufacturer: Ref<string>;
+  licenseManufacturerOptions: ComputedRef<DictionaryItem[]>;
+  licenseManufacturerFilterOptions: ComputedRef<DictionaryItem[]>;
   resetLicenseFilters: () => void | Promise<void>;
   retryLicenseList: () => void | Promise<void>;
+  exportLicenses: () => void | Promise<void>;
   can: CapabilityFn;
   openLicenseModal: (license?: SoftwareLicense) => void | Promise<void>;
   deleteLicense: (license: SoftwareLicense) => void | Promise<void>;
@@ -358,6 +372,7 @@ export interface LicenseContext {
 export interface RepairContext {
   repairListLoading: Ref<boolean>;
   repairListError: Ref<string>;
+  exportingRepairs: Ref<boolean>;
   repairKeyword: Ref<string>;
   searchRepairs: () => void | Promise<void>;
   repairStatus: Ref<string>;
@@ -401,6 +416,7 @@ export interface SpareContext {
   updatingSparePartId: Ref<number | null>;
   spareListLoading: Ref<boolean>;
   spareListError: Ref<string>;
+  exportingSpares: Ref<boolean>;
   openSparePartModal: (part?: SparePart) => void;
   saveSparePart: () => void | Promise<boolean>;
   toggleSparePart: (part: SparePart) => void | Promise<void>;
@@ -410,6 +426,8 @@ export interface SpareContext {
   changeSparePageSize: (size: number) => void | Promise<void>;
   resetSpareFilters: () => void | Promise<void>;
   retrySpareList: () => void | Promise<void>;
+  exportSpareParts: () => void | Promise<void>;
+  exportSpareTransactions: (partId: number) => void | Promise<void>;
   openSpareOperation: (part: SparePart, type?: string, location?: { data_center: number; server_room: number | null; quantity: number; label: string }) => void;
   spareOperationType: Ref<string>;
   spareOperationForm: Ref<Record<string, string>>;
@@ -421,7 +439,7 @@ export interface SpareContext {
   saveSpareOperation: () => void | Promise<boolean>;
   spareOperationLabel: (type: string) => string;
   dataCenters: Ref<DataCenter[]>;
-  brands: Ref<DictionaryItem[]>;
+  manufacturers: Ref<DictionaryItem[]>;
   request: RequestFn;
   spareStocks: Ref<SpareStock[]>;
   spareTransactions: Ref<SpareTransaction[]>;
@@ -476,6 +494,7 @@ export interface SettingsContext extends CustomFieldContext, TagContext {
   deleteDictionary: (item: DictionaryItem) => void | Promise<void>;
   dictionaryItemUsed: (item: DictionaryItem) => boolean;
   isAdmin: Ref<boolean>;
+  currentUsername: Ref<string>;
   organizationLoading: Ref<boolean>;
   organizationError: ComputedRef<string>;
   userListError: Ref<string>;
@@ -493,9 +512,20 @@ export interface SettingsContext extends CustomFieldContext, TagContext {
   openUserModal: (user?: ManagedUser) => void;
   toggleUser: (user: ManagedUser) => void | Promise<void>;
   deleteUser: (user: ManagedUser) => void | Promise<void>;
+  openUserResetModal: (user: ManagedUser) => void;
+  resetUserPassword: () => void | Promise<void>;
+  userProtectionReason: (user: ManagedUser) => string;
+  canChangeUserRole: (user: ManagedUser) => boolean;
   userSaving: Ref<boolean>;
-  userActionId: Ref<number | null>;
+  userPendingId: Ref<number | null>;
   userFormErrors: Ref<Record<string, string>>;
+  showUserResetModal: Ref<boolean>;
+  resettingUser: Ref<ManagedUser | null>;
+  userResetForm: Ref<{ new_password: string; confirm_password: string }>;
+  userResetFormRef: Ref<import("element-plus").FormInstance | undefined>;
+  userResetFormRules: import("element-plus").FormRules;
+  userResetSaving: Ref<boolean>;
+  userResetFormErrors: Ref<Record<string, string>>;
   roles: Ref<Role[]>;
   auditFilters: Ref<Record<string, string>>;
   auditListLoading: Ref<boolean>;

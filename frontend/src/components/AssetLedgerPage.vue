@@ -28,9 +28,10 @@ const {
   assetFilters,
   assetListLoading,
   assetListError,
+  exportingAssets,
   resetAssetFilters,
   tags,
-  brands,
+  manufacturers,
   deviceTypes,
   dataCenters,
   assetColumnOptions,
@@ -57,7 +58,7 @@ const {
   exportAssets,
   registerFaultFromSelection,
   downloadImportTemplate,
-  onElementUploadChange,
+  openImportDialog,
   assets,
   handleElementAssetSelection,
   openAssetDetail,
@@ -81,7 +82,7 @@ const statusOptions = [
 ];
 
 const activeTags = computed(() => tags.value.filter((item) => item.is_active));
-const activeBrands = computed(() => brands.value.filter((item) => item.is_active));
+const activeManufacturers = computed(() => manufacturers.value.filter((item) => item.is_active));
 const activeDeviceTypes = computed(() => deviceTypes.value.filter((item) => item.is_active));
 const activeDataCenters = computed(() => dataCenters.value.filter((item) => item.is_active !== false));
 const hasAssetFilters = computed(() => Boolean(
@@ -89,22 +90,18 @@ const hasAssetFilters = computed(() => Boolean(
   assetFilters.status ||
   assetFilters.deviceType ||
   assetFilters.tag.length ||
-  assetFilters.brand ||
+  assetFilters.manufacturer ||
   assetFilters.model.trim() ||
   assetFilters.dataCenter ||
   assetFilters.warranty ||
   appliedCustomFilters.value.length,
 ));
-const exportLabel = computed(() =>
-  selectedAssetIds.value.length ? `导出选中（${selectedAssetIds.value.length}）` : "导出全部",
-);
-
 const assetColumnMinWidths: Record<string, number> = {
   asset_no: 220,
   asset_type: 120,
   status: 105,
   rack_code: 200,
-  brand_model: 150,
+  manufacturer_model: 150,
   maintenance_expiry_date: 130,
 };
 
@@ -288,9 +285,9 @@ function handleToolbarAction(command: string) {
               <template #reference><el-button class="toolbar-extra-action asset-toolbar-more" :icon="Filter">更多筛选</el-button></template>
               <div class="asset-ledger-advanced-filters">
                 <el-form label-position="top">
-                  <el-form-item label="品牌">
-                    <el-select v-model="assetFilters.brand" clearable filterable placeholder="全部品牌" @change="searchLedger">
-                      <el-option v-for="item in activeBrands" :key="item.id" :label="item.name" :value="String(item.id)" />
+                  <el-form-item label="厂商">
+                    <el-select v-model="assetFilters.manufacturer" clearable filterable placeholder="全部厂商" @change="searchLedger">
+                      <el-option v-for="item in activeManufacturers" :key="item.id" :label="item.name" :value="String(item.id)" />
                     </el-select>
                   </el-form-item>
                   <el-form-item label="型号">
@@ -404,13 +401,12 @@ function handleToolbarAction(command: string) {
                         <el-button link type="primary" @click="resetAssetColumns">恢复默认</el-button>
                       </div>
                     </el-popover>
-                    <el-button v-if="can('assets.export')" :icon="Download" @click="exportAssets">{{ exportLabel }}</el-button>
-                    <el-upload v-if="can('assets.import')" accept=".csv,text/csv" :auto-upload="false" :show-file-list="false" :on-change="onElementUploadChange"><el-button :icon="Upload">导入资产</el-button></el-upload>
-                    <el-dropdown v-if="can('assets.import') || can('faults.manage') || can('assets.manage')" trigger="click" @command="handleToolbarAction">
+                    <el-button v-if="can('assets.manage')" :icon="Upload" @click="openImportDialog">导入资产</el-button>
+                    <el-dropdown v-if="can('assets.manage') || can('faults.manage')" trigger="click" @command="handleToolbarAction">
                       <el-button :icon="MoreFilled">更多操作</el-button>
                       <template #dropdown>
                         <el-dropdown-menu>
-                          <el-dropdown-item v-if="can('assets.import')" command="template">导入模板</el-dropdown-item>
+                          <el-dropdown-item v-if="can('assets.manage')" command="template">导入模板</el-dropdown-item>
                           <el-dropdown-item v-if="can('faults.manage')" command="fault" :disabled="selectedAssetIds.length !== 1">登记故障</el-dropdown-item>
                           <el-dropdown-item v-if="can('assets.manage')" command="delete" :disabled="!selectedAssetIds.length" divided>批量删除</el-dropdown-item>
                         </el-dropdown-menu>
@@ -420,9 +416,12 @@ function handleToolbarAction(command: string) {
                 </div>
               </div>
             </el-popover>
-            </div>
+          </div>
           </template>
           <template #actions>
+            <el-button v-if="can('assets.export')" class="toolbar-secondary-action toolbar-export-action" :icon="Download" :loading="exportingAssets" :disabled="exportingAssets" @click="exportAssets">
+              导出数据
+            </el-button>
             <el-button v-if="can('assets.manage')" class="page-primary-action" type="primary" @click="openNewAssetModal">新增资产</el-button>
           </template>
         </PageToolbar>

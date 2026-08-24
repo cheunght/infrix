@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed } from "vue";
+import { Download } from "@element-plus/icons-vue";
 import PagedTable from "./PagedTable.vue";
 import SearchField from "./SearchField.vue";
 import type { LicenseContext } from "../types/page-context";
@@ -13,11 +14,15 @@ const context = props.context;
 const {
   licenseListLoading,
   licenseListError,
+  exportingLicenses,
   licenseKeyword,
   searchLicenses,
   licenseStatus,
+  licenseManufacturer,
+  licenseManufacturerFilterOptions,
   resetLicenseFilters,
   retryLicenseList,
+  exportLicenses,
   can,
   openLicenseModal,
   deleteLicense,
@@ -31,7 +36,7 @@ const {
 } = context;
 
 const licenseHasFilters = computed(
-  () => Boolean(licenseKeyword.value.trim() || licenseStatus.value),
+  () => Boolean(licenseKeyword.value.trim() || licenseStatus.value || licenseManufacturer.value),
 );
 </script>
 
@@ -58,13 +63,26 @@ const licenseHasFilters = computed(
             <el-option label="正常" value="normal" />
             <el-option label="即将到期" value="expiring" />
             <el-option label="已过期" value="expired" />
-            <el-option label="超授权" value="over_limit" />
+          </el-select>
+        </template>
+        <template #secondary-filter>
+          <el-select
+            v-model="licenseManufacturer"
+            placeholder="全部厂商"
+            clearable
+            filterable
+            @change="searchLicenses"
+          >
+            <el-option v-for="manufacturer in licenseManufacturerFilterOptions" :key="manufacturer.id" :label="manufacturer.name" :value="String(manufacturer.id)" />
           </el-select>
         </template>
         <template #extra-filter>
           <el-button class="toolbar-secondary-action" :disabled="licenseListLoading" @click="resetLicenseFilters">重置</el-button>
         </template>
         <template #actions>
+          <el-button v-if="can('licenses.export')" class="toolbar-secondary-action toolbar-export-action" :icon="Download" :loading="exportingLicenses" :disabled="exportingLicenses" @click="exportLicenses">
+            导出数据
+          </el-button>
           <el-button v-if="can('licenses.manage')" class="page-primary-action" type="primary" @click="openLicenseModal()">
             新增许可
           </el-button>
@@ -101,11 +119,12 @@ const licenseHasFilters = computed(
             show-overflow-tooltip
           />
           <el-table-column
-            prop="vendor"
             label="厂商"
             min-width="120"
             show-overflow-tooltip
-          />
+          >
+            <template #default="{ row }">{{ row.manufacturer?.name || "—" }}</template>
+          </el-table-column>
           <el-table-column
             prop="license_type"
             label="许可类型"
@@ -123,11 +142,8 @@ const licenseHasFilters = computed(
                   <el-progress
                     :percentage="Math.min(Math.max(row.utilization, 0), 100)"
                     :show-text="false"
-                    :status="row.status === 'over_limit' ? 'exception' : undefined"
                   />
-                  <span :class="{ 'is-over-limit': row.status === 'over_limit' }">
-                    {{ Number(row.utilization || 0).toFixed(1) }}%
-                  </span>
+                  <span>{{ Number(row.utilization || 0).toFixed(1) }}%</span>
                 </div>
               </div>
             </template>

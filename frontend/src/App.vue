@@ -30,10 +30,11 @@ import { useLicenses } from "./composables/useLicenses";
 import { useRepairs } from "./composables/useRepairs";
 import { useSpareParts } from "./composables/useSpareParts";
 import { useSettings } from "./composables/useSettings";
+import { useGlobalSearch, type GlobalSearchModule } from "./composables/useGlobalSearch";
 import { useRoute, useRouter, type RouteLocationRaw } from "vue-router";
 import GlobalOverlayHost from "./components/overlays/GlobalOverlayHost.vue";
 import ApiErrorAlert from "./components/ApiErrorAlert.vue";
-import SearchField from "./components/SearchField.vue";
+import GlobalSearch from "./components/GlobalSearch.vue";
 import infrixMark from "./assets/infrix-mark.png";
 import infrixWordmark from "./assets/infrix-wordmark.png";
 import { hasCapability } from "./permissions";
@@ -44,7 +45,10 @@ import {
 } from "./router";
 import type {
   Page,
+  Asset,
   AssetDetail,
+  FaultEvent,
+  Rack,
 } from "./types";
 import type { PageContext } from "./types/page-context";
 const route = useRoute();
@@ -86,6 +90,12 @@ const {
   download,
 } = apiClient;
 const {
+  query: globalSearchQuery,
+  state: globalSearchState,
+  focus: focusGlobalSearch,
+  close: closeGlobalSearch,
+} = useGlobalSearch({ request, can });
+const {
   dashboard,
   dashboardLoading,
   dashboardError,
@@ -100,6 +110,7 @@ const {
 } = useDashboard({ request, beginLoad, isCurrentLoad });
 const showUserMenu = ref(false);
 const showPasswordModal = ref(false);
+const showProfileModal = ref(false);
 const showAssetDetail = ref(false);
 const detailAsset = ref<AssetDetail | null>(null);
 const detailLoading = ref(false);
@@ -111,6 +122,14 @@ const pageError = ref("");
 const passwordForm = ref({ old_password: "", new_password: "", confirm_password: "" });
 const passwordSaving = ref(false);
 const passwordFormErrors = ref<Record<string, string>>({});
+const profileForm = ref({ first_name: "", last_name: "", email: "" });
+const profileLoading = ref(false);
+const profileSaving = ref(false);
+const profileError = ref("");
+const profileFormErrors = ref<Record<string, string>>({});
+const roleName = ref("");
+const userIsActive = ref(false);
+const lastLogin = ref<string | null>(null);
 const viewportHeight = ref(window.innerHeight);
 const settingsSection = ref<SettingsSection>("dictionaries");
 // 机房资源保留机房管理和机柜管理两个入口。
@@ -128,6 +147,7 @@ const facilities = useFacilities({
   actionMessage,
   closeAssetDetail,
   openRackAssetDetail,
+  clearRouteQuery,
   refreshDictionaries: async () => {
     return loadDictionaries();
   },
@@ -227,12 +247,13 @@ const settings = useSettings({
   confirmAction,
   can,
   isAdmin,
+  currentUsername: username,
   settingsSection,
   dataCenters,
   actionMessage,
 });
 const {
-  brands,
+  manufacturers,
   deviceTypes,
   customFields,
   customFieldDeviceType,
@@ -270,7 +291,7 @@ const {
   userListError,
   roleListError,
   userSaving,
-  userActionId,
+  userPendingId,
   userFormErrors,
   roles,
   userSearch,
@@ -282,6 +303,13 @@ const {
   userForm,
   userFormRef,
   userFormRules,
+  showUserResetModal,
+  resettingUser,
+  userResetForm,
+  userResetFormRef,
+  userResetFormRules,
+  userResetSaving,
+  userResetFormErrors,
   dictionarySection,
   dictionaryLoading,
   dictionaryError,
@@ -318,6 +346,10 @@ const {
   retryAuditLogs,
   openUserModal,
   saveUser,
+  openUserResetModal,
+  resetUserPassword,
+  userProtectionReason,
+  canChangeUserRole,
   toggleUser,
   deleteUser,
   openCustomFieldModal,
@@ -364,16 +396,37 @@ const auth = useAuth({
   passwordForm,
   passwordSaving,
   passwordFormErrors,
+  showProfileModal,
+  profileForm,
+  profileLoading,
+  profileSaving,
+  profileError,
+  profileFormErrors,
+  roleName,
+  userIsActive,
+  lastLogin,
   actionMessage,
   settingsSection,
 });
-const { checkAuth, login, logout, changePassword } = auth;
+const { checkAuth, login, logout, loadProfile, saveProfile, changePassword } = auth;
 const overlayAuth = {
+  username,
+  loadProfile,
   showPasswordModal,
   passwordChangeRequired,
   passwordForm,
   passwordSaving,
   passwordFormErrors,
+  showProfileModal,
+  profileForm,
+  profileLoading,
+  profileSaving,
+  profileError,
+  profileFormErrors,
+  roleName,
+  userIsActive,
+  lastLogin,
+  saveProfile,
   changePassword,
 };
 const assetsApi = useAssets({
@@ -388,7 +441,7 @@ const assetsApi = useAssets({
   dataCenters,
   serverRooms,
   racks,
-  brands,
+  manufacturers,
   deviceTypes,
   tags,
   loadRackManagement: async () => { await loadRackManagement(); },
@@ -411,8 +464,8 @@ const {
   assetFilters,
   assetListLoading,
   assetListError,
+  exportingAssets,
   assetTagFilter,
-  assetLookup,
   draftCustomFilters,
   appliedCustomFilters,
   applyAssetCustomFilters,
@@ -443,8 +496,12 @@ const {
   assetCustomSchemaLoading,
   assetCustomSchemaError,
   retryAssetCustomSchema,
+  depreciationStartTouched,
+  enableDepreciation,
+  markDepreciationStartTouched,
+  syncDepreciationStartFromPurchase,
   updateAssetCustomFieldValue,
-  activeBrands,
+  manufacturerOptions,
   activeDeviceTypes,
   activeDataCenters,
   assetRoomOptions,
@@ -462,22 +519,13 @@ const {
   exportAssets,
   assetValue,
   downloadImportTemplate,
-  onElementUploadChange,
-  showImportPreview,
-  importPreview,
-  showImportResult,
-  importResult,
-  copyImportErrors,
-  downloadImportErrors,
-  cancelImportPreview,
-  confirmImportPreview,
-  importErrorText,
+  showImportDialog,
+  openImportDialog,
   searchLedger,
   syncFiltersFromQuery: syncAssetFiltersFromQuery,
   resetAssetFilters,
   changeAssetPage,
   changeAssetPageSize,
-  lookupAsset,
   syncAssetDeviceType,
   changeAssetDataCenter,
   changeAssetRoom,
@@ -488,10 +536,12 @@ openAssetDetail = assetsApi.openAssetDetail;
 invalidateAssetDetail = assetsApi.invalidateDetail;
 const licensesApi = useLicenses({
   request,
+  download,
   beginLoad,
   isCurrentLoad,
   confirmAction,
   actionMessage,
+  manufacturers,
   clearRouteQuery,
 });
 const {
@@ -501,10 +551,15 @@ const {
   licensePageSize,
   licenseKeyword,
   licenseStatus,
+  licenseManufacturer,
+  licenseManufacturerOptions,
+  licenseManufacturerFilterOptions,
   licenseListLoading,
   licenseListError,
+  exportingLicenses,
   resetLicenseFilters,
   retryLicenseList,
+  exportLicenses,
   deletingLicenseId,
   showLicenseModal,
   editingLicense,
@@ -532,6 +587,7 @@ const repairs = useRepairs({
 const {
   repairListLoading,
   repairListError,
+  exportingRepairs,
   repairRows,
   repairCount,
   repairPage,
@@ -567,6 +623,7 @@ const {
 } = repairs;
 const spares = useSpareParts({
   request,
+  download,
   beginLoad,
   isCurrentLoad,
   confirmAction,
@@ -603,6 +660,7 @@ const {
   updatingSparePartId,
   spareListLoading,
   spareListError,
+  exportingSpares,
   editingSparePart,
   spareOperationType,
   spareOperationForm,
@@ -619,6 +677,8 @@ const {
   retrySpareList,
   changeSparePage,
   changeSparePageSize,
+  exportSpareParts,
+  exportSpareTransactions,
   selectSparePart,
   changeSpareStockPage,
   changeSpareStockPageSize,
@@ -672,38 +732,69 @@ const navItems = [
 ];
 
 function closeTransientUi() {
+  closeGlobalSearch();
   closeAssetDetail();
   showAssetModal.value = false;
   showFaultModal.value = false;
   showRepairModal.value = false;
-  showImportPreview.value = false;
-  showImportResult.value = false;
+  showImportDialog.value = false;
   showRoomModal.value = false;
   showLicenseModal.value = false;
   showSparePartModal.value = false;
   showSpareOperationModal.value = false;
 }
 
-function syncRouteState() {
+function routeQueryValue(key: string): string {
+  const value = route.query[key];
+  return (Array.isArray(value) ? String(value[0] ?? "") : String(value ?? "")).trim();
+}
+
+function positiveRouteQueryId(value: string): number | null {
+  if (!/^\d+$/.test(value)) return null;
+  const parsed = Number(value);
+  return Number.isSafeInteger(parsed) && parsed > 0 ? parsed : null;
+}
+
+function syncRouteState(): boolean {
   const routePage = route.meta.page || "dashboard";
+  const rackQueryKeys = ["room", "rack", "rack_code"];
+  const queryKeysToClear: string[] = [];
+  const hasQueryKey = (key: string) =>
+    Object.prototype.hasOwnProperty.call(route.query, key);
   page.value = routePage;
   if (routePage === "settings")
     settingsSection.value = route.meta.settingsSection || "dictionaries";
   if (routePage === "racks") {
     rackSection.value = route.meta.rackSection || "rooms";
-    if (rackSection.value === "view") {
-      const roomQuery = String(route.query.room || "").trim();
-      const rackQuery = Number.parseInt(String(route.query.rack || ""), 10);
-      const rackCodeQuery = String(route.query.rack_code || "").trim();
-      if (roomQuery) selectedRoom.value = roomQuery;
-      if (rackCodeQuery) selectedRack.value = rackCodeQuery;
-      if (Number.isFinite(rackQuery) && rackQuery > 0) focusedRackId.value = rackQuery;
+  }
+  if (routePage === "racks" && rackSection.value === "view") {
+    const roomQuery = positiveRouteQueryId(routeQueryValue("room"));
+    const rackQuery = positiveRouteQueryId(routeQueryValue("rack"));
+    if (hasQueryKey("room") && roomQuery === null) queryKeysToClear.push("room");
+    if (hasQueryKey("rack") && rackQuery === null) queryKeysToClear.push("rack");
+    if (hasQueryKey("rack_code") && !routeQueryValue("rack_code")) {
+      queryKeysToClear.push("rack_code");
+    }
+    selectedRoom.value = roomQuery ? String(roomQuery) : "";
+    selectedRack.value = routeQueryValue("rack_code");
+    focusedRackId.value = rackQuery;
+  } else {
+    // These refs are route-positioning state. Leaving the Rack View, or
+    // returning to it without its query, must not resurrect the old target.
+    selectedRoom.value = "";
+    selectedRack.value = "";
+    focusedRackId.value = null;
+    if (routePage === "racks") {
+      for (const key of rackQueryKeys) {
+        if (hasQueryKey(key)) queryKeysToClear.push(key);
+      }
     }
   }
   if (routePage === "ledger") syncAssetFiltersFromQuery(route.query);
   if (routePage === "repairs") syncRepairFiltersFromQuery(route.query);
   if (routePage === "licenses") syncLicenseFiltersFromQuery(route.query);
   pageTitle.value = route.meta.title || "仪表盘";
+  return clearRouteQuery(queryKeysToClear);
 }
 
 function routeIsAllowed() {
@@ -736,8 +827,8 @@ function ensureRouteAccess() {
 function navigateToRoute(location: RouteLocationRaw, reloadIfSame = false) {
   const target = router.resolve(location);
   if (target.fullPath === route.fullPath) {
-    syncRouteState();
-    if (reloadIfSame && authenticated.value) void load();
+    const queryNormalized = syncRouteState();
+    if (reloadIfSame && authenticated.value && !queryNormalized) void load();
     return;
   }
   void router.push(location);
@@ -764,6 +855,40 @@ function goToAssets(query: Record<string, string> = {}) {
 
 function goToRepairs(query: Record<string, string> = {}) {
   navigateToRoute({ name: "repairs", query });
+}
+
+async function handleGlobalSearchAsset(asset: Asset) {
+  closeGlobalSearch();
+  await openAssetDetail(asset.id);
+}
+
+function handleGlobalSearchRack(rack: Rack) {
+  closeGlobalSearch();
+  openRackSection("view", {
+    room: String(rack.room),
+    rack: String(rack.id),
+    rack_code: rack.code,
+  });
+}
+
+function handleGlobalSearchFault(fault: FaultEvent) {
+  closeGlobalSearch();
+  goToRepairs({ fault: String(fault.id) });
+}
+
+function handleGlobalSearchViewAll(module: GlobalSearchModule) {
+  const search = globalSearchQuery.value.trim();
+  if (!search) return;
+  closeGlobalSearch();
+  if (module === "assets") {
+    goToAssets({ search });
+    return;
+  }
+  if (module === "racks") {
+    openRackSection("view", { rack_code: search });
+    return;
+  }
+  goToRepairs({ search, is_closed: "false" });
 }
 
 function goToLicenses(query: Record<string, string> = {}) {
@@ -945,6 +1070,11 @@ function openSettingsSection(
   nextTick(() => sidebarMenu.value?.open("settings"));
   navigateToRoute(routeForPage("settings", { settingsSection: section }), true);
 }
+function openProfileSettings() {
+  showUserMenu.value = false;
+  showProfileModal.value = true;
+  void loadProfile();
+}
 const activeMenu = computed(() =>
   page.value === "settings"
     ? `settings-${settingsSection.value}`
@@ -1002,9 +1132,10 @@ watch(actionMessage, (message) => {
 watch(
   () => route.fullPath,
   () => {
-    syncRouteState();
+    const queryNormalized = syncRouteState();
     closeTransientUi();
     if (!authenticated.value || !ensureRouteAccess()) return;
+    if (queryNormalized) return;
     void load();
     resetMainScroll();
   },
@@ -1058,7 +1189,7 @@ const pageContext = {
   dashboardLoading, dashboardError, dashboardUpdatedAt, refreshDashboard,
   openAssetDetail, refreshOpenAssetDetail, openRackSection,
   assetSearch, searchLedger, assetColumnOptions, assetDynamicColumnOptions, visibleAssetColumns,
-  assetFilters, assetListLoading, assetListError, resetAssetFilters,
+  assetFilters, assetListLoading, assetListError, exportingAssets, resetAssetFilters,
   draftCustomFilters, appliedCustomFilters, applyAssetCustomFilters,
   assetFilterCustomFieldSchema, assetFilterCustomSchemaLoading, assetFilterCustomSchemaError,
   retryAssetFilterCustomSchema,
@@ -1066,18 +1197,18 @@ const pageContext = {
   retryAssetListCustomSchema,
   toggleAssetColumn, resetAssetColumns, visibleAssetColumnOptions, can,
   openNewAssetModal, selectedAssetIds, deleteSelectedAssets, exportAssets,
-  registerFaultFromSelection, downloadImportTemplate, onElementUploadChange,
+  registerFaultFromSelection, downloadImportTemplate, openImportDialog,
   handleElementAssetSelection, assetValue, openAssetClone, openAssetEditor,
   deleteAsset, assetPage, assetPageSize, assetCount, changeAssetPage,
   changeAssetPageSize,
   repairListLoading, repairListError,
   repairKeyword, searchRepairs, repairStatus, repairStart, repairEnd,
   onRepairStatusChange, onRepairDateChange, resetRepairFilters, retryRepairList,
-  exportRepairs, openFaultModal, repairRows, openRepairModal, formatDateTime,
+  exportRepairs, exportingRepairs, openFaultModal, repairRows, openRepairModal, formatDateTime,
   repairPage, repairPageSize, repairCount, changeRepairPage,
   changeRepairPageSize,
-  licenseKeyword, searchLicenses, licenseStatus, licenseListLoading, licenseListError,
-  resetLicenseFilters, retryLicenseList, deletingLicenseId,
+  licenseKeyword, searchLicenses, licenseStatus, licenseManufacturer, licenseManufacturerOptions, licenseManufacturerFilterOptions, licenseListLoading, licenseListError, exportingLicenses,
+  resetLicenseFilters, retryLicenseList, deletingLicenseId, exportLicenses,
   openLicenseModal, deleteLicense, licenses, licensePage,
   licensePageSize, licenseCount, changeLicensePage, changeLicensePageSize,
   spareParts, spareStocks, spareTransactions, sparePartCount, spareStockCount, spareTransactionCount,
@@ -1085,8 +1216,8 @@ const pageContext = {
   spareSearch, spareType, spareActive, spareListDataCenter, spareListRoom,
   spareRooms,
   sparePartForm, editingSparePart, showSparePartModal, spareSaving, deletingSparePartId, updatingSparePartId,
-  spareListLoading, spareListError, openSparePartModal, saveSparePart, toggleSparePart,
-  deleteSparePart, searchSpareParts, resetSpareFilters, retrySpareList, changeSparePage, changeSparePageSize,
+  spareListLoading, spareListError, exportingSpares, openSparePartModal, saveSparePart, toggleSparePart,
+  deleteSparePart, searchSpareParts, resetSpareFilters, retrySpareList, changeSparePage, changeSparePageSize, exportSpareParts, exportSpareTransactions,
   openSpareOperation, spareOperationType, spareOperationForm, showSpareOperationModal,
   spareOperationSaving, spareOperationCurrentQuantity, spareOperationLocationLabel,
   spareOperationLocationLocked, saveSpareOperation, spareOperationLabel,
@@ -1117,8 +1248,10 @@ const pageContext = {
   openDictionaryModal, currentDictionaryItems, toggleDictionary,
   dictionaryItemUsed, deleteDictionary, isAdmin, organizationLoading, organizationError,
   userListError, roleListError, retryOrganization, users, userSearch, userPage, userPageSize, userCount,
-  userFormErrors, userSaving, userActionId, openUserModal,
+  userFormErrors, userSaving, userPendingId, openUserModal,
   toggleUser, deleteUser, roles, retryUserList, searchUsers, changeUserPage, changeUserPageSize,
+  showUserResetModal, resettingUser, userResetForm, userResetFormRef, userResetFormRules,
+  userResetSaving, userResetFormErrors, openUserResetModal, resetUserPassword, userProtectionReason, canChangeUserRole,
   auditFilters, auditListLoading, auditListError,
   loadAuditLogs, retryAuditLogs, searchAuditLogs, auditLogs, auditPage, auditPageSize, auditCount,
   changeAuditPage, changeAuditPageSize,
@@ -1131,13 +1264,14 @@ const pageContext = {
   customFieldOptionFormErrors,
   showCustomFieldOptionModal, editingCustomFieldOption, tagSearch, tagActive, tagListLoading, tagListError, tagSaving, tagActionId,
   loadTags, retryTagList, openTagModal, saveTag, toggleTag, deleteTag, tagForm, tagFormErrors, showTagModal, editingTag,
-  brands,
+  manufacturers,
   showAssetModal, assetModalMode, editingAsset, assetForm, activeDeviceTypes,
   assetFormLoading, assetFormLoadError, assetFormSaving, assetFormFieldErrors,
   retryAssetFormLoad, clearAssetFormErrors,
   assetCustomFieldSchema,
   assetCustomSchemaLoading, assetCustomSchemaError, retryAssetCustomSchema, updateAssetCustomFieldValue,
-  syncAssetDeviceType, activeBrands, activeDataCenters, changeAssetDataCenter,
+  depreciationStartTouched, enableDepreciation, markDepreciationStartTouched, syncDepreciationStartFromPurchase,
+  syncAssetDeviceType, manufacturerOptions, activeDataCenters, changeAssetDataCenter,
   assetRoomOptions, changeAssetRoom, assetRackOptions, changeAssetRack, setAssetRackMounted,
   saveAsset,
 } satisfies PageContext;
@@ -1289,12 +1423,15 @@ const overlayAssetDetail = {
           <h1>{{ pageTitle }}</h1>
         </div>
         <div class="header-tools">
-          <SearchField
-            class="ep-global-search itam-filter-search"
-            v-model="assetLookup"
-            placeholder="搜索资产编号 / SN / 名称"
-            aria-label="搜索资产"
-            @search="lookupAsset"
+          <GlobalSearch
+            v-model="globalSearchQuery"
+            :state="globalSearchState"
+            @focus="focusGlobalSearch"
+            @close="closeGlobalSearch"
+            @select-asset="handleGlobalSearchAsset"
+            @select-rack="handleGlobalSearchRack"
+            @select-fault="handleGlobalSearchFault"
+            @view-all="handleGlobalSearchViewAll"
           />
           <el-dropdown trigger="click"
             ><el-button text
@@ -1304,6 +1441,8 @@ const overlayAssetDetail = {
               ></el-button
             ><template #dropdown
               ><el-dropdown-menu
+                ><el-dropdown-item @click="openProfileSettings"
+                  >个人设置</el-dropdown-item
                 ><el-dropdown-item @click="showPasswordModal = true"
                   >修改密码</el-dropdown-item
                 ><el-dropdown-item divided @click="logout"

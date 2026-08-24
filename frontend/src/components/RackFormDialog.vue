@@ -3,6 +3,7 @@ import { computed, nextTick, ref, watch } from "vue";
 import type { FormInstance, FormRules } from "element-plus";
 import type { Rack, RackFormState } from "../types";
 import type { RackManagementContext } from "../types/page-context";
+import FormDialogShell from "./FormDialogShell.vue";
 
 const props = defineProps<{ context: RackManagementContext }>();
 const context = props.context;
@@ -92,15 +93,16 @@ watch(showRackModal, (open) => {
 </script>
 
 <template>
-  <el-dialog
+  <FormDialogShell
     v-model="showRackModal"
-    class="rack-form-dialog"
     :title="editingRack ? '编辑机柜' : '新增机柜'"
-    width="640px"
-    destroy-on-close
+    description="维护机柜容量、状态和责任信息"
+    size="medium"
+    :saving="rackSaving"
     :close-on-click-modal="!rackSaving"
     :close-on-press-escape="!rackSaving"
     :show-close="!rackSaving"
+    :close-disabled="rackSaving"
     @close="closeDialog"
   >
     <el-form
@@ -109,57 +111,48 @@ watch(showRackModal, (open) => {
       :rules="formRules"
       :validate-on-rule-change="false"
       label-position="top"
-      class="rack-form"
       @submit.prevent="submitRack"
     >
-      <el-divider content-position="left">基本信息</el-divider>
-      <div class="rack-form-grid">
-        <el-form-item label="所属机房" prop="room" :error="fieldError('room')">
-          <el-select v-model="rackForm.room" class="control-full" disabled :placeholder="currentRoomLabel">
-            <el-option v-if="currentRoom" :label="currentRoomLabel" :value="String(currentRoom.id)" />
-          </el-select>
-        </el-form-item>
-        <el-form-item label="机柜编号" prop="code" :error="fieldError('code')">
-          <el-input v-model="rackForm.code" :validate-event="false" placeholder="例如 A01" autocomplete="off" />
-        </el-form-item>
-        <el-form-item label="机柜名称" prop="name" :error="fieldError('name')">
-          <el-input v-model="rackForm.name" :validate-event="false" placeholder="可选" />
-        </el-form-item>
-        <el-form-item label="机柜类型" prop="rack_type" :error="fieldError('rack_type')">
-          <el-input v-model="rackForm.rack_type" :validate-event="false" placeholder="例如 标准机柜" />
-        </el-form-item>
-      </div>
-
-      <el-divider content-position="left">容量与状态</el-divider>
-      <div class="rack-form-grid">
-        <el-form-item label="总 U 位数" prop="total_u" :error="fieldError('total_u')">
-          <el-input-number v-model="rackForm.total_u" :min="1" :max="32767" controls-position="right" class="control-full" />
-          <small v-if="currentHighestOccupiedU" class="rack-form-hint">当前最高占用：U{{ currentHighestOccupiedU }}，容量不能小于该位置</small>
-        </el-form-item>
-        <el-form-item label="机柜状态" prop="status" :error="fieldError('status')">
-          <el-select v-model="rackForm.status" class="control-full" placeholder="请选择状态">
-            <el-option label="使用中" value="in_use" />
-            <el-option label="预留" value="reserved" />
-            <el-option label="停用" value="disabled" />
-          </el-select>
-        </el-form-item>
-      </div>
-
-      <el-divider content-position="left">责任信息</el-divider>
-      <div class="rack-form-grid">
-        <el-form-item label="负责人" prop="owner_name" :error="fieldError('owner_name')">
-          <el-input v-model="rackForm.owner_name" :validate-event="false" placeholder="可选" />
-        </el-form-item>
-        <el-form-item label="备注" prop="notes" :error="fieldError('notes')" class="rack-form-span-2">
-          <el-input v-model="rackForm.notes" :validate-event="false" type="textarea" :rows="3" placeholder="可选" />
-        </el-form-item>
-      </div>
+      <section class="form-dialog__section">
+        <h3 class="form-dialog__section-title">基本信息</h3>
+        <div class="form-dialog__grid">
+          <el-form-item label="所属机房" prop="room" :error="fieldError('room')">
+            <el-select v-model="rackForm.room" disabled :placeholder="currentRoomLabel">
+              <el-option v-if="currentRoom" :label="currentRoomLabel" :value="String(currentRoom.id)" />
+            </el-select>
+          </el-form-item>
+          <el-form-item label="机柜编号" prop="code" :error="fieldError('code')">
+            <el-input v-model="rackForm.code" :validate-event="false" placeholder="例如 A01" autocomplete="off" />
+          </el-form-item>
+          <el-form-item label="机柜名称" prop="name" :error="fieldError('name')">
+            <el-input v-model="rackForm.name" :validate-event="false" placeholder="可选" />
+          </el-form-item>
+          <el-form-item label="机柜类型" prop="rack_type" :error="fieldError('rack_type')">
+            <el-input v-model="rackForm.rack_type" :validate-event="false" placeholder="例如 标准机柜" />
+          </el-form-item>
+          <el-form-item label="总 U 位数" prop="total_u" :error="fieldError('total_u')">
+            <el-input-number v-model="rackForm.total_u" :min="1" :max="32767" controls-position="right" />
+            <small v-if="currentHighestOccupiedU" class="rack-form-hint">当前最高占用：U{{ currentHighestOccupiedU }}，容量不能小于该位置</small>
+          </el-form-item>
+          <el-form-item label="机柜状态" prop="status" :error="fieldError('status')">
+            <el-select v-model="rackForm.status" placeholder="请选择状态">
+              <el-option label="使用中" value="in_use" />
+              <el-option label="预留" value="reserved" />
+              <el-option label="停用" value="disabled" />
+            </el-select>
+          </el-form-item>
+          <el-form-item label="负责人" prop="owner_name" :error="fieldError('owner_name')">
+            <el-input v-model="rackForm.owner_name" :validate-event="false" placeholder="可选" />
+          </el-form-item>
+          <el-form-item label="备注" prop="notes" :error="fieldError('notes')" class="form-dialog__field--full">
+            <el-input v-model="rackForm.notes" :validate-event="false" type="textarea" :rows="3" placeholder="可选" />
+          </el-form-item>
+        </div>
+      </section>
     </el-form>
     <template #footer>
-      <div class="rack-form-footer">
-        <el-button :disabled="rackSaving" @click="closeDialog">取消</el-button>
-        <el-button type="primary" :loading="rackSaving" @click="submitRack">保存机柜</el-button>
-      </div>
+      <el-button :disabled="rackSaving" @click="closeDialog">取消</el-button>
+      <el-button type="primary" :loading="rackSaving" :disabled="rackSaving" @click="submitRack">保存机柜</el-button>
     </template>
-  </el-dialog>
+  </FormDialogShell>
 </template>

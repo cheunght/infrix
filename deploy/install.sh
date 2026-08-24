@@ -60,8 +60,19 @@ DB_USER="${DB_USER:-itam}"
 DB_PASSWORD="${DB_PASSWORD:-}"
 DB_HOST="${DB_HOST:-127.0.0.1}"
 DB_PORT="${DB_PORT:-3306}"
+DJANGO_ENV="${DJANGO_ENV:-production}"
 DJANGO_DEBUG="${DJANGO_DEBUG:-0}"
-DJANGO_ALLOWED_HOSTS="${DJANGO_ALLOWED_HOSTS:-*}"
+DJANGO_SECRET_KEY="${DJANGO_SECRET_KEY:-}"
+DJANGO_ALLOWED_HOSTS="${DJANGO_ALLOWED_HOSTS:-}"
+DJANGO_CSRF_TRUSTED_ORIGINS="${DJANGO_CSRF_TRUSTED_ORIGINS:-}"
+DJANGO_HTTPS_MODE="${DJANGO_HTTPS_MODE:-proxy}"
+DJANGO_SECURE_SSL_REDIRECT="${DJANGO_SECURE_SSL_REDIRECT:-1}"
+DJANGO_SESSION_COOKIE_SECURE="${DJANGO_SESSION_COOKIE_SECURE:-1}"
+DJANGO_CSRF_COOKIE_SECURE="${DJANGO_CSRF_COOKIE_SECURE:-1}"
+DJANGO_SECURE_HSTS_SECONDS="${DJANGO_SECURE_HSTS_SECONDS:-3600}"
+DJANGO_SECURE_HSTS_INCLUDE_SUBDOMAINS="${DJANGO_SECURE_HSTS_INCLUDE_SUBDOMAINS:-0}"
+DJANGO_SECURE_HSTS_PRELOAD="${DJANGO_SECURE_HSTS_PRELOAD:-0}"
+DJANGO_USE_X_FORWARDED_HOST="${DJANGO_USE_X_FORWARDED_HOST:-0}"
 TZ="${TZ:-Asia/Shanghai}"
 MARIADB_ROOT_PASSWORD="${MARIADB_ROOT_PASSWORD:-${MYSQL_ROOT_PASSWORD:-}}"
 
@@ -158,14 +169,79 @@ if [[ "$DB_ENGINE" == "mysql" && ! "$DB_PASSWORD" =~ ^[A-Za-z0-9._@%+=:,/-]+$ ]]
   fail "DB_PASSWORD 只能包含字母、数字和 . _ @ % + = : , / -，请重新设置。"
 fi
 
+if [[ -z "$DJANGO_SECRET_KEY" ]]; then
+  DJANGO_SECRET_KEY="$(openssl rand -hex 32)"
+fi
+
+case "$DJANGO_ENV" in
+  production)
+    [[ "$DJANGO_DEBUG" == "0" ]] || fail "生产部署必须设置 DJANGO_DEBUG=0。"
+    [[ ${#DJANGO_SECRET_KEY} -ge 50 ]] || fail "DJANGO_SECRET_KEY 缺失或过短，生产部署已阻断。"
+    [[ "$DJANGO_SECRET_KEY" != "dev-only-change-me" && "$DJANGO_SECRET_KEY" != "change-me" ]] || \
+      fail "DJANGO_SECRET_KEY 仍是开发占位符，生产部署已阻断。"
+    [[ -n "${DJANGO_ALLOWED_HOSTS//[[:space:]]/}" ]] || \
+      fail "DJANGO_ALLOWED_HOSTS 不能为空，请设置实际域名或 IP。"
+    if [[ "$DJANGO_ALLOWED_HOSTS" =~ (^|,)[[:space:]]*\*[[:space:]]*(,|$) ]]; then
+      fail "DJANGO_ALLOWED_HOSTS 不允许包含 *。"
+    fi
+    [[ -n "${DJANGO_CSRF_TRUSTED_ORIGINS//[[:space:]]/}" ]] || \
+      fail "DJANGO_CSRF_TRUSTED_ORIGINS 不能为空，请设置 https:// 来源。"
+    [[ "$DJANGO_HTTPS_MODE" == "proxy" ]] || \
+      fail "当前 Nginx 部署契约要求 DJANGO_HTTPS_MODE=proxy。"
+    [[ "$DJANGO_SECURE_SSL_REDIRECT" == "1" ]] || \
+      fail "生产部署必须设置 DJANGO_SECURE_SSL_REDIRECT=1。"
+    [[ "$DJANGO_SESSION_COOKIE_SECURE" == "1" ]] || \
+      fail "生产部署必须设置 DJANGO_SESSION_COOKIE_SECURE=1。"
+    [[ "$DJANGO_CSRF_COOKIE_SECURE" == "1" ]] || \
+      fail "生产部署必须设置 DJANGO_CSRF_COOKIE_SECURE=1。"
+    [[ "$DJANGO_SECURE_HSTS_SECONDS" =~ ^[1-9][0-9]*$ ]] || \
+      fail "生产部署必须设置正整数 DJANGO_SECURE_HSTS_SECONDS。"
+    [[ "$DJANGO_SECURE_HSTS_INCLUDE_SUBDOMAINS" =~ ^[01]$ ]] || \
+      fail "DJANGO_SECURE_HSTS_INCLUDE_SUBDOMAINS 必须是 0 或 1。"
+    [[ "$DJANGO_SECURE_HSTS_PRELOAD" =~ ^[01]$ ]] || \
+      fail "DJANGO_SECURE_HSTS_PRELOAD 必须是 0 或 1。"
+    [[ "$DJANGO_USE_X_FORWARDED_HOST" == "0" ]] || \
+      fail "当前部署不启用 DJANGO_USE_X_FORWARDED_HOST。"
+    ;;
+  development)
+    [[ -n "${DJANGO_ALLOWED_HOSTS//[[:space:]]/}" ]] || \
+      fail "开发部署时 DJANGO_ALLOWED_HOSTS 不能为空；可设置为 *。"
+    log "开发环境部署：允许 DJANGO_ALLOWED_HOSTS=*，跳过生产安全门禁。"
+    ;;
+  *)
+    fail "DJANGO_ENV 必须是 development 或 production。"
+    ;;
+esac
+
+append_env_entry() {
+  local key="$1"
+  local value="$2"
+  if grep -q "^${key}=$" "$ENV_FILE"; then
+    sed -i "/^${key}=$/d" "$ENV_FILE"
+  fi
+  if ! grep -q "^${key}=" "$ENV_FILE"; then
+    printf '%s=%s\n' "$key" "$value" >> "$ENV_FILE"
+  fi
+}
+
 if [[ ! -f "$ENV_FILE" ]]; then
   log "创建 $ENV_FILE"
   (
     umask 027
     cat > "$ENV_FILE" <<EOF
+DJANGO_ENV=$DJANGO_ENV
 DJANGO_DEBUG=$DJANGO_DEBUG
-DJANGO_SECRET_KEY=$(openssl rand -hex 32)
+DJANGO_SECRET_KEY=$DJANGO_SECRET_KEY
 DJANGO_ALLOWED_HOSTS=$DJANGO_ALLOWED_HOSTS
+DJANGO_CSRF_TRUSTED_ORIGINS=$DJANGO_CSRF_TRUSTED_ORIGINS
+DJANGO_HTTPS_MODE=$DJANGO_HTTPS_MODE
+DJANGO_SECURE_SSL_REDIRECT=$DJANGO_SECURE_SSL_REDIRECT
+DJANGO_SESSION_COOKIE_SECURE=$DJANGO_SESSION_COOKIE_SECURE
+DJANGO_CSRF_COOKIE_SECURE=$DJANGO_CSRF_COOKIE_SECURE
+DJANGO_SECURE_HSTS_SECONDS=$DJANGO_SECURE_HSTS_SECONDS
+DJANGO_SECURE_HSTS_INCLUDE_SUBDOMAINS=$DJANGO_SECURE_HSTS_INCLUDE_SUBDOMAINS
+DJANGO_SECURE_HSTS_PRELOAD=$DJANGO_SECURE_HSTS_PRELOAD
+DJANGO_USE_X_FORWARDED_HOST=$DJANGO_USE_X_FORWARDED_HOST
 TZ=$TZ
 DB_ENGINE=$DB_ENGINE
 DB_NAME=$DB_NAME
@@ -175,6 +251,22 @@ DB_HOST=$DB_HOST
 DB_PORT=$DB_PORT
 EOF
   )
+else
+  # Existing environment files retain their secret and database values; append
+  # only the new security contract keys when upgrading an older deployment.
+  append_env_entry DJANGO_ENV "$DJANGO_ENV"
+  append_env_entry DJANGO_DEBUG "$DJANGO_DEBUG"
+  append_env_entry DJANGO_SECRET_KEY "$DJANGO_SECRET_KEY"
+  append_env_entry DJANGO_ALLOWED_HOSTS "$DJANGO_ALLOWED_HOSTS"
+  append_env_entry DJANGO_CSRF_TRUSTED_ORIGINS "$DJANGO_CSRF_TRUSTED_ORIGINS"
+  append_env_entry DJANGO_HTTPS_MODE "$DJANGO_HTTPS_MODE"
+  append_env_entry DJANGO_SECURE_SSL_REDIRECT "$DJANGO_SECURE_SSL_REDIRECT"
+  append_env_entry DJANGO_SESSION_COOKIE_SECURE "$DJANGO_SESSION_COOKIE_SECURE"
+  append_env_entry DJANGO_CSRF_COOKIE_SECURE "$DJANGO_CSRF_COOKIE_SECURE"
+  append_env_entry DJANGO_SECURE_HSTS_SECONDS "$DJANGO_SECURE_HSTS_SECONDS"
+  append_env_entry DJANGO_SECURE_HSTS_INCLUDE_SUBDOMAINS "$DJANGO_SECURE_HSTS_INCLUDE_SUBDOMAINS"
+  append_env_entry DJANGO_SECURE_HSTS_PRELOAD "$DJANGO_SECURE_HSTS_PRELOAD"
+  append_env_entry DJANGO_USE_X_FORWARDED_HOST "$DJANGO_USE_X_FORWARDED_HOST"
 fi
 chmod 640 "$ENV_FILE"
 chown root:"$APP_GROUP" "$ENV_FILE"
@@ -257,7 +349,23 @@ fi
 log "迁移后数据量核对"
 count_data
 "$APP_DIR/backend/.venv/bin/python" manage.py check_preset_roles
-"$APP_DIR/backend/.venv/bin/python" manage.py check --deploy
+if [[ "$DJANGO_ENV" == "production" ]]; then
+  deploy_check_output="$("$APP_DIR/backend/.venv/bin/python" manage.py check --deploy 2>&1)" || {
+    printf '%s\n' "$deploy_check_output" >&2
+    fail "Django check --deploy 执行失败。"
+  }
+  printf '%s\n' "$deploy_check_output"
+  unexpected_security_warnings="$(printf '%s\n' "$deploy_check_output" | grep -E 'security\.W' | grep -vE 'security\.(W005|W021)' || true)"
+  if [[ -n "$unexpected_security_warnings" ]]; then
+    printf '%s\n' "$unexpected_security_warnings" >&2
+    fail "Django check --deploy 仍包含未豁免的安全告警，生产部署已阻断。"
+  fi
+  if printf '%s\n' "$deploy_check_output" | grep -qE 'security\.(W005|W021)'; then
+    log "保留 HSTS 子域/preload 告警：当前策略未默认覆盖所有子域，需由部署方确认后再启用。"
+  fi
+else
+  log "开发环境跳过 Django check --deploy 生产安全门禁。"
+fi
 "$APP_DIR/backend/.venv/bin/python" manage.py check
 "$APP_DIR/backend/.venv/bin/python" manage.py collectstatic --noinput --clear
 
@@ -317,6 +425,14 @@ if [[ -f "$nginx_default_conf" ]] &&
   log "已备份并停用冲突的 Nginx 默认配置：$nginx_default_backup"
 fi
 
+nginx_hsts_value="max-age=$DJANGO_SECURE_HSTS_SECONDS"
+if [[ "$DJANGO_SECURE_HSTS_INCLUDE_SUBDOMAINS" == "1" ]]; then
+  nginx_hsts_value+="; includeSubDomains"
+fi
+if [[ "$DJANGO_SECURE_HSTS_PRELOAD" == "1" ]]; then
+  nginx_hsts_value+="; preload"
+fi
+
 cat > "$NGINX_CONF_FILE" <<EOF
 server {
     listen 80 default_server;
@@ -329,23 +445,31 @@ server {
         proxy_set_header Host \$host;
         proxy_set_header X-Real-IP \$remote_addr;
         proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
-        proxy_set_header X-Forwarded-Proto \$scheme;
+        # This HTTP hop is private. The external TLS gateway must overwrite
+        # X-Forwarded-Proto with exactly http or https before reaching it.
+        proxy_set_header X-Forwarded-Proto \$http_x_forwarded_proto;
     }
 
     location /admin/ {
         proxy_pass http://127.0.0.1:8001;
         proxy_set_header Host \$host;
-        proxy_set_header X-Forwarded-Proto \$scheme;
+        proxy_set_header X-Forwarded-Proto \$http_x_forwarded_proto;
     }
 
     location /static/ {
         alias $APP_DIR/backend/staticfiles/;
+        add_header Strict-Transport-Security "$nginx_hsts_value" always;
+        add_header X-Frame-Options "DENY" always;
+        add_header X-Content-Type-Options "nosniff" always;
     }
 
     location / {
         # SPA 路由可能与 Vite 的静态目录同名（例如 /assets），只服务
         # 真实文件，目录路径统一回退到 index.html，避免刷新时返回 403。
         try_files \$uri /index.html;
+        add_header Strict-Transport-Security "$nginx_hsts_value" always;
+        add_header X-Frame-Options "DENY" always;
+        add_header X-Content-Type-Options "nosniff" always;
     }
 }
 EOF
@@ -379,7 +503,8 @@ health_url="http://127.0.0.1:8001/api/v1/auth/csrf/"
 api_ready=0
 for _ in $(seq 1 30); do
   if systemctl is-active --quiet itam &&
-    curl --retry 2 --retry-delay 1 -fsS --connect-timeout 2 --max-time 5 "$health_url" >/dev/null 2>&1; then
+    curl --retry 2 --retry-delay 1 -fsS --connect-timeout 2 --max-time 5 \
+      -H "X-Forwarded-Proto: https" "$health_url" >/dev/null 2>&1; then
     api_ready=1
     break
   fi
@@ -391,8 +516,14 @@ if [[ "$api_ready" -ne 1 ]]; then
   fail "Infrix API 健康检查失败。"
 fi
 
+health_host="${DJANGO_ALLOWED_HOSTS%%,*}"
+if [[ "$health_host" == "*" ]]; then
+  health_host="$SERVER_NAME"
+fi
+
 if ! curl --retry 5 --retry-delay 1 -fsS --connect-timeout 5 --max-time 10 \
-  -H "Host: $SERVER_NAME" http://127.0.0.1/api/v1/auth/csrf/ >/dev/null 2>&1; then
+  -H "Host: $health_host" \
+  -H "X-Forwarded-Proto: https" http://127.0.0.1/api/v1/auth/csrf/ >/dev/null 2>&1; then
   nginx -t >&2 || true
   systemctl status nginx --no-pager >&2 || true
   journalctl -u nginx -n 50 --no-pager >&2 || true
@@ -400,7 +531,8 @@ if ! curl --retry 5 --retry-delay 1 -fsS --connect-timeout 5 --max-time 10 \
 fi
 
 if ! curl --retry 5 --retry-delay 1 -fsS --connect-timeout 5 --max-time 10 \
-  -H "Host: $SERVER_NAME" http://127.0.0.1/ >/dev/null 2>&1; then
+  -H "Host: $health_host" \
+  -H "X-Forwarded-Proto: https" http://127.0.0.1/ >/dev/null 2>&1; then
   nginx -t >&2 || true
   systemctl status nginx --no-pager >&2 || true
   journalctl -u nginx -n 50 --no-pager >&2 || true
@@ -408,7 +540,8 @@ if ! curl --retry 5 --retry-delay 1 -fsS --connect-timeout 5 --max-time 10 \
 fi
 
 if ! curl --retry 5 --retry-delay 1 -fsS --connect-timeout 5 --max-time 10 \
-  -H "Host: $SERVER_NAME" http://127.0.0.1/assets >/dev/null 2>&1; then
+  -H "Host: $health_host" \
+  -H "X-Forwarded-Proto: https" http://127.0.0.1/assets >/dev/null 2>&1; then
   nginx -t >&2 || true
   systemctl status nginx --no-pager >&2 || true
   journalctl -u nginx -n 50 --no-pager >&2 || true
@@ -416,8 +549,12 @@ if ! curl --retry 5 --retry-delay 1 -fsS --connect-timeout 5 --max-time 10 \
 fi
 
 echo
-echo "Infrix 部署完成：http://$SERVER_NAME/"
-echo "API 文档：http://$SERVER_NAME/api/docs/"
+if [[ "$DJANGO_ENV" == "production" ]]; then
+  echo "Infrix 部署完成：请通过外部 HTTPS 网关访问。"
+  echo "内部 Nginx：TCP 80（仅允许可信 HTTPS 网关访问）"
+else
+  echo "Infrix 开发环境部署完成：Nginx 监听 TCP 80。"
+fi
 echo "环境文件：$ENV_FILE"
 echo "创建管理员：cd $APP_DIR/backend && sudo -u $APP_USER ./run.sh createsuperuser"
 echo "注意：本脚本不会配置 SELinux 或防火墙，请按现有系统策略维护。"

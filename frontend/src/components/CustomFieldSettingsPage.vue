@@ -1,19 +1,18 @@
 <script setup lang="ts">
 import { computed, proxyRefs, ref } from "vue";
 import type { FormInstance, FormRules } from "element-plus";
-import { ArrowDown } from "@element-plus/icons-vue";
 import type { CustomFieldContext } from "../types/page-context";
 import type { CustomField, CustomFieldValidationConfig } from "../types";
 import PageContainer from "./page/PageContainer.vue";
 import PageContent from "./page/PageContent.vue";
 import PageToolbar from "./page/PageToolbar.vue";
 import StatusTag from "./StatusTag.vue";
+import FormDialogShell from "./FormDialogShell.vue";
 
 const props = defineProps<{ context: CustomFieldContext }>();
 const c = proxyRefs(props.context);
 const customFieldFormRef = ref<FormInstance>();
 const customFieldOptionFormRef = ref<FormInstance>();
-const customFieldAdvancedExpanded = ref(false);
 const validationConfig = computed(() => c.customFieldForm.validation_config as CustomFieldValidationConfig);
 const customFieldValidationKeysByType: Record<string, string[]> = {
   text: ["min_length", "max_length"],
@@ -24,19 +23,6 @@ const customFieldValidationKeysByType: Record<string, string[]> = {
   select: [],
   boolean: [],
 };
-const customFieldAdvancedErrorFields = new Set([
-  "default_value",
-  "sort_order",
-  "group",
-  "placeholder",
-  "help_text",
-  "form_visible",
-  "detail_visible",
-  "list_visible",
-  "filterable",
-  "validation_config",
-  "is_active",
-]);
 const hasCustomFieldValidationRules = computed(() => (customFieldValidationKeysByType[c.customFieldForm.field_type] || []).length > 0);
 const isCustomFieldOptionType = computed(() => ["select", "multiselect"].includes(c.customFieldForm.field_type));
 const customFieldDefaultValueDisabled = computed(() => isCustomFieldOptionType.value && (!c.editingCustomField || !(c.editingCustomField.options || []).length));
@@ -150,12 +136,10 @@ function ensureFormVisible(value: boolean) {
 function openCreateCustomField() {
   c.openCustomFieldModal();
   c.customFieldForm.device_type = "";
-  customFieldAdvancedExpanded.value = false;
 }
 
 function openEditCustomField(field: CustomField) {
   c.openCustomFieldModal(field);
-  customFieldAdvancedExpanded.value = true;
 }
 
 function handleCustomFieldTypeChange(type: string) {
@@ -187,15 +171,9 @@ const customFieldOptionFormRules: FormRules = {
 };
 
 async function submitCustomField() {
-  const valid = await customFieldFormRef.value?.validate().catch(() => {
-    customFieldAdvancedExpanded.value = true;
-    return false;
-  });
+  const valid = await customFieldFormRef.value?.validate().catch(() => false);
   if (valid !== true) return;
   await c.saveCustomField();
-  if (Object.keys(c.customFieldFormErrors).some((field) => customFieldAdvancedErrorFields.has(field))) {
-    customFieldAdvancedExpanded.value = true;
-  }
 }
 
 async function submitCustomFieldOption() {
@@ -250,17 +228,26 @@ async function submitCustomFieldOption() {
     </PageContent>
   </PageContainer>
 
-  <el-dialog v-model="c.showCustomFieldModal" class="custom-field-dialog" :title="c.editingCustomField ? '编辑自定义字段' : '新增自定义字段'" width="620px" destroy-on-close :show-close="!c.customFieldSaving" :close-on-click-modal="!c.customFieldSaving" :close-on-press-escape="!c.customFieldSaving">
+  <FormDialogShell v-model="c.showCustomFieldModal" class="custom-field-dialog" :title="c.editingCustomField ? '编辑字段' : '新增字段'" description="配置字段定义、适用范围和显示规则" size="large" :saving="c.customFieldSaving" :show-close="!c.customFieldSaving" :close-disabled="c.customFieldSaving" :close-on-click-modal="!c.customFieldSaving" :close-on-press-escape="!c.customFieldSaving">
     <el-form ref="customFieldFormRef" class="custom-field-form" :model="c.customFieldForm" :rules="customFieldFormRules" label-position="top" :validate-on-rule-change="false" @submit.prevent="submitCustomField">
-      <section class="custom-field-form-section custom-field-form-section--basic">
-        <div class="custom-field-section-title">基本信息</div>
-        <div class="custom-field-basic-grid">
+      <section class="form-dialog__section custom-field-form-section custom-field-form-section--basic">
+        <h3 class="form-dialog__section-title">字段定义</h3>
+        <div class="form-dialog__grid">
           <el-form-item label="字段名称" prop="name" required :error="c.customFieldFormErrors.name"><el-input v-model="c.customFieldForm.name" maxlength="120" /></el-form-item>
           <el-form-item label="字段编码" prop="key" required :error="c.customFieldFormErrors.key">
             <el-input v-model="c.customFieldForm.key" :disabled="!!c.editingCustomField" placeholder="例如 operating_system" />
             <div class="custom-field-form-help">用于系统识别和 API，创建后不可修改。</div>
           </el-form-item>
-          <el-form-item label="适用范围" prop="device_type" required :error="c.customFieldFormErrors.device_type">
+          <el-form-item label="字段类型" prop="field_type" required :error="c.customFieldFormErrors.field_type">
+            <el-select v-model="c.customFieldForm.field_type" :disabled="!!c.editingCustomField" @change="handleCustomFieldTypeChange"><el-option label="单行文本" value="text" /><el-option label="多行文本" value="textarea" /><el-option label="数字" value="number" /><el-option label="日期" value="date" /><el-option label="单选" value="select" /><el-option label="多选" value="multiselect" /><el-option label="是/否" value="boolean" /></el-select>
+          </el-form-item>
+        </div>
+      </section>
+
+      <section class="form-dialog__section custom-field-form-section">
+        <h3 class="form-dialog__section-title">适用范围</h3>
+        <div class="form-dialog__grid">
+          <el-form-item label="设备类型" prop="device_type" required class="form-dialog__field--full" :error="c.customFieldFormErrors.device_type">
             <el-select v-model="c.customFieldForm.device_type" :disabled="!!c.editingCustomField" clearable placeholder="全部资产">
               <el-option label="全部资产" value="" />
               <el-option v-for="item in c.deviceTypes" :key="item.id" :label="item.name" :value="String(item.id)" />
@@ -268,22 +255,15 @@ async function submitCustomFieldOption() {
             <div class="custom-field-form-help">{{ customFieldScopeHint }}</div>
             <div v-if="c.editingCustomField" class="custom-field-form-help">适用范围创建后不可修改。</div>
           </el-form-item>
-          <el-form-item label="字段类型" prop="field_type" required :error="c.customFieldFormErrors.field_type">
-            <el-select v-model="c.customFieldForm.field_type" :disabled="!!c.editingCustomField" @change="handleCustomFieldTypeChange"><el-option label="单行文本" value="text" /><el-option label="多行文本" value="textarea" /><el-option label="数字" value="number" /><el-option label="日期" value="date" /><el-option label="单选" value="select" /><el-option label="多选" value="multiselect" /><el-option label="是/否" value="boolean" /></el-select>
+          <el-form-item label="字段要求">
+            <el-checkbox v-model="c.customFieldForm.required" @change="ensureFormVisible">必填</el-checkbox>
           </el-form-item>
         </div>
-        <el-checkbox v-model="c.customFieldForm.required" class="custom-field-required" @change="ensureFormVisible">必填</el-checkbox>
       </section>
 
-      <button type="button" class="custom-field-advanced-toggle" :aria-expanded="customFieldAdvancedExpanded" @click="customFieldAdvancedExpanded = !customFieldAdvancedExpanded">
-        <span>更多配置</span>
-        <el-icon :class="{ 'is-expanded': customFieldAdvancedExpanded }"><ArrowDown /></el-icon>
-      </button>
-
-      <div v-show="customFieldAdvancedExpanded" class="custom-field-advanced-config">
-        <section class="custom-field-form-section">
-          <div class="custom-field-section-title">输入配置</div>
-          <div class="custom-field-advanced-grid">
+        <section class="form-dialog__section custom-field-form-section">
+          <h3 class="form-dialog__section-title">输入配置</h3>
+          <div class="form-dialog__grid">
             <el-form-item label="分组" prop="group" :error="c.customFieldFormErrors.group"><el-input v-model="c.customFieldForm.group" maxlength="80" placeholder="例如：硬件配置" /></el-form-item>
             <el-form-item label="显示顺序" prop="sort_order" :error="c.customFieldFormErrors.sort_order"><el-input-number v-model="c.customFieldForm.sort_order" class="custom-field-sort-order" :min="0" :step="1" /></el-form-item>
             <el-form-item label="默认值" prop="default_value" :error="c.customFieldFormErrors.default_value">
@@ -294,13 +274,13 @@ async function submitCustomFieldOption() {
               <el-input v-model="c.customFieldForm.placeholder" maxlength="255" placeholder="输入框提示文字" />
               <div class="custom-field-form-help">显示在资产编辑输入框中的提示文字。</div>
             </el-form-item>
-            <el-form-item label="帮助文字" prop="help_text" :error="c.customFieldFormErrors.help_text" class="custom-field-form-full"><el-input v-model="c.customFieldForm.help_text" type="textarea" :rows="2" maxlength="1000" show-word-limit placeholder="向资产编辑人员解释字段含义" /></el-form-item>
+            <el-form-item label="帮助文字" prop="help_text" :error="c.customFieldFormErrors.help_text" class="form-dialog__field--full"><el-input v-model="c.customFieldForm.help_text" type="textarea" :rows="2" maxlength="1000" show-word-limit placeholder="向资产编辑人员解释字段含义" /></el-form-item>
           </div>
           <div v-if="isCustomFieldOptionType" class="custom-field-form-help custom-field-option-hint">保存字段后可配置选项。</div>
         </section>
 
-        <section class="custom-field-form-section">
-          <div class="custom-field-section-title">显示配置</div>
+        <section class="form-dialog__section custom-field-form-section">
+          <h3 class="form-dialog__section-title">显示配置</h3>
           <div class="custom-field-visibility-row">
             <el-checkbox v-model="c.customFieldForm.is_active">启用</el-checkbox>
             <el-checkbox v-model="c.customFieldForm.form_visible" :disabled="c.customFieldForm.required">表单显示</el-checkbox>
@@ -312,9 +292,9 @@ async function submitCustomFieldOption() {
           <div class="custom-field-form-help">允许用户在资产台账“更多筛选”中使用该字段。</div>
         </section>
 
-        <section v-if="hasCustomFieldValidationRules" class="custom-field-form-section">
-          <div class="custom-field-section-title">校验规则</div>
-          <el-form-item prop="validation_config" :error="c.customFieldFormErrors.validation_config" class="custom-field-validation">
+        <section v-if="hasCustomFieldValidationRules" class="form-dialog__section custom-field-form-section">
+          <h3 class="form-dialog__section-title">校验规则</h3>
+          <el-form-item label="校验参数" prop="validation_config" :error="c.customFieldFormErrors.validation_config" class="custom-field-validation form-dialog__field--full">
             <div v-if="['text', 'textarea'].includes(c.customFieldForm.field_type)" class="custom-field-validation-grid">
               <el-input-number v-model="validationConfig.min_length" :min="0" :step="1" controls-position="right" placeholder="最小长度" />
               <el-input-number v-model="validationConfig.max_length" :min="0" :step="1" controls-position="right" placeholder="最大长度" />
@@ -334,27 +314,33 @@ async function submitCustomFieldOption() {
             </div>
           </el-form-item>
         </section>
-      </div>
     </el-form>
-    <template #footer><el-button :disabled="c.customFieldSaving" @click="c.showCustomFieldModal = false">取消</el-button><el-button type="primary" :loading="c.customFieldSaving" :disabled="c.customFieldSaving" @click="submitCustomField">{{ c.editingCustomField ? '保存' : '创建' }}</el-button></template>
-  </el-dialog>
+    <template #footer><el-button :disabled="c.customFieldSaving" @click="c.showCustomFieldModal = false">取消</el-button><el-button type="primary" :loading="c.customFieldSaving" :disabled="c.customFieldSaving" @click="submitCustomField">保存字段</el-button></template>
+  </FormDialogShell>
 
-  <el-dialog v-model="c.showCustomFieldOptionModal" :title="'管理字段选项' + (c.editingCustomField ? '：' + c.editingCustomField.name : '')" width="680px" destroy-on-close :show-close="!c.customFieldOptionSaving" :close-on-click-modal="!c.customFieldOptionSaving" :close-on-press-escape="!c.customFieldOptionSaving">
-    <div v-if="c.customFieldOptionError" class="settings-state settings-state--error" role="alert">
-      <div class="settings-state__copy"><strong>字段选项加载失败</strong><span>{{ c.customFieldOptionError }}</span></div>
-      <el-button type="primary" plain :loading="c.customFieldOptionLoading" @click="c.retryCustomFieldOptions">重新加载</el-button>
-    </div>
-    <el-table v-else v-loading="c.customFieldOptionLoading" :data="c.editingCustomField?.options || []" size="small">
-      <template #empty><div class="settings-empty"><span>暂无选项</span></div></template>
-      <el-table-column prop="value" label="稳定值" /><el-table-column prop="label" label="显示名称" /><el-table-column prop="sort_order" label="顺序" width="70" /><el-table-column label="状态" width="80"><template #default="{ row }"><StatusTag size="small" :type="row.is_active ? 'success' : 'info'" :label="row.is_active ? '启用' : '停用'" /></template></el-table-column><el-table-column label="操作" width="160"><template #default="{ row }"><el-button link type="primary" :disabled="c.customFieldOptionActionId === row.id || c.customFieldOptionSaving" @click="c.openCustomFieldOptionModal(c.editingCustomField, row)">编辑</el-button><el-button link type="danger" :disabled="c.customFieldOptionActionId === row.id || c.customFieldOptionSaving" @click="c.deleteCustomFieldOption(row)">删除</el-button></template></el-table-column>
-    </el-table>
-    <el-divider />
-    <el-form ref="customFieldOptionFormRef" :model="c.customFieldOptionForm" :rules="customFieldOptionFormRules" label-position="top" class="form-grid" :validate-on-rule-change="false" @submit.prevent="submitCustomFieldOption">
-      <el-form-item label="稳定值" prop="value" required :error="c.customFieldOptionFormErrors.value"><el-input v-model="c.customFieldOptionForm.value" maxlength="120" /></el-form-item>
-      <el-form-item label="显示名称" prop="label" required :error="c.customFieldOptionFormErrors.label"><el-input v-model="c.customFieldOptionForm.label" maxlength="120" /></el-form-item>
-      <el-form-item label="顺序" prop="sort_order" :error="c.customFieldOptionFormErrors.sort_order"><el-input-number v-model="c.customFieldOptionForm.sort_order" :min="0" :step="1" /></el-form-item>
-      <el-checkbox v-model="c.customFieldOptionForm.is_active">启用</el-checkbox>
-    </el-form>
-    <template #footer><el-button :disabled="c.customFieldOptionSaving" @click="c.showCustomFieldOptionModal = false">关闭</el-button><el-button type="primary" :loading="c.customFieldOptionSaving" :disabled="c.customFieldOptionSaving" @click="submitCustomFieldOption">保存选项</el-button></template>
-  </el-dialog>
+  <FormDialogShell v-model="c.showCustomFieldOptionModal" class="custom-field-option-dialog" :title="'管理字段选项' + (c.editingCustomField ? '：' + c.editingCustomField.name : '')" description="维护可选值、显示名称和排序" size="medium" :saving="c.customFieldOptionSaving" :show-close="!c.customFieldOptionSaving" :close-disabled="c.customFieldOptionSaving" :close-on-click-modal="!c.customFieldOptionSaving" :close-on-press-escape="!c.customFieldOptionSaving">
+    <section class="form-dialog__section">
+      <h3 class="form-dialog__section-title">已有选项</h3>
+      <div v-if="c.customFieldOptionError" class="settings-state settings-state--error" role="alert">
+        <div class="settings-state__copy"><strong>字段选项加载失败</strong><span>{{ c.customFieldOptionError }}</span></div>
+        <el-button type="primary" plain :loading="c.customFieldOptionLoading" @click="c.retryCustomFieldOptions">重新加载</el-button>
+      </div>
+      <el-table v-else v-loading="c.customFieldOptionLoading" :data="c.editingCustomField?.options || []" size="small">
+        <template #empty><div class="settings-empty"><span>暂无选项</span></div></template>
+        <el-table-column prop="value" label="稳定值" /><el-table-column prop="label" label="显示名称" /><el-table-column prop="sort_order" label="顺序" width="70" /><el-table-column label="状态" width="80"><template #default="{ row }"><StatusTag size="small" :type="row.is_active ? 'success' : 'info'" :label="row.is_active ? '启用' : '停用'" /></template></el-table-column><el-table-column label="操作" width="160"><template #default="{ row }"><el-button link type="primary" :disabled="c.customFieldOptionActionId === row.id || c.customFieldOptionSaving" @click="c.openCustomFieldOptionModal(c.editingCustomField, row)">编辑</el-button><el-button link type="danger" :disabled="c.customFieldOptionActionId === row.id || c.customFieldOptionSaving" @click="c.deleteCustomFieldOption(row)">删除</el-button></template></el-table-column>
+      </el-table>
+    </section>
+    <section class="form-dialog__section custom-field-option-form-section">
+      <h3 class="form-dialog__section-title">选项信息</h3>
+      <el-form ref="customFieldOptionFormRef" :model="c.customFieldOptionForm" :rules="customFieldOptionFormRules" label-position="top" class="form-dialog__grid" :validate-on-rule-change="false" @submit.prevent="submitCustomFieldOption">
+        <el-form-item label="稳定值" prop="value" required :error="c.customFieldOptionFormErrors.value"><el-input v-model="c.customFieldOptionForm.value" maxlength="120" /></el-form-item>
+        <el-form-item label="显示名称" prop="label" required :error="c.customFieldOptionFormErrors.label"><el-input v-model="c.customFieldOptionForm.label" maxlength="120" /></el-form-item>
+        <el-form-item label="顺序" prop="sort_order" :error="c.customFieldOptionFormErrors.sort_order"><el-input-number v-model="c.customFieldOptionForm.sort_order" :min="0" :step="1" /></el-form-item>
+        <el-form-item label="状态">
+          <el-checkbox v-model="c.customFieldOptionForm.is_active">启用</el-checkbox>
+        </el-form-item>
+      </el-form>
+    </section>
+    <template #footer><el-button :disabled="c.customFieldOptionSaving" @click="c.showCustomFieldOptionModal = false">取消</el-button><el-button type="primary" :loading="c.customFieldOptionSaving" :disabled="c.customFieldOptionSaving" @click="submitCustomFieldOption">保存选项</el-button></template>
+  </FormDialogShell>
 </template>

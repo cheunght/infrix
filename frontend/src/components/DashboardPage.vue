@@ -2,13 +2,7 @@
 import { computed } from "vue";
 import {
   ArrowRight,
-  Box,
-  Calendar,
-  CircleCheck,
-  Key,
-  Monitor,
   OfficeBuilding,
-  Tools,
   Warning,
 } from "@element-plus/icons-vue";
 import DashboardDonut from "./DashboardDonut.vue";
@@ -18,6 +12,13 @@ import metricAssets from "../assets/dashboard/metric-assets.png";
 import metricRacks from "../assets/dashboard/metric-racks.png";
 import quickImportIcon from "../assets/dashboard/quick-import.png";
 import inventoryCheckIcon from "../assets/dashboard/inventory-check.png";
+import assetsTotalIcon from "../assets/dashboard/generated-icons/assets-total.png";
+import assetsInUseIcon from "../assets/dashboard/generated-icons/assets-in-use.png";
+import assetsInStockIcon from "../assets/dashboard/generated-icons/assets-in-stock.png";
+import assetsRepairIcon from "../assets/dashboard/generated-icons/assets-repair.png";
+import faultOpenIcon from "../assets/dashboard/generated-icons/fault-open.png";
+import licenseRiskIcon from "../assets/dashboard/generated-icons/license-risk.png";
+import maintenanceDueIcon from "../assets/dashboard/generated-icons/maintenance-due.png";
 import type {
   DashboardAlert,
   DashboardDataCenterOverview,
@@ -70,7 +71,7 @@ const licenseSummary = computed<DashboardLicenseSummary | null>(
 );
 const licenseRiskTotal = computed(() => {
   const summary = licenseSummary.value;
-  return summary ? summary.expiring + summary.expired + summary.over_limit : 0;
+  return summary ? summary.expiring + summary.expired : 0;
 });
 
 function openChanges() {
@@ -143,7 +144,7 @@ function utilization(value: number) {
             :value="dashboardData.assets.total"
             subtitle="全部纳管资产"
             tone="blue"
-            :icon="Monitor"
+            :icon-image="assetsTotalIcon"
             :clickable="can('assets.view')"
             @click="can('assets.view') && goToAssets()"
           />
@@ -152,7 +153,7 @@ function utilization(value: number) {
             :value="dashboardData.assets.in_use"
             subtitle="当前正在使用"
             tone="green"
-            :icon="CircleCheck"
+            :icon-image="assetsInUseIcon"
             :clickable="can('assets.view')"
             @click="can('assets.view') && goToAssets({ status: 'in_use' })"
           />
@@ -161,7 +162,7 @@ function utilization(value: number) {
             :value="dashboardData.assets.in_stock"
             subtitle="当前在库资产"
             tone="purple"
-            :icon="Box"
+            :icon-image="assetsInStockIcon"
             :clickable="can('assets.view')"
             @click="can('assets.view') && goToAssets({ status: 'in_stock' })"
           />
@@ -170,7 +171,7 @@ function utilization(value: number) {
             :value="dashboardData.assets.repair"
             subtitle="存在未闭环维修"
             tone="orange"
-            :icon="Tools"
+            :icon-image="assetsRepairIcon"
             :clickable="can('assets.view')"
             @click="can('assets.view') && goToAssets({ status: 'repair' })"
           />
@@ -190,23 +191,24 @@ function utilization(value: number) {
               @keydown.enter="goToRepairs({ is_closed: 'false' })"
               @keydown.space.prevent="goToRepairs({ is_closed: 'false' })"
             >
-              <span class="dashboard-attention-card__icon"><Warning /></span>
+              <span class="dashboard-attention-card__icon"><img :src="faultOpenIcon" alt="" aria-hidden="true" /></span>
               <span class="dashboard-attention-card__content">
                 <span class="dashboard-attention-card__title">未关闭故障</span>
                 <strong>{{ dashboardData.alerts?.open_faults }}</strong>
                 <small>{{ dashboardData.alerts?.open_faults ? "需要跟进的设备故障" : "当前无未关闭故障" }}</small>
               </span>
-              <el-icon class="dashboard-attention-card__arrow"><ArrowRight /></el-icon>
+              <span class="dashboard-attention-card__action" aria-hidden="true">
+                <el-icon class="dashboard-attention-card__arrow"><ArrowRight /></el-icon>
+              </span>
             </div>
             <div v-if="can('licenses.view') && licenseSummary" class="dashboard-attention-card dashboard-attention-card--license">
-              <span class="dashboard-attention-card__icon"><Key /></span>
+              <span class="dashboard-attention-card__icon"><img :src="licenseRiskIcon" alt="" aria-hidden="true" /></span>
               <span class="dashboard-attention-card__content">
                 <span class="dashboard-attention-card__title">软件许可风险</span>
                 <strong>{{ licenseRiskTotal }}</strong>
                 <small v-if="!licenseRiskTotal">当前无许可风险</small>
                 <span v-else class="dashboard-attention-risk-links">
                   <el-button link class="dashboard-attention-risk-link" @click="goToLicenses({ status: 'expired' })">已过期 {{ licenseSummary.expired }}</el-button>
-                  <el-button link class="dashboard-attention-risk-link" @click="goToLicenses({ status: 'over_limit' })">超授权 {{ licenseSummary.over_limit }}</el-button>
                   <el-button link class="dashboard-attention-risk-link" @click="goToLicenses({ status: 'expiring' })">即将到期 {{ licenseSummary.expiring }}</el-button>
                 </span>
               </span>
@@ -220,7 +222,7 @@ function utilization(value: number) {
               @keydown.enter="can('assets.view') && goToAssets({ warranty: 'within_30_days' })"
               @keydown.space.prevent="can('assets.view') && goToAssets({ warranty: 'within_30_days' })"
             >
-              <span class="dashboard-attention-card__icon"><Calendar /></span>
+              <span class="dashboard-attention-card__icon"><img :src="maintenanceDueIcon" alt="" aria-hidden="true" /></span>
               <span class="dashboard-attention-card__content">
                 <span class="dashboard-attention-card__title">30 天内维保到期</span>
                 <strong>{{ dashboardData.expiring.within_30_days }}</strong>
@@ -234,7 +236,9 @@ function utilization(value: number) {
                   <span v-else>已过期 {{ dashboardData.expiring.expired || 0 }} 项</span>
                 </small>
               </span>
-              <el-icon v-if="can('assets.view')" class="dashboard-attention-card__arrow"><ArrowRight /></el-icon>
+              <span v-if="can('assets.view')" class="dashboard-attention-card__action" aria-hidden="true">
+                <el-icon class="dashboard-attention-card__arrow"><ArrowRight /></el-icon>
+              </span>
             </div>
           </div>
         </section>
@@ -351,7 +355,7 @@ function utilization(value: number) {
             <span class="dashboard-quick-action__content"><strong class="dashboard-quick-action__title">新增机柜</strong><small class="dashboard-quick-action__description">创建新的机柜</small></span>
             <span class="dashboard-quick-action__chevron"><el-icon><ArrowRight /></el-icon></span>
           </button>
-          <button v-if="can('assets.import')" type="button" class="dashboard-quick-action" @click="handleMenuSelect('asset-list')">
+          <button v-if="can('assets.manage')" type="button" class="dashboard-quick-action" @click="handleMenuSelect('asset-list')">
             <span class="dashboard-quick-action__icon"><img :src="quickImportIcon" alt="" aria-hidden="true" /></span>
             <span class="dashboard-quick-action__content"><strong class="dashboard-quick-action__title">导入设备</strong><small class="dashboard-quick-action__description">批量导入设备资产</small></span>
             <span class="dashboard-quick-action__chevron"><el-icon><ArrowRight /></el-icon></span>

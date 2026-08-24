@@ -1,6 +1,6 @@
 import { computed, nextTick, ref, type ComputedRef, type Ref } from "vue";
 import { type FormInstance, type FormRules } from "element-plus";
-import { flattenError, pageItems, pageTotal, type PageResult } from "../api";
+import { flattenError, isAbortError, pageItems, pageTotal, type PageResult } from "../api";
 import type {
   AuditLog,
   CustomField,
@@ -22,6 +22,7 @@ export interface SettingsDeps {
   confirmAction: (message: string) => Promise<boolean>;
   can: CapabilityFn;
   isAdmin: Ref<boolean>;
+  currentUsername: Ref<string>;
   settingsSection: Ref<SettingsSection>;
   dataCenters: Ref<DataCenter[]>;
   actionMessage: Ref<string>;
@@ -51,7 +52,7 @@ function extractFieldErrors(error: unknown, allowedFields: readonly string[]): F
 }
 
 export function useSettings(deps: SettingsDeps) {
-  const brands = ref<DictionaryItem[]>([]);
+  const manufacturers = ref<DictionaryItem[]>([]);
   const deviceTypes = ref<DictionaryItem[]>([]);
   const customFields = ref<CustomField[]>([]);
   const customFieldDeviceType = ref("");
@@ -118,6 +119,11 @@ export function useSettings(deps: SettingsDeps) {
   const userCount = ref(0);
   const showUserModal = ref(false);
   const editingUser = ref<ManagedUser | null>(null);
+  const showUserResetModal = ref(false);
+  const resettingUser = ref<ManagedUser | null>(null);
+  const userResetForm = ref({ new_password: "", confirm_password: "" });
+  const userResetSaving = ref(false);
+  const userResetFormErrors = ref<FormErrors>({});
   const userForm = ref({
     username: "",
     first_name: "",
@@ -129,13 +135,14 @@ export function useSettings(deps: SettingsDeps) {
     role_code: "auditor",
   });
   const userFormRef = ref<FormInstance>();
+  const userResetFormRef = ref<FormInstance>();
   const organizationLoading = ref(false);
   const userListError = ref("");
   const roleListError = ref("");
   const organizationRequestId = ref(0);
   const userRequestId = ref(0);
   const userSaving = ref(false);
-  const userActionId = ref<number | null>(null);
+  const userPendingId = ref<number | null>(null);
   const userFormErrors = ref<FormErrors>({});
   const userFormRules: FormRules = {
     username: [{ required: true, message: "请输入用户名", trigger: "blur" }],
@@ -168,11 +175,30 @@ export function useSettings(deps: SettingsDeps) {
       },
     ],
   };
-  const dictionarySection = ref<"brands" | "device-types" | "data-centers">("brands");
+  const userResetFormRules: FormRules = {
+    new_password: [
+      { required: true, message: "请输入新密码", trigger: "blur" },
+      { min: 8, message: "密码至少需要 8 位", trigger: ["blur", "change"] },
+    ],
+    confirm_password: [
+      { required: true, message: "请确认新密码", trigger: "blur" },
+      {
+        validator: (_rule, value, callback) => {
+          if (String(value || "") !== String(userResetForm.value.new_password || "")) {
+            callback(new Error("两次输入的密码不一致"));
+          } else {
+            callback();
+          }
+        },
+        trigger: ["blur", "change"],
+      },
+    ],
+  };
+  const dictionarySection = ref<"manufacturers" | "device-types" | "data-centers">("manufacturers");
   const dictionarySearch = ref("");
   const showDictionaryModal = ref(false);
   const editingDictionary = ref<DictionaryItem | DataCenter | null>(null);
-  const dictionaryForm = ref({ name: "", address: "", color: "#1677EF", is_active: true });
+  const dictionaryForm = ref({ name: "", code: "", address: "", color: "#1677EF", is_active: true });
   const dictionaryLoading = ref(false);
   const dictionaryError = ref("");
   const dictionaryRequestId = ref(0);
@@ -197,15 +223,6 @@ export function useSettings(deps: SettingsDeps) {
   const auditRequestId = ref(0);
 
   const organizationError = computed(() => userListError.value || roleListError.value);
-
-  function isAbortError(error: unknown) {
-    return Boolean(
-      error &&
-        typeof error === "object" &&
-        "name" in error &&
-        (error as { name?: string }).name === "AbortError",
-    );
-  }
 
   function errorMessage(error: unknown, fallback: string) {
     return error instanceof Error && error.message ? error.message : fallback;
@@ -235,14 +252,14 @@ export function useSettings(deps: SettingsDeps) {
       const dataCenterRequest = deps.can("racks.view")
         ? deps.request<PageResult<DataCenter> | DataCenter[]>(`/data-centers/?${dataCenterParams.toString()}`)
         : Promise.resolve<DataCenter[]>([]);
-      const [brandResult, deviceTypeResult, dataCenterResult] = await Promise.all([
-        deps.request<PageResult<DictionaryItem> | DictionaryItem[]>(`/brands/?${params.toString()}`),
+      const [manufacturerResult, deviceTypeResult, dataCenterResult] = await Promise.all([
+        deps.request<PageResult<DictionaryItem> | DictionaryItem[]>(`/manufacturers/?${params.toString()}`),
         deps.request<PageResult<DictionaryItem> | DictionaryItem[]>(`/device-types/?${params.toString()}`),
         dataCenterRequest,
       ]);
-      if (brandResult == null || deviceTypeResult == null || dataCenterResult == null) return false;
+      if (manufacturerResult == null || deviceTypeResult == null || dataCenterResult == null) return false;
       if (requestId !== dictionaryRequestId.value || !deps.isCurrentLoad(version)) return false;
-      brands.value = pageItems(brandResult);
+      manufacturers.value = pageItems(manufacturerResult);
       deviceTypes.value = pageItems(deviceTypeResult);
       deps.dataCenters.value = pageItems(dataCenterResult);
       return true;
@@ -352,7 +369,8 @@ export function useSettings(deps: SettingsDeps) {
         users.value = pageItems(userResult.value);
       } else {
         refreshed = false;
-        if (userRequestIdAtStart === userRequestId.value) {
+        const userError = userResult.status === "rejected" ? userResult.reason : undefined;
+        if (!isAbortError(userError) && userRequestIdAtStart === userRequestId.value) {
           userListError.value = userResult.status === "rejected"
             ? errorMessage(userResult.reason, "用户数据加载失败")
             : "用户数据加载失败";
@@ -362,9 +380,12 @@ export function useSettings(deps: SettingsDeps) {
         roles.value = pageItems(roleResult.value);
       } else {
         refreshed = false;
-        roleListError.value = roleResult.status === "rejected"
-          ? errorMessage(roleResult.reason, "角色数据加载失败")
-          : "角色数据加载失败";
+        const roleError = roleResult.status === "rejected" ? roleResult.reason : undefined;
+        if (!isAbortError(roleError)) {
+          roleListError.value = roleResult.status === "rejected"
+            ? errorMessage(roleResult.reason, "角色数据加载失败")
+            : "角色数据加载失败";
+        }
       }
       return refreshed;
     } catch (error) {
@@ -478,6 +499,24 @@ export function useSettings(deps: SettingsDeps) {
     nextTick(() => userFormRef.value?.clearValidate());
   }
 
+  function userProtectionReason(user: ManagedUser): string {
+    if (user.is_superuser) return "超级管理员账号受保护，不能停用或删除";
+    if (user.username === deps.currentUsername.value) return "不能停用或删除当前登录账号";
+    return "";
+  }
+
+  function canChangeUserRole(user: ManagedUser): boolean {
+    return !user.is_superuser && user.username !== deps.currentUsername.value;
+  }
+
+  function openUserResetModal(user: ManagedUser) {
+    resettingUser.value = user;
+    userResetForm.value = { new_password: "", confirm_password: "" };
+    userResetFormErrors.value = {};
+    showUserResetModal.value = true;
+    nextTick(() => userResetFormRef.value?.clearValidate());
+  }
+
   async function saveUser() {
     if (userSaving.value) return;
     userSaving.value = true;
@@ -491,13 +530,13 @@ export function useSettings(deps: SettingsDeps) {
         method,
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          username: userForm.value.username,
+          ...(!editingUser.value ? { username: userForm.value.username } : {}),
           first_name: userForm.value.first_name,
           last_name: userForm.value.last_name,
           email: userForm.value.email,
           is_active: userForm.value.is_active,
           role_code: userForm.value.role_code,
-          ...(userForm.value.password ? { password: userForm.value.password } : {}),
+          ...(!editingUser.value && userForm.value.password ? { password: userForm.value.password } : {}),
         }),
       });
       saved = true;
@@ -521,9 +560,41 @@ export function useSettings(deps: SettingsDeps) {
     if (!refreshed && userListError.value) deps.actionMessage.value = "用户账号已保存，但用户列表刷新失败，请重试";
   }
 
+  async function resetUserPassword() {
+    const user = resettingUser.value;
+    if (!user || userPendingId.value === user.id || userResetSaving.value) return;
+    userPendingId.value = user.id;
+    userResetSaving.value = true;
+    userResetFormErrors.value = {};
+    let saved = false;
+    try {
+      await deps.request(`/users/${user.id}/reset-password/`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(userResetForm.value),
+      });
+      saved = true;
+    } catch (error) {
+      userResetFormErrors.value = extractFieldErrors(error, ["new_password", "confirm_password"]);
+      deps.actionMessage.value = errorMessage(error, "密码重置失败");
+    } finally {
+      userResetSaving.value = false;
+      userPendingId.value = null;
+    }
+    if (!saved) return;
+    showUserResetModal.value = false;
+    resettingUser.value = null;
+    userResetForm.value = { new_password: "", confirm_password: "" };
+    deps.actionMessage.value = "用户密码已重置";
+  }
+
   async function toggleUser(user: ManagedUser) {
-    if (userActionId.value === user.id) return;
-    userActionId.value = user.id;
+    if (userProtectionReason(user)) {
+      deps.actionMessage.value = userProtectionReason(user);
+      return;
+    }
+    if (userPendingId.value === user.id) return;
+    userPendingId.value = user.id;
     try {
       await deps.request(`/users/${user.id}/`, {
         method: "PATCH",
@@ -536,13 +607,17 @@ export function useSettings(deps: SettingsDeps) {
     } catch (error) {
       deps.actionMessage.value = errorMessage(error, "用户状态更新失败");
     } finally {
-      userActionId.value = null;
+      userPendingId.value = null;
     }
   }
 
   async function deleteUser(user: ManagedUser) {
-    if (userActionId.value === user.id) return;
-    userActionId.value = user.id;
+    if (userProtectionReason(user)) {
+      deps.actionMessage.value = userProtectionReason(user);
+      return;
+    }
+    if (userPendingId.value === user.id) return;
+    userPendingId.value = user.id;
     try {
       if (!(await deps.confirmAction(`确定删除用户“${user.username}”吗？`))) return;
       await deps.request(`/users/${user.id}/`, { method: "DELETE" });
@@ -552,7 +627,7 @@ export function useSettings(deps: SettingsDeps) {
     } catch (error) {
       deps.actionMessage.value = errorMessage(error, "用户删除失败");
     } finally {
-      userActionId.value = null;
+      userPendingId.value = null;
     }
   }
 
@@ -842,18 +917,19 @@ export function useSettings(deps: SettingsDeps) {
   }
 
   const currentDictionaryItems = computed<Array<DictionaryItem | DataCenter>>(() =>
-    dictionarySection.value === "brands"
-      ? brands.value
+    dictionarySection.value === "manufacturers"
+      ? manufacturers.value
       : dictionarySection.value === "device-types"
         ? deviceTypes.value
         : deps.dataCenters.value,
   );
   const currentDictionaryLabel = computed(() =>
-    dictionarySection.value === "brands" ? "品牌" : dictionarySection.value === "device-types" ? "设备类型" : "数据中心",
+    dictionarySection.value === "manufacturers" ? "厂商" : dictionarySection.value === "device-types" ? "设备类型" : "数据中心",
   );
   function dictionaryItemUsed(item: DictionaryItem | DataCenter) {
     return (
       (item.assets_count || 0) > 0 ||
+      (dictionarySection.value === "manufacturers" && ((item as DictionaryItem).licenses_count || 0) > 0) ||
       (dictionarySection.value === "data-centers" && ((item as DataCenter).rooms_count || 0) > 0)
     );
   }
@@ -863,11 +939,12 @@ export function useSettings(deps: SettingsDeps) {
     dictionaryForm.value = item
       ? {
           name: item.name,
+          code: "code" in item ? item.code || "" : "",
           address: "address" in item ? item.address || "" : "",
           color: "color" in item ? item.color || "#1677EF" : "#1677EF",
           is_active: item.is_active,
         }
-      : { name: "", address: "", color: "#1677EF", is_active: true };
+      : { name: "", code: "", address: "", color: "#1677EF", is_active: true };
     showDictionaryModal.value = true;
   }
   function retryDictionaries() {
@@ -885,10 +962,11 @@ export function useSettings(deps: SettingsDeps) {
     dictionaryFormErrors.value = {};
     let saved = false;
     try {
-      const base = section === "brands" ? "brands" : section === "device-types" ? "device-types" : "data-centers";
+      const base = section === "manufacturers" ? "manufacturers" : section === "device-types" ? "device-types" : "data-centers";
       const method = editingDictionary.value ? "PATCH" : "POST";
       const path = editingDictionary.value ? `/${base}/${editingDictionary.value.id}/` : `/${base}/`;
       dictionaryForm.value.name = dictionaryForm.value.name.trim();
+      dictionaryForm.value.code = dictionaryForm.value.code.trim();
       dictionaryForm.value.address = dictionaryForm.value.address.trim();
       dictionaryForm.value.color = dictionaryForm.value.color.trim().toUpperCase();
       const payload = section === "device-types"
@@ -903,11 +981,13 @@ export function useSettings(deps: SettingsDeps) {
               address: dictionaryForm.value.address,
               is_active: dictionaryForm.value.is_active,
             }
-          : { name: dictionaryForm.value.name, is_active: dictionaryForm.value.is_active };
+          : section === "manufacturers"
+            ? { name: dictionaryForm.value.name, code: dictionaryForm.value.code || null, is_active: dictionaryForm.value.is_active }
+            : { name: dictionaryForm.value.name, is_active: dictionaryForm.value.is_active };
       await deps.request(path, { method, headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload) });
       saved = true;
     } catch (error) {
-      dictionaryFormErrors.value = extractFieldErrors(error, ["name", "address", "color"]);
+      dictionaryFormErrors.value = extractFieldErrors(error, ["name", "code", "address", "color"]);
       deps.actionMessage.value = errorMessage(error, `${label}保存失败`);
     } finally {
       dictionarySaving.value = false;
@@ -928,7 +1008,7 @@ export function useSettings(deps: SettingsDeps) {
     }
     dictionaryActionId.value = item.id;
     try {
-      const base = section === "brands" ? "brands" : section === "device-types" ? "device-types" : "data-centers";
+      const base = section === "manufacturers" ? "manufacturers" : section === "device-types" ? "device-types" : "data-centers";
       await deps.request(`/${base}/${item.id}/`, { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ is_active: !item.is_active }) });
       deps.actionMessage.value = item.is_active ? `${label}已停用` : `${label}已启用`;
       const refreshed = await loadDictionaries();
@@ -941,7 +1021,11 @@ export function useSettings(deps: SettingsDeps) {
   }
   async function deleteDictionary(item: DictionaryItem) {
     if (dictionaryItemUsed(item)) {
-      deps.actionMessage.value = dictionarySection.value === "data-centers" ? "数据中心仍包含机房或资产，不能删除，请先停用" : "字典项正在被资产使用，请先停用";
+      deps.actionMessage.value = dictionarySection.value === "data-centers"
+        ? "数据中心仍包含机房或资产，不能删除，请先停用"
+        : dictionarySection.value === "manufacturers"
+          ? "厂商正在被资产或软件许可使用，不能删除，请先停用"
+          : "字典项正在被资产使用，请先停用";
       return;
     }
     if (dictionaryActionId.value === item.id) return;
@@ -954,7 +1038,7 @@ export function useSettings(deps: SettingsDeps) {
     dictionaryActionId.value = item.id;
     try {
       if (!(await deps.confirmAction(`确定删除${label}“${item.name}”吗？`))) return;
-      const base = section === "brands" ? "brands" : section === "device-types" ? "device-types" : "data-centers";
+      const base = section === "manufacturers" ? "manufacturers" : section === "device-types" ? "device-types" : "data-centers";
       await deps.request(`/${base}/${item.id}/`, { method: "DELETE" });
       deps.actionMessage.value = `${label}已删除`;
       const refreshed = await loadDictionaries();
@@ -1020,7 +1104,7 @@ export function useSettings(deps: SettingsDeps) {
   }
 
   return {
-    brands,
+    manufacturers,
     deviceTypes,
     customFields,
     customFieldDeviceType,
@@ -1063,12 +1147,19 @@ export function useSettings(deps: SettingsDeps) {
     userForm,
     userFormRef,
     userFormRules,
+    showUserResetModal,
+    resettingUser,
+    userResetForm,
+    userResetFormRef,
+    userResetFormRules,
+    userResetSaving,
+    userResetFormErrors,
     organizationLoading,
     organizationError,
     userListError,
     roleListError,
     userSaving,
-    userActionId,
+    userPendingId,
     userFormErrors,
     dictionarySection,
     dictionarySearch,
@@ -1105,6 +1196,10 @@ export function useSettings(deps: SettingsDeps) {
     retryAuditLogs,
     openUserModal,
     saveUser,
+    openUserResetModal,
+    resetUserPassword,
+    userProtectionReason,
+    canChangeUserRole,
     toggleUser,
     deleteUser,
     openCustomFieldModal,

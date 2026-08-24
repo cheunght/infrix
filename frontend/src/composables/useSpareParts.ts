@@ -1,5 +1,5 @@
 import { ref, type Ref } from "vue";
-import { pageItems, pageTotal, type PageResult } from "../api";
+import { buildExportQuery, isAbortError, pageItems, pageTotal, type PageResult } from "../api";
 import type { DataCenter, ServerRoom, SparePart, SpareStock, SpareTransaction } from "../types";
 import type { CapabilityFn, RequestFn } from "../types/page-context";
 
@@ -12,6 +12,7 @@ export type SpareOperationLocation = {
 
 export interface SparePartsDeps {
   request: RequestFn;
+  download: (path: string, filename?: string) => Promise<void>;
   beginLoad: () => number;
   isCurrentLoad: (version: number) => boolean;
   confirmAction: (message: string) => Promise<boolean>;
@@ -43,7 +44,7 @@ export function useSpareParts(deps: SparePartsDeps) {
   const spareRoom = ref("");
   const spareSelectedPart = ref<SparePart | null>(null);
   const sparePartForm = ref({
-    name: "", part_type: "other", brand: "", model: "", specification: "", unit: "件", is_active: true, notes: "",
+    name: "", part_type: "other", manufacturer: "", model: "", specification: "", unit: "件", is_active: true, notes: "",
   });
   const showSparePartModal = ref(false);
   const editingSparePart = ref<SparePart | null>(null);
@@ -52,6 +53,7 @@ export function useSpareParts(deps: SparePartsDeps) {
   const updatingSparePartId = ref<number | null>(null);
   const spareListLoading = ref(false);
   const spareListError = ref("");
+  const exportingSpares = ref(false);
   const spareListRequestId = ref(0);
   let spareListController: AbortController | null = null;
   const selectedDataRequestId = ref(0);
@@ -97,8 +99,12 @@ export function useSpareParts(deps: SparePartsDeps) {
     return Math.max(1, Math.ceil(total / Math.max(1, pageSize)));
   }
 
-  function listParams() {
-    const params = new URLSearchParams({ page: String(sparePage.value), page_size: String(sparePageSize.value) });
+  function listParams(includePagination = true) {
+    const params = new URLSearchParams();
+    if (includePagination) {
+      params.set("page", String(sparePage.value));
+      params.set("page_size", String(sparePageSize.value));
+    }
     if (spareSearch.value.trim()) params.set("search", spareSearch.value.trim());
     if (spareType.value) params.set("part_type", spareType.value);
     if (spareActive.value) params.set("is_active", spareActive.value);
@@ -122,7 +128,6 @@ export function useSpareParts(deps: SparePartsDeps) {
         deps.request<PageResult<SparePart> | SparePart[]>(`/spare-parts/?${listParams().toString()}`, { signal: controller.signal }),
         deps.request<PageResult<ServerRoom> | ServerRoom[]>("/server-rooms/?page_size=100&is_active=true", { signal: controller.signal }),
       ]);
-      // useApiClient resolves intentionally aborted requests to undefined.
       if (partResult == null || roomResult == null) return false;
       if (requestId !== spareListRequestId.value || !deps.isCurrentLoad(version)) return false;
 
@@ -145,7 +150,7 @@ export function useSpareParts(deps: SparePartsDeps) {
       }
       return true;
     } catch (error) {
-      if (requestId === spareListRequestId.value && deps.isCurrentLoad(version)) {
+      if (requestId === spareListRequestId.value && deps.isCurrentLoad(version) && !isAbortError(error)) {
         spareListError.value = errorMessage(error, "备件数据加载失败");
       }
       return false;
@@ -183,6 +188,36 @@ export function useSpareParts(deps: SparePartsDeps) {
   function retrySpareList() { void loadSpareData(); }
   function changeSparePage(page: number) { sparePage.value = Math.max(1, page); void loadSpareData(); }
   function changeSparePageSize(size: number) { sparePageSize.value = size; sparePage.value = 1; void loadSpareData(); }
+
+  async function exportSpareParts() {
+    if (exportingSpares.value) return;
+    exportingSpares.value = true;
+    const query = buildExportQuery(listParams(false));
+    try {
+      await deps.download(`/reports/spare-parts/export/${query ? `?${query}` : ""}`, "备件管理.xlsx");
+    } catch (error) {
+      deps.actionMessage.value = errorMessage(error, "导出失败，请稍后重试");
+    } finally {
+      exportingSpares.value = false;
+    }
+  }
+
+  async function exportSpareTransactions(partId: number) {
+    if (exportingSpares.value) return;
+    exportingSpares.value = true;
+    const params = new URLSearchParams({ part: String(partId) });
+    if (spareTransactionFilters.value.operation_type) {
+      params.set("operation_type", spareTransactionFilters.value.operation_type);
+    }
+    const query = buildExportQuery(params);
+    try {
+      await deps.download(`/reports/spare-transactions/export/${query ? `?${query}` : ""}`, "备件流水.xlsx");
+    } catch (error) {
+      deps.actionMessage.value = errorMessage(error, "导出失败，请稍后重试");
+    } finally {
+      exportingSpares.value = false;
+    }
+  }
 
   function selectSparePart(part: SparePart | null, resetFilters = true) {
     spareSelectedPart.value = part;
@@ -244,7 +279,7 @@ export function useSpareParts(deps: SparePartsDeps) {
       stockLocationTotalsByPart.value = { ...stockLocationTotalsByPart.value, [partId]: pageTotal(result) };
       stockLocationLoadedByPart.value = { ...stockLocationLoadedByPart.value, [partId]: true };
     } catch (error) {
-      if (stockLocationRequestIds.get(partId) === serial) {
+      if (stockLocationRequestIds.get(partId) === serial && !isAbortError(error)) {
         stockLocationErrorByPart.value = { ...stockLocationErrorByPart.value, [partId]: errorMessage(error, "库存地点加载失败") };
       }
     } finally {
@@ -287,7 +322,7 @@ export function useSpareParts(deps: SparePartsDeps) {
       transactionRows.value = pageItems(result);
       transactionCount.value = nextCount;
     } catch (error) {
-      if (requestId === transactionRequestId.value) {
+      if (requestId === transactionRequestId.value && !isAbortError(error)) {
         transactionError.value = errorMessage(error, "库存流水加载失败");
       }
     } finally {
@@ -315,8 +350,8 @@ export function useSpareParts(deps: SparePartsDeps) {
   function openSparePartModal(part?: SparePart) {
     editingSparePart.value = part || null;
     sparePartForm.value = part
-      ? { name: part.name, part_type: part.part_type, brand: part.brand ? String(part.brand) : "", model: part.model || "", specification: part.specification || "", unit: part.unit || "件", is_active: part.is_active, notes: part.notes || "" }
-      : { name: "", part_type: "other", brand: "", model: "", specification: "", unit: "件", is_active: true, notes: "" };
+      ? { name: part.name, part_type: part.part_type, manufacturer: part.manufacturer ? String(part.manufacturer) : "", model: part.model || "", specification: part.specification || "", unit: part.unit || "件", is_active: part.is_active, notes: part.notes || "" }
+      : { name: "", part_type: "other", manufacturer: "", model: "", specification: "", unit: "件", is_active: true, notes: "" };
     showSparePartModal.value = true;
   }
 
@@ -325,7 +360,7 @@ export function useSpareParts(deps: SparePartsDeps) {
     spareSaving.value = true;
     try {
       const path = editingSparePart.value ? `/spare-parts/${editingSparePart.value.id}/` : "/spare-parts/";
-      await deps.request(path, { method: editingSparePart.value ? "PATCH" : "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ ...sparePartForm.value, brand: sparePartForm.value.brand ? Number(sparePartForm.value.brand) : null }) });
+      await deps.request(path, { method: editingSparePart.value ? "PATCH" : "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ ...sparePartForm.value, manufacturer: sparePartForm.value.manufacturer ? Number(sparePartForm.value.manufacturer) : null }) });
     } catch (error) {
       deps.actionMessage.value = errorMessage(error, "备件保存失败");
       return false;
@@ -428,7 +463,7 @@ export function useSpareParts(deps: SparePartsDeps) {
     sparePage, sparePageSize, spareStockPage, spareStockPageSize, spareTransactionPage, spareTransactionPageSize,
     spareRooms, spareSearch, spareType, spareActive, spareListDataCenter, spareListRoom, spareDataCenter, spareRoom,
     spareSelectedPart, sparePartForm, showSparePartModal, editingSparePart, spareSaving, deletingSparePartId, updatingSparePartId,
-    spareListLoading, spareListError, loadSpareData, refreshSparePart, searchSpareParts, resetSpareFilters, retrySpareList,
+    spareListLoading, spareListError, exportingSpares, loadSpareData, refreshSparePart, searchSpareParts, resetSpareFilters, retrySpareList,
     spareOperationType, spareOperationForm, showSpareOperationModal, spareOperationSaving, spareOperationCurrentQuantity,
     spareOperationLocationLabel, spareOperationLocationLocked, spareTransactionFilters,
     stockLocations, stockLoading, stockLocationLoadingByPart, stockLocationErrorByPart, stockLocationTotalsByPart,
@@ -436,6 +471,6 @@ export function useSpareParts(deps: SparePartsDeps) {
     transactionLoading, transactionError, loadTransactions, changeTransactionPage, changeTransactionPageSize,
     changeSparePage, changeSparePageSize, selectSparePart, changeSpareStockPage, changeSpareStockPageSize,
     changeSpareTransactionPage, changeSpareTransactionPageSize, openSparePartModal, saveSparePart, toggleSparePart,
-    deleteSparePart, openSpareOperation, saveSpareOperation, spareOperationLabel,
+    deleteSparePart, openSpareOperation, saveSpareOperation, spareOperationLabel, exportSpareParts, exportSpareTransactions,
   };
 }

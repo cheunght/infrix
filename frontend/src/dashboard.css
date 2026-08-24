@@ -119,6 +119,30 @@
   font-size: 28px;
 }
 
+/* Keep every KPI's leading icon and content column in the same place while
+   letting the content column absorb the card's available width. */
+.dashboard-kpi-row .statistic-card__body {
+  display: grid;
+  grid-template-columns: 64px minmax(0, 1fr);
+  column-gap: 22px;
+}
+
+.dashboard-kpi-row .statistic-card__icon {
+  width: 56px;
+  min-width: 56px;
+  height: 56px;
+  justify-self: center;
+}
+
+.dashboard-kpi-row .statistic-card__icon img {
+  width: 44px;
+  height: 44px;
+}
+
+.dashboard-kpi-row .statistic-card__content {
+  min-width: 0;
+}
+
 .dashboard-overview-row,
 .dashboard-summary-row {
   display: grid;
@@ -211,12 +235,13 @@
 
 .dashboard-attention-card {
   display: grid;
-  grid-template-columns: auto minmax(0, 1fr) auto;
+  grid-template-columns: 64px minmax(0, 1fr) 28px;
+  grid-template-areas: "icon content action";
   align-items: center;
-  gap: var(--space-md);
+  column-gap: 22px;
   min-width: 0;
   min-height: 104px;
-  padding: var(--space-md) var(--space-lg);
+  padding: 18px var(--space-lg);
   border: 1px solid var(--color-border-soft);
   border-radius: var(--radius-lg);
   background: var(--color-surface);
@@ -239,10 +264,20 @@
 .dashboard-attention-card__icon {
   display: grid;
   place-items: center;
-  width: 38px;
-  height: 38px;
+  width: 56px;
+  min-width: 56px;
+  height: 56px;
+  grid-area: icon;
+  justify-self: center;
   border-radius: var(--radius-md);
   font-size: 20px;
+}
+
+.dashboard-attention-card__icon img {
+  display: block;
+  width: 44px;
+  height: 44px;
+  object-fit: contain;
 }
 
 .dashboard-attention-card--fault .dashboard-attention-card__icon {
@@ -262,6 +297,7 @@
 
 .dashboard-attention-card__content {
   display: grid;
+  grid-area: content;
   min-width: 0;
   gap: 3px;
 }
@@ -314,6 +350,14 @@
 .dashboard-attention-risk-link.el-button:hover,
 .dashboard-attention-risk-link.el-button:focus-visible {
   color: var(--el-color-primary);
+}
+
+.dashboard-attention-card__action {
+  display: grid;
+  place-items: center;
+  width: 28px;
+  min-width: 28px;
+  grid-area: action;
 }
 
 .dashboard-attention-card__arrow {

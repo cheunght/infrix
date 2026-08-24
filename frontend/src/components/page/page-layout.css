@@ -214,6 +214,15 @@ header.page-header.page-header--compact {
   gap: var(--space-sm);
 }
 
+/* Export is a secondary toolbar action that sits beside the fixed-width
+   primary action. Let the action rail grow without changing the filter grid. */
+.page-toolbar > .toolbar-primary-action:has(.toolbar-export-action),
+.page-toolbar__actions:has(.toolbar-export-action) {
+  width: max-content;
+  min-width: max-content;
+  max-width: none;
+}
+
 .page-toolbar .el-button + .el-button,
 .page-toolbar .el-upload + .el-button,
 .page-toolbar .el-button + .el-upload {

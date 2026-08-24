@@ -2,6 +2,13 @@
 import { computed, toRefs } from "vue";
 import type { AssetDetail, InventoryItem } from "../types";
 import { statusLabel } from "../status";
+import {
+  depreciationMethodLabel,
+  depreciationStatusLabel,
+  formatDepreciationProgress,
+  formatMoneyDecimalString,
+  formatResidualRate,
+} from "../depreciation";
 import StatusTag, { type StatusTagType } from "./StatusTag.vue";
 import DynamicFieldDisplay from "./fields/DynamicFieldDisplay.vue";
 
@@ -91,8 +98,8 @@ const basicFields = computed<DetailField[]>(() => {
   if (!current) return [];
   return [
     makeField("设备类型", current.device_type_name || current.asset_type),
-    makeField("品牌", current.brand_name),
-    makeField("型号", current.model_name || current.model || current.brand_model),
+    makeField("厂商", current.manufacturer_name),
+    makeField("型号", current.model_name || current.model || current.manufacturer_model),
     makeField("序列号", current.serial_number),
     makeField("用途", current.purpose),
     makeField("使用人", current.owner_name),
@@ -147,6 +154,39 @@ const hasLocationFields = computed(() => visibleLocationFields.value.length > 0)
 const hasNetworkFields = computed(() => visibleNetworkFields.value.length > 0);
 const hasNotes = computed(() => hasContent(asset.value?.notes));
 const inventoryRecords = computed(() => asset.value?.inventory_records || []);
+
+const depreciation = computed(() => asset.value?.depreciation || null);
+const depreciationStatus = computed(() => depreciation.value?.status || "unconfigured");
+const depreciationStatusText = computed(() => depreciationStatus.value === "not_started"
+  ? "折旧尚未开始"
+  : depreciationStatusLabel(depreciationStatus.value));
+const depreciationProgressText = computed(() => formatDepreciationProgress(
+  depreciation.value?.progress,
+  depreciation.value?.elapsed_months,
+  depreciation.value?.total_months,
+));
+const depreciationProgressWidth = computed(() => depreciationProgressText.value === "—" ? "0%" : depreciationProgressText.value);
+const depreciationConfigFields = computed<DetailField[]>(() => {
+  const current = depreciation.value;
+  if (!current || current.status === "unconfigured") return [];
+  return [
+    makeField("起算日", current.start_date),
+    makeField("折旧年限", current.years == null ? null : `${current.years} 年`),
+    makeField("残值率", formatResidualRate(current.residual_rate)),
+    makeField("折旧方法", depreciationMethodLabel(current.method)),
+  ];
+});
+const visibleDepreciationConfigFields = computed(() => fieldsWithContent(depreciationConfigFields.value));
+const depreciationMetricFields = computed<DetailField[]>(() => {
+  const current = depreciation.value;
+  if (!current || current.status === "unconfigured") return [];
+  return [
+    makeField("当前净值", formatMoneyDecimalString(current.net_book_value)),
+    makeField("累计折旧", formatMoneyDecimalString(current.accumulated_depreciation)),
+    makeField("资产原值", formatMoneyDecimalString(current.original_value)),
+    makeField("预计残值", formatMoneyDecimalString(current.residual_value)),
+  ];
+});
 
 const maintenanceExpiry = computed(() => {
   const current = asset.value;
@@ -312,6 +352,41 @@ function retryDetail() {
             </dd>
           </template>
         </dl>
+      </section>
+
+      <section class="asset-detail-section asset-depreciation-section">
+        <h3>折旧信息</h3>
+        <div v-if="depreciationStatus === 'unconfigured'" class="asset-depreciation-empty">未配置折旧</div>
+        <template v-else>
+          <div class="asset-depreciation-status-row">
+            <span>状态</span>
+            <strong>{{ depreciationStatusText }}</strong>
+          </div>
+          <div class="asset-depreciation-metrics">
+            <div v-for="field in depreciationMetricFields" :key="field.label" class="asset-depreciation-metric">
+              <span>{{ field.label }}</span>
+              <strong>{{ field.value }}</strong>
+            </div>
+          </div>
+          <div class="asset-depreciation-progress">
+            <div class="asset-depreciation-progress__heading">
+              <span>折旧进度</span>
+              <strong>{{ depreciationProgressText }}</strong>
+            </div>
+            <div class="asset-depreciation-progress__track" aria-hidden="true">
+              <span :style="{ width: depreciationProgressWidth }" />
+            </div>
+            <span v-if="depreciation?.elapsed_months != null && depreciation?.total_months != null" class="asset-depreciation-progress__detail">
+              {{ depreciation.elapsed_months }} / {{ depreciation.total_months }} 个月
+            </span>
+          </div>
+          <dl v-if="visibleDepreciationConfigFields.length" class="asset-detail-fields asset-depreciation-config">
+            <template v-for="field in visibleDepreciationConfigFields" :key="field.label">
+              <dt>{{ field.label }}</dt>
+              <dd>{{ field.value }}</dd>
+            </template>
+          </dl>
+        </template>
       </section>
 
       <section v-if="latestInventoryRecord" class="asset-detail-section">

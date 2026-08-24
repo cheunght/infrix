@@ -1,13 +1,14 @@
 <script setup lang="ts">
 import { computed, nextTick, ref, watch } from "vue";
 import type { FormInstance, FormRules } from "element-plus";
-import { Filter, List, Loading, MoreFilled } from "@element-plus/icons-vue";
+import { Download, Filter, List, Loading, MoreFilled } from "@element-plus/icons-vue";
 import PagedTable from "./PagedTable.vue";
 import SearchField from "./SearchField.vue";
 import PageContainer from "./page/PageContainer.vue";
 import PageContent from "./page/PageContent.vue";
 import PageToolbar from "./page/PageToolbar.vue";
 import StatusTag from "./StatusTag.vue";
+import FormDialogShell from "./FormDialogShell.vue";
 import type { DataCenter, DictionaryItem, ServerRoom, SparePart, SpareStock, SpareTransaction } from "../types";
 import type { SpareContext } from "../types/page-context";
 
@@ -17,11 +18,12 @@ const {
   can, spareParts, sparePartCount, sparePage, sparePageSize, spareSearch, spareType,
   spareListDataCenter, spareListRoom, spareRooms, sparePartForm, editingSparePart, showSparePartModal,
   spareSaving, deletingSparePartId, updatingSparePartId, spareListLoading, spareListError,
+  exportingSpares,
   openSparePartModal, saveSparePart, toggleSparePart, deleteSparePart, searchSpareParts,
-  resetSpareFilters, retrySpareList, changeSparePage, changeSparePageSize,
+  resetSpareFilters, retrySpareList, changeSparePage, changeSparePageSize, exportSpareParts, exportSpareTransactions,
   openSpareOperation, spareOperationType, spareOperationForm, showSpareOperationModal,
   spareOperationSaving, spareOperationCurrentQuantity, spareOperationLocationLabel, spareOperationLocationLocked,
-  saveSpareOperation, spareOperationLabel, dataCenters, brands,
+  saveSpareOperation, spareOperationLabel, dataCenters, manufacturers,
   stockLocations, stockLocationLoadingByPart, stockLocationErrorByPart, stockLocationTotalsByPart,
   stockLocationLoadedByPart, loadStockLocations: loadStockLocationsInContext, transactionRows, transactionCount,
   transactionPage, transactionPageSize, transactionLoading, transactionError, loadTransactions: loadTransactionsInContext,
@@ -34,7 +36,7 @@ const partTypes = [
   { value: "network_card", label: "网卡" }, { value: "hba_card", label: "HBA 卡" },
   { value: "fan", label: "风扇" }, { value: "raid_card", label: "RAID 卡" }, { value: "other", label: "其他" },
 ];
-const activeBrands = computed(() => (brands.value as DictionaryItem[]).filter((item) => item.is_active));
+const activeManufacturers = computed(() => (manufacturers.value as DictionaryItem[]).filter((item) => item.is_active));
 const activeDataCenters = computed(() => (dataCenters.value as DataCenter[]).filter((item) => item.is_active));
 const hasSpareFilters = computed(() => Boolean(
   spareSearch.value.trim() || spareType.value || spareListDataCenter.value || spareListRoom.value,
@@ -149,7 +151,7 @@ watch(showSpareOperationModal, (open, wasOpen) => { if (!open && wasOpen) refres
       <template #toolbar>
         <PageToolbar>
           <template #search>
-            <SearchField v-model="spareSearch" placeholder="搜索备件名称、类型、品牌或型号" aria-label="搜索备件" :loading="spareListLoading" @search="searchSpareParts" />
+            <SearchField v-model="spareSearch" placeholder="搜索备件名称、类型、厂商或型号" aria-label="搜索备件" :loading="spareListLoading" @search="searchSpareParts" />
           </template>
           <template #primary-filter>
             <el-select v-model="spareType" placeholder="全部类型" clearable @change="searchSpareParts"><el-option v-for="item in partTypes" :key="item.value" :label="item.label" :value="item.value" /></el-select>
@@ -171,6 +173,9 @@ watch(showSpareOperationModal, (open, wasOpen) => { if (!open && wasOpen) refres
             </div>
           </template>
           <template #actions>
+            <el-button v-if="can('spares.export')" class="toolbar-secondary-action toolbar-export-action" :icon="Download" :loading="exportingSpares" :disabled="exportingSpares" @click="exportSpareParts">
+              导出数据
+            </el-button>
             <el-button v-if="can('spares.manage')" class="page-primary-action" type="primary" @click="openSparePartModal()">新增备件</el-button>
           </template>
         </PageToolbar>
@@ -216,7 +221,7 @@ watch(showSpareOperationModal, (open, wasOpen) => { if (!open && wasOpen) refres
             <el-table-column label="备件" min-width="220">
               <template #default="{ row }"><div class="spare-part-cell"><strong class="spare-part-cell__name" :title="row.name">{{ row.name }}</strong><span class="spare-part-cell__meta" :title="`${row.part_type_label || row.part_type}${row.specification ? ` · ${row.specification}` : ''}`">{{ row.part_type_label || row.part_type }}<template v-if="row.specification"> · {{ row.specification }}</template></span></div></template>
             </el-table-column>
-            <el-table-column prop="brand_name" label="品牌" min-width="120" show-overflow-tooltip />
+            <el-table-column prop="manufacturer_name" label="厂商" min-width="120" show-overflow-tooltip />
             <el-table-column prop="model" label="型号" min-width="130" show-overflow-tooltip />
             <el-table-column label="库存" width="120"><template #default="{ row }"><div class="spare-stock-summary"><strong>{{ row.total_quantity || 0 }} {{ row.unit }}</strong><span>{{ row.location_count || 0 }} 个库存地点</span></div></template></el-table-column>
             <el-table-column label="状态" width="90"><template #default="{ row }"><StatusTag :type="row.is_active ? 'success' : 'info'" :label="row.is_active ? '启用' : '停用'" /></template></el-table-column>
@@ -226,12 +231,45 @@ watch(showSpareOperationModal, (open, wasOpen) => { if (!open && wasOpen) refres
       </PageContent>
     </PageContainer>
 
-    <el-dialog v-model="showSparePartModal" :title="editingSparePart ? '编辑备件' : '新增备件'" width="620px" destroy-on-close @open="handleSparePartModalOpened">
+    <FormDialogShell
+      v-model="showSparePartModal"
+      :title="editingSparePart ? '编辑备件' : '新增备件'"
+      description="维护备件基础信息和计量单位"
+      size="medium"
+      :saving="spareSaving"
+      :close-on-click-modal="!spareSaving"
+      :close-on-press-escape="!spareSaving"
+      :show-close="!spareSaving"
+      :close-disabled="spareSaving"
+      @open="handleSparePartModalOpened"
+    >
       <el-form ref="sparePartFormRef" :model="sparePartForm" :rules="sparePartRules" label-position="top" @submit.prevent="handleSaveSparePart">
-        <div class="form-grid"><el-form-item label="备件名称" prop="name"><el-input v-model="sparePartForm.name" /></el-form-item><el-form-item label="备件类型" prop="part_type"><el-select v-model="sparePartForm.part_type"><el-option v-for="item in partTypes" :key="item.value" :label="item.label" :value="item.value" /></el-select></el-form-item><el-form-item label="品牌"><el-select v-model="sparePartForm.brand" clearable placeholder="未关联品牌"><el-option v-for="brand in activeBrands" :key="brand.id" :label="brand.name" :value="String(brand.id)" /></el-select></el-form-item><el-form-item label="型号"><el-input v-model="sparePartForm.model" /></el-form-item><el-form-item label="规格"><el-input v-model="sparePartForm.specification" /></el-form-item><el-form-item label="计量单位" prop="unit"><el-input v-model="sparePartForm.unit" /></el-form-item><el-form-item label="备注" class="full-width"><el-input v-model="sparePartForm.notes" type="textarea" :rows="2" /></el-form-item></div><el-checkbox v-model="sparePartForm.is_active">启用</el-checkbox>
+        <section class="form-dialog__section">
+          <h3 class="form-dialog__section-title">基本信息</h3>
+          <div class="form-dialog__grid">
+            <el-form-item label="备件名称" prop="name"><el-input v-model="sparePartForm.name" /></el-form-item>
+            <el-form-item label="备件类型" prop="part_type"><el-select v-model="sparePartForm.part_type"><el-option v-for="item in partTypes" :key="item.value" :label="item.label" :value="item.value" /></el-select></el-form-item>
+            <el-form-item label="厂商"><el-select v-model="sparePartForm.manufacturer" clearable placeholder="未关联厂商"><el-option v-for="manufacturer in activeManufacturers" :key="manufacturer.id" :label="manufacturer.name" :value="String(manufacturer.id)" /></el-select></el-form-item>
+            <el-form-item label="型号"><el-input v-model="sparePartForm.model" /></el-form-item>
+            <el-form-item label="规格"><el-input v-model="sparePartForm.specification" /></el-form-item>
+            <el-form-item label="计量单位" prop="unit"><el-input v-model="sparePartForm.unit" /></el-form-item>
+          </div>
+        </section>
+        <section class="form-dialog__section">
+          <h3 class="form-dialog__section-title">状态与备注</h3>
+          <div class="form-dialog__grid">
+            <el-form-item label="状态">
+              <el-checkbox v-model="sparePartForm.is_active">启用</el-checkbox>
+            </el-form-item>
+            <el-form-item label="备注" class="form-dialog__field--full"><el-input v-model="sparePartForm.notes" type="textarea" :rows="2" /></el-form-item>
+          </div>
+        </section>
       </el-form>
-      <template #footer><el-button @click="showSparePartModal = false">取消</el-button><el-button type="primary" :loading="spareSaving" @click="handleSaveSparePart">保存备件</el-button></template>
-    </el-dialog>
+      <template #footer>
+        <el-button :disabled="spareSaving" @click="showSparePartModal = false">取消</el-button>
+        <el-button type="primary" :loading="spareSaving" :disabled="spareSaving" @click="handleSaveSparePart">保存备件</el-button>
+      </template>
+    </FormDialogShell>
 
     <el-dialog v-model="showSpareOperationModal" :title="`${spareOperationLabel(spareOperationType)}库存`" width="620px" destroy-on-close>
       <el-form label-position="top" @submit.prevent="saveSpareOperation">
@@ -247,7 +285,7 @@ watch(showSpareOperationModal, (open, wasOpen) => { if (!open && wasOpen) refres
     </el-dialog>
 
     <el-drawer v-model="transactionDrawerOpen" title="库存流水" size="620px" destroy-on-close>
-      <div v-if="selectedPart" class="spare-transaction-drawer-title"><strong>{{ selectedPart.name }}</strong><span class="form-hint">{{ selectedPart.part_type_label }} · {{ selectedPart.unit }}</span></div>
+      <div v-if="selectedPart" class="spare-transaction-drawer-title"><div><strong>{{ selectedPart.name }}</strong><span class="form-hint">{{ selectedPart.part_type_label }} · {{ selectedPart.unit }}</span></div><el-button v-if="can('spares.export')" class="toolbar-secondary-action" :icon="Download" :loading="exportingSpares" :disabled="exportingSpares" @click="exportSpareTransactions(selectedPart.id)">导出流水</el-button></div>
       <div v-if="transactionError" class="spare-inline-error spare-transaction-error" role="alert"><span>库存流水加载失败：{{ transactionError }}</span><el-button link type="primary" :loading="transactionLoading" @click="retryTransactions">重新加载</el-button></div>
       <el-table v-loading="transactionLoading" :data="transactionRows"><template #empty><span v-if="!transactionError">暂无库存流水</span></template><el-table-column prop="created_at" label="时间" width="165" show-overflow-tooltip /><el-table-column prop="operation_type_label" label="操作" width="90" /><el-table-column label="数量" width="85"><template #default="{ row }">{{ row.quantity }} {{ row.unit }}</template></el-table-column><el-table-column label="地点" min-width="210" show-overflow-tooltip><template #default="{ row }">{{ transactionLocation(row) }}</template></el-table-column><el-table-column prop="operator_name" label="操作人" width="105" show-overflow-tooltip /><el-table-column prop="reference" label="用途" min-width="120" show-overflow-tooltip /><el-table-column prop="notes" label="备注" min-width="130" show-overflow-tooltip /></el-table>
       <PagedTable v-model:current-page="transactionPage" v-model:page-size="transactionPageSize" :total="transactionCount" :loading="transactionLoading" @update:current-page="changeTransactionPage" @update:page-size="changeTransactionPageSize" />
@@ -288,6 +326,8 @@ watch(showSpareOperationModal, (open, wasOpen) => { if (!open && wasOpen) refres
 .spare-inline-error { justify-content: flex-start; margin: 8px 0 0; padding: 8px 10px; }
 .spare-inline-error .el-button { margin-left: auto; }
 .spare-transaction-error { margin-bottom: 12px; }
+.spare-transaction-drawer-title > div { display: grid; min-width: 0; gap: 2px; }
+.spare-transaction-drawer-title > .el-button { margin-left: auto; }
 
 @media (max-width: 640px) {
   .spare-list-error, .spare-inline-error { align-items: flex-start; flex-direction: column; }

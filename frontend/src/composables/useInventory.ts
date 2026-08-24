@@ -1,6 +1,6 @@
 import { computed, onBeforeUnmount, ref } from "vue";
 import { ElMessage, ElMessageBox } from "element-plus";
-import { pageItems, pageTotal, type PageResult } from "../api";
+import { buildExportQuery, pageItems, pageTotal, type PageResult } from "../api";
 import type {
   InventoryBulkNormalResponse,
   InventoryBulkResolutionResponse,
@@ -36,6 +36,7 @@ export function useInventory(context: InventoryContext) {
   const resolutionSaving = ref(false);
   const bulkResolutionSaving = ref(false);
   const bulkNormalSaving = ref(false);
+  const exportingTaskId = ref<number | null>(null);
 
   const tasks = ref<InventoryTask[]>([]);
   const taskCount = ref(0);
@@ -483,6 +484,18 @@ export function useInventory(context: InventoryContext) {
     }
   }
 
+  function itemQueryParams(includePagination = true) {
+    const params = new URLSearchParams();
+    if (includePagination) {
+      params.set("page", String(itemPage.value));
+      params.set("page_size", String(itemPageSize.value));
+    }
+    if (itemSearch.value.trim()) params.set("search", itemSearch.value.trim());
+    if (itemStatus.value) params.set("status", itemStatus.value);
+    if (itemResolutionStatus.value) params.set("resolution_status", itemResolutionStatus.value);
+    return params;
+  }
+
   async function loadItems(corrected = false): Promise<boolean> {
     if (!activeTask.value) return false;
     clearBatchSelection();
@@ -494,13 +507,7 @@ export function useInventory(context: InventoryContext) {
     itemListLoading.value = true;
     itemListError.value = "";
     try {
-      const params = new URLSearchParams({
-        page: String(itemPage.value),
-        page_size: String(itemPageSize.value),
-      });
-      if (itemSearch.value.trim()) params.set("search", itemSearch.value.trim());
-      if (itemStatus.value) params.set("status", itemStatus.value);
-      if (itemResolutionStatus.value) params.set("resolution_status", itemResolutionStatus.value);
+      const params = itemQueryParams();
       const result = await context.request<PageResult<InventoryItem> | InventoryItem[]>(
         `/inventory-tasks/${taskId}/items/?${params}`,
         { signal: controller.signal },
@@ -812,14 +819,19 @@ export function useInventory(context: InventoryContext) {
   }
 
   async function exportTask(task = activeTask.value) {
-    if (!task) return;
+    if (!task || exportingTaskId.value !== null) return;
+    exportingTaskId.value = task.id;
+    const params = activeTask.value?.id === task.id ? itemQueryParams(false) : new URLSearchParams();
+    const query = buildExportQuery(params);
     try {
       await context.downloadFile(
-        `/inventory-tasks/${task.id}/export/`,
-        `inventory-${task.id}.xlsx`,
+        `/inventory-tasks/${task.id}/export/${query ? `?${query}` : ""}`,
+        "盘点结果.xlsx",
       );
     } catch (error) {
-      ElMessage.error(error instanceof Error ? error.message : "盘点结果导出失败");
+      ElMessage.error(error instanceof Error ? error.message : "导出失败，请稍后重试");
+    } finally {
+      if (exportingTaskId.value === task.id) exportingTaskId.value = null;
     }
   }
 
@@ -1390,6 +1402,7 @@ export function useInventory(context: InventoryContext) {
     resolutionSaving,
     bulkResolutionSaving,
     bulkNormalSaving,
+    exportingTaskId,
     tasks,
     taskCount,
     taskPage,

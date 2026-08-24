@@ -1,9 +1,6 @@
 from django.contrib import admin
 from .models import *
 
-for model in [Department, DataCenter, ServerRoom, Rack, Brand, DeviceType, CustomField, CustomFieldOption, Tag, SparePart, SoftwareLicense, Asset, AssetNetworkAddress, AssetCustomValue, AssetTag, RackUnitAllocation, ProcurementRecord, MaintenanceContract, FaultEvent, RepairRecord, AssetRelation, InventoryTask, InventoryItem]:
-    admin.site.register(model)
-
 
 class ReadOnlyInspectionAdmin(admin.ModelAdmin):
     """Allow staff to inspect immutable inventory records without mutation."""
@@ -34,6 +31,34 @@ class ReadOnlyInspectionAdmin(admin.ModelAdmin):
             "show_close": True,
         }
         return super().changeform_view(request, object_id, form_url, extra_context)
+
+
+for model in [
+    Department,
+    DataCenter,
+    ServerRoom,
+    Rack,
+    Manufacturer,
+    DeviceType,
+    CustomField,
+    CustomFieldOption,
+    Tag,
+    SparePart,
+    SoftwareLicense,
+    Asset,
+    AssetNetworkAddress,
+    AssetCustomValue,
+    AssetTag,
+    RackUnitAllocation,
+    ProcurementRecord,
+    MaintenanceContract,
+    FaultEvent,
+    RepairRecord,
+    AssetRelation,
+    InventoryTask,
+    InventoryItem,
+]:
+    admin.site.register(model, ReadOnlyInspectionAdmin)
 
 
 @admin.register(SpareStock)

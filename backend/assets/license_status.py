@@ -7,14 +7,13 @@ from django.utils import timezone
 
 from .models import SoftwareLicense
 
-LICENSE_STATUS_KEYS = ("normal", "expiring", "expired", "over_limit")
+LICENSE_STATUS_KEYS = ("normal", "expiring", "expired")
+LEGACY_LICENSE_STATUS_KEY = "over_limit"
 
 
 def license_status_value(obj, today=None):
     """Return the mutually-exclusive status used by the license UI."""
     today = today or timezone.localdate()
-    if obj.used_count > obj.authorized_count:
-        return "over_limit"
     if obj.expiry_date and obj.expiry_date < today:
         return "expired"
     if obj.expiry_date and obj.expiry_date <= today + timedelta(days=90):
@@ -27,7 +26,6 @@ def license_status_expression(today=None):
     today = today or timezone.localdate()
     expiry_limit = today + timedelta(days=90)
     return Case(
-        When(used_count__gt=F("authorized_count"), then=Value("over_limit")),
         When(expiry_date__lt=today, then=Value("expired")),
         When(
             expiry_date__gte=today,
@@ -45,7 +43,9 @@ def filter_licenses_by_status(queryset, status, today=None):
     expiry_limit = today + timedelta(days=90)
     within_limit = Q(used_count__lte=F("authorized_count"))
     if status == "over_limit":
-        return queryset.filter(used_count__gt=F("authorized_count"))
+        # Kept as a safe compatibility query for older clients. Current
+        # writes and the database constraint make this status unreachable.
+        return queryset.none()
     if status == "expired":
         return queryset.filter(within_limit, expiry_date__lt=today)
     if status == "expiring":
@@ -58,12 +58,13 @@ def filter_licenses_by_status(queryset, status, today=None):
         return queryset.filter(within_limit).filter(
             Q(expiry_date__isnull=True) | Q(expiry_date__gt=expiry_limit)
         )
-    return queryset
+    return queryset.filter(within_limit)
 
 
 def license_status_counts(queryset=None, today=None):
     """Return one mutually-exclusive count for every license status."""
     queryset = queryset if queryset is not None else SoftwareLicense.objects.all()
+    queryset = queryset.filter(used_count__lte=F("authorized_count"))
     rows = (
         queryset.annotate(_license_status=license_status_expression(today))
         .values("_license_status")
@@ -72,5 +73,7 @@ def license_status_counts(queryset=None, today=None):
     counts = {status: 0 for status in LICENSE_STATUS_KEYS}
     for row in rows:
         counts[row["_license_status"]] = row["count"]
-    counts["total"] = sum(counts.values())
+    # Keep the legacy response key without exposing it as a current status.
+    counts[LEGACY_LICENSE_STATUS_KEY] = 0
+    counts["total"] = sum(counts[status] for status in LICENSE_STATUS_KEYS)
     return counts

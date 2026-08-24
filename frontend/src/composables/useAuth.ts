@@ -1,5 +1,5 @@
 import type { Ref } from "vue";
-import { ApiError, flattenError } from "../api";
+import { ApiError, flattenError, isAbortError } from "../api";
 import type { RequestFn } from "../types/page-context";
 
 export interface AuthDeps {
@@ -23,6 +23,15 @@ export interface AuthDeps {
   passwordForm: Ref<{ old_password: string; new_password: string; confirm_password: string }>;
   passwordSaving: Ref<boolean>;
   passwordFormErrors: Ref<Record<string, string>>;
+  showProfileModal: Ref<boolean>;
+  profileForm: Ref<{ first_name: string; last_name: string; email: string }>;
+  profileLoading: Ref<boolean>;
+  profileSaving: Ref<boolean>;
+  profileError: Ref<string>;
+  profileFormErrors: Ref<Record<string, string>>;
+  roleName: Ref<string>;
+  userIsActive: Ref<boolean>;
+  lastLogin: Ref<string | null>;
   actionMessage: Ref<string>;
   settingsSection: Ref<string>;
 }
@@ -30,30 +39,50 @@ export interface AuthDeps {
 type AuthPayload = {
   username: string;
   display_name: string;
+  first_name?: string;
+  last_name?: string;
+  email?: string;
   is_staff: boolean;
+  is_admin?: boolean;
+  is_active?: boolean;
   role_code: string;
+  role_name?: string;
   permissions: string[];
   password_change_required: boolean;
+  last_login?: string | null;
 };
 
 export function useAuth(deps: AuthDeps) {
+  function applyAuthPayload(user: AuthPayload) {
+    deps.authenticated.value = true;
+    deps.username.value = user.username;
+    deps.userName.value = user.display_name;
+    deps.profileForm.value = {
+      first_name: user.first_name || "",
+      last_name: user.last_name || "",
+      email: user.email || "",
+    };
+    deps.roleName.value = user.role_name || user.role_code;
+    deps.userIsActive.value = user.is_active !== false;
+    deps.lastLogin.value = user.last_login || null;
+    deps.isAdmin.value = Boolean(user.is_admin ?? user.is_staff);
+    deps.roleCode.value = user.role_code;
+    deps.permissions.value = user.permissions;
+    deps.passwordChangeRequired.value = Boolean(user.password_change_required);
+  }
+
   async function checkAuth() {
     try {
       const user = await deps.request<AuthPayload & { username: string }>("/auth/me/");
-      deps.authenticated.value = true;
-      deps.username.value = user.username;
-      deps.userName.value = user.display_name;
-      deps.isAdmin.value = user.is_staff;
-      deps.roleCode.value = user.role_code;
-      deps.permissions.value = user.permissions;
-      deps.passwordChangeRequired.value = Boolean(user.password_change_required);
+      applyAuthPayload(user);
       deps.syncRouteState();
       deps.ensureRouteAccess();
       if (deps.passwordChangeRequired.value) deps.showPasswordModal.value = true;
       if (!deps.isAdmin.value && deps.settingsSection.value === "organization") {
         deps.settingsSection.value = "dictionaries";
       }
-    } catch {
+    } catch (error) {
+      if (isAbortError(error)) return;
       deps.authenticated.value = false;
       deps.isAdmin.value = false;
       deps.roleCode.value = "";
@@ -73,13 +102,7 @@ export function useAuth(deps: AuthDeps) {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ username: deps.username.value, password: deps.password.value }),
       });
-      deps.authenticated.value = true;
-      deps.username.value = user.username;
-      deps.userName.value = user.display_name;
-      deps.isAdmin.value = user.is_staff;
-      deps.roleCode.value = user.role_code;
-      deps.permissions.value = user.permissions;
-      deps.passwordChangeRequired.value = Boolean(user.password_change_required);
+      applyAuthPayload(user);
       deps.syncRouteState();
       deps.ensureRouteAccess();
       if (!deps.isAdmin.value && deps.settingsSection.value === "organization") {
@@ -118,7 +141,70 @@ export function useAuth(deps: AuthDeps) {
       deps.username.value = "";
       deps.passwordChangeRequired.value = false;
       deps.showPasswordModal.value = false;
+      deps.showProfileModal.value = false;
+      deps.profileForm.value = { first_name: "", last_name: "", email: "" };
+      deps.roleName.value = "";
+      deps.userIsActive.value = false;
+      deps.lastLogin.value = null;
       await deps.routerReplace("/");
+    }
+  }
+
+  async function loadProfile() {
+    if (deps.profileLoading.value) return false;
+    deps.profileLoading.value = true;
+    deps.profileError.value = "";
+    try {
+      const user = await deps.request<AuthPayload>("/auth/me/");
+      applyAuthPayload(user);
+      return true;
+    } catch (error) {
+      if (isAbortError(error)) return false;
+      deps.profileError.value = error instanceof Error ? error.message : "个人资料加载失败";
+      return false;
+    } finally {
+      deps.profileLoading.value = false;
+    }
+  }
+
+  async function saveProfile() {
+    if (deps.profileSaving.value) return false;
+    deps.profileSaving.value = true;
+    deps.profileFormErrors.value = {};
+    const form = deps.profileForm.value;
+    form.first_name = form.first_name.trim();
+    form.last_name = form.last_name.trim();
+    form.email = form.email.trim();
+    try {
+      const user = await deps.request<AuthPayload>("/auth/me/", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          first_name: form.first_name,
+          last_name: form.last_name,
+          email: form.email,
+        }),
+      });
+      applyAuthPayload(user);
+      deps.showProfileModal.value = false;
+      deps.actionMessage.value = "个人资料已保存";
+      return true;
+    } catch (error) {
+      const details = error && typeof error === "object" && "details" in error
+        ? (error as { details?: unknown }).details
+        : undefined;
+      const source = details && typeof details === "object" && !Array.isArray(details)
+        ? details as Record<string, unknown>
+        : {};
+      deps.profileFormErrors.value = Object.fromEntries(
+        ["first_name", "last_name", "email"]
+          .map((field) => [field, flattenError(source[field])] as const)
+          .filter(([, message]) => Boolean(message)),
+      );
+      deps.actionMessage.value = error instanceof Error ? error.message : "个人资料保存失败";
+      return false;
+    } finally {
+      deps.profileSaving.value = false;
     }
   }
 
@@ -134,6 +220,7 @@ export function useAuth(deps: AuthDeps) {
         body: JSON.stringify({
           old_password: deps.passwordForm.value.old_password,
           new_password: deps.passwordForm.value.new_password,
+          confirm_password: deps.passwordForm.value.confirm_password,
         }),
       });
       deps.showPasswordModal.value = false;
@@ -162,5 +249,5 @@ export function useAuth(deps: AuthDeps) {
     }
   }
 
-  return { checkAuth, login, logout, changePassword };
+  return { checkAuth, login, logout, loadProfile, saveProfile, changePassword };
 }

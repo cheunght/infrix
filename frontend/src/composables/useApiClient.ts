@@ -14,8 +14,8 @@ export interface ApiClientOptions {
 /**
  * Shared authenticated API plumbing for all page composables.
  *
- * The client owns request cancellation and the monotonically increasing load
- * token, while App.vue remains responsible for deciding which page to load.
+ * The client owns read-request cancellation and the monotonically increasing
+ * load token, while App.vue remains responsible for deciding which page to load.
  */
 export function useApiClient({ csrfToken, authenticated }: ApiClientOptions) {
   const loadVersion = ref(0);
@@ -47,27 +47,24 @@ export function useApiClient({ csrfToken, authenticated }: ApiClientOptions) {
     retryCsrf = true,
     signal?: AbortSignal,
   ): Promise<T> {
-    try {
-      return await apiRequest<T>(
-        path,
-        {
-          ...options,
-          signal: signal || options.signal || activeLoadController?.signal,
-        },
-        () => csrfToken.value,
-        loadCsrf,
-        () => {
-          authenticated.value = false;
-        },
-        retryCsrf,
-      );
-    } catch (error) {
-      if (error instanceof DOMException && error.name === "AbortError")
-        return undefined as T;
-      if (error instanceof Error && error.name === "AbortError")
-        return undefined as T;
-      throw error;
-    }
+    const method = (options.method || "GET").toUpperCase();
+    // Route changes may cancel page reads; mutation cancellation must be explicit.
+    const inheritedLoadSignal = method === "GET" || method === "HEAD"
+      ? activeLoadController?.signal
+      : undefined;
+    return apiRequest<T>(
+      path,
+      {
+        ...options,
+        signal: signal || options.signal || inheritedLoadSignal,
+      },
+      () => csrfToken.value,
+      loadCsrf,
+      () => {
+        authenticated.value = false;
+      },
+      retryCsrf,
+    );
   }
 
   async function download(path: string, filename?: string) {

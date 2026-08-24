@@ -66,7 +66,7 @@ const {
   selectedBatchItems, batchSelectionMode, isBatchSelectable, onBatchSelectionChange, batchSelectionModeFor,
   isBatchSelectableForMode, batchResolutionActionOptions, clearBatchSelection,
   taskScope, loadInitialData, loadTasks, loadItems, retryActiveTask, openTask, closeTask,
-  openNewTask, changeTaskDataCenter, saveTask, deleteTask, completeTask, reopenTask, exportTask,
+  openNewTask, changeTaskDataCenter, saveTask, deleteTask, completeTask, reopenTask, exportTask, exportingTaskId,
   changeTaskServerRoom, retryScopePreview, closeTaskDialog,
   openItem, changeItemStatus, saveItem, saveItemAndNext, filterPendingItems, changeTaskPage, changeTaskPageSize,
   changeItemPage, changeItemPageSize, resetTaskFilters, resetItemFilters,
@@ -249,7 +249,7 @@ onMounted(async () => {
         <el-table-column label="完成率" width="150"><template #default="{ row }"><el-progress :percentage="row.summary.completion_rate" :stroke-width="8" /></template></el-table-column>
         <el-table-column label="异常" width="90"><template #default="{ row }">{{ row.summary.exceptions }}</template></el-table-column>
         <el-table-column label="状态" width="100"><template #default="{ row }"><StatusTag :status="row.status" :label="taskStatusLabel(row.status)" /></template></el-table-column>
-        <el-table-column label="操作" fixed="right" width="220"><template #default="{ row }"><div class="inventory-task-actions"><el-button link type="primary" @click.stop="openTask(row)">查看</el-button><el-button v-if="can('inventory.export')" link :icon="Download" @click.stop="exportTask(row)">导出</el-button><el-button v-if="can('inventory.manage') && row.can_delete" link type="danger" :icon="Delete" :loading="taskDeletingId === row.id" :disabled="taskDeletingId !== null" @click.stop="deleteTask(row)">删除</el-button></div></template></el-table-column>
+        <el-table-column label="操作" fixed="right" width="220"><template #default="{ row }"><div class="inventory-task-actions"><el-button link type="primary" @click.stop="openTask(row)">查看</el-button><el-button v-if="can('inventory.export')" link :icon="Download" :loading="exportingTaskId === row.id" :disabled="exportingTaskId !== null" @click.stop="exportTask(row)">导出</el-button><el-button v-if="can('inventory.manage') && row.can_delete" link type="danger" :icon="Delete" :loading="taskDeletingId === row.id" :disabled="taskDeletingId !== null" @click.stop="deleteTask(row)">删除</el-button></div></template></el-table-column>
         </el-table>
         <PagedTable v-model:current-page="taskPage" v-model:page-size="taskPageSize" :total="taskCount" :page-sizes="[20, 50, 100]" :loading="taskListLoading" @update:current-page="changeTaskPage" @update:page-size="changeTaskPageSize" />
       </PageContent>
@@ -265,7 +265,7 @@ onMounted(async () => {
             <el-button link @click="closeTask">返回任务列表</el-button>
           </template>
           <template #actions>
-            <el-button v-if="can('inventory.export')" :icon="Download" @click="exportTask()">
+            <el-button v-if="can('inventory.export')" :icon="Download" :loading="exportingTaskId === activeTask.id" :disabled="exportingTaskId !== null" @click="exportTask()">
               导出结果
             </el-button>
             <el-button

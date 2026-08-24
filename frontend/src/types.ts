@@ -12,12 +12,15 @@ export type Page =
 export type DictionaryItem = {
   id: number;
   name: string;
+  code?: string | null;
   color?: string;
   is_active: boolean;
   assets_count?: number;
+  licenses_count?: number;
   created_at?: string;
   updated_at?: string;
 };
+export type Manufacturer = { id: number; name: string; code: string | null; is_active: boolean };
 export type CustomFieldOption = { id: number; field?: number; value: string; label: string; sort_order: number; is_active: boolean };
 export type CustomFieldValidationConfig = {
   min_length?: number;
@@ -184,6 +187,23 @@ export type DashboardLicenseSummary = {
   expired: number;
   over_limit: number;
 };
+export type DepreciationStatus = "unconfigured" | "not_started" | "depreciating" | "fully_depreciated";
+export type DepreciationInfo = {
+  method: string | null;
+  start_date: string | null;
+  years: number | null;
+  residual_rate: string | null;
+  original_value: string | null;
+  residual_value: string | null;
+  monthly_depreciation: string | null;
+  accumulated_depreciation: string | null;
+  net_book_value: string | null;
+  elapsed_months: number | null;
+  total_months: number | null;
+  progress: string | null;
+  status: DepreciationStatus;
+};
+export type AssetDepreciationSummary = Pick<DepreciationInfo, "status" | "net_book_value" | "accumulated_depreciation">;
 export type DashboardOverview = {
   assets: {
     total: number;
@@ -228,13 +248,13 @@ export type Asset = {
   asset_no: string;
   name: string;
   asset_type: string;
-  brand?: number | null;
-  brand_name?: string;
+  manufacturer?: number | null;
+  manufacturer_name?: string;
   device_type?: number | null;
   device_type_name?: string;
   model?: string;
   model_name?: string;
-  brand_model?: string;
+  manufacturer_model?: string;
   status: string;
   purpose: string;
   serial_number: string | null;
@@ -258,6 +278,11 @@ export type Asset = {
   purchase_order_no?: string;
   maintenance_provider?: string;
   maintenance_expiry_date?: string | null;
+  depreciation_start_date?: string | null;
+  depreciation_years?: number | null;
+  residual_rate?: string | null;
+  depreciation_method?: string | null;
+  depreciation?: DepreciationInfo | AssetDepreciationSummary | null;
   tag_names?: string[];
   tags?: Array<{ id: number; name: string; is_active: boolean }>;
   custom_values?: Record<string, unknown>;
@@ -272,6 +297,7 @@ export type AssetDetail = Asset & {
   tags: Array<{ id: number; name: string; is_active: boolean }>;
   custom_fields: AssetCustomFieldValue[];
   custom_values: Record<string, unknown>;
+  depreciation: DepreciationInfo;
 };
 export type InventoryStatus = "pending" | "normal" | "location_mismatch" | "not_found" | "info_mismatch" | "other";
 export type InventoryResolutionStatus = "not_required" | "pending" | "resolved";
@@ -409,7 +435,7 @@ export type Rack = {
   assets_count?: number;
   used_u?: number;
   free_u?: number;
-  allocations: Array<{ asset: number; start_u: number; end_u: number; units: number; asset_no: string; asset_name: string; asset_type: string; device_type_name?: string | null; device_type_color?: string | null; brand_model?: string; serial_number?: string | null; status: string }>;
+  allocations: Array<{ asset: number; start_u: number; end_u: number; units: number; asset_no: string; asset_name: string; asset_type: string; device_type_name?: string | null; device_type_color?: string | null; manufacturer_model?: string; serial_number?: string | null; status: string }>;
 };
 export type ServerRoom = { id: number; data_center: number; data_center_name: string; name: string; is_active: boolean; owner_name?: string; contact_phone?: string; notes?: string; racks_count: number; assets_count: number; created_at?: string; updated_at?: string };
 export type FacilitySummary = {
@@ -438,16 +464,16 @@ export type FacilitySummary = {
 };
 export type FaultEvent = { id: number; asset: number; asset_no: string; asset_name: string; occurred_at: string; reason: string; description: string; is_closed: boolean; repair: { id: number; fault: number; provider: string; started_at: string | null; finished_at: string | null; notes: string } | null };
 export type Role = { id: number; code: string; name: string; description: string; user_count?: number };
-export type ManagedUser = { id: number; username: string; display_name: string; first_name: string; last_name: string; email: string; is_active: boolean; is_staff: boolean; groups: number[]; assigned_role_code: string; assigned_role_name: string; last_login: string | null; date_joined: string };
+export type ManagedUser = { id: number; username: string; display_name: string; first_name: string; last_name: string; email: string; is_active: boolean; is_staff: boolean; is_superuser: boolean; groups: number[]; assigned_role_code: string; assigned_role_name: string; last_login: string | null; date_joined: string };
 export type AuditLog = { id: number; actor_username: string | null; actor_display_name: string; action: string; resource_type: string; resource_id: string; payload: Record<string, unknown>; created_at: string };
-export type SoftwareLicense = { id: number; name: string; vendor: string; license_type: string; authorized_count: number; used_count: number; utilization: number; remaining_count: number; expiry_date: string | null; status: "over_limit" | "expired" | "expiring" | "normal"; status_label: string; days_remaining: number | null; notes: string };
+export type SoftwareLicense = { id: number; name: string; manufacturer: Manufacturer | null; license_type: string; authorized_count: number; used_count: number; utilization: number; remaining_count: number; expiry_date: string | null; status: "over_limit" | "expired" | "expiring" | "normal"; status_label: string; days_remaining: number | null; notes: string };
 export type SparePart = {
   id: number;
   name: string;
   part_type: string;
   part_type_label: string;
-  brand: number | null;
-  brand_name: string | null;
+  manufacturer: number | null;
+  manufacturer_name: string | null;
   model: string;
   specification: string;
   unit: string;

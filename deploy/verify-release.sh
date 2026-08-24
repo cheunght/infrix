@@ -5,7 +5,7 @@ IFS=$'\n\t'
 APP_DIR="${APP_DIR:-/opt/itam}"
 APP_USER="${APP_USER:-itam}"
 ENV_FILE="${ENV_FILE:-/etc/itam/itam.env}"
-BASE_URL="${BASE_URL:-http://127.0.0.1}"
+BASE_URL="${BASE_URL:-}"
 
 fail() {
   echo "验收失败：$*" >&2
@@ -31,40 +31,78 @@ env_value() {
   awk -F= -v key="$key" '$1 == key { sub(/^[^=]*=/, ""); print; exit }' "$ENV_FILE"
 }
 
-production_security_hints() {
-  local debug_value secret_value hosts_value risk_count=0
+production_security_gate() {
+  local env_value_value debug_value secret_value hosts_value csrf_origins_value
+  local https_mode ssl_redirect session_secure csrf_secure hsts_seconds forwarded_host
+  env_value_value="$(env_value DJANGO_ENV)"
   debug_value="$(env_value DJANGO_DEBUG)"
   secret_value="$(env_value DJANGO_SECRET_KEY)"
   hosts_value="$(env_value DJANGO_ALLOWED_HOSTS)"
+  csrf_origins_value="$(env_value DJANGO_CSRF_TRUSTED_ORIGINS)"
+  https_mode="$(env_value DJANGO_HTTPS_MODE)"
+  ssl_redirect="$(env_value DJANGO_SECURE_SSL_REDIRECT)"
+  session_secure="$(env_value DJANGO_SESSION_COOKIE_SECURE)"
+  csrf_secure="$(env_value DJANGO_CSRF_COOKIE_SECURE)"
+  hsts_seconds="$(env_value DJANGO_SECURE_HSTS_SECONDS)"
+  forwarded_host="$(env_value DJANGO_USE_X_FORWARDED_HOST)"
 
-  log "检查生产安全配置（仅提示，不阻断验收）"
-  if [[ "$debug_value" != "0" ]]; then
-    echo "安全提示 [高]：DJANGO_DEBUG 未设置为 0。生产环境应关闭调试模式。" >&2
-    risk_count=$((risk_count + 1))
+  log "检查生产安全配置（阻断式门禁）"
+  [[ "$env_value_value" == "production" ]] || fail "DJANGO_ENV 必须为 production。"
+  [[ "$debug_value" == "0" ]] || fail "DJANGO_DEBUG 必须为 0。"
+  [[ -n "$secret_value" && "$secret_value" != "dev-only-change-me" && "$secret_value" != "change-me" && ${#secret_value} -ge 50 ]] || \
+    fail "DJANGO_SECRET_KEY 缺失、过短或仍是占位符。"
+  [[ -n "${hosts_value//[[:space:]]/}" ]] || fail "DJANGO_ALLOWED_HOSTS 不能为空。"
+  if [[ "$hosts_value" =~ (^|,)[[:space:]]*\*[[:space:]]*(,|$) ]]; then
+    fail "DJANGO_ALLOWED_HOSTS 不允许包含 *。"
   fi
-  if [[ -z "$secret_value" || "$secret_value" == "dev-only-change-me" || ${#secret_value} -lt 32 ]]; then
-    echo "安全提示 [高]：DJANGO_SECRET_KEY 缺失或过短，请使用随机且仅生产环境可读的密钥。" >&2
-    risk_count=$((risk_count + 1))
-  fi
-  if [[ -z "$hosts_value" || "$hosts_value" == "*" ]]; then
-    echo "安全提示 [中]：DJANGO_ALLOWED_HOSTS 过宽，请限制为实际域名或 IP。" >&2
-    risk_count=$((risk_count + 1))
-  fi
+  [[ -n "${csrf_origins_value//[[:space:]]/}" ]] || \
+    fail "DJANGO_CSRF_TRUSTED_ORIGINS 不能为空。"
+  case "$csrf_origins_value" in
+    https://*) ;;
+    *) fail "DJANGO_CSRF_TRUSTED_ORIGINS 必须使用 https://。" ;;
+  esac
+  [[ "$https_mode" == "proxy" ]] || fail "当前 Nginx 部署要求 DJANGO_HTTPS_MODE=proxy。"
+  [[ "$ssl_redirect" == "1" ]] || fail "DJANGO_SECURE_SSL_REDIRECT 必须为 1。"
+  [[ "$session_secure" == "1" ]] || fail "DJANGO_SESSION_COOKIE_SECURE 必须为 1。"
+  [[ "$csrf_secure" == "1" ]] || fail "DJANGO_CSRF_COOKIE_SECURE 必须为 1。"
+  [[ "$hsts_seconds" =~ ^[1-9][0-9]*$ ]] || fail "DJANGO_SECURE_HSTS_SECONDS 必须为正整数。"
+  [[ "$forwarded_host" == "0" ]] || fail "DJANGO_USE_X_FORWARDED_HOST 必须为 0。"
   case "${BASE_URL,,}" in
     https://*) ;;
-    *)
-      echo "安全提示 [中]：当前 BASE_URL 未使用 HTTPS；正式入口应启用 HTTPS、安全 Cookie、HSTS 和 X-Frame-Options。" >&2
-      risk_count=$((risk_count + 1))
-      ;;
+    *) fail "BASE_URL 必须显式使用 https://，以验证正式入口。" ;;
   esac
-  if [[ "$risk_count" -eq 0 ]]; then
-    log "生产安全配置提示：未发现明显风险（仍需由网关确认 HTTPS 和安全响应头）。"
-  else
-    log "生产安全配置提示：发现 $risk_count 项建议，未阻断本次验收。"
-  fi
+  log "生产安全配置门禁通过（密钥值不会输出）。"
 }
 
-production_security_hints
+development_security_gate() {
+  local env_value_value hosts_value
+  env_value_value="$(env_value DJANGO_ENV)"
+  hosts_value="$(env_value DJANGO_ALLOWED_HOSTS)"
+
+  log "检查开发环境配置"
+  [[ "$env_value_value" == "development" ]] || fail "DJANGO_ENV 必须为 development。"
+  [[ -n "${hosts_value//[[:space:]]/}" ]] || \
+    fail "开发环境 DJANGO_ALLOWED_HOSTS 不能为空；可设置为 *。"
+  log "开发环境配置门禁通过（允许 DJANGO_ALLOWED_HOSTS=*）。"
+}
+
+deployment_env="$(env_value DJANGO_ENV)"
+case "$deployment_env" in
+  production)
+    production_security_gate
+    ;;
+  development)
+    development_security_gate
+    BASE_URL="${BASE_URL:-http://127.0.0.1}"
+    ;;
+  *)
+    fail "DJANGO_ENV 必须是 development 或 production。"
+    ;;
+esac
+case "${BASE_URL,,}" in
+  http://*|https://*) ;;
+  *) fail "BASE_URL 必须使用 http:// 或 https://。" ;;
+esac
 
 log "检查 systemd 服务"
 systemctl is-active --quiet itam || fail "itam.service 未运行。"
@@ -72,6 +110,23 @@ systemctl is-active --quiet nginx || fail "nginx 未运行。"
 
 log "检查 Django 配置和迁移"
 run_app check >/dev/null || fail "Django check 未通过。"
+if [[ "$deployment_env" == "production" ]]; then
+  deploy_check_output="$(run_app check --deploy 2>&1)" || {
+    printf '%s\n' "$deploy_check_output" >&2
+    fail "Django check --deploy 执行失败。"
+  }
+  printf '%s\n' "$deploy_check_output"
+  unexpected_security_warnings="$(printf '%s\n' "$deploy_check_output" | grep -E 'security\.W' | grep -vE 'security\.(W005|W021)' || true)"
+  if [[ -n "$unexpected_security_warnings" ]]; then
+    printf '%s\n' "$unexpected_security_warnings" >&2
+    fail "Django check --deploy 仍包含未豁免的安全告警，已阻断验收。"
+  fi
+  if printf '%s\n' "$deploy_check_output" | grep -qE 'security\.(W005|W021)'; then
+    log "Django check --deploy 保留 W005/W021：HSTS 子域和 preload 未默认开启，需在确认所有子域 HTTPS 后再评估。"
+  fi
+else
+  log "开发环境跳过 Django check --deploy 生产安全门禁。"
+fi
 run_app makemigrations --check --dry-run >/dev/null || fail "存在未生成的模型迁移。"
 run_app check_preset_roles >/dev/null || fail "预设角色检查未通过。"
 

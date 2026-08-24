@@ -1,6 +1,6 @@
 import { ref, type Ref } from "vue";
 import type { LocationQuery } from "vue-router";
-import { pageItems, pageTotal, type PageResult } from "../api";
+import { buildExportQuery, isAbortError, pageItems, pageTotal, type PageResult } from "../api";
 import type { Asset, FaultEvent } from "../types";
 import type { RequestFn } from "../types/page-context";
 
@@ -38,6 +38,7 @@ export function useRepairs(deps: RepairsDeps) {
   const repairStatus = ref("");
   const repairStart = ref("");
   const repairEnd = ref("");
+  const focusedFaultId = ref<number | null>(null);
   const showFaultModal = ref(false);
   const showRepairModal = ref(false);
   const selectedFault = ref<FaultEvent | null>(null);
@@ -49,6 +50,7 @@ export function useRepairs(deps: RepairsDeps) {
   const repairForm = ref({ provider: "", started_at: "", finished_at: "", notes: "" });
   const repairListLoading = ref(false);
   const repairListError = ref("");
+  const exportingRepairs = ref(false);
   const repairRequestId = ref(0);
   const faultSaving = ref(false);
   const repairSaving = ref(false);
@@ -92,7 +94,7 @@ export function useRepairs(deps: RepairsDeps) {
       faultAssetOptions.value = pageItems(payload);
       if (faultAssetOptions.value.length === 1) faultForm.value.asset = String(faultAssetOptions.value[0].id);
     } catch (error) {
-      if (requestId !== faultAssetRequestId.value) return;
+      if (requestId !== faultAssetRequestId.value || isAbortError(error)) return;
       deps.actionMessage.value = error instanceof Error ? error.message : "资产搜索失败";
     } finally {
       if (requestId === faultAssetRequestId.value) faultAssetLoading.value = false;
@@ -157,6 +159,16 @@ export function useRepairs(deps: RepairsDeps) {
     repairListError.value = "";
 
     try {
+      if (focusedFaultId.value) {
+        const focusedFault = await deps.request<FaultEvent>(`/fault-events/${focusedFaultId.value}/`);
+        if (requestId !== repairRequestId.value || !deps.isCurrentLoad(version)) return false;
+        repairRows.value = [focusedFault];
+        repairCount.value = 1;
+        repairPage.value = 1;
+        appliedRepairFilters.value = filters;
+        return true;
+      }
+
       const payload = await deps.request<PageResult<FaultEvent> | FaultEvent[]>(
         `/fault-events/?${repairParams(filters).toString()}`,
       );
@@ -176,7 +188,7 @@ export function useRepairs(deps: RepairsDeps) {
       appliedRepairFilters.value = filters;
       return true;
     } catch (error) {
-      if (requestId === repairRequestId.value && deps.isCurrentLoad(version)) {
+      if (requestId === repairRequestId.value && deps.isCurrentLoad(version) && !isAbortError(error)) {
         repairListError.value = errorMessage(error, "故障数据加载失败");
       }
       return false;
@@ -185,6 +197,7 @@ export function useRepairs(deps: RepairsDeps) {
     }
   }
   function searchRepairs() {
+    focusedFaultId.value = null;
     repairPage.value = 1;
     void loadRepairs();
   }
@@ -196,18 +209,22 @@ export function useRepairs(deps: RepairsDeps) {
 
   function syncFiltersFromQuery(query: LocationQuery) {
     const status = queryValue(query, "is_closed");
+    const fault = queryValue(query, "fault");
     repairKeyword.value = queryValue(query, "search");
     repairStatus.value = status === "true" || status === "false" ? status : "";
+    focusedFaultId.value = /^\d+$/.test(fault) && Number(fault) > 0 ? Number(fault) : null;
     repairStart.value = "";
     repairEnd.value = "";
     repairPage.value = 1;
   }
 
   function onRepairStatusChange() {
+    focusedFaultId.value = null;
     repairPage.value = 1;
     void loadRepairs();
   }
   function onRepairDateChange() {
+    focusedFaultId.value = null;
     repairPage.value = 1;
     if (repairStart.value && repairEnd.value && repairStart.value > repairEnd.value) {
       repairListError.value = "开始日期不能晚于结束日期";
@@ -222,12 +239,13 @@ export function useRepairs(deps: RepairsDeps) {
     void loadRepairs();
   }
   function resetRepairFilters() {
+    focusedFaultId.value = null;
     repairKeyword.value = "";
     repairStatus.value = "";
     repairStart.value = "";
     repairEnd.value = "";
     repairPage.value = 1;
-    if (deps.clearRouteQuery?.(["is_closed", "search", "start", "end"])) return;
+    if (deps.clearRouteQuery?.(["fault", "is_closed", "search", "start", "end"])) return;
     void loadRepairs();
   }
   function retryRepairList() {
@@ -296,15 +314,20 @@ export function useRepairs(deps: RepairsDeps) {
     return true;
   }
   async function exportRepairs() {
+    if (exportingRepairs.value) return;
+    exportingRepairs.value = true;
     const params = new URLSearchParams();
     if (appliedRepairFilters.value.keyword) params.set("search", appliedRepairFilters.value.keyword);
     if (appliedRepairFilters.value.status) params.set("is_closed", appliedRepairFilters.value.status);
     if (appliedRepairFilters.value.start) params.set("start", appliedRepairFilters.value.start);
     if (appliedRepairFilters.value.end) params.set("end", appliedRepairFilters.value.end);
     try {
-      await deps.download(`/reports/repairs/export/?${params.toString()}`, "repairs.xlsx");
+      const query = buildExportQuery(params);
+      await deps.download(`/reports/repairs/export/${query ? `?${query}` : ""}`, "故障维修.xlsx");
     } catch (error) {
-      deps.actionMessage.value = error instanceof Error ? error.message : "维修记录导出失败";
+      deps.actionMessage.value = error instanceof Error ? error.message : "导出失败，请稍后重试";
+    } finally {
+      exportingRepairs.value = false;
     }
   }
   function changeRepairPage(page: number) {
@@ -320,7 +343,7 @@ export function useRepairs(deps: RepairsDeps) {
   return {
     repairRows, repairCount, repairPage, repairPageSize, repairKeyword, repairStatus, repairStart, repairEnd,
     showFaultModal, showRepairModal, selectedFault, faultForm, faultAssetSearch, faultAssetOptions, faultAssetLoading,
-    repairListLoading, repairListError, faultSaving, repairSaving,
+    repairListLoading, repairListError, exportingRepairs, faultSaving, repairSaving,
     repairForm, repairTimeError, openFaultModal, searchFaultAssets, registerFaultFromSelection, openRepairModal, loadRepairs,
     searchRepairs, onRepairStatusChange, onRepairDateChange, resetRepairFilters, retryRepairList,
     syncFiltersFromQuery,

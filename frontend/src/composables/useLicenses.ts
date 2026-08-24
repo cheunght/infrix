@@ -1,15 +1,17 @@
-import { ref, type Ref } from "vue";
+import { computed, ref, type Ref } from "vue";
 import type { LocationQuery } from "vue-router";
-import { pageItems, pageTotal, type PageResult } from "../api";
-import type { SoftwareLicense } from "../types";
+import { buildExportQuery, isAbortError, pageItems, pageTotal, type PageResult } from "../api";
+import type { DictionaryItem, SoftwareLicense } from "../types";
 import type { RequestFn } from "../types/page-context";
 
 export interface LicensesDeps {
   request: RequestFn;
+  download: (path: string, filename?: string) => Promise<void>;
   beginLoad: () => number;
   isCurrentLoad: (version: number) => boolean;
   confirmAction: (message: string) => Promise<boolean>;
   actionMessage: Ref<string>;
+  manufacturers: Ref<DictionaryItem[]>;
   clearRouteQuery?: (keys: string[]) => boolean;
 }
 
@@ -20,8 +22,10 @@ export function useLicenses(deps: LicensesDeps) {
   const licensePageSize = ref(50);
   const licenseKeyword = ref("");
   const licenseStatus = ref("");
+  const licenseManufacturer = ref("");
   const licenseListLoading = ref(false);
   const licenseListError = ref("");
+  const exportingLicenses = ref(false);
   const licenseRequestId = ref(0);
   const licenseSaving = ref(false);
   const deletingLicenseId = ref<number | null>(null);
@@ -29,7 +33,7 @@ export function useLicenses(deps: LicensesDeps) {
   const editingLicense = ref<SoftwareLicense | null>(null);
   const licenseForm = ref({
     name: "",
-    vendor: "",
+    manufacturer_id: "",
     license_type: "",
     authorized_count: "0",
     used_count: "0",
@@ -40,6 +44,12 @@ export function useLicenses(deps: LicensesDeps) {
   function totalPages(total: number) {
     return Math.max(1, Math.ceil(total / licensePageSize.value));
   }
+
+  const licenseManufacturerOptions = computed(() => {
+    const currentId = licenseForm.value.manufacturer_id;
+    return deps.manufacturers.value.filter((item) => item.is_active || String(item.id) === currentId);
+  });
+  const licenseManufacturerFilterOptions = computed(() => deps.manufacturers.value);
 
   function errorMessage(error: unknown, fallback: string) {
     return error instanceof Error && error.message ? error.message : fallback;
@@ -54,13 +64,12 @@ export function useLicenses(deps: LicensesDeps) {
     });
     if (licenseKeyword.value.trim()) params.set("search", licenseKeyword.value.trim());
     if (licenseStatus.value) params.set("status", licenseStatus.value);
+    if (licenseManufacturer.value) params.set("manufacturer", licenseManufacturer.value);
     licenseListLoading.value = true;
     licenseListError.value = "";
 
     try {
       const result = await deps.request<PageResult<SoftwareLicense> | SoftwareLicense[]>(`/licenses/?${params.toString()}`);
-      // apiClient returns undefined for an intentionally aborted request. Do
-      // not turn that into an empty list or an error state.
       if (result == null) return false;
       if (requestId !== licenseRequestId.value || !deps.isCurrentLoad(version)) return false;
 
@@ -77,7 +86,7 @@ export function useLicenses(deps: LicensesDeps) {
       licenseCount.value = nextCount;
       return true;
     } catch (error) {
-      if (requestId === licenseRequestId.value && deps.isCurrentLoad(version)) {
+      if (requestId === licenseRequestId.value && deps.isCurrentLoad(version) && !isAbortError(error)) {
         licenseListError.value = errorMessage(error, "许可证数据加载失败");
       }
       return false;
@@ -101,6 +110,8 @@ export function useLicenses(deps: LicensesDeps) {
     const validStatuses = new Set(["normal", "expiring", "expired", "over_limit"]);
     licenseKeyword.value = queryValue(query, "search");
     licenseStatus.value = validStatuses.has(status) ? status : "";
+    const manufacturer = queryValue(query, "manufacturer");
+    licenseManufacturer.value = /^\d+$/.test(manufacturer) ? manufacturer : "";
     licensePage.value = 1;
   }
 
@@ -117,9 +128,31 @@ export function useLicenses(deps: LicensesDeps) {
   function resetLicenseFilters() {
     licenseKeyword.value = "";
     licenseStatus.value = "";
+    licenseManufacturer.value = "";
     licensePage.value = 1;
-    if (deps.clearRouteQuery?.(["status", "search"])) return;
+    if (deps.clearRouteQuery?.(["status", "search", "manufacturer"])) return;
     void loadLicenses();
+  }
+
+  function licenseFilterParams() {
+    const params = new URLSearchParams();
+    if (licenseKeyword.value.trim()) params.set("search", licenseKeyword.value.trim());
+    if (licenseStatus.value) params.set("status", licenseStatus.value);
+    if (licenseManufacturer.value) params.set("manufacturer", licenseManufacturer.value);
+    return params;
+  }
+
+  async function exportLicenses() {
+    if (exportingLicenses.value) return;
+    exportingLicenses.value = true;
+    const query = buildExportQuery(licenseFilterParams());
+    try {
+      await deps.download(`/reports/licenses/export/${query ? `?${query}` : ""}`, "软件许可.xlsx");
+    } catch (error) {
+      deps.actionMessage.value = errorMessage(error, "导出失败，请稍后重试");
+    } finally {
+      exportingLicenses.value = false;
+    }
   }
 
   function retryLicenseList() {
@@ -131,7 +164,7 @@ export function useLicenses(deps: LicensesDeps) {
     licenseForm.value = license
       ? {
           name: license.name,
-          vendor: license.vendor || "",
+          manufacturer_id: license.manufacturer ? String(license.manufacturer.id) : "",
           license_type: license.license_type || "",
           authorized_count: String(license.authorized_count ?? 0),
           used_count: String(license.used_count ?? 0),
@@ -140,7 +173,7 @@ export function useLicenses(deps: LicensesDeps) {
         }
       : {
           name: "",
-          vendor: "",
+          manufacturer_id: "",
           license_type: "",
           authorized_count: "0",
           used_count: "0",
@@ -160,6 +193,7 @@ export function useLicenses(deps: LicensesDeps) {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           ...licenseForm.value,
+          manufacturer_id: licenseForm.value.manufacturer_id ? Number(licenseForm.value.manufacturer_id) : null,
           authorized_count: Number(licenseForm.value.authorized_count),
           used_count: Number(licenseForm.value.used_count),
           expiry_date: licenseForm.value.expiry_date || null,
@@ -199,10 +233,11 @@ export function useLicenses(deps: LicensesDeps) {
   }
 
   return {
-    licenses, licenseCount, licensePage, licensePageSize, licenseKeyword, licenseStatus,
-    licenseListLoading, licenseListError, licenseSaving, deletingLicenseId,
+    licenses, licenseCount, licensePage, licensePageSize, licenseKeyword, licenseStatus, licenseManufacturer,
+    licenseManufacturerOptions, licenseManufacturerFilterOptions,
+    licenseListLoading, licenseListError, exportingLicenses, licenseSaving, deletingLicenseId,
     showLicenseModal, editingLicense, licenseForm,
     loadLicenses, searchLicenses, changeLicensePage, changeLicensePageSize,
-    resetLicenseFilters, retryLicenseList, syncFiltersFromQuery, openLicenseModal, saveLicense, deleteLicense,
+    resetLicenseFilters, retryLicenseList, syncFiltersFromQuery, openLicenseModal, saveLicense, deleteLicense, exportLicenses,
   };
 }

@@ -1,4 +1,5 @@
 import { computed, ref, type Ref } from "vue";
+import { isAbortError } from "../api";
 import type { DashboardOverview } from "../types";
 
 export interface DashboardApi {
@@ -24,7 +25,7 @@ export function useDashboard(api: DashboardApi) {
       dashboardUpdatedAt.value = new Date().toISOString();
       return true;
     } catch (error) {
-      if (api.isCurrentLoad(version)) {
+      if (api.isCurrentLoad(version) && !isAbortError(error)) {
         dashboardError.value = error instanceof Error && error.message
           ? error.message
           : "Dashboard 数据加载失败";

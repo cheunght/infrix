@@ -37,13 +37,30 @@ def model_snapshot(instance):
     return json_value(snapshot)
 
 
+def software_license_audit_snapshot(instance):
+    """Keep license audit changes readable without querying manufacturers per field."""
+    snapshot = model_snapshot(instance)
+    manufacturer = getattr(instance, "manufacturer", None)
+    snapshot["manufacturer"] = (
+        {
+            "id": manufacturer.pk,
+            "name": manufacturer.name,
+            "code": manufacturer.code,
+            "is_active": manufacturer.is_active,
+        }
+        if manufacturer is not None
+        else None
+    )
+    return json_value(snapshot)
+
+
 def asset_audit_snapshot(asset_id):
     """Build the same rich asset snapshot used by asset write audits."""
     from .serializers import AssetDetailSerializer
 
     asset = Asset.objects.select_related(
         "department",
-        "brand",
+        "manufacturer",
         "device_type",
         "asset_data_center",
         "rack_allocation__rack__room__data_center",
@@ -55,6 +72,10 @@ def asset_audit_snapshot(asset_id):
         "custom_values__field__options",
     ).get(pk=asset_id)
     snapshot = AssetDetailSerializer(asset).data
+    # Depreciation values are derived from today's date and must not create
+    # date-dependent audit diffs.  The four configuration fields remain in the
+    # AssetDetailSerializer payload and are intentionally retained here.
+    snapshot.pop("depreciation", None)
     custom_snapshot = asset_custom_value_snapshot(asset.pk)
     snapshot["custom_value_snapshot"] = custom_snapshot
     snapshot["custom_values"] = {

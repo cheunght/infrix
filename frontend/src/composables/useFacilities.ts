@@ -1,5 +1,5 @@
 import { computed, ref, type ComputedRef, type Ref } from "vue";
-import { flattenError } from "../api";
+import { flattenError, isAbortError } from "../api";
 import type {
   AssetDetail,
   DataCenter,
@@ -33,6 +33,7 @@ export interface FacilitiesDeps extends FacilitiesApi {
   refreshDictionaries: () => void | Promise<boolean | void>;
   reload: () => void | Promise<void>;
   confirmAction: (message: string) => Promise<boolean>;
+  clearRouteQuery?: (keys: string[]) => boolean;
 }
 
 export function useFacilities(deps: FacilitiesDeps) {
@@ -114,11 +115,15 @@ export function useFacilities(deps: FacilitiesDeps) {
   }
 
   async function loadDataCenters(version = deps.beginLoad()) {
-    const result = await deps.request<{ results?: DataCenter[]; count?: number } | DataCenter[]>(
-      "/data-centers/?page_size=100",
-    );
-    if (deps.isCurrentLoad(version)) {
-      dataCenters.value = Array.isArray(result) ? result : result?.results || [];
+    try {
+      const result = await deps.request<{ results?: DataCenter[]; count?: number } | DataCenter[]>(
+        "/data-centers/?page_size=100",
+      );
+      if (deps.isCurrentLoad(version)) {
+        dataCenters.value = Array.isArray(result) ? result : result?.results || [];
+      }
+    } catch (error) {
+      if (!isAbortError(error)) throw error;
     }
   }
 
@@ -180,17 +185,22 @@ export function useFacilities(deps: FacilitiesDeps) {
   }
 
   function requestErrorMessage(error: unknown, fallback: string) {
+    if (isAbortError(error)) return "";
     return error instanceof Error && error.message ? error.message : fallback;
   }
 
   async function loadServerRooms(version = deps.beginLoad()) {
-    const params = new URLSearchParams({ page_size: "100", is_active: "true" });
-    if (selectedDataCenter.value) params.set("data_center", selectedDataCenter.value);
-    const result = await deps.request<{ results?: ServerRoom[] } | ServerRoom[]>(
-      `/server-rooms/?${params.toString()}`,
-    );
-    if (deps.isCurrentLoad(version)) {
-      serverRooms.value = Array.isArray(result) ? result : result?.results || [];
+    try {
+      const params = new URLSearchParams({ page_size: "100", is_active: "true" });
+      if (selectedDataCenter.value) params.set("data_center", selectedDataCenter.value);
+      const result = await deps.request<{ results?: ServerRoom[] } | ServerRoom[]>(
+        `/server-rooms/?${params.toString()}`,
+      );
+      if (deps.isCurrentLoad(version)) {
+        serverRooms.value = Array.isArray(result) ? result : result?.results || [];
+      }
+    } catch (error) {
+      if (!isAbortError(error)) throw error;
     }
   }
 
@@ -240,11 +250,6 @@ export function useFacilities(deps: FacilitiesDeps) {
         rackCanvasLoading.value = false;
       }
     }
-  }
-
-  function isAbortError(error: unknown) {
-    return error instanceof DOMException && error.name === "AbortError"
-      || error instanceof Error && error.name === "AbortError";
   }
 
   function retryRackView() {
@@ -736,6 +741,7 @@ export function useFacilities(deps: FacilitiesDeps) {
     selectedRackDeviceType.value = "";
     clearRackSelection();
     rackPage.value = 1;
+    if (deps.clearRouteQuery?.(["room", "rack", "rack_code"])) return;
     void deps.reload();
   }
   function changeRackPage(pageNumber: number) {

@@ -64,8 +64,9 @@ class Rack(Timestamped):
         return self.code
 
 
-class Brand(Timestamped):
+class Manufacturer(Timestamped):
     name = models.CharField(max_length=120, unique=True)
+    code = models.CharField(max_length=80, unique=True, null=True, blank=True)
     is_active = models.BooleanField(default=True)
 
     def __str__(self):
@@ -163,8 +164,8 @@ class SparePart(Timestamped):
 
     name = models.CharField(max_length=160)
     part_type = models.CharField(max_length=30, choices=PART_TYPES, default="other")
-    brand = models.ForeignKey(
-        Brand,
+    manufacturer = models.ForeignKey(
+        Manufacturer,
         null=True,
         blank=True,
         on_delete=models.SET_NULL,
@@ -267,7 +268,13 @@ class SpareStockTransaction(Timestamped):
 
 class SoftwareLicense(Timestamped):
     name = models.CharField(max_length=160)
-    vendor = models.CharField(max_length=120, blank=True)
+    manufacturer = models.ForeignKey(
+        Manufacturer,
+        null=True,
+        blank=True,
+        on_delete=models.PROTECT,
+        related_name="software_licenses",
+    )
     license_type = models.CharField(max_length=80, blank=True)
     authorized_count = models.PositiveIntegerField(default=0)
     used_count = models.PositiveIntegerField(default=0)
@@ -292,7 +299,7 @@ class Asset(Timestamped):
     asset_no = models.CharField(max_length=80, unique=True)
     name = models.CharField(max_length=160)
     asset_type = models.CharField(max_length=80)
-    brand_model = models.CharField(max_length=160, blank=True)
+    manufacturer_model = models.CharField(max_length=160, blank=True)
     serial_number = models.CharField(max_length=160, blank=True, unique=True, null=True)
     purpose = models.CharField(max_length=255, blank=True)
     status = models.CharField(max_length=20, choices=STATUS, default="in_stock")
@@ -305,7 +312,23 @@ class Asset(Timestamped):
         editable=False,
         help_text="由故障维修生命周期维护的维修前资产状态快照",
     )
-    brand = models.ForeignKey(Brand, null=True, blank=True, on_delete=models.SET_NULL, related_name="assets")
+    depreciation_start_date = models.DateField(null=True, blank=True)
+    depreciation_years = models.PositiveSmallIntegerField(null=True, blank=True)
+    residual_rate = models.DecimalField(
+        max_digits=5,
+        decimal_places=4,
+        null=True,
+        blank=True,
+    )
+    DEPRECIATION_METHODS = [("straight_line", "直线法")]
+    depreciation_method = models.CharField(
+        max_length=20,
+        choices=DEPRECIATION_METHODS,
+        null=True,
+        blank=True,
+        default=None,
+    )
+    manufacturer = models.ForeignKey(Manufacturer, null=True, blank=True, on_delete=models.SET_NULL, related_name="assets")
     device_type = models.ForeignKey(DeviceType, null=True, blank=True, on_delete=models.SET_NULL, related_name="assets")
     asset_data_center = models.ForeignKey(
         DataCenter,

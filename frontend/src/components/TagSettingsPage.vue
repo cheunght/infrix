@@ -6,6 +6,7 @@ import PageContainer from "./page/PageContainer.vue";
 import PageContent from "./page/PageContent.vue";
 import PageToolbar from "./page/PageToolbar.vue";
 import StatusTag from "./StatusTag.vue";
+import FormDialogShell from "./FormDialogShell.vue";
 import type { TagContext } from "../types/page-context";
 
 const props = defineProps<{ context: TagContext }>();
@@ -74,11 +75,16 @@ async function submitTag() {
     </PageContent>
   </PageContainer>
 
-  <el-dialog v-model="c.showTagModal" :title="c.editingTag ? '编辑标签' : '新增标签'" width="460px" :show-close="!c.tagSaving" :close-on-click-modal="!c.tagSaving" :close-on-press-escape="!c.tagSaving">
+  <FormDialogShell v-model="c.showTagModal" :title="c.editingTag ? '编辑标签' : '新增标签'" description="维护标签名称和启用状态" size="small" :saving="c.tagSaving" :show-close="!c.tagSaving" :close-disabled="c.tagSaving" :close-on-click-modal="!c.tagSaving" :close-on-press-escape="!c.tagSaving">
     <el-form ref="tagFormRef" :model="c.tagForm" :rules="tagFormRules" label-position="top" :validate-on-rule-change="false" @submit.prevent="submitTag">
-      <el-form-item label="标签名称" prop="name" required :error="c.tagFormErrors.name"><el-input v-model="c.tagForm.name" maxlength="80" /></el-form-item>
-      <el-checkbox v-model="c.tagForm.is_active">启用</el-checkbox>
+      <section class="form-dialog__section">
+        <h3 class="form-dialog__section-title">基本信息</h3>
+        <el-form-item label="标签名称" prop="name" required :error="c.tagFormErrors.name"><el-input v-model="c.tagForm.name" maxlength="80" /></el-form-item>
+        <el-form-item label="状态">
+          <el-checkbox v-model="c.tagForm.is_active">启用</el-checkbox>
+        </el-form-item>
+      </section>
     </el-form>
-    <template #footer><el-button :disabled="c.tagSaving" @click="c.showTagModal = false">取消</el-button><el-button type="primary" :loading="c.tagSaving" :disabled="c.tagSaving" @click="submitTag">保存</el-button></template>
-  </el-dialog>
+    <template #footer><el-button :disabled="c.tagSaving" @click="c.showTagModal = false">取消</el-button><el-button type="primary" :loading="c.tagSaving" :disabled="c.tagSaving" @click="submitTag">保存标签</el-button></template>
+  </FormDialogShell>
 </template>

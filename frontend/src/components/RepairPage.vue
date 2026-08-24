@@ -24,6 +24,7 @@ const {
   resetRepairFilters,
   retryRepairList,
   exportRepairs,
+  exportingRepairs,
   can,
   openFaultModal,
   openAssetDetail,
@@ -63,13 +64,15 @@ const hasRepairFilters = computed(() => Boolean(
                   <el-date-picker v-model="repairEnd" type="date" value-format="YYYY-MM-DD" placeholder="结束日期" @change="onRepairDateChange" />
                   <div class="toolbar-extra-popover-actions">
                     <el-button class="toolbar-secondary-action" @click="resetRepairFilters">重置</el-button>
-                    <el-button v-if="can('faults.export')" class="toolbar-secondary-action" :icon="Download" @click="exportRepairs">导出维修记录</el-button>
                   </div>
                 </div>
               </el-popover>
             </div>
           </template>
           <template #actions>
+            <el-button v-if="can('faults.export')" class="toolbar-secondary-action toolbar-export-action" :icon="Download" :loading="exportingRepairs" :disabled="exportingRepairs" @click="exportRepairs">
+              导出数据
+            </el-button>
             <el-button v-if="can('faults.manage')" class="page-primary-action" type="primary" @click="openFaultModal()">新增故障</el-button>
           </template>
         </PageToolbar>
