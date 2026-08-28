@@ -4,7 +4,6 @@ defineProps<{
   currentPage: number;
   pageSize: number;
   pageSizes?: number[];
-  loading?: boolean;
 }>();
 
 const emit = defineEmits<{
@@ -14,16 +13,18 @@ const emit = defineEmits<{
 </script>
 
 <template>
-  <div class="paged-table" :class="{ 'is-loading': loading }" v-loading="loading">
+  <div class="paged-table">
     <slot />
-    <el-pagination
-      :current-page="currentPage"
-      :page-size="pageSize"
-      :total="total"
-      :page-sizes="pageSizes || [20, 50, 100]"
-      layout="total, sizes, prev, pager, next"
-      @update:current-page="emit('update:currentPage', $event)"
-      @update:page-size="emit('update:pageSize', $event)"
-    />
+    <div class="paged-table__footer">
+      <el-pagination
+        :current-page="currentPage"
+        :page-size="pageSize"
+        :total="total"
+        :page-sizes="pageSizes || [20, 50, 100]"
+        layout="total, sizes, prev, pager, next"
+        @update:current-page="emit('update:currentPage', $event)"
+        @update:page-size="emit('update:pageSize', $event)"
+      />
+    </div>
   </div>
 </template>

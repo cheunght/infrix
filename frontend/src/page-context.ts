@@ -1,7 +1,13 @@
 import type { ComputedRef, Ref } from "vue";
-import type { RackSection, SettingsSection } from "./router";
+import type {
+  LocationStatusFilter,
+  LocationTypeFilter,
+  RackSection,
+  SettingsSection,
+} from "./router";
 import type {
   Asset,
+  AssetStatus,
   AssetCustomFilter,
   AssetDetail,
   CustomField,
@@ -10,13 +16,9 @@ import type {
   CustomFieldSchema,
   DataCenter,
   DashboardOverview,
-  DashboardStatus,
   DictionaryItem,
   FacilitySummary,
   FaultEvent,
-  InventoryInspector,
-  InventoryItem,
-  InventoryTask,
   ManagedUser,
   Rack,
   RackFormState,
@@ -25,8 +27,11 @@ import type {
   ServerRoom,
   SoftwareLicense,
   SparePart,
+  SparePartCategory,
+  SparePartFormState,
   SpareStock,
   SpareTransaction,
+  StockOperationType,
   Tag,
 } from "./types";
 
@@ -37,14 +42,13 @@ export type ActionFn = (...args: never[]) => void | Promise<void>;
 export interface AssetFormState {
   asset_no: string;
   name: string;
-  asset_type: string;
   manufacturer_id: string;
   model: string;
   device_type: string;
   manufacturer_model: string;
   serial_number: string;
   purpose: string;
-  status: string;
+  status: AssetStatus;
   owner_name: string;
   notes: string;
   rack_mounted: boolean;
@@ -95,7 +99,7 @@ export interface DashboardContext {
 }
 
 export interface AssetFilters {
-  status: string;
+  status: AssetStatus | "";
   deviceType: string;
   tag: string[];
   manufacturer: string;
@@ -224,60 +228,32 @@ export interface RackManagementContext {
 
 export interface RackSharedContext extends RackFiltersContext, RackListContext, RackCanvasContext, RackInspectorContext, RackManagementContext {
   rackSection: Ref<RackSection>;
-  dataCenters: Ref<DataCenter[]>;
   racks: Ref<Rack[]>;
   facilitySummary: Ref<FacilitySummary | null>;
-  rackManagementLoading: Ref<boolean>;
-  dataCenterManagementError: Ref<string>;
-  roomManagementError: Ref<string>;
-  rackManagementError: Ref<string>;
-  roomManagementSearch: Ref<string>;
-  roomManagementDataCenter: Ref<string>;
-  roomManagementPage: Ref<number>;
-  roomManagementPageSize: Ref<number>;
-  roomManagementCount: Ref<number>;
-  changeRoomManagementSearch: () => void | Promise<void>;
-  changeRoomManagementDataCenter: () => void | Promise<void>;
-  changeRoomManagementPage: (page: number) => void | Promise<void>;
-  resetRoomManagementFilters: () => void | Promise<void>;
-  rackListLoading: Ref<boolean>;
-  rackCanvasLoading: Ref<boolean>;
-  rackListError: Ref<string>;
-  rackCanvasError: Ref<string>;
+  focusedRackId: Ref<number | null>;
+  locationSearch: Ref<string>;
+  locationType: Ref<LocationTypeFilter>;
+  locationStatus: Ref<LocationStatusFilter>;
+  locationDataCenter: Ref<string>;
+  locationManagementLoading: Ref<boolean>;
+  locationManagementError: Ref<string>;
+  loadLocationManagement: () => void | Promise<boolean>;
+  retryLocationManagement: () => void | Promise<void>;
+  changeLocationSearch: () => void | Promise<void>;
+  changeLocationType: (type: string) => void | Promise<void>;
+  changeLocationStatus: (status: string) => void | Promise<void>;
+  changeLocationDataCenter: () => void | Promise<void>;
+  resetLocationFilters: () => void | Promise<void>;
+  dataCenterActionId: Ref<number | null>;
+  deleteDataCenter: (center: DataCenter) => void | Promise<void>;
+  updateDataCenterStatus: (center: DataCenter, isActive: boolean) => void | Promise<void>;
   can: CapabilityFn;
   openDataCenterModal: (center?: DataCenter) => void | Promise<void>;
-  openRoomModal: (room?: ServerRoom) => void | Promise<void>;
+  openRoomModal: (room?: ServerRoom, dataCenterId?: number) => void | Promise<void>;
   openRackSection: (section: RackSection | string, query?: Record<string, string>) => void;
-  selectRack: (rack: Rack) => void;
-  rackDetailOpen: Ref<boolean>;
-  rackViewStyle: ComputedRef<Record<string, string>>;
-  detailAsset: Ref<AssetDetail | null>;
-  detailLoading: Ref<boolean>;
-  detailError: Ref<string>;
-  retryAssetDetail: () => void | Promise<void>;
-  closeAssetDetail: () => void;
   deleteRoom: (room: ServerRoom) => void | Promise<void>;
   updatingRoomId: Ref<number | null>;
   updateRoomStatus: (room: ServerRoom, isActive: boolean) => void | Promise<void>;
-  rackUsedU: (rack: Rack) => number;
-  rackUtilization: (rack: Rack) => number;
-  rackUtilizationColor: (rack: Rack) => string;
-  rackBodyStyle: (rack: Rack) => Record<string, string>;
-  rackGapUnavailable: (rack: Rack, u: number) => boolean;
-  rackAllocationStyle: (rack: Rack, allocation: Rack["allocations"][number]) => Record<string, string>;
-  focusedRackId: Ref<number | null>;
-  focusedRack: ComputedRef<Rack | null>;
-  visibleRacks: ComputedRef<Rack[]>;
-  displayedRacks: ComputedRef<Rack[]>;
-  rackViewTitle: ComputedRef<string>;
-  deviceTypes: Ref<DictionaryItem[]>;
-  openRackAssetDetail: (assetId: number, rackId: number) => void | Promise<void>;
-  rackCount: Ref<number>;
-  rackPage: Ref<number>;
-  changeRackPage: (page: number) => void | Promise<void>;
-  retryRackView: () => void | Promise<void>;
-  retryRackManagement: () => void | Promise<void>;
-  hasRackFilters: ComputedRef<boolean>;
 }
 
 export interface RackFiltersContext {
@@ -285,12 +261,10 @@ export interface RackFiltersContext {
   selectedDataCenter: Ref<string>;
   changeDataCenter: () => void | Promise<void>;
   selectedRoom: Ref<string>;
-  changeRoom: () => void | Promise<void>;
   roomOptions: ComputedRef<Array<{ id: string; name: string; data_center_name?: string }>>;
   selectedRack: Ref<string>;
   changeRackFilter: () => void | Promise<void>;
-  rackOptions: ComputedRef<string[]>;
-  selectedRackDeviceType: Ref<string>;
+  selectedRackDeviceTypeId: Ref<string>;
   deviceTypes: Ref<DictionaryItem[]>;
   resetRackFilters: () => void | Promise<void>;
   exportRackLayout: () => void | Promise<void>;
@@ -315,16 +289,14 @@ export interface RackListContext {
 }
 
 export interface RackCanvasContext {
-  rackViewTitle: ComputedRef<string>;
   focusedRack: ComputedRef<Rack | null>;
   displayedRacks: ComputedRef<Rack[]>;
-  rackDetailOpen: Ref<boolean>;
   deviceTypes: Ref<DictionaryItem[]>;
+  rackUsedU: (rack: Rack) => number;
   rackUtilization: (rack: Rack) => number;
   rackBodyStyle: (rack: Rack) => Record<string, string>;
   rackGapUnavailable: (rack: Rack, u: number) => boolean;
   rackAllocationStyle: (rack: Rack, allocation: Rack["allocations"][number]) => Record<string, string>;
-  focusedRackId: Ref<number | null>;
   openRackAssetDetail: (assetId: number, rackId: number) => void | Promise<void>;
   detailAsset: Ref<AssetDetail | null>;
   rackCanvasLoading: Ref<boolean>;
@@ -403,23 +375,22 @@ export interface SpareContext {
   sparePage: Ref<number>;
   sparePageSize: Ref<number>;
   spareSearch: Ref<string>;
-  spareType: Ref<string>;
-  spareActive: Ref<string>;
+  spareCategory: Ref<string>;
+  spareManufacturer: Ref<string>;
   spareListDataCenter: Ref<string>;
   spareListRoom: Ref<string>;
   spareRooms: Ref<ServerRoom[]>;
-  sparePartForm: Ref<Record<string, string | number | boolean>>;
+  spareCategories: Ref<SparePartCategory[]>;
+  sparePartForm: Ref<SparePartFormState>;
   editingSparePart: Ref<SparePart | null>;
   showSparePartModal: Ref<boolean>;
   spareSaving: Ref<boolean>;
   deletingSparePartId: Ref<number | null>;
-  updatingSparePartId: Ref<number | null>;
   spareListLoading: Ref<boolean>;
   spareListError: Ref<string>;
   exportingSpares: Ref<boolean>;
   openSparePartModal: (part?: SparePart) => void;
   saveSparePart: () => void | Promise<boolean>;
-  toggleSparePart: (part: SparePart) => void | Promise<void>;
   deleteSparePart: (part: SparePart) => void | Promise<void>;
   searchSpareParts: () => void | Promise<void>;
   changeSparePage: (page: number) => void | Promise<void>;
@@ -428,11 +399,12 @@ export interface SpareContext {
   retrySpareList: () => void | Promise<void>;
   exportSpareParts: () => void | Promise<void>;
   exportSpareTransactions: (partId: number) => void | Promise<void>;
-  openSpareOperation: (part: SparePart, type?: string, location?: { data_center: number; server_room: number | null; quantity: number; label: string }) => void;
-  spareOperationType: Ref<string>;
+  openSpareOperation: (part: SparePart, type?: StockOperationType, location?: { data_center: number; server_room: number | null; quantity: number; label: string }) => void;
+  spareOperationType: Ref<StockOperationType>;
   spareOperationForm: Ref<Record<string, string>>;
   showSpareOperationModal: Ref<boolean>;
   spareOperationSaving: Ref<boolean>;
+  spareOperationError: Ref<string>;
   spareOperationCurrentQuantity: Ref<number | null>;
   spareOperationLocationLabel: Ref<string>;
   spareOperationLocationLocked: Ref<boolean>;
@@ -454,6 +426,7 @@ export interface SpareContext {
   loadStockLocations: (partId: number) => void | Promise<void>;
   transactionRows: Ref<SpareTransaction[]>;
   transactionCount: Ref<number>;
+  spareTransactionFilters: Ref<{ part: string; operation_type: StockOperationType | ""; start: string; end: string }>;
   transactionPage: Ref<number>;
   transactionPageSize: Ref<number>;
   transactionLoading: Ref<boolean>;
@@ -479,8 +452,15 @@ export interface SettingsContext extends CustomFieldContext, TagContext {
   settingsSection: Ref<SettingsSection>;
   can: CapabilityFn;
   dictionarySection: Ref<string>;
+  dictionaryPage: Ref<number>;
+  dictionaryPageSize: Ref<number>;
+  dictionaryCount: ComputedRef<number>;
   dictionarySearch: Ref<string>;
   loadDictionaries: () => void | Promise<boolean>;
+  changeDictionarySection: () => void | Promise<void>;
+  searchDictionaries: () => void | Promise<void>;
+  changeDictionaryPage: (page: number) => void;
+  changeDictionaryPageSize: (size: number) => void;
   retryDictionaries: () => void | Promise<boolean>;
   dictionaryLoading: Ref<boolean>;
   dictionaryError: Ref<string>;
@@ -488,8 +468,8 @@ export interface SettingsContext extends CustomFieldContext, TagContext {
   dictionaryActionId: Ref<number | null>;
   dictionaryFormErrors: Ref<Record<string, string>>;
   currentDictionaryLabel: ComputedRef<string>;
-  openDictionaryModal: (item?: DictionaryItem | DataCenter) => void;
-  currentDictionaryItems: ComputedRef<DictionaryItem[]>;
+  openDictionaryModal: (item?: DictionaryItem) => void;
+  currentDictionaryItems: ComputedRef<Array<DictionaryItem | SparePartCategory>>;
   toggleDictionary: (item: DictionaryItem) => void | Promise<void>;
   deleteDictionary: (item: DictionaryItem) => void | Promise<void>;
   dictionaryItemUsed: (item: DictionaryItem) => boolean;
@@ -546,7 +526,14 @@ export interface CustomFieldContext {
   loading: Ref<boolean>;
   customFieldDeviceType: Ref<string>;
   customFieldActive: Ref<string>;
+  customFieldTableItems: ComputedRef<CustomField[]>;
+  customFieldPage: Ref<number>;
+  customFieldPageSize: Ref<number>;
+  customFieldCount: ComputedRef<number>;
   loadCustomFields: () => void | Promise<boolean>;
+  refreshCustomFieldList: () => void | Promise<void>;
+  changeCustomFieldPage: (page: number) => void;
+  changeCustomFieldPageSize: (size: number) => void;
   retryCustomFieldList: () => void | Promise<boolean>;
   customFieldListLoading: Ref<boolean>;
   customFieldListError: Ref<string>;
@@ -582,7 +569,14 @@ export interface TagContext {
   loading: Ref<boolean>;
   tagSearch: Ref<string>;
   tagActive: Ref<string>;
+  tagTableItems: ComputedRef<Tag[]>;
+  tagPage: Ref<number>;
+  tagPageSize: Ref<number>;
+  tagCount: ComputedRef<number>;
   loadTags: () => void | Promise<boolean>;
+  refreshTagList: () => void | Promise<void>;
+  changeTagPage: (page: number) => void;
+  changeTagPageSize: (size: number) => void;
   retryTagList: () => void | Promise<boolean>;
   tagListLoading: Ref<boolean>;
   tagListError: Ref<string>;

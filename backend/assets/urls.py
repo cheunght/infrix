@@ -1,6 +1,6 @@
 from rest_framework.routers import DefaultRouter
 from django.urls import path
-from .views import AuditLogViewSet, AssetViewSet, CustomFieldOptionViewSet, CustomFieldViewSet, DataCenterViewSet, DeviceTypeViewSet, FaultEventViewSet, GroupViewSet, InventoryItemViewSet, InventoryTaskViewSet, ManufacturerViewSet, RackViewSet, RepairRecordViewSet, ServerRoomViewSet, SoftwareLicenseViewSet, SparePartViewSet, SpareStockViewSet, SpareStockTransactionViewSet, TagViewSet, UserViewSet, asset_inventory_records, dashboard_overview, facilities_summary, inventory_inspectors, license_export, license_summary, repair_record_export, rack_layout_export, spare_part_export, spare_transaction_export, auth_login, auth_me, auth_logout, auth_csrf, auth_change_password, asset_import, asset_import_preview, asset_import_template, asset_export
+from .views import AuditLogViewSet, AssetViewSet, CustomFieldOptionViewSet, CustomFieldViewSet, DataCenterViewSet, DeviceTypeViewSet, FaultEventViewSet, GroupViewSet, InventoryItemViewSet, InventoryTaskViewSet, ManufacturerViewSet, RackViewSet, RepairRecordViewSet, ServerRoomViewSet, SoftwareLicenseViewSet, SparePartCategoryViewSet, SparePartViewSet, SpareStockViewSet, SpareStockTransactionViewSet, TagViewSet, UserViewSet, asset_inventory_records, dashboard_overview, facilities_summary, inventory_inspectors, license_export, license_summary, repair_record_export, rack_layout_export, spare_part_export, spare_transaction_export, auth_login, auth_me, auth_logout, auth_csrf, auth_change_password, asset_import, asset_import_preview, asset_import_template, asset_export
 
 router = DefaultRouter()
 router.register("assets", AssetViewSet)
@@ -9,6 +9,7 @@ router.register("server-rooms", ServerRoomViewSet, basename="server-room")
 router.register("data-centers", DataCenterViewSet, basename="data-center")
 router.register("manufacturers", ManufacturerViewSet, basename="manufacturer")
 router.register("device-types", DeviceTypeViewSet, basename="device-type")
+router.register("spare-part-categories", SparePartCategoryViewSet, basename="spare-part-category")
 router.register("custom-fields", CustomFieldViewSet, basename="custom-field")
 router.register("custom-field-options", CustomFieldOptionViewSet, basename="custom-field-option")
 router.register("tags", TagViewSet, basename="tag")

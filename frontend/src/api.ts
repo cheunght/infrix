@@ -20,7 +20,6 @@ export function pageTotal<T>(payload: PageResult<T> | T[] | null | undefined): n
 const FIELD_LABELS: Record<string, string> = {
   asset_no: "资产编号",
   name: "名称",
-  asset_type: "设备类型",
   manufacturer: "厂商",
   device_type: "设备类型",
   serial_number: "序列号",

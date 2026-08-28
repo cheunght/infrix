@@ -3,7 +3,9 @@ import { computed, nextTick, ref, watch } from "vue";
 import type { FormInstance, FormRules } from "element-plus";
 import type { Rack, RackFormState } from "../types";
 import type { RackManagementContext } from "../types/page-context";
+import FieldHelp from "./FieldHelp.vue";
 import FormDialogShell from "./FormDialogShell.vue";
+import { RACK_STATUS_OPTIONS } from "../business-enums";
 
 const props = defineProps<{ context: RackManagementContext }>();
 const context = props.context;
@@ -67,6 +69,7 @@ const currentHighestOccupiedU = computed(() => {
   if (!rack?.allocations?.length) return 0;
   return Math.max(...rack.allocations.map((allocation) => allocation.end_u));
 });
+const currentHighestOccupiedUHelp = computed(() => `当前最高占用：U${currentHighestOccupiedU.value}，容量不能小于该位置`);
 
 function fieldError(field: string) {
   return rackFormFieldErrors.value[field];
@@ -110,12 +113,13 @@ watch(showRackModal, (open) => {
       :model="rackForm"
       :rules="formRules"
       :validate-on-rule-change="false"
-      label-position="top"
+      label-position="right"
+      class="horizontal-form"
       @submit.prevent="submitRack"
     >
       <section class="form-dialog__section">
         <h3 class="form-dialog__section-title">基本信息</h3>
-        <div class="form-dialog__grid">
+        <div class="horizontal-form__rows">
           <el-form-item label="所属机房" prop="room" :error="fieldError('room')">
             <el-select v-model="rackForm.room" disabled :placeholder="currentRoomLabel">
               <el-option v-if="currentRoom" :label="currentRoomLabel" :value="String(currentRoom.id)" />
@@ -124,27 +128,27 @@ watch(showRackModal, (open) => {
           <el-form-item label="机柜编号" prop="code" :error="fieldError('code')">
             <el-input v-model="rackForm.code" :validate-event="false" placeholder="例如 A01" autocomplete="off" />
           </el-form-item>
+          <el-form-item label="总 U 位数" prop="total_u" :error="fieldError('total_u')">
+            <el-input-number v-model="rackForm.total_u" :min="1" :max="32767" :step="1" :precision="0" :value-on-clear="null" aria-label="总 U 位数">
+              <template #suffix>U</template>
+            </el-input-number>
+            <FieldHelp v-if="currentHighestOccupiedU" :text="currentHighestOccupiedUHelp" />
+          </el-form-item>
           <el-form-item label="机柜名称" prop="name" :error="fieldError('name')">
             <el-input v-model="rackForm.name" :validate-event="false" placeholder="可选" />
           </el-form-item>
           <el-form-item label="机柜类型" prop="rack_type" :error="fieldError('rack_type')">
             <el-input v-model="rackForm.rack_type" :validate-event="false" placeholder="例如 标准机柜" />
           </el-form-item>
-          <el-form-item label="总 U 位数" prop="total_u" :error="fieldError('total_u')">
-            <el-input-number v-model="rackForm.total_u" :min="1" :max="32767" controls-position="right" />
-            <small v-if="currentHighestOccupiedU" class="rack-form-hint">当前最高占用：U{{ currentHighestOccupiedU }}，容量不能小于该位置</small>
-          </el-form-item>
           <el-form-item label="机柜状态" prop="status" :error="fieldError('status')">
             <el-select v-model="rackForm.status" placeholder="请选择状态">
-              <el-option label="使用中" value="in_use" />
-              <el-option label="预留" value="reserved" />
-              <el-option label="停用" value="disabled" />
+              <el-option v-for="option in RACK_STATUS_OPTIONS" :key="option.value" :label="option.label" :value="option.value" />
             </el-select>
           </el-form-item>
           <el-form-item label="负责人" prop="owner_name" :error="fieldError('owner_name')">
             <el-input v-model="rackForm.owner_name" :validate-event="false" placeholder="可选" />
           </el-form-item>
-          <el-form-item label="备注" prop="notes" :error="fieldError('notes')" class="form-dialog__field--full">
+          <el-form-item label="备注" prop="notes" :error="fieldError('notes')">
             <el-input v-model="rackForm.notes" :validate-event="false" type="textarea" :rows="3" placeholder="可选" />
           </el-form-item>
         </div>

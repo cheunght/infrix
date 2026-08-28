@@ -43,6 +43,7 @@ for model in [
     CustomField,
     CustomFieldOption,
     Tag,
+    SparePartCategory,
     SparePart,
     SoftwareLicense,
     Asset,
@@ -71,7 +72,7 @@ class SpareStockAdmin(ReadOnlyInspectionAdmin):
         "data_center__name",
         "server_room__name",
     )
-    list_select_related = ("part", "data_center", "server_room")
+    list_select_related = ("part", "part__category", "data_center", "server_room")
 
 
 @admin.register(SpareStockTransaction)
@@ -80,7 +81,10 @@ class SpareStockTransactionAdmin(ReadOnlyInspectionAdmin):
         "created_at",
         "part",
         "operation_type",
+        "quantity_delta",
         "quantity",
+        "before_quantity",
+        "after_quantity",
         "source_data_center",
         "target_data_center",
         "operator",
@@ -100,6 +104,7 @@ class SpareStockTransactionAdmin(ReadOnlyInspectionAdmin):
     )
     list_select_related = (
         "part",
+        "part__category",
         "operator",
         "source_data_center",
         "source_server_room",

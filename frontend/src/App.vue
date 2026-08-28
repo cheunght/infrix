@@ -8,6 +8,7 @@ import {
   watch,
 } from "vue";
 import { ElMessage, ElMessageBox } from "element-plus";
+import type { MenuInstance } from "element-plus";
 import {
   Checked,
   Expand,
@@ -38,6 +39,7 @@ import GlobalSearch from "./components/GlobalSearch.vue";
 import infrixMark from "./assets/infrix-mark.png";
 import infrixWordmark from "./assets/infrix-wordmark.png";
 import { hasCapability } from "./permissions";
+import { statusLabel } from "./status";
 import {
   routeForPage,
   type RackSection,
@@ -68,12 +70,8 @@ const sidebarCollapsed = ref(
     (window.matchMedia?.("(max-width: 900px)").matches &&
       !localStorage.getItem("itam.sidebar.collapsed")),
 );
-const settingsMenuExpanded = ref(
-  localStorage.getItem("itam.settings.expanded") !== "0",
-);
-const sidebarMenu = ref<{ open: (index: string) => void } | null>(null);
+const sidebarMenu = ref<MenuInstance>();
 const userName = ref("");
-const showColumnMenu = ref(false);
 const username = ref("");
 const password = ref("");
 const loginError = ref("");
@@ -108,7 +106,6 @@ const {
   dashboardDateTime,
   dashboardAlertLevel,
 } = useDashboard({ request, beginLoad, isCurrentLoad });
-const showUserMenu = ref(false);
 const showPasswordModal = ref(false);
 const showProfileModal = ref(false);
 const showAssetDetail = ref(false);
@@ -121,6 +118,7 @@ const actionMessage = ref("");
 const pageError = ref("");
 const passwordForm = ref({ old_password: "", new_password: "", confirm_password: "" });
 const passwordSaving = ref(false);
+const passwordError = ref("");
 const passwordFormErrors = ref<Record<string, string>>({});
 const profileForm = ref({ first_name: "", last_name: "", email: "" });
 const profileLoading = ref(false);
@@ -132,8 +130,7 @@ const userIsActive = ref(false);
 const lastLogin = ref<string | null>(null);
 const viewportHeight = ref(window.innerHeight);
 const settingsSection = ref<SettingsSection>("dictionaries");
-// 机房资源保留机房管理和机柜管理两个入口。
-const rackSection = ref<RackSection>("rooms");
+const rackSection = ref<RackSection>("locations");
 const facilities = useFacilities({
   request,
   beginLoad,
@@ -148,9 +145,7 @@ const facilities = useFacilities({
   closeAssetDetail,
   openRackAssetDetail,
   clearRouteQuery,
-  refreshDictionaries: async () => {
-    return loadDictionaries();
-  },
+  updateRouteQuery,
   reload: () => load(),
   confirmAction,
 });
@@ -159,19 +154,20 @@ const {
   serverRooms,
   racks,
   facilitySummary,
-  rackManagementLoading,
-  dataCenterManagementError,
-  roomManagementError,
-  rackManagementError,
-  roomManagementSearch,
-  roomManagementDataCenter,
-  roomManagementPage,
-  roomManagementPageSize,
-  roomManagementCount,
-  changeRoomManagementSearch,
-  changeRoomManagementDataCenter,
-  changeRoomManagementPage,
-  resetRoomManagementFilters,
+  locationSearch,
+  locationType,
+  locationStatus,
+  locationDataCenter,
+  locationManagementLoading,
+  locationManagementError,
+  dataCenterActionId,
+  loadLocationManagement,
+  retryLocationManagement,
+  changeLocationSearch,
+  changeLocationType,
+  changeLocationStatus,
+  changeLocationDataCenter,
+  resetLocationFilters,
   rackListLoading,
   rackCanvasLoading,
   rackListError,
@@ -179,17 +175,13 @@ const {
   selectedDataCenter,
   selectedRoom,
   selectedRack,
-  selectedRackDeviceType,
+  selectedRackDeviceTypeId,
   focusedRackId,
   rackCount,
   rackPage,
   rackPageSize,
   showDataCenterModal,
-  editingDataCenter,
-  dataCenterForm,
   showRoomModal,
-  editingRoom,
-  roomForm,
   showRackModal,
   editingRack,
   rackForm,
@@ -200,12 +192,11 @@ const {
   updatingRoomId,
   loadDataCenters,
   loadRackManagement,
-  loadServerRooms,
   loadRackView,
   openDataCenterModal,
-  saveDataCenter,
+  updateDataCenterStatus,
+  deleteDataCenter,
   openRoomModal,
-  saveRoom,
   deleteRoom,
   updateRoomStatus,
   openRackModal,
@@ -216,15 +207,10 @@ const {
   exportRackLayout,
   visibleRacks,
   roomOptions,
-  rackOptions,
   hasRackFilters,
   focusedRack,
   rackDetailOpen,
   displayedRacks,
-  rackViewTitle,
-  rackViewStyle,
-  rackUnitHeight,
-  rackBodyHeight,
   rackBodyStyle,
   rackAllocationStyle,
   rackUsedU,
@@ -233,9 +219,7 @@ const {
   rackUtilizationColor,
   selectRack,
   retryRackView,
-  retryRackManagement,
   changeDataCenter,
-  changeRoom,
   changeRackFilter,
   resetRackFilters,
   changeRackPage,
@@ -249,13 +233,17 @@ const settings = useSettings({
   isAdmin,
   currentUsername: username,
   settingsSection,
-  dataCenters,
   actionMessage,
 });
 const {
   manufacturers,
   deviceTypes,
+  spareCategories,
   customFields,
+  customFieldTableItems,
+  customFieldCount,
+  customFieldPage,
+  customFieldPageSize,
   customFieldDeviceType,
   customFieldActive,
   customFieldListLoading,
@@ -275,6 +263,10 @@ const {
   showCustomFieldModal,
   showCustomFieldOptionModal,
   tags,
+  tagTableItems,
+  tagCount,
+  tagPage,
+  tagPageSize,
   tagListLoading,
   tagListError,
   tagSaving,
@@ -311,6 +303,9 @@ const {
   userResetSaving,
   userResetFormErrors,
   dictionarySection,
+  dictionaryPage,
+  dictionaryPageSize,
+  dictionaryCount,
   dictionaryLoading,
   dictionaryError,
   dictionarySaving,
@@ -331,10 +326,16 @@ const {
   retryDictionaries,
   loadCustomFields,
   retryCustomFieldList,
+  refreshCustomFieldList,
+  changeCustomFieldPage,
+  changeCustomFieldPageSize,
   loadCustomFieldOptions,
   retryCustomFieldOptions,
   loadTags,
   retryTagList,
+  refreshTagList,
+  changeTagPage,
+  changeTagPageSize,
   loadOrganization,
   retryOrganization,
   loadUsers,
@@ -364,6 +365,10 @@ const {
   toggleTag,
   deleteTag,
   currentDictionaryItems,
+  changeDictionarySection,
+  searchDictionaries,
+  changeDictionaryPage,
+  changeDictionaryPageSize,
   currentDictionaryLabel,
   dictionaryItemUsed,
   openDictionaryModal,
@@ -395,6 +400,7 @@ const auth = useAuth({
   showPasswordModal,
   passwordForm,
   passwordSaving,
+  passwordError,
   passwordFormErrors,
   showProfileModal,
   profileForm,
@@ -408,7 +414,7 @@ const auth = useAuth({
   actionMessage,
   settingsSection,
 });
-const { checkAuth, login, logout, loadProfile, saveProfile, changePassword } = auth;
+const { checkAuth, login, logout, loadProfile, saveProfile, changePassword, openPasswordModal } = auth;
 const overlayAuth = {
   username,
   loadProfile,
@@ -416,6 +422,7 @@ const overlayAuth = {
   passwordChangeRequired,
   passwordForm,
   passwordSaving,
+  passwordError,
   passwordFormErrors,
   showProfileModal,
   profileForm,
@@ -452,7 +459,7 @@ const assetsApi = useAssets({
   detailLoading,
   detailError,
   closeAssetDetail,
-  statusLabel: (status) => ({ in_stock: "在库", in_use: "在用", idle: "闲置", repair: "维修中", retired: "已报废" }[status] || status),
+  statusLabel,
 });
 const {
   assets,
@@ -600,12 +607,8 @@ const {
   showRepairModal,
   selectedFault,
   faultForm,
-  faultAssetSearch,
-  faultAssetOptions,
-  faultAssetLoading,
   repairForm,
   openFaultModal,
-  searchFaultAssets,
   registerFaultFromSelection,
   openRepairModal,
   loadRepairs,
@@ -628,6 +631,7 @@ const spares = useSpareParts({
   isCurrentLoad,
   confirmAction,
   dataCenters,
+  spareCategories,
   actionMessage,
   can,
 });
@@ -646,8 +650,8 @@ const {
   spareTransactionPageSize,
   spareRooms,
   spareSearch,
-  spareType,
-  spareActive,
+  spareCategory,
+  spareManufacturer,
   spareListDataCenter,
   spareListRoom,
   spareDataCenter,
@@ -657,7 +661,6 @@ const {
   showSparePartModal,
   spareSaving,
   deletingSparePartId,
-  updatingSparePartId,
   spareListLoading,
   spareListError,
   exportingSpares,
@@ -666,6 +669,7 @@ const {
   spareOperationForm,
   showSpareOperationModal,
   spareOperationSaving,
+  spareOperationError,
   spareOperationCurrentQuantity,
   spareOperationLocationLabel,
   spareOperationLocationLocked,
@@ -686,7 +690,6 @@ const {
   changeSpareTransactionPageSize,
   openSparePartModal,
   saveSparePart,
-  toggleSparePart,
   deleteSparePart,
   openSpareOperation,
   saveSpareOperation,
@@ -738,7 +741,9 @@ function closeTransientUi() {
   showFaultModal.value = false;
   showRepairModal.value = false;
   showImportDialog.value = false;
+  showDataCenterModal.value = false;
   showRoomModal.value = false;
+  showRackModal.value = false;
   showLicenseModal.value = false;
   showSparePartModal.value = false;
   showSpareOperationModal.value = false;
@@ -757,7 +762,9 @@ function positiveRouteQueryId(value: string): number | null {
 
 function syncRouteState(): boolean {
   const routePage = route.meta.page || "dashboard";
-  const rackQueryKeys = ["room", "rack", "rack_code"];
+  const rackFilterQueryKeys = ["room", "rack", "rack_code", "device_type"];
+  const locationQueryKeys = ["data_center", "search", "type", "status"];
+  const rackSectionQueryKeys = [...locationQueryKeys, ...rackFilterQueryKeys];
   const queryKeysToClear: string[] = [];
   const hasQueryKey = (key: string) =>
     Object.prototype.hasOwnProperty.call(route.query, key);
@@ -765,27 +772,65 @@ function syncRouteState(): boolean {
   if (routePage === "settings")
     settingsSection.value = route.meta.settingsSection || "dictionaries";
   if (routePage === "racks") {
-    rackSection.value = route.meta.rackSection || "rooms";
+    rackSection.value = route.meta.rackSection || "locations";
   }
   if (routePage === "racks" && rackSection.value === "view") {
+    const dataCenterQuery = positiveRouteQueryId(routeQueryValue("data_center"));
     const roomQuery = positiveRouteQueryId(routeQueryValue("room"));
     const rackQuery = positiveRouteQueryId(routeQueryValue("rack"));
+    if (hasQueryKey("data_center") && dataCenterQuery === null) queryKeysToClear.push("data_center");
     if (hasQueryKey("room") && roomQuery === null) queryKeysToClear.push("room");
     if (hasQueryKey("rack") && rackQuery === null) queryKeysToClear.push("rack");
     if (hasQueryKey("rack_code") && !routeQueryValue("rack_code")) {
       queryKeysToClear.push("rack_code");
     }
+    const deviceTypeQuery = positiveRouteQueryId(routeQueryValue("device_type"));
+    if (hasQueryKey("device_type") && deviceTypeQuery === null) queryKeysToClear.push("device_type");
+    selectedDataCenter.value = dataCenterQuery ? String(dataCenterQuery) : "";
     selectedRoom.value = roomQuery ? String(roomQuery) : "";
     selectedRack.value = routeQueryValue("rack_code");
+    selectedRackDeviceTypeId.value = deviceTypeQuery ? String(deviceTypeQuery) : "";
     focusedRackId.value = rackQuery;
+    for (const key of ["search"]) {
+      if (hasQueryKey(key)) queryKeysToClear.push(key);
+    }
+  } else if (routePage === "racks" && rackSection.value === "locations") {
+    const dataCenterQuery = positiveRouteQueryId(routeQueryValue("data_center"));
+    if (hasQueryKey("data_center") && dataCenterQuery === null) queryKeysToClear.push("data_center");
+    locationDataCenter.value = dataCenterQuery ? String(dataCenterQuery) : "";
+    locationSearch.value = routeQueryValue("search");
+    const locationTypeQuery = routeQueryValue("type");
+    locationType.value = locationTypeQuery === "data-center" || locationTypeQuery === "room"
+      ? locationTypeQuery
+      : "all";
+    if (hasQueryKey("type") && locationType.value === "all" && locationTypeQuery !== "all") {
+      queryKeysToClear.push("type");
+    }
+    const locationStatusQuery = routeQueryValue("status");
+    locationStatus.value = locationStatusQuery === "active" || locationStatusQuery === "inactive"
+      ? locationStatusQuery
+      : "all";
+    if (hasQueryKey("status") && locationStatus.value === "all" && locationStatusQuery !== "all") {
+      queryKeysToClear.push("status");
+    }
+    for (const key of rackFilterQueryKeys) {
+      if (hasQueryKey(key)) queryKeysToClear.push(key);
+    }
+    selectedDataCenter.value = "";
+    selectedRoom.value = "";
+    selectedRack.value = "";
+    selectedRackDeviceTypeId.value = "";
+    focusedRackId.value = null;
   } else {
     // These refs are route-positioning state. Leaving the Rack View, or
     // returning to it without its query, must not resurrect the old target.
+    selectedDataCenter.value = "";
     selectedRoom.value = "";
     selectedRack.value = "";
+    selectedRackDeviceTypeId.value = "";
     focusedRackId.value = null;
     if (routePage === "racks") {
-      for (const key of rackQueryKeys) {
+      for (const key of rackSectionQueryKeys) {
         if (hasQueryKey(key)) queryKeysToClear.push(key);
       }
     }
@@ -802,8 +847,7 @@ function routeIsAllowed() {
   if (routePage === "spares" && !can("spares.view")) return false;
   if (
     routePage === "racks" &&
-    route.meta.rackSection === "rooms" &&
-    !can("racks.manage")
+    !can("racks.view")
   ) {
     return false;
   }
@@ -841,6 +885,26 @@ function clearRouteQuery(keys: string[]): boolean {
   let changed = false;
   for (const key of keys) {
     if (Object.prototype.hasOwnProperty.call(nextQuery, key)) {
+      delete nextQuery[key];
+      changed = true;
+    }
+  }
+  if (changed) void router.replace({ name: routeName, query: nextQuery });
+  return changed;
+}
+
+function updateRouteQuery(updates: Record<string, string | undefined>): boolean {
+  const routeName = route.name;
+  if (!routeName) return false;
+  const nextQuery = { ...route.query };
+  let changed = false;
+  for (const [key, value] of Object.entries(updates)) {
+    if (value) {
+      if (String(nextQuery[key] ?? "") !== value) {
+        nextQuery[key] = value;
+        changed = true;
+      }
+    } else if (Object.prototype.hasOwnProperty.call(nextQuery, key)) {
       delete nextQuery[key];
       changed = true;
     }
@@ -912,61 +976,76 @@ function toggleSidebar() {
     "itam.sidebar.collapsed",
     sidebarCollapsed.value ? "1" : "0",
   );
-  if (!sidebarCollapsed.value && settingsMenuExpanded.value) {
-    nextTick(() => sidebarMenu.value?.open("settings"));
-  }
+  if (!sidebarCollapsed.value) openActiveSidebarSubmenu();
 }
-function toggleSettingsMenu() {
-  if (sidebarCollapsed.value) {
-    sidebarCollapsed.value = false;
-    localStorage.setItem("itam.sidebar.collapsed", "0");
-    settingsMenuExpanded.value = true;
-    localStorage.setItem("itam.settings.expanded", "1");
-    return;
-  }
-  settingsMenuExpanded.value = !settingsMenuExpanded.value;
-  localStorage.setItem(
-    "itam.settings.expanded",
-    settingsMenuExpanded.value ? "1" : "0",
-  );
-}
-function handleSettingsMenuOpen(index: string) {
-  if (index !== "settings") return;
-  // In collapsed mode Element Plus opens the submenu in an adjacent popper.
-  // Do not expand the whole sidebar in response to that transient event.
-  if (sidebarCollapsed.value) return;
-  settingsMenuExpanded.value = true;
-  localStorage.setItem("itam.settings.expanded", "1");
-}
-function handleSettingsMenuClose(index: string) {
-  if (index !== "settings") return;
-  if (sidebarCollapsed.value) return;
-  settingsMenuExpanded.value = false;
-  localStorage.setItem("itam.settings.expanded", "0");
+function openActiveSidebarSubmenu() {
+  const submenuIndex =
+    page.value === "settings"
+      ? "settings"
+      : page.value === "ledger" || page.value === "spares"
+        ? "asset-menu"
+        : page.value === "racks"
+          ? "racks-menu"
+          : "";
+  if (submenuIndex) nextTick(() => sidebarMenu.value?.open(submenuIndex));
 }
 
 function totalPages(total: number, size: number) {
   return Math.max(1, Math.ceil(total / size));
 }
 async function confirmAction(message: string) {
+  const isDelete = message.trim().startsWith("确定删除");
+  const dialogMessage = isDelete
+    ? `${message.trim().replace(/^确定/, "").replace(/吗？(?=\s*(?:\n|$))/, "？")}\n删除后无法恢复，是否继续？`
+    : message;
   try {
-    await ElMessageBox.confirm(message, "确认操作", {
-      type: "warning",
-      confirmButtonText: "确定",
+    await ElMessageBox.confirm(dialogMessage, isDelete ? "删除确认" : "确认操作", {
+      type: isDelete ? "error" : "warning",
+      confirmButtonText: isDelete ? "删除" : "确定",
       cancelButtonText: "取消",
+      confirmButtonClass: isDelete ? "el-button--danger" : undefined,
     });
     return true;
   } catch {
     return false;
   }
 }
+function facilitySectionQuery(section: RackSection): Record<string, string> {
+  if (section !== "view") {
+    return {
+      ...(locationDataCenter.value ? { data_center: locationDataCenter.value } : {}),
+      ...(locationSearch.value.trim() ? { search: locationSearch.value.trim() } : {}),
+      ...(locationType.value !== "all" ? { type: locationType.value } : {}),
+      ...(locationStatus.value !== "all" ? { status: locationStatus.value } : {}),
+    };
+  }
+  return {
+    ...(selectedDataCenter.value ? { data_center: selectedDataCenter.value } : {}),
+    ...(selectedRoom.value ? { room: selectedRoom.value } : {}),
+    ...(focusedRackId.value ? { rack: String(focusedRackId.value) } : {}),
+    ...(selectedRack.value.trim() ? { rack_code: selectedRack.value.trim() } : {}),
+    ...(selectedRackDeviceTypeId.value ? { device_type: selectedRackDeviceTypeId.value } : {}),
+  };
+}
+
 function openRackSection(section: RackSection | string, query: Record<string, string> = {}) {
-  const normalized: RackSection = section === "view" ? "view" : "rooms";
+  const normalized: RackSection = section === "view"
+    ? "view"
+    : "locations";
   rackSection.value = normalized;
+  const hasExplicitQuery = Object.keys(query).length > 0;
+  if (hasExplicitQuery && normalized === "locations") {
+    if (!Object.prototype.hasOwnProperty.call(query, "search")) locationSearch.value = "";
+    if (!Object.prototype.hasOwnProperty.call(query, "type")) locationType.value = "all";
+    if (!Object.prototype.hasOwnProperty.call(query, "status")) locationStatus.value = "all";
+    if (!Object.prototype.hasOwnProperty.call(query, "data_center")) locationDataCenter.value = "";
+  }
+  if (hasExplicitQuery && normalized === "view") rackPage.value = 1;
+  const targetQuery = hasExplicitQuery ? query : facilitySectionQuery(normalized);
   navigateToRoute(
     {
-      name: normalized === "view" ? "racks-view" : "racks-rooms",
-      query,
+      name: normalized === "view" ? "racks-view" : "racks-locations",
+      query: targetQuery,
     },
     true,
   );
@@ -992,7 +1071,7 @@ async function load() {
   const version = beginLoad();
   // Spare parts and the rack view own their workspace loading masks so a
   // list/canvas request never blocks the entire routed application.
-  const usesLocalPageLoading = page.value === "dashboard" || page.value === "settings" || page.value === "spares" || (page.value === "racks" && (rackSection.value === "view" || rackSection.value === "rooms"));
+  const usesLocalPageLoading = page.value === "dashboard" || page.value === "settings" || page.value === "spares" || page.value === "racks";
   loading.value = !usesLocalPageLoading;
   pageError.value = "";
   try {
@@ -1000,8 +1079,8 @@ async function load() {
     if (page.value === "dashboard") {
       await loadDashboardData(version);
     }
-    if (page.value === "racks" && rackSection.value === "rooms") {
-      await loadRackManagement(version);
+    if (page.value === "racks" && rackSection.value === "locations") {
+      await loadLocationManagement(version);
     } else if (page.value === "racks") {
       await loadRackView(version);
     }
@@ -1039,12 +1118,13 @@ function navigate(item: (typeof navItems)[number]) {
   if (item.page === "licenses") licensePage.value = 1;
   if (item.page === "spares") sparePage.value = 1;
   if (item.page === "spares") nextTick(() => sidebarMenu.value?.open("asset-menu"));
-  if (item.page === "racks") rackPage.value = 1;
-  if (item.page === "racks") rackSection.value = "rooms";
+  if (item.page === "racks") {
+    rackPage.value = 1;
+    openRackSection("locations");
+    return;
+  }
   if (item.page === "settings") {
     settingsSection.value = "dictionaries";
-    settingsMenuExpanded.value = true;
-    localStorage.setItem("itam.settings.expanded", "1");
     nextTick(() => sidebarMenu.value?.open("settings"));
   }
   navigateToRoute(
@@ -1065,13 +1145,10 @@ function openSettingsSection(
   if (section === "audit" && !can("audit.view")) return;
   closeTransientUi();
   settingsSection.value = section;
-  settingsMenuExpanded.value = true;
-  localStorage.setItem("itam.settings.expanded", "1");
   nextTick(() => sidebarMenu.value?.open("settings"));
   navigateToRoute(routeForPage("settings", { settingsSection: section }), true);
 }
 function openProfileSettings() {
-  showUserMenu.value = false;
   showProfileModal.value = true;
   void loadProfile();
 }
@@ -1079,7 +1156,7 @@ const activeMenu = computed(() =>
   page.value === "settings"
     ? `settings-${settingsSection.value}`
     : page.value === "racks"
-      ? `racks-${rackSection.value}`
+      ? `racks-${rackSection.value === "view" ? "view" : "locations"}`
       : page.value === "ledger"
         ? "asset-list"
         : page.value,
@@ -1097,8 +1174,16 @@ function handleMenuSelect(index: string) {
     nextTick(() => sidebarMenu.value?.open("asset-menu"));
     return;
   }
+  if (index === "racks-menu" || index === "racks") {
+    const racksItem = navItems.find((entry) => entry.page === "racks");
+    if (racksItem) navigate(racksItem);
+    nextTick(() => sidebarMenu.value?.open("racks-menu"));
+    return;
+  }
   if (index.startsWith("racks-")) {
-    openRackSection(index === "racks-rooms" ? "rooms" : "view");
+    openRackSection(
+      index === "racks-view" ? "view" : "locations",
+    );
     return;
   }
   if (index.startsWith("settings-")) {
@@ -1109,11 +1194,6 @@ function handleMenuSelect(index: string) {
   }
   const item = navItems.find((entry) => entry.page === index);
   if (item) navigate(item);
-}
-function closeMenusOnOutsideClick(event: MouseEvent) {
-  const target = event.target as HTMLElement | null;
-  if (!target?.closest(".user-menu")) showUserMenu.value = false;
-  if (!target?.closest(".column-menu-wrap")) showColumnMenu.value = false;
 }
 function updateViewportHeight() {
   viewportHeight.value = window.innerHeight;
@@ -1135,6 +1215,7 @@ watch(
     const queryNormalized = syncRouteState();
     closeTransientUi();
     if (!authenticated.value || !ensureRouteAccess()) return;
+    if (!sidebarCollapsed.value) openActiveSidebarSubmenu();
     if (queryNormalized) return;
     void load();
     resetMainScroll();
@@ -1161,7 +1242,6 @@ watch(
   { immediate: true },
 );
 onMounted(async () => {
-  document.addEventListener("click", closeMenusOnOutsideClick);
   window.addEventListener("resize", updateViewportHeight);
   await loadCsrf();
   await checkAuth();
@@ -1171,7 +1251,6 @@ onMounted(async () => {
   }
 });
 onBeforeUnmount(() => {
-  document.removeEventListener("click", closeMenusOnOutsideClick);
   window.removeEventListener("resize", updateViewportHeight);
   apiClient.dispose();
 });
@@ -1213,38 +1292,40 @@ const pageContext = {
   licensePageSize, licenseCount, changeLicensePage, changeLicensePageSize,
   spareParts, spareStocks, spareTransactions, sparePartCount, spareStockCount, spareTransactionCount,
   sparePage, sparePageSize,
-  spareSearch, spareType, spareActive, spareListDataCenter, spareListRoom,
-  spareRooms,
-  sparePartForm, editingSparePart, showSparePartModal, spareSaving, deletingSparePartId, updatingSparePartId,
-  spareListLoading, spareListError, exportingSpares, openSparePartModal, saveSparePart, toggleSparePart,
+  spareSearch, spareCategory, spareManufacturer, spareListDataCenter, spareListRoom,
+  spareRooms, spareCategories,
+  sparePartForm, editingSparePart, showSparePartModal, spareSaving, deletingSparePartId,
+  spareListLoading, spareListError, exportingSpares, openSparePartModal, saveSparePart,
   deleteSparePart, searchSpareParts, resetSpareFilters, retrySpareList, changeSparePage, changeSparePageSize, exportSpareParts, exportSpareTransactions,
   openSpareOperation, spareOperationType, spareOperationForm, showSpareOperationModal,
-  spareOperationSaving, spareOperationCurrentQuantity, spareOperationLocationLabel,
-  spareOperationLocationLocked, saveSpareOperation, spareOperationLabel,
+  spareOperationSaving, spareOperationError, spareOperationCurrentQuantity, spareOperationLocationLabel,
+  spareOperationLocationLocked, spareTransactionFilters, saveSpareOperation, spareOperationLabel,
   stockLocations, stockLoading, stockLocationLoadingByPart, stockLocationErrorByPart,
   stockLocationTotalsByPart, stockLocationLoadedByPart, loadStockLocations, transactionRows, transactionCount,
   transactionPage, transactionPageSize, transactionLoading, transactionError, loadTransactions,
   changeTransactionPage, changeTransactionPageSize,
-  rackSection, serverRooms, openDataCenterModal, openRoomModal, deleteRoom, updateRoomStatus, racks,
+  rackSection, serverRooms, openDataCenterModal, openRoomModal, deleteRoom, updateRoomStatus, racks, facilitySummary,
+  locationSearch, locationType, locationStatus, locationDataCenter,
+  locationManagementLoading, locationManagementError, dataCenterActionId,
+  loadLocationManagement, retryLocationManagement,
+  changeLocationSearch, changeLocationType, changeLocationStatus, changeLocationDataCenter, resetLocationFilters,
+  updateDataCenterStatus, deleteDataCenter,
   showRackModal, editingRack, rackForm, rackFormFieldErrors, rackSaving, deletingRackId, updatingRackId, updatingRoomId,
   openRackModal, saveRack, deleteRack, updateRackStatus, clearRackFormErrors,
-  dataCenters, selectedDataCenter, changeDataCenter, changeRoom,
-  facilitySummary, rackManagementLoading, dataCenterManagementError, roomManagementError, rackManagementError,
-  roomManagementSearch, roomManagementDataCenter, roomManagementPage, roomManagementPageSize, roomManagementCount,
-  changeRoomManagementSearch, changeRoomManagementDataCenter, changeRoomManagementPage, resetRoomManagementFilters,
+  dataCenters, selectedDataCenter, changeDataCenter,
   rackListLoading, rackCanvasLoading, rackListError, rackCanvasError,
   changeRackFilter, selectedRoom,
-  roomOptions, selectedRack, rackOptions, hasRackFilters, selectedRackDeviceType, deviceTypes,
-  resetRackFilters, retryRackView, retryRackManagement, exportRackLayout, rackViewTitle, displayedRacks,
+  roomOptions, selectedRack, hasRackFilters, selectedRackDeviceTypeId, deviceTypes,
+  resetRackFilters, retryRackView, exportRackLayout, displayedRacks,
   rackUtilization, rackUtilizationColor, rackUsedU, focusedRackId, focusedRack, visibleRacks, selectRack,
-  rackViewStyle, rackBodyStyle,
+  rackBodyStyle,
   rackAllocationStyle, rackGapUnavailable, openRackAssetDetail,
   rackDetailOpen, detailAsset, detailLoading, detailError, retryAssetDetail, closeAssetDetail,
   rackCount, rackPage, rackPageSize, changeRackPage,
-  settingsSection, dictionarySection,
+  settingsSection, dictionarySection, dictionaryPage, dictionaryPageSize, dictionaryCount,
   dictionarySearch, dictionaryLoading, dictionaryError, dictionarySaving, dictionaryActionId,
   dictionaryFormErrors,
-  loadDictionaries, retryDictionaries, currentDictionaryLabel,
+  loadDictionaries, changeDictionarySection, searchDictionaries, changeDictionaryPage, changeDictionaryPageSize, retryDictionaries, currentDictionaryLabel,
   openDictionaryModal, currentDictionaryItems, toggleDictionary,
   dictionaryItemUsed, deleteDictionary, isAdmin, organizationLoading, organizationError,
   userListError, roleListError, retryOrganization, users, userSearch, userPage, userPageSize, userCount,
@@ -1255,15 +1336,15 @@ const pageContext = {
   auditFilters, auditListLoading, auditListError,
   loadAuditLogs, retryAuditLogs, searchAuditLogs, auditLogs, auditPage, auditPageSize, auditCount,
   changeAuditPage, changeAuditPageSize,
-  customFieldDeviceType, customFieldActive, customFieldListLoading, customFieldListError,
+  customFieldDeviceType, customFieldActive, customFieldTableItems, customFieldPage, customFieldPageSize, customFieldCount, customFieldListLoading, customFieldListError,
   customFieldOptionLoading, customFieldOptionError, customFieldSaving, customFieldOptionSaving,
-  customFieldActionId, customFieldOptionActionId, loadCustomFields, retryCustomFieldList, loadCustomFieldOptions, retryCustomFieldOptions, customFields,
+  customFieldActionId, customFieldOptionActionId, loadCustomFields, retryCustomFieldList, refreshCustomFieldList, changeCustomFieldPage, changeCustomFieldPageSize, loadCustomFieldOptions, retryCustomFieldOptions, customFields,
   openCustomFieldModal, saveCustomField, toggleCustomField, deleteCustomField,
   openCustomFieldOptionModal, saveCustomFieldOption, deleteCustomFieldOption,
   customFieldForm, customFieldFormErrors, showCustomFieldModal, editingCustomField, customFieldOptionForm,
   customFieldOptionFormErrors,
-  showCustomFieldOptionModal, editingCustomFieldOption, tagSearch, tagActive, tagListLoading, tagListError, tagSaving, tagActionId,
-  loadTags, retryTagList, openTagModal, saveTag, toggleTag, deleteTag, tagForm, tagFormErrors, showTagModal, editingTag,
+  showCustomFieldOptionModal, editingCustomFieldOption, tagSearch, tagActive, tagTableItems, tagPage, tagPageSize, tagCount, tagListLoading, tagListError, tagSaving, tagActionId,
+  loadTags, retryTagList, refreshTagList, changeTagPage, changeTagPageSize, openTagModal, saveTag, toggleTag, deleteTag, tagForm, tagFormErrors, showTagModal, editingTag,
   manufacturers,
   showAssetModal, assetModalMode, editingAsset, assetForm, activeDeviceTypes,
   assetFormLoading, assetFormLoadError, assetFormSaving, assetFormFieldErrors,
@@ -1346,52 +1427,45 @@ const overlayAssetDetail = {
         ref="sidebarMenu"
         class="ep-sidebar-menu"
         :default-active="activeMenu"
-        :default-openeds="settingsMenuExpanded ? ['settings'] : []"
         :unique-opened="true"
         :collapse="sidebarCollapsed"
-        :collapse-transition="false"
-        :popper-offset="0"
+        :collapse-transition="true"
         popper-effect="light"
-        popper-class="ep-sidebar-submenu-popper"
-        @open="handleSettingsMenuOpen"
-        @close="handleSettingsMenuClose"
         @select="handleMenuSelect"
       >
-        <el-menu-item index="dashboard" title="仪表盘"
+        <el-menu-item index="dashboard"
           ><el-icon><House /></el-icon
           ><template #title>仪表盘</template></el-menu-item
         >
         <el-sub-menu
           index="asset-menu"
-          popper-class="ep-sidebar-submenu-popper ep-sidebar-submenu-popper--assets"
           ><template #title><el-icon><Monitor /></el-icon><span>资产管理</span></template
           ><el-menu-item index="asset-list">资产列表</el-menu-item
           ><el-menu-item v-if="can('spares.view')" index="spares">备件管理</el-menu-item
         ></el-sub-menu
         >
-        <el-sub-menu
-          index="racks-menu"
-          popper-class="ep-sidebar-submenu-popper ep-sidebar-submenu-popper--racks"
-          @title-click="openRackSection('rooms')"
-          ><template #title><el-icon><OfficeBuilding /></el-icon><span>机房资源</span></template
-          ><el-menu-item v-if="can('racks.manage')" index="racks-rooms">机房管理</el-menu-item
-          ><el-menu-item index="racks-view">机柜管理</el-menu-item></el-sub-menu
-        >
-        <el-menu-item index="licenses" title="软件许可"
+        <el-sub-menu v-if="can('racks.view')" index="racks-menu">
+          <template #title>
+            <el-icon><OfficeBuilding /></el-icon>
+            <span>机房资源</span>
+          </template>
+          <el-menu-item index="racks-locations">位置管理</el-menu-item>
+          <el-menu-item index="racks-view">机柜视图</el-menu-item>
+        </el-sub-menu>
+        <el-menu-item index="licenses"
           ><el-icon><Key /></el-icon
           ><template #title>软件许可</template></el-menu-item
         >
-        <el-menu-item index="inventory" title="盘点中心"
+        <el-menu-item index="inventory"
           ><el-icon><Checked /></el-icon
           ><template #title>盘点中心</template></el-menu-item
         >
-        <el-menu-item index="repairs" title="故障维修"
+        <el-menu-item index="repairs"
           ><el-icon><Warning /></el-icon
           ><template #title>故障维修</template></el-menu-item
         >
         <el-sub-menu
           index="settings"
-          popper-class="ep-sidebar-submenu-popper ep-sidebar-submenu-popper--settings"
           ><template #title
             ><el-icon><Setting /></el-icon><span>系统设置</span></template
           ><el-menu-item index="settings-dictionaries"
@@ -1408,8 +1482,8 @@ const overlayAssetDetail = {
         >
       </el-menu>
     </el-aside>
-    <el-main class="main ep-main" :class="{ 'dashboard-host': page === 'dashboard' }"
-      ><el-header class="app-header"
+    <el-container class="shell-main">
+      <el-header class="app-header"
         ><div class="page-heading">
           <el-button
             class="ep-main-collapse-button"
@@ -1443,7 +1517,7 @@ const overlayAssetDetail = {
               ><el-dropdown-menu
                 ><el-dropdown-item @click="openProfileSettings"
                   >个人设置</el-dropdown-item
-                ><el-dropdown-item @click="showPasswordModal = true"
+                ><el-dropdown-item @click="openPasswordModal"
                   >修改密码</el-dropdown-item
                 ><el-dropdown-item divided @click="logout"
                   >退出登录</el-dropdown-item
@@ -1453,24 +1527,27 @@ const overlayAssetDetail = {
           >
         </div></el-header
       >
-      <div class="app-route-shell" v-loading="loading" :aria-busy="loading ? 'true' : 'false'">
-        <ApiErrorAlert :message="pageError" />
-        <div class="app-route-view">
-          <router-view v-slot="{ Component }">
-            <component :is="Component" :context="pageContext" />
-          </router-view>
+      <el-main class="main ep-main" :class="{ 'dashboard-host': page === 'dashboard' }">
+        <div class="app-route-shell" v-loading="loading" :aria-busy="loading ? 'true' : 'false'">
+          <ApiErrorAlert :message="pageError" />
+          <div class="app-route-view">
+            <router-view v-slot="{ Component }">
+              <component :is="Component" :context="pageContext" />
+            </router-view>
+          </div>
         </div>
-      </div>
-      <GlobalOverlayHost
-        :asset-context="pageContext"
-        :asset-detail="overlayAssetDetail"
-        :assets="assetsApi"
-        :facilities="facilities"
-        :licenses="licensesApi"
-        :repairs="repairs"
-        :settings="settings"
-        :auth="overlayAuth"
-      />
-    </el-main>
+        <GlobalOverlayHost
+          :request="request"
+          :asset-context="pageContext"
+          :asset-detail="overlayAssetDetail"
+          :assets="assetsApi"
+          :facilities="facilities"
+          :licenses="licensesApi"
+          :repairs="repairs"
+          :settings="settings"
+          :auth="overlayAuth"
+        />
+      </el-main>
+    </el-container>
   </el-container>
 </template>

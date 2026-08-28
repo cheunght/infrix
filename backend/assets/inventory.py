@@ -28,6 +28,7 @@ def get_inventory_scope_assets(
 
     queryset = Asset.objects.select_related(
         "asset_data_center",
+        "device_type",
         "rack_allocation__rack__room__data_center",
     ).prefetch_related("network_addresses")
 

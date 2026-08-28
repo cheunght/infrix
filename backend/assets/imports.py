@@ -23,6 +23,7 @@ from openpyxl.utils import get_column_letter
 from rest_framework.exceptions import ValidationError as DRFValidationError
 
 from .audit import asset_audit_snapshot, write_audit_log
+from .enum_contracts import ASSET_IMPORT_STATUS_VALUES
 from .models import Asset, CustomField, DataCenter, DeviceType, Manufacturer, Rack, ServerRoom, Tag
 from .serializers import AssetWriteSerializer
 
@@ -70,9 +71,8 @@ IMPORT_FIELD_LABELS = {key: label for key, label, _required, _description in IMP
 IMPORT_FIELD_LABELS.update({"configuration": "机柜位置", "custom_values": "自定义字段"})
 IMPORT_BASE_HEADERS = {key for key, _label, _required, _description in IMPORT_COLUMNS}
 IMPORT_REQUIRED_HEADERS = {key for key, _label, required, _description in IMPORT_COLUMNS if required}
-IMPORT_LEGACY_HEADERS = {"asset_type", "category"}
 IMPORT_ALIASES = {"asset_model", "rack_total_u", "procurement_notes", "maintenance_notes"}
-IMPORT_STATUS_VALUES = {"in_stock", "in_use", "idle", "retired"}
+IMPORT_STATUS_VALUES = frozenset(ASSET_IMPORT_STATUS_VALUES)
 IMPORT_CUSTOM_HEADER_RE = re.compile(r"custom__[a-z][a-z0-9_]*$")
 
 
@@ -152,9 +152,6 @@ def _normalize_headers(values):
         raise ImportFileError("导入文件第一行必须包含完整的字段名")
     if len(headers) != len(set(headers)):
         raise ImportFileError("导入文件包含重复字段名，请保留每个字段一列")
-    legacy = sorted(set(headers).intersection(IMPORT_LEGACY_HEADERS))
-    if legacy:
-        raise ImportFileError(f"模板不再支持 { '、'.join(legacy) } 列，请使用 device_type")
     unknown = [
         header for header in headers
         if header not in IMPORT_BASE_HEADERS and header not in IMPORT_ALIASES and not IMPORT_CUSTOM_HEADER_RE.fullmatch(header)

@@ -50,6 +50,10 @@ const activeOptions = computed(() => (props.field.options || []).filter((option)
 function update(value: unknown) {
   emit("update:modelValue", value);
 }
+
+function updateNumber(value: number | null | undefined) {
+  emit("update:modelValue", value ?? null);
+}
 </script>
 
 <template>
@@ -73,10 +77,10 @@ function update(value: unknown) {
     v-else-if="field.field_type === 'number'"
     :model-value="numberValue"
     :disabled="disabled"
-    :controls="true"
-    controls-position="right"
     :placeholder="inputPlaceholder"
-    @update:model-value="update"
+    :aria-label="field.name"
+    :value-on-clear="null"
+    @update:model-value="updateNumber"
   />
   <el-date-picker
     v-else-if="field.field_type === 'date'"

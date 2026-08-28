@@ -22,6 +22,7 @@ export interface AuthDeps {
   showPasswordModal: Ref<boolean>;
   passwordForm: Ref<{ old_password: string; new_password: string; confirm_password: string }>;
   passwordSaving: Ref<boolean>;
+  passwordError: Ref<string>;
   passwordFormErrors: Ref<Record<string, string>>;
   showProfileModal: Ref<boolean>;
   profileForm: Ref<{ first_name: string; last_name: string; email: string }>;
@@ -53,6 +54,17 @@ type AuthPayload = {
 };
 
 export function useAuth(deps: AuthDeps) {
+  function resetPasswordState() {
+    deps.passwordForm.value = { old_password: "", new_password: "", confirm_password: "" };
+    deps.passwordError.value = "";
+    deps.passwordFormErrors.value = {};
+  }
+
+  function openPasswordModal() {
+    resetPasswordState();
+    deps.showPasswordModal.value = true;
+  }
+
   function applyAuthPayload(user: AuthPayload) {
     deps.authenticated.value = true;
     deps.username.value = user.username;
@@ -77,7 +89,7 @@ export function useAuth(deps: AuthDeps) {
       applyAuthPayload(user);
       deps.syncRouteState();
       deps.ensureRouteAccess();
-      if (deps.passwordChangeRequired.value) deps.showPasswordModal.value = true;
+      if (deps.passwordChangeRequired.value) openPasswordModal();
       if (!deps.isAdmin.value && deps.settingsSection.value === "organization") {
         deps.settingsSection.value = "dictionaries";
       }
@@ -111,7 +123,7 @@ export function useAuth(deps: AuthDeps) {
       deps.password.value = "";
       await deps.loadCsrf();
       if (deps.passwordChangeRequired.value) {
-        deps.showPasswordModal.value = true;
+        openPasswordModal();
         return;
       }
       await deps.bootstrapApplication();
@@ -141,6 +153,7 @@ export function useAuth(deps: AuthDeps) {
       deps.username.value = "";
       deps.passwordChangeRequired.value = false;
       deps.showPasswordModal.value = false;
+      resetPasswordState();
       deps.showProfileModal.value = false;
       deps.profileForm.value = { first_name: "", last_name: "", email: "" };
       deps.roleName.value = "";
@@ -211,6 +224,7 @@ export function useAuth(deps: AuthDeps) {
   async function changePassword() {
     if (deps.passwordSaving.value) return;
     deps.passwordSaving.value = true;
+    deps.passwordError.value = "";
     deps.passwordFormErrors.value = {};
     try {
       const wasRequired = deps.passwordChangeRequired.value;
@@ -225,6 +239,7 @@ export function useAuth(deps: AuthDeps) {
       });
       deps.showPasswordModal.value = false;
       deps.passwordChangeRequired.value = false;
+      deps.passwordError.value = "";
       deps.passwordForm.value = { old_password: "", new_password: "", confirm_password: "" };
       deps.actionMessage.value = "密码已修改，请妥善保存";
       if (wasRequired) await deps.bootstrapApplication();
@@ -243,11 +258,12 @@ export function useAuth(deps: AuthDeps) {
         fieldErrors.old_password = flattenError(source.detail);
       }
       deps.passwordFormErrors.value = fieldErrors;
-      deps.actionMessage.value = error instanceof Error ? error.message : "修改失败";
+      deps.passwordError.value = error instanceof Error ? error.message : "修改失败";
+      deps.actionMessage.value = deps.passwordError.value;
     } finally {
       deps.passwordSaving.value = false;
     }
   }
 
-  return { checkAuth, login, logout, loadProfile, saveProfile, changePassword };
+  return { checkAuth, login, logout, loadProfile, saveProfile, changePassword, openPasswordModal };
 }

@@ -8,6 +8,9 @@ import PageContainer from "./page/PageContainer.vue";
 import PageContent from "./page/PageContent.vue";
 import PageToolbar from "./page/PageToolbar.vue";
 import StatusTag from "./StatusTag.vue";
+import { statusTone } from "../status";
+import { LICENSE_STATUS_OPTIONS } from "../business-enums";
+import ResourceState from "./ResourceState.vue";
 
 const props = defineProps<{ context: LicenseContext }>();
 const context = props.context;
@@ -53,36 +56,34 @@ const licenseHasFilters = computed(
             @search="searchLicenses"
           />
         </template>
-        <template #primary-filter>
-          <el-select
-            v-model="licenseStatus"
-            placeholder="全部状态"
-            clearable
-            @change="searchLicenses"
-          >
-            <el-option label="正常" value="normal" />
-            <el-option label="即将到期" value="expiring" />
-            <el-option label="已过期" value="expired" />
-          </el-select>
-        </template>
-        <template #secondary-filter>
-          <el-select
-            v-model="licenseManufacturer"
-            placeholder="全部厂商"
-            clearable
-            filterable
-            @change="searchLicenses"
-          >
-            <el-option v-for="manufacturer in licenseManufacturerFilterOptions" :key="manufacturer.id" :label="manufacturer.name" :value="String(manufacturer.id)" />
-          </el-select>
-        </template>
-        <template #extra-filter>
-          <el-button class="toolbar-secondary-action" :disabled="licenseListLoading" @click="resetLicenseFilters">重置</el-button>
+        <template #filters>
+          <div class="page-toolbar__filter-group">
+            <el-select
+              v-model="licenseStatus"
+              placeholder="全部状态"
+              clearable
+              @change="searchLicenses"
+            >
+              <el-option v-for="option in LICENSE_STATUS_OPTIONS" :key="option.value" :label="option.label" :value="option.value" />
+            </el-select>
+            <el-select
+              v-model="licenseManufacturer"
+              placeholder="全部厂商"
+              clearable
+              filterable
+              @change="searchLicenses"
+            >
+              <el-option v-for="manufacturer in licenseManufacturerFilterOptions" :key="manufacturer.id" :label="manufacturer.name" :value="String(manufacturer.id)" />
+            </el-select>
+            <el-button class="toolbar-secondary-action" :disabled="licenseListLoading" @click="resetLicenseFilters">重置</el-button>
+          </div>
         </template>
         <template #actions>
           <el-button v-if="can('licenses.export')" class="toolbar-secondary-action toolbar-export-action" :icon="Download" :loading="exportingLicenses" :disabled="exportingLicenses" @click="exportLicenses">
             导出数据
           </el-button>
+        </template>
+        <template #primary>
           <el-button v-if="can('licenses.manage')" class="page-primary-action" type="primary" @click="openLicenseModal()">
             新增许可
           </el-button>
@@ -91,24 +92,22 @@ const licenseHasFilters = computed(
       </template>
 
       <PageContent surface class="license-list-card">
-        <div v-if="licenseListError" class="license-list-error" role="alert">
-          <div class="license-list-error__copy">
-            <strong>许可证数据加载失败</strong>
-            <span>{{ licenseListError }}</span>
-          </div>
-          <el-button link type="primary" @click="retryLicenseList">重新加载</el-button>
-        </div>
-        <PagedTable
-          v-model:current-page="licensePage"
-          v-model:page-size="licensePageSize"
-          :total="licenseCount"
-          :loading="licenseListLoading"
-          @update:current-page="changeLicensePage"
-          @update:page-size="changeLicensePageSize"
-        >
+        <ResourceState :error="licenseListError" @retry="retryLicenseList">
+          <template #error="{ error }">
+            <el-alert title="许可证数据加载失败" :description="error" type="error" show-icon :closable="false" />
+            <el-button link type="primary" @click="retryLicenseList">重新加载</el-button>
+          </template>
+          <PagedTable
+            v-model:current-page="licensePage"
+            v-model:page-size="licensePageSize"
+            :total="licenseCount"
+            @update:current-page="changeLicensePage"
+            @update:page-size="changeLicensePageSize"
+          >
           <el-table
             class="license-table"
             :data="licenses"
+            v-loading="licenseListLoading"
             table-layout="fixed"
             empty-text="暂无许可证记录"
           >
@@ -116,12 +115,10 @@ const licenseHasFilters = computed(
             prop="name"
             label="软件名称"
             min-width="180"
-            show-overflow-tooltip
           />
           <el-table-column
             label="厂商"
             min-width="120"
-            show-overflow-tooltip
           >
             <template #default="{ row }">{{ row.manufacturer?.name || "—" }}</template>
           </el-table-column>
@@ -129,7 +126,6 @@ const licenseHasFilters = computed(
             prop="license_type"
             label="许可类型"
             min-width="120"
-            show-overflow-tooltip
           />
           <el-table-column label="授权使用" min-width="190">
             <template #default="{ row }">
@@ -154,7 +150,7 @@ const licenseHasFilters = computed(
           <el-table-column label="状态" width="110">
             <template #default="{ row }">
               <StatusTag
-                :status="row.status"
+                :tone="statusTone(row.status)"
                 :label="row.status_label"
               />
             </template>
@@ -179,15 +175,13 @@ const licenseHasFilters = computed(
             </template>
           </el-table-column>
           <template #empty>
-            <div v-if="licenseListError" class="license-table-empty-placeholder" aria-hidden="true" />
-            <div v-else-if="licenseHasFilters" class="license-table-empty">
-              <span>没有符合当前筛选条件的许可证</span>
-              <el-button link type="primary" @click="resetLicenseFilters">清除筛选</el-button>
-            </div>
-            <div v-else class="license-table-empty">暂无许可证记录</div>
+            <el-empty :image-size="56" :description="licenseHasFilters ? '没有符合当前筛选条件的许可证' : '暂无许可证记录'">
+              <el-button v-if="licenseHasFilters" link type="primary" @click="resetLicenseFilters">清除筛选</el-button>
+            </el-empty>
           </template>
           </el-table>
-        </PagedTable>
+          </PagedTable>
+        </ResourceState>
       </PageContent>
   </PageContainer>
 </template>

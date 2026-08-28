@@ -1,5 +1,6 @@
 """Shared rack, room and data-center capacity aggregations."""
 
+from ..enum_contracts import RACK_STATUS_LABELS
 from ..models import Rack
 
 
@@ -48,7 +49,7 @@ def build_rack_capacity_rows(racks, include_status=False):
                 {
                     "name": rack.name,
                     "status": rack.status,
-                    "status_label": dict(Rack.STATUS).get(rack.status, rack.status),
+                    "status_label": RACK_STATUS_LABELS.get(rack.status, rack.status),
                 }
             )
         rows.append(row)

@@ -38,6 +38,8 @@ npm run typecheck
 npm run build
 ```
 
+`npm run build` 会先执行前端 UI 回归契约检查，确保字典 Tab、Rack 分页和 Dashboard 资源跳转的关键交互不会被布局清理误改。
+
 API 文档：`http://127.0.0.1:8000/api/docs/`
 
 ## 当前功能

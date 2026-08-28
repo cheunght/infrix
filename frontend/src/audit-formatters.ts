@@ -1,5 +1,16 @@
 import type { AuditLog } from "./types";
 import { depreciationMethodLabel, formatResidualRate } from "./depreciation";
+import {
+  ASSET_STATUS_LABEL_MAP,
+  businessOptionLabel,
+  INVENTORY_ITEM_STATUS_LABEL_MAP,
+  INVENTORY_RESOLUTION_ACTION_OPTIONS,
+  INVENTORY_RESOLUTION_STATUS_OPTIONS,
+  INVENTORY_TASK_STATUS_LABEL_MAP,
+  LICENSE_STATUS_LABEL_MAP,
+  RACK_STATUS_LABEL_MAP,
+  STOCK_OPERATION_OPTIONS,
+} from "./business-enums";
 
 type AuditRecord = Record<string, unknown>;
 
@@ -51,6 +62,7 @@ const RESOURCE_LABELS: Record<string, string> = {
   repair_record: "维修记录",
   software_license: "软件许可",
   spare_part: "备件",
+  spare_part_category: "备件类型",
   spare_stock_transaction: "库存流水",
   inventory_task: "盘点任务",
   inventory_item: "盘点项目",
@@ -78,7 +90,6 @@ const FIELD_LABELS: Record<string, string> = {
   id: "编号",
   asset_no: "资产编号",
   asset_name: "资产名称",
-  asset_type: "资产类型",
   name: "名称",
   code: "编码",
   username: "用户名",
@@ -95,6 +106,12 @@ const FIELD_LABELS: Record<string, string> = {
   manufacturer: "厂商",
   manufacturer_name: "厂商",
   model: "型号",
+  specification: "规格",
+  unit: "计量单位",
+  safety_stock: "安全库存",
+  storage_location: "存放位置",
+  total_quantity: "库存数量",
+  is_low_stock: "低库存",
   model_name: "型号",
   manufacturer_model: "厂商/型号",
   serial_number: "序列号",
@@ -163,13 +180,13 @@ const FIELD_LABELS: Record<string, string> = {
   remaining_count: "剩余数量",
   utilization: "使用率",
   license_type: "许可类型",
-  vendor: "供应商",
   part_name: "备件",
-  part_type: "备件类型",
-  part_type_label: "备件类型",
+  category: "备件类型",
+  category_name: "备件类型",
   operation_type: "操作类型",
   operation_type_label: "操作类型",
   quantity: "数量",
+  quantity_delta: "变化数量",
   before_quantity: "操作前库存",
   after_quantity: "操作后库存",
   reference: "参考单号/用途",
@@ -204,35 +221,17 @@ const FIELD_LABELS: Record<string, string> = {
 };
 
 const STATUS_LABELS: Record<string, string> = {
-  in_stock: "在库",
-  in_use: "在用",
-  idle: "闲置",
-  repair: "维修中",
-  retired: "已报废",
-  pending: "未盘点",
-  normal: "正常",
-  location_mismatch: "位置不符",
-  not_found: "未找到",
-  info_mismatch: "设备信息不符",
-  other: "其他异常",
+  ...ASSET_STATUS_LABEL_MAP,
+  ...INVENTORY_ITEM_STATUS_LABEL_MAP,
+  ...INVENTORY_TASK_STATUS_LABEL_MAP,
+  ...LICENSE_STATUS_LABEL_MAP,
+  ...RACK_STATUS_LABEL_MAP,
   resolved: "已处理",
   unresolved: "未处理",
-  expiring: "即将到期",
-  expired: "已过期",
-  over_limit: "超出授权",
-  reserved: "预留",
-  disabled: "已停用",
   unconfigured: "未配置",
   not_started: "尚未开始",
   depreciating: "折旧中",
   fully_depreciated: "已折旧完",
-};
-
-const RESOLUTION_LABELS: Record<string, string> = {
-  update_asset: "更新资产台账",
-  keep_asset: "保持资产台账",
-  confirm_missing: "确认设备缺失",
-  ignore: "忽略/误报",
 };
 
 const REFERENCE_KEYS = new Set([
@@ -295,7 +294,7 @@ const KEY_FIELD_ORDER = [
   "username",
   "display_name",
   "code",
-  "asset_type",
+  "category",
   "status",
   "manufacturer_name",
   "device_type_name",
@@ -370,7 +369,9 @@ function labelForKey(key: string): string {
 function statusText(value: unknown, key: string): string | null {
   if (typeof value !== "string") return null;
   const normalizedKey = lowerKey(key).split(".").pop() || key;
-  if (normalizedKey === "resolution_action") return RESOLUTION_LABELS[value] || value;
+  if (normalizedKey === "resolution_action") return businessOptionLabel(INVENTORY_RESOLUTION_ACTION_OPTIONS, value);
+  if (normalizedKey === "resolution_status") return businessOptionLabel(INVENTORY_RESOLUTION_STATUS_OPTIONS, value);
+  if (normalizedKey === "operation_type") return businessOptionLabel(STOCK_OPERATION_OPTIONS, value);
   if (normalizedKey === "status" || normalizedKey === "status_before_repair" || normalizedKey.endsWith("_status")) {
     return STATUS_LABELS[value] || value;
   }

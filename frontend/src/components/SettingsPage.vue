@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, ref, watch } from "vue";
-import { Filter, MoreFilled } from "@element-plus/icons-vue";
+import { MoreFilled } from "@element-plus/icons-vue";
 import PagedTable from "./PagedTable.vue";
 import SearchField from "./SearchField.vue";
 import CustomFieldSettingsPage from "./CustomFieldSettingsPage.vue";
@@ -29,12 +29,18 @@ const {
   settingsSection,
   can,
   dictionarySection,
+  dictionaryPage,
+  dictionaryPageSize,
+  dictionaryCount,
   dictionarySearch,
   dictionaryLoading,
   dictionaryError,
   dictionarySaving,
   dictionaryActionId,
-  loadDictionaries,
+  changeDictionarySection,
+  searchDictionaries,
+  changeDictionaryPage,
+  changeDictionaryPageSize,
   retryDictionaries,
   currentDictionaryLabel,
   openDictionaryModal,
@@ -82,24 +88,30 @@ const organizationTab = ref<"users" | "roles">("users");
 const allDictionaryTabs: PageTabItem[] = [
   { label: "厂商", value: "manufacturers" },
   { label: "设备类型", value: "device-types" },
-  { label: "数据中心", value: "data-centers" },
+  { label: "备件类型", value: "spare-categories" },
 ];
 const organizationTabs: PageTabItem[] = [
   { label: "用户账号", value: "users" },
   { label: "预设角色", value: "roles" },
 ];
-const dictionaryTabs = computed(() =>
-  can("racks.view") ? allDictionaryTabs : allDictionaryTabs.filter((item) => item.value !== "data-centers"),
-);
-const canManageCurrentDictionary = computed(() =>
-  can(dictionarySection.value === "data-centers" ? "racks.manage" : "settings.manage"),
-);
+const dictionaryTabs = computed(() => allDictionaryTabs);
+const canManageCurrentDictionary = computed(() => can("settings.manage"));
 const dictionaryPrimaryLabel = computed(() => {
   if (dictionarySection.value === "manufacturers") return "新增厂商";
   if (dictionarySection.value === "device-types") return "新增类型";
-  if (dictionarySection.value === "data-centers") return "新增中心";
+  if (dictionarySection.value === "spare-categories") return "新增类型";
   return "新增字典";
 });
+const dictionaryAttributeLabel = computed(() =>
+  dictionarySection.value === "device-types"
+    ? "颜色"
+    : dictionarySection.value === "spare-categories"
+      ? "类型编码"
+      : "厂商编码",
+);
+const dictionaryCountLabel = computed(() =>
+  dictionarySection.value === "spare-categories" ? "备件数量" : "资产数量",
+);
 const hasDictionaryFilters = computed(() => Boolean(dictionarySearch.value.trim()));
 const hasUserSearch = computed(() => Boolean(userSearch.value.trim()));
 const hasAuditFilters = computed(() => Boolean(
@@ -138,7 +150,7 @@ onBeforeUnmount(clearUserSearchTimer);
 
 function clearDictionarySearch() {
   dictionarySearch.value = "";
-  return loadDictionaries();
+  return searchDictionaries();
 }
 
 function clearAuditFilters() {
@@ -170,7 +182,7 @@ function handleUserAction(command: string, user: (typeof users.value)[number]) {
 
     <PageContainer v-else-if="settingsSection === 'dictionaries'">
       <template #subnav>
-        <PageTabs v-model="dictionarySection" :items="dictionaryTabs" @update:model-value="() => loadDictionaries()">
+        <PageTabs v-model="dictionarySection" :items="dictionaryTabs" @update:model-value="changeDictionarySection">
         </PageTabs>
       </template>
       <template #toolbar>
@@ -181,10 +193,10 @@ function handleUserAction(command: string, user: (typeof users.value)[number]) {
               :loading="dictionaryLoading"
               :placeholder="`搜索${currentDictionaryLabel}`"
               :aria-label="`搜索${currentDictionaryLabel}`"
-              @search="() => loadDictionaries()"
+              @search="searchDictionaries"
             />
           </template>
-          <template #actions>
+          <template #primary>
             <el-button v-if="canManageCurrentDictionary" class="page-primary-action" type="primary" :loading="dictionarySaving" :disabled="dictionarySaving" @click="openDictionaryModal()">
               {{ dictionaryPrimaryLabel }}
             </el-button>
@@ -192,35 +204,48 @@ function handleUserAction(command: string, user: (typeof users.value)[number]) {
         </PageToolbar>
       </template>
       <PageContent surface>
-        <div v-if="dictionaryError" class="settings-state settings-state--error" role="alert">
-          <div class="settings-state__copy">
-            <strong>字典数据加载失败</strong>
+        <el-alert v-if="dictionaryError" title="字典数据加载失败" type="error" show-icon :closable="false">
+          <template #default>
             <span>{{ dictionaryError }}</span>
-          </div>
-          <el-button type="primary" plain :loading="dictionaryLoading" @click="retryDictionaries">重新加载</el-button>
-        </div>
-        <el-table v-else v-loading="dictionaryLoading" :data="currentDictionaryItems" table-layout="fixed">
-          <template #empty>
-            <div class="settings-empty">
-              <span>{{ hasDictionaryFilters ? `没有符合当前筛选条件的${currentDictionaryLabel}` : `暂无${currentDictionaryLabel}` }}</span>
-              <el-button v-if="hasDictionaryFilters" link type="primary" @click="clearDictionarySearch">清除筛选</el-button>
-            </div>
+            <el-button link type="danger" :loading="dictionaryLoading" @click="retryDictionaries">重新加载</el-button>
           </template>
-          <el-table-column prop="name" :label="currentDictionaryLabel" min-width="220" show-overflow-tooltip />
-          <el-table-column v-if="dictionarySection === 'manufacturers'" prop="code" label="厂商编码" min-width="160" show-overflow-tooltip />
-          <el-table-column v-if="dictionarySection === 'device-types'" label="颜色" width="150">
+        </el-alert>
+        <PagedTable
+          v-else
+          v-model:current-page="dictionaryPage"
+          v-model:page-size="dictionaryPageSize"
+          :total="dictionaryCount"
+          @update:current-page="changeDictionaryPage"
+          @update:page-size="changeDictionaryPageSize"
+        >
+          <el-table :key="`dictionary-table-${dictionarySection}`" class="settings-dictionary-table" v-loading="dictionaryLoading" :data="currentDictionaryItems" table-layout="fixed">
+          <template #empty>
+            <el-empty :image-size="56" :description="hasDictionaryFilters ? '没有符合当前筛选条件的' + currentDictionaryLabel : '暂无' + currentDictionaryLabel">
+              <el-button v-if="hasDictionaryFilters" link type="primary" @click="clearDictionarySearch">清除筛选</el-button>
+            </el-empty>
+          </template>
+          <el-table-column prop="name" :label="currentDictionaryLabel" min-width="220" />
+          <el-table-column :label="dictionaryAttributeLabel" width="160">
             <template #default="{ row }">
-              <span class="color-chip" :style="{ background: row.color || '#1677EF' }" />
-              {{ row.color || "#1677EF" }}
+              <template v-if="dictionarySection === 'device-types'">
+                <span class="color-chip" :style="{ background: row.color || '#1677EF' }" />
+                {{ row.color || "#1677EF" }}
+              </template>
+              <template v-else>{{ row.code || "—" }}</template>
             </template>
           </el-table-column>
           <el-table-column label="状态" width="100">
             <template #default="{ row }">
-              <StatusTag :type="row.is_active ? 'success' : 'info'" :label="row.is_active ? '启用' : '停用'" />
+              <StatusTag :tone="row.is_active ? 'success' : 'info'" :label="row.is_active ? '启用' : '停用'" />
             </template>
           </el-table-column>
-          <el-table-column prop="assets_count" label="资产数量" width="110" />
+          <el-table-column :label="dictionaryCountLabel" width="110">
+            <template #default="{ row }">
+              {{ dictionarySection === "spare-categories" ? (row.spare_parts_count || 0) : (row.assets_count || 0) }}
+            </template>
+          </el-table-column>
           <el-table-column v-if="dictionarySection === 'manufacturers'" prop="licenses_count" label="许可数量" width="110" />
+          <el-table-column v-if="dictionarySection === 'manufacturers'" prop="spare_parts_count" label="备件数量" width="110" />
           <el-table-column label="操作" width="210" fixed="right">
             <template #default="{ row }">
               <div class="ep-table-actions">
@@ -230,7 +255,8 @@ function handleUserAction(command: string, user: (typeof users.value)[number]) {
               </div>
             </template>
           </el-table-column>
-        </el-table>
+          </el-table>
+        </PagedTable>
       </PageContent>
     </PageContainer>
 
@@ -250,30 +276,31 @@ function handleUserAction(command: string, user: (typeof users.value)[number]) {
               @search="triggerUserSearch"
             />
           </template>
-          <template v-if="organizationTab === 'users'" #actions>
+          <template v-if="organizationTab === 'users'" #primary>
             <el-button class="page-primary-action" type="primary" :loading="userSaving" :disabled="userSaving" @click="openUserModal()">新增用户</el-button>
           </template>
         </PageToolbar>
       </template>
       <PageContent surface>
         <template v-if="organizationTab === 'users'">
-          <div v-if="userListError" class="settings-state settings-state--error" role="alert">
-            <div class="settings-state__copy"><strong>用户数据加载失败</strong><span>{{ userListError }}</span></div>
-            <el-button type="primary" plain :loading="organizationLoading" @click="retryUserList">重新加载</el-button>
-          </div>
+          <el-alert v-if="userListError" title="用户数据加载失败" type="error" show-icon :closable="false">
+            <template #default>
+              <span>{{ userListError }}</span>
+              <el-button link type="danger" :loading="organizationLoading" @click="retryUserList">重新加载</el-button>
+            </template>
+          </el-alert>
           <el-table v-else v-loading="organizationLoading" :data="users" table-layout="fixed">
             <template #empty>
-              <div class="settings-empty">
-                <span>{{ hasUserSearch ? "没有符合当前筛选条件的用户账号" : "暂无用户账号" }}</span>
+              <el-empty :image-size="56" :description="hasUserSearch ? '没有符合当前筛选条件的用户账号' : '暂无用户账号'">
                 <el-button v-if="hasUserSearch" link type="primary" @click="userSearch = ''; triggerUserSearch()">清除筛选</el-button>
-              </div>
+              </el-empty>
             </template>
-            <el-table-column prop="username" label="用户名" min-width="180" show-overflow-tooltip />
-            <el-table-column prop="display_name" label="姓名" min-width="180" show-overflow-tooltip />
-            <el-table-column prop="email" label="邮箱" min-width="220" show-overflow-tooltip />
-            <el-table-column prop="assigned_role_name" label="角色" min-width="150" show-overflow-tooltip />
+            <el-table-column prop="username" label="用户名" min-width="180" />
+            <el-table-column prop="display_name" label="姓名" min-width="180" />
+            <el-table-column prop="email" label="邮箱" min-width="220" />
+            <el-table-column prop="assigned_role_name" label="角色" min-width="150" />
             <el-table-column label="状态" width="120">
-              <template #default="{ row }"><StatusTag :type="row.is_active ? 'success' : 'info'" :label="row.is_active ? '启用' : '停用'" /></template>
+              <template #default="{ row }"><StatusTag :tone="row.is_active ? 'success' : 'info'" :label="row.is_active ? '启用' : '停用'" /></template>
             </el-table-column>
             <el-table-column label="操作" width="164" fixed="right">
               <template #default="{ row }">
@@ -297,17 +324,19 @@ function handleUserAction(command: string, user: (typeof users.value)[number]) {
               </template>
             </el-table-column>
           </el-table>
-          <PagedTable v-if="!userListError" v-model:current-page="userPage" v-model:page-size="userPageSize" :total="userCount" :page-sizes="[20, 50, 100]" :loading="organizationLoading" @update:current-page="changeUserPage" @update:page-size="changeUserPageSize" />
+          <PagedTable v-if="!userListError" v-model:current-page="userPage" v-model:page-size="userPageSize" :total="userCount" :page-sizes="[20, 50, 100]" @update:current-page="changeUserPage" @update:page-size="changeUserPageSize" />
         </template>
         <template v-else>
-          <div v-if="roleListError" class="settings-state settings-state--error" role="alert">
-            <div class="settings-state__copy"><strong>角色数据加载失败</strong><span>{{ roleListError }}</span></div>
-            <el-button type="primary" plain :loading="organizationLoading" @click="retryOrganization">重新加载</el-button>
-          </div>
+          <el-alert v-if="roleListError" title="角色数据加载失败" type="error" show-icon :closable="false">
+            <template #default>
+              <span>{{ roleListError }}</span>
+              <el-button link type="danger" :loading="organizationLoading" @click="retryOrganization">重新加载</el-button>
+            </template>
+          </el-alert>
           <el-table v-else v-loading="organizationLoading && !roles.length" :data="roles" table-layout="fixed">
-            <template #empty><div class="settings-empty"><span>暂无角色</span></div></template>
-            <el-table-column prop="name" label="角色名称" min-width="220" show-overflow-tooltip />
-            <el-table-column prop="description" label="权限范围" min-width="320" show-overflow-tooltip />
+            <template #empty><el-empty :image-size="56" description="暂无角色" /></template>
+            <el-table-column prop="name" label="角色名称" min-width="220" />
+            <el-table-column prop="description" label="权限范围" min-width="320" />
             <el-table-column prop="user_count" label="用户数" width="120" />
           </el-table>
           <p class="form-hint">预设角色不可重命名或删除，每个账号只能分配一个业务角色。</p>
@@ -321,57 +350,49 @@ function handleUserAction(command: string, user: (typeof users.value)[number]) {
           <template #search>
             <SearchField v-model="auditFilters.search" :loading="auditListLoading" placeholder="操作者、资源或编号" aria-label="搜索操作日志" @search="searchAuditLogs" />
           </template>
-          <template #primary-filter>
-            <el-select v-model="auditFilters.resource_type" placeholder="全部资源" clearable :disabled="auditListLoading" @change="searchAuditLogs">
-              <el-option v-for="item in auditResourceOptions" :key="item.value" :label="item.label" :value="item.value" />
-            </el-select>
-          </template>
-          <template #secondary-filter>
-            <el-select v-model="auditFilters.action" placeholder="全部动作" clearable :disabled="auditListLoading" @change="searchAuditLogs">
-              <el-option v-for="item in auditActionOptions" :key="item.value" :label="item.label" :value="item.value" />
-            </el-select>
-          </template>
-          <template #extra-filter>
-            <el-popover placement="bottom-start" :width="360" trigger="click">
-              <template #reference><el-button class="toolbar-extra-action" :icon="Filter">更多筛选</el-button></template>
-              <div class="toolbar-extra-panel">
-                <el-date-picker v-model="auditFilters.start" type="date" value-format="YYYY-MM-DD" placeholder="开始日期" :disabled="auditListLoading" @change="searchAuditLogs" />
-                <el-date-picker v-model="auditFilters.end" type="date" value-format="YYYY-MM-DD" placeholder="结束日期" :disabled="auditListLoading" @change="searchAuditLogs" />
-              </div>
-            </el-popover>
+          <template #filters>
+            <div class="page-toolbar__filter-group">
+              <el-select v-model="auditFilters.resource_type" placeholder="全部资源" clearable :disabled="auditListLoading" @change="searchAuditLogs">
+                <el-option v-for="item in auditResourceOptions" :key="item.value" :label="item.label" :value="item.value" />
+              </el-select>
+              <el-select v-model="auditFilters.action" placeholder="全部动作" clearable :disabled="auditListLoading" @change="searchAuditLogs">
+                <el-option v-for="item in auditActionOptions" :key="item.value" :label="item.label" :value="item.value" />
+              </el-select>
+            </div>
           </template>
         </PageToolbar>
       </template>
       <PageContent surface>
-        <div v-if="auditListError" class="settings-state settings-state--error" role="alert">
-          <div class="settings-state__copy"><strong>操作日志数据加载失败</strong><span>{{ auditListError }}</span></div>
-          <el-button type="primary" plain :loading="auditListLoading" @click="retryAuditLogs">重新加载</el-button>
-        </div>
+        <el-alert v-if="auditListError" title="操作日志数据加载失败" type="error" show-icon :closable="false">
+          <template #default>
+            <span>{{ auditListError }}</span>
+            <el-button link type="danger" :loading="auditListLoading" @click="retryAuditLogs">重新加载</el-button>
+          </template>
+        </el-alert>
         <template v-else>
           <el-table class="audit-log-table" v-loading="auditListLoading" :data="auditLogs" table-layout="fixed">
             <template #empty>
-              <div class="settings-empty">
-                <span>{{ hasAuditFilters ? "没有符合当前筛选条件的操作日志" : "暂无操作日志" }}</span>
+              <el-empty :image-size="56" :description="hasAuditFilters ? '没有符合当前筛选条件的操作日志' : '暂无操作日志'">
                 <el-button v-if="hasAuditFilters" link type="primary" @click="clearAuditFilters">清除筛选</el-button>
-              </div>
+              </el-empty>
             </template>
             <el-table-column prop="created_at" label="时间" width="178"><template #default="{ row }">{{ formatAuditDateTime(row.created_at) }}</template></el-table-column>
-            <el-table-column prop="actor_display_name" label="操作者" width="138" show-overflow-tooltip />
+            <el-table-column prop="actor_display_name" label="操作者" width="138" />
             <el-table-column label="资源" width="108"><template #default="{ row }">{{ resourceLabel(row.resource_type) }}</template></el-table-column>
             <el-table-column label="动作" width="108"><template #default="{ row }">{{ auditLogActionLabel(row) }}</template></el-table-column>
-            <el-table-column label="对象" min-width="180" show-overflow-tooltip>
+            <el-table-column label="对象" min-width="180">
               <template #default="{ row }">{{ auditObjectLabel(row) }}</template>
             </el-table-column>
             <el-table-column label="变更摘要" min-width="320">
               <template #default="{ row }">
-                <span class="audit-change-summary" :title="auditChangeSummary(row)">{{ auditChangeSummary(row) }}</span>
+                <span class="audit-change-summary">{{ auditChangeSummary(row) }}</span>
               </template>
             </el-table-column>
             <el-table-column label="操作" width="96" fixed="right">
               <template #default="{ row }"><el-button link type="primary" @click="openAuditDetail(row)">查看详情</el-button></template>
             </el-table-column>
           </el-table>
-          <PagedTable v-model:current-page="auditPage" v-model:page-size="auditPageSize" :total="auditCount" :page-sizes="[20, 50, 100]" :loading="auditListLoading" @update:current-page="changeAuditPage" @update:page-size="changeAuditPageSize" />
+          <PagedTable v-model:current-page="auditPage" v-model:page-size="auditPageSize" :total="auditCount" :page-sizes="[20, 50, 100]" @update:current-page="changeAuditPage" @update:page-size="changeAuditPageSize" />
         </template>
       </PageContent>
     </PageContainer>
@@ -402,7 +423,7 @@ function handleUserAction(command: string, user: (typeof users.value)[number]) {
         <section class="audit-detail-section">
           <h3>{{ selectedAuditDetail.changeTitle }}</h3>
           <el-table v-if="selectedAuditDetail.changes.length" class="audit-change-table" :data="selectedAuditDetail.changes" table-layout="fixed">
-            <el-table-column prop="label" label="字段" width="150" show-overflow-tooltip />
+          <el-table-column prop="label" label="字段" width="150" />
             <el-table-column label="变更前" min-width="180">
               <template #default="{ row }"><span class="audit-value">{{ row.beforeText }}</span></template>
             </el-table-column>
@@ -411,7 +432,7 @@ function handleUserAction(command: string, user: (typeof users.value)[number]) {
             </el-table-column>
           </el-table>
           <el-table v-else-if="selectedAuditDetail.fields.length" class="audit-change-table" :data="selectedAuditDetail.fields" table-layout="fixed">
-            <el-table-column prop="label" label="字段" width="150" show-overflow-tooltip />
+          <el-table-column prop="label" label="字段" width="150" />
             <el-table-column label="内容" min-width="320">
               <template #default="{ row }"><span class="audit-value">{{ row.valueText }}</span></template>
             </el-table-column>

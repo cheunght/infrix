@@ -14,7 +14,6 @@
   --itam-sidebar-icon: #6b7280;
   --itam-sidebar-muted: #7c8ba3;
   --itam-sidebar-hover: #f6f7f9;
-  --itam-sidebar-active: #eef0f2;
   --itam-page-bg: #f5f7fa;
 
   /* Phase 2 design tokens. Keep the existing ITAM variables above as
@@ -41,9 +40,6 @@
   --page-padding-block: 20px;
   --page-section-gap: 16px;
   --page-toolbar-gap: 12px;
-  --page-tabs-height: 44px;
-  --page-toolbar-height: 36px;
-  --panel-radius: var(--radius-md);
   --page-content-min-height: 0px;
   --space-1: 4px;
   --space-2: 8px;
@@ -51,20 +47,6 @@
   --space-4: 16px;
   --space-5: 24px;
   --space-6: 32px;
-  --control-height: 36px;
-  --dialog-padding-x: 24px;
-  --dialog-padding-y: 20px;
-  --dialog-section-gap: 24px;
-  --page-title-size: 20px;
-  --page-description-size: 13px;
-  --section-title-size: 16px;
-  --body-size: 14px;
-  --caption-size: 12px;
-  --radius-sm: 6px;
-  --radius-md: 8px;
-  --radius-lg: 12px;
-  --shadow-card: 0 1px 2px rgba(23, 32, 51, 0.04);
-  --shadow-overlay: 0 12px 32px rgba(23, 32, 51, 0.16);
 
   /* Element Plus theme variables. Components still render through Element
      Plus; these values only establish the shared visual language. */
@@ -80,12 +62,6 @@
   --el-border-color-light: var(--color-border-soft);
   --el-border-color-lighter: #f0f2f5;
   --el-fill-color-light: #f7f9fc;
-  --el-component-size: var(--control-height);
-  --el-border-radius-base: var(--radius-md);
-  --el-border-radius-small: var(--radius-sm);
-  --el-border-radius-round: 999px;
-  --el-font-size-base: var(--body-size);
-  --el-box-shadow-light: var(--shadow-card);
 }
 
 body {
@@ -102,7 +78,6 @@ body {
   background: var(--itam-sidebar-bg);
   min-width: 0;
   flex: 0 0 var(--sidebar-width);
-  transition: width 0.2s ease, flex-basis 0.2s ease, padding 0.2s ease;
 }
 /* The legacy .sidebar rules set flex-basis: 216px. Scope the final layout
    rules to the Element Plus shell so the actual flex item shrinks with the
@@ -126,15 +101,6 @@ body {
   padding-right: 0;
   padding-left: 0;
 }
-.shell.sidebar-collapsed > .ep-sidebar .ep-collapse-button {
-  box-sizing: border-box;
-  width: var(--sidebar-width-collapsed);
-  margin-right: 0;
-  margin-left: 0;
-  padding-right: 0;
-  padding-left: 0;
-  justify-content: center;
-}
 .sidebar-brand {
   display: flex;
   align-items: center;
@@ -145,119 +111,13 @@ body {
   font-weight: 600;
   white-space: nowrap;
 }
-.sidebar-brand .el-icon {
-  color: var(--itam-primary-blue);
-  font-size: 22px;
-}
-.ep-collapse-button {
-  width: calc(100% - 16px);
-  height: 40px;
-  margin: 0 8px 8px;
-  border-radius: 8px;
-  color: var(--itam-sidebar-muted) !important;
-}
-.ep-collapse-button:hover,
-.ep-collapse-button:focus-visible {
-  background: var(--itam-sidebar-hover) !important;
-  color: var(--itam-sidebar-text) !important;
-}
 .ep-sidebar-menu {
+  --el-menu-bg-color: var(--itam-sidebar-bg);
+  --el-menu-text-color: var(--itam-sidebar-text);
+  --el-menu-hover-text-color: var(--itam-primary-blue);
+  --el-menu-hover-bg-color: var(--itam-sidebar-hover);
+  --el-menu-active-color: var(--itam-primary-blue);
   border-right: 0;
-  background: var(--itam-sidebar-bg);
-}
-.ep-sidebar-menu.el-menu--collapse {
-  width: var(--sidebar-width-collapsed);
-}
-.ep-sidebar-menu.el-menu--collapse > .el-menu-item,
-.ep-sidebar-menu.el-menu--collapse > .el-sub-menu > .el-sub-menu__title {
-  box-sizing: border-box;
-  width: var(--sidebar-width-collapsed);
-  min-width: var(--sidebar-width-collapsed);
-  margin: 4px 0;
-  padding: 0 !important;
-  justify-content: center;
-}
-.ep-sidebar-menu.el-menu--collapse > .el-menu-item .el-icon,
-.ep-sidebar-menu.el-menu--collapse > .el-sub-menu > .el-sub-menu__title .el-icon {
-  display: inline-flex;
-  flex: 0 0 24px;
-  width: 24px !important;
-  height: 24px;
-  margin: 0 !important;
-  align-items: center;
-  justify-content: center;
-  text-align: center;
-}
-.shell.sidebar-collapsed > .ep-sidebar .sidebar-brand > .el-icon,
-.shell.sidebar-collapsed > .ep-sidebar .ep-collapse-button > .el-icon {
-  display: inline-flex;
-  flex: 0 0 24px;
-  width: 24px;
-  height: 24px;
-  margin: 0;
-  align-items: center;
-  justify-content: center;
-}
-.ep-sidebar-menu .el-menu-item,
-.ep-sidebar-menu .el-sub-menu__title {
-  height: 46px;
-  width: calc(100% - 16px);
-  margin: 4px 8px;
-  border-radius: 8px;
-  color: var(--itam-sidebar-text);
-  background: transparent;
-}
-.ep-sidebar-menu .el-menu-item .el-icon,
-.ep-sidebar-menu .el-sub-menu__title .el-icon,
-.ep-sidebar-menu .el-sub-menu__icon-arrow {
-  color: var(--itam-sidebar-icon);
-}
-.ep-sidebar-menu .el-menu-item:hover,
-.ep-sidebar-menu .el-sub-menu__title:hover {
-  color: var(--itam-sidebar-text);
-  background: var(--itam-sidebar-hover);
-}
-.ep-sidebar-menu .el-menu-item.is-active {
-  color: var(--itam-primary-blue);
-  background: var(--el-color-primary-light-9);
-  font-weight: 600;
-}
-.ep-sidebar-menu .el-sub-menu.is-active > .el-sub-menu__title {
-  color: var(--itam-sidebar-text);
-  background: var(--itam-sidebar-active);
-  font-weight: 600;
-}
-.ep-sidebar-menu .el-sub-menu.is-active > .el-sub-menu__title:hover {
-  color: var(--itam-sidebar-text);
-  background: var(--itam-sidebar-active);
-}
-.ep-sidebar-menu .el-menu-item:hover .el-icon,
-.ep-sidebar-menu .el-menu-item.is-active .el-icon,
-.ep-sidebar-menu .el-sub-menu__title:hover .el-icon,
-.ep-sidebar-menu .el-sub-menu.is-active > .el-sub-menu__title .el-icon,
-.ep-sidebar-menu .el-sub-menu.is-active > .el-sub-menu__title .el-sub-menu__icon-arrow {
-  color: var(--itam-sidebar-text);
-}
-.ep-sidebar-menu > .el-menu-item.is-active,
-.ep-sidebar-menu > .el-menu-item.is-active:hover {
-  color: var(--itam-primary-blue);
-  background: var(--el-color-primary-light-9);
-}
-.ep-sidebar-menu > .el-menu-item.is-active .el-icon {
-  color: var(--itam-primary-blue);
-}
-.ep-sidebar-menu .el-sub-menu .el-menu-item {
-  min-width: 0;
-  padding-left: 52px !important;
-  background: var(--itam-sidebar-bg);
-}
-.ep-sidebar-menu .el-sub-menu .el-menu-item:hover {
-  background: var(--itam-sidebar-hover);
-}
-.ep-sidebar-menu .el-sub-menu .el-menu-item.is-active {
-  color: var(--itam-sidebar-text);
-  background: var(--itam-sidebar-active);
-  font-weight: 600;
 }
 .ep-main {
   min-width: 0;
@@ -276,7 +136,7 @@ body {
 }
 .app-header h1 {
   margin: 0;
-  font-size: var(--page-title-size);
+  font-size: var(--el-font-size-extra-large);
 }
 .header-tools {
   display: flex;
@@ -288,14 +148,6 @@ body {
 }
 .ep-user-name {
   margin-left: 8px;
-}
-.ep-toolbar:not(.page-toolbar) .el-input,
-.ep-toolbar:not(.page-toolbar) .el-select,
-.ep-toolbar:not(.page-toolbar) .el-date-editor {
-  max-width: 320px;
-}
-.ep-toolbar:not(.page-toolbar) .el-date-editor {
-  width: 160px;
 }
 .form-grid .el-form-item {
   min-width: 0;
@@ -323,162 +175,17 @@ body {
 }
 .login-card .el-form-item,
 .login-card .el-form-item__content,
-.login-card .el-input,
-.login-card .el-input__wrapper,
-.login-card .el-input__inner {
+.login-card .el-input {
   width: 100%;
   min-width: 0;
   box-sizing: border-box;
 }
-.login-card .el-input__wrapper {
-  min-height: 40px;
-}
-.login-card .el-input__inner {
-  height: 38px;
-  padding: 0 !important;
-  border: 0 !important;
-  border-radius: 0;
-  background: transparent;
-  box-shadow: none !important;
-}
 .login-card .el-form-item__content {
   display: flex;
 }
-.ep-sidebar .el-menu {
-  width: 100%;
-}
-.ep-sidebar .el-sub-menu .el-menu {
-  background: var(--itam-sidebar-bg);
-}
-.ep-sidebar .el-menu--collapse .el-sub-menu > .el-sub-menu__title {
-  padding-left: 20px !important;
-}
-
-/* Settings is a parent-only navigation item. Selecting a child should leave
-   the parent neutral and use the shared blue for the selected child text. */
-.ep-sidebar-menu .el-sub-menu.is-active > .el-sub-menu__title,
-.ep-sidebar-menu .el-sub-menu.is-active > .el-sub-menu__title:hover {
-  color: var(--itam-sidebar-text);
-  background: transparent;
-  font-weight: 400;
-}
-.ep-sidebar-menu .el-sub-menu.is-active > .el-sub-menu__title .el-icon,
-.ep-sidebar-menu .el-sub-menu.is-active > .el-sub-menu__title .el-sub-menu__icon-arrow {
-  color: var(--itam-sidebar-icon);
-}
-.ep-sidebar-menu .el-sub-menu .el-menu-item.is-active,
-.ep-sidebar-menu .el-sub-menu .el-menu-item.is-active:hover {
-  color: var(--itam-primary-blue);
-  background: var(--el-color-primary-light-9);
-  font-weight: 600;
-}
-.ep-sidebar-menu .el-sub-menu .el-menu-item.is-active .el-icon {
-  color: var(--itam-primary-blue);
-}
-.ep-sidebar-menu .el-sub-menu__title {
-  position: relative;
-  display: flex;
-  align-items: center;
-}
-.ep-sidebar-menu .el-sub-menu__icon-arrow {
-  position: absolute;
-  right: 14px !important;
-}
-
-/* Use the dashboard's in-stock blue consistently for primary actions and
-   data visualizations. */
-.el-button--primary {
-  --el-button-bg-color: var(--itam-primary-blue);
-  --el-button-border-color: var(--itam-primary-blue);
-  --el-button-hover-bg-color: #3f78ed;
-  --el-button-hover-border-color: #3f78ed;
-  --el-button-active-bg-color: #1d4ed8;
-  --el-button-active-border-color: #1d4ed8;
-}
-.ep-main .rack-list-item.active {
-  border-color: var(--itam-primary-blue);
-}
-.ep-main .rack-u-card.active {
-  border-color: var(--itam-primary-blue);
-  box-shadow: 0 0 0 2px #2563eb18;
-}
-.ep-main .rack-u-card.active .rack-u-head strong,
-.ep-main .rack-current-tag {
-  color: var(--itam-primary-blue);
-}
-.ep-main .rack-current-tag {
-  background: var(--itam-primary-blue);
-  color: #fff;
-}
-.ep-main .rack-u-card .device:focus,
-.ep-main .rack-u-card .device-selected {
-  outline-color: var(--itam-primary-blue);
-  box-shadow: 0 0 0 3px #fff, 0 0 0 5px var(--itam-primary-blue);
-}
-
-/* Final interaction baseline for every business page.  Keep these rules at
+/* Final interaction baseline for every business page. Keep these rules at
    the end of the stylesheet so legacy native-control overrides cannot make
    one page feel taller or denser than another. */
-:root {
-  --itam-control-height: 36px;
-  --itam-control-radius: 7px;
-  --itam-control-gap: 10px;
-}
-
-.ep-main .el-input__wrapper,
-.ep-main .el-select__wrapper,
-.ep-main .el-date-editor.el-input,
-.ep-main .el-date-editor.el-input__wrapper,
-.ep-main .el-input-number,
-.ep-main .el-input-number .el-input__wrapper,
-.ep-main .itam-search-field {
-  min-height: var(--itam-control-height);
-  height: var(--itam-control-height);
-  box-sizing: border-box;
-}
-
-.ep-main .el-input__wrapper,
-.ep-main .el-select__wrapper,
-.ep-main .el-date-editor.el-input,
-.ep-main .el-date-editor.el-input__wrapper,
-.ep-main .el-input-number .el-input__wrapper {
-  border-radius: var(--itam-control-radius);
-}
-
-.ep-main .el-button:not(.is-circle):not(.is-link):not(.is-text):not(.ep-main-collapse-button),
-.ep-main .el-upload .el-button {
-  min-height: var(--itam-control-height);
-  height: var(--itam-control-height);
-  box-sizing: border-box;
-  border-radius: var(--itam-control-radius);
-  white-space: nowrap;
-}
-
-.ep-main .el-input-group__append {
-  height: var(--itam-control-height);
-  min-height: var(--itam-control-height);
-  padding: 0;
-  border-radius: 0 var(--itam-control-radius) var(--itam-control-radius) 0;
-}
-
-.ep-main .el-input-group__append .itam-search-button {
-  width: 42px;
-  height: var(--itam-control-height);
-  min-height: var(--itam-control-height);
-  margin: 0;
-  padding: 0;
-  border: 0;
-  border-radius: 0 var(--itam-control-radius) var(--itam-control-radius) 0;
-}
-
-.itam-search-field {
-  width: min(390px, 100%);
-}
-
-.itam-search-field .el-input__wrapper {
-  border-radius: var(--itam-control-radius) 0 0 var(--itam-control-radius);
-}
-
 .itam-search-field .el-input__prefix {
   color: var(--el-text-color-secondary);
 }
@@ -487,102 +194,14 @@ body {
   min-width: 0;
 }
 
-.itam-search-field .el-input-group__append {
-  border-left: 1px solid var(--el-border-color);
-  background: var(--el-fill-color-blank);
-}
-
-.itam-search-field .itam-search-button:hover,
-.itam-search-field .itam-search-button:focus-visible {
-  color: var(--itam-primary-blue);
-  background: var(--el-color-primary-light-9);
-}
-
-.ep-main .ep-toolbar:not(.page-toolbar) {
-  gap: var(--itam-control-gap);
-  row-gap: 8px;
-}
-
-.ep-main .ep-toolbar:not(.page-toolbar) > .itam-search-field {
-  flex: 0 1 390px;
-}
-
-.ep-main .el-pagination {
-  min-height: var(--itam-control-height);
-  margin-top: 12px;
-  padding-top: 0;
-  gap: 4px;
-  align-items: center;
-}
-
-.ep-main .el-pagination .el-pagination__sizes .el-select,
-.ep-main .el-pagination .el-pagination__sizes .el-select__wrapper {
-  height: var(--itam-control-height);
-  min-height: var(--itam-control-height);
-}
-
-.ep-main .el-table th.el-table__cell {
-  padding-top: 9px;
-  padding-bottom: 9px;
-}
-
-.ep-main .el-table td.el-table__cell {
-  padding-top: 10px;
-  padding-bottom: 10px;
-}
-
-.ep-main .el-table .el-button.is-link,
-.ep-main .el-table .el-button.is-text {
-  min-height: 30px;
-  height: 30px;
-  padding-top: 4px;
-  padding-bottom: 4px;
-}
-
-.ep-main .el-card__header {
-  padding: 12px 16px;
-}
-
-.ep-main .el-card__body {
-  padding: 14px 16px;
-}
-
-.ep-main .el-dialog .el-input__wrapper,
-.ep-main .el-dialog .el-select__wrapper,
-.ep-main .el-dialog .el-date-editor.el-input,
-.ep-main .el-dialog .el-input-number .el-input__wrapper,
-.ep-main .el-dialog .el-button:not(.is-circle):not(.is-link):not(.is-text) {
-  min-height: var(--itam-control-height);
-  height: var(--itam-control-height);
-}
-
 .ep-main .el-dialog textarea.el-textarea__inner {
   min-height: 82px;
   height: auto;
 }
 
-@media (max-width: 900px) {
-  .ep-main .ep-toolbar:not(.page-toolbar) > .itam-search-field,
-  .ep-main .itam-search-field {
-    flex: 1 1 100%;
-    width: 100%;
-    max-width: none;
-  }
-
-  .ep-main .ep-toolbar:not(.page-toolbar) .ep-toolbar-spacer {
-    display: none;
-  }
-}
-
 @media (max-width: 760px) {
   .ep-main {
     padding: 0 14px 16px;
-  }
-
-  .ep-main .ep-toolbar:not(.page-toolbar) > .el-select,
-  .ep-main .ep-toolbar:not(.page-toolbar) > .el-date-editor {
-    flex: 1 1 160px;
-    max-width: none;
   }
 
   .ep-main .el-table {
@@ -596,121 +215,12 @@ body {
 }
 
 @media (max-width: 560px) {
-  .ep-main .ep-toolbar:not(.page-toolbar) > .el-select,
-  .ep-main .ep-toolbar:not(.page-toolbar) > .el-date-editor,
-  .ep-main .ep-toolbar:not(.page-toolbar) > .el-button,
-  .ep-main .ep-toolbar:not(.page-toolbar) > .el-upload {
-    flex: 1 1 100%;
-    width: 100%;
-    max-width: none;
-  }
-
   .ep-main .el-pagination {
     justify-content: flex-start;
     flex-wrap: wrap;
   }
 }
 
-.el-button + .el-button {
-  margin-left: 8px;
-}
-.ep-main .ep-toolbar .el-button + .el-button,
-.ep-main .ep-actions .el-button + .el-button {
-  margin-left: 0;
-}
-.ep-main .el-button {
-  box-sizing: border-box;
-}
-.ep-main .filters .el-button {
-  height: var(--el-component-size);
-  min-height: var(--el-component-size);
-}
-.ep-main .filters .el-input__inner {
-  min-width: 0;
-  padding: 0;
-  border: 0;
-  border-radius: 0;
-  background: transparent;
-  outline: none;
-}
-.ep-main .filters .el-input__wrapper {
-  border: 1px solid var(--el-border-color);
-  box-shadow: none;
-}
-.ep-main .filters .el-input__wrapper.is-focus {
-  border-color: var(--el-color-primary);
-  box-shadow: 0 0 0 1px var(--el-color-primary) inset;
-}
-.el-card {
-  border-radius: 8px;
-}
-.el-card__header {
-  padding: 14px 16px;
-}
-.el-card__body {
-  padding: 16px;
-}
-.el-table {
-  --el-table-header-bg-color: #f5f7fa;
-}
-.el-table .cell {
-  line-height: 24px;
-}
-/* Keep rows readable and visually separated across all Element Plus tables. */
-.ep-main .el-table th.el-table__cell {
-  padding-top: 13px;
-  padding-bottom: 13px;
-}
-.ep-main .el-table td.el-table__cell {
-  padding-top: 15px;
-  padding-bottom: 15px;
-}
-.el-pagination {
-  justify-content: flex-end;
-  padding-top: 16px;
-}
-.el-form-item:last-child {
-  margin-bottom: 0;
-}
-.el-drawer__header {
-  margin-bottom: 0;
-  padding-bottom: 16px;
-  border-bottom: 1px solid var(--el-border-color-lighter);
-}
-.el-drawer__body {
-  padding-top: 0;
-}
-
-.ep-toolbar:not(.page-toolbar) {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  flex-wrap: wrap;
-}
-/* Separate page-level filters/actions from the table below. Card-header
-   toolbars are not adjacent to a table and therefore remain unchanged. */
-.ep-main .ep-toolbar:not(.page-toolbar) + .el-table,
-.ep-main .ep-toolbar:not(.page-toolbar) + .table-scroll {
-  margin-top: 16px;
-}
-.ep-toolbar:not(.page-toolbar) .el-input {
-  width: 320px;
-}
-.ep-toolbar:not(.page-toolbar) .el-select {
-  width: 160px;
-}
-.ep-toolbar-spacer {
-  flex: 1;
-}
-.ep-page-card {
-  margin-bottom: 16px;
-}
-.ep-actions {
-  display: flex;
-  align-items: center;
-  justify-content: flex-end;
-  gap: 6px;
-}
 .ep-column-list {
   display: grid;
   gap: 8px;
@@ -742,51 +252,6 @@ body {
   color: var(--el-text-color-secondary);
   font-size: 11px;
 }
-.action-message {
-  display: none;
-}
-
-@media (max-width: 760px) {
-  .ep-toolbar:not(.page-toolbar) .el-input,
-  .ep-toolbar:not(.page-toolbar) .el-select,
-  .ep-toolbar:not(.page-toolbar) .el-date-editor {
-    width: 100%;
-  }
-  .ep-toolbar-spacer {
-    display: none;
-  }
-}
-
-/* Keep the settings parent title full-width and pin its disclosure arrow to
-   the far right.  Element Plus positions the arrow absolutely, but the
-   legacy sidebar width rules can leave the title's flex box only as wide as
-   its text.  These final, scoped rules restore the expected full-width
-   containing block without changing the collapsed sidebar behavior. */
-.ep-sidebar-menu:not(.el-menu--collapse) > .el-sub-menu {
-  width: 100% !important;
-}
-
-.ep-sidebar-menu:not(.el-menu--collapse) > .el-sub-menu > .el-sub-menu__title {
-  position: relative !important;
-  display: flex !important;
-  box-sizing: border-box !important;
-  width: calc(100% - 16px) !important;
-  max-width: none !important;
-  padding-right: 42px !important;
-}
-
-.ep-sidebar-menu:not(.el-menu--collapse) > .el-sub-menu > .el-sub-menu__title > .el-sub-menu__icon-arrow,
-.ep-sidebar-menu:not(.el-menu--collapse) > .el-sub-menu > .el-sub-menu__title .el-sub-menu__icon-arrow {
-  position: absolute !important;
-  /* Keep the arrow's top edge aligned with the menu label's visual top. */
-  top: 14px !important;
-  right: 14px !important;
-  left: auto !important;
-  margin-top: 0 !important;
-  margin-right: 0 !important;
-  margin-left: 0 !important;
-}
-
 /* Platform brand mark generated for the login screen and sidebar. */
 .sidebar-brand-icon {
   display: block;
@@ -803,107 +268,6 @@ body {
   margin: 0;
 }
 
-/* Keep the expanded navigation compact: the hamburger sits at the upper
-   right of the navigation header instead of consuming a separate menu row. */
-.shell:not(.sidebar-collapsed) > .ep-sidebar .ep-collapse-button {
-  position: absolute;
-  top: 16px;
-  right: 8px;
-  z-index: 2;
-  width: 32px;
-  height: 32px;
-  min-height: 32px;
-  margin: 0;
-  padding: 0 !important;
-  justify-content: center;
-}
-
-.shell:not(.sidebar-collapsed) > .ep-sidebar .sidebar-brand {
-  padding-right: 48px;
-}
-
-.ep-sidebar-menu:not(.el-menu--collapse) {
-  padding-top: 0;
-}
-
-.ep-sidebar-menu:not(.el-menu--collapse) > .el-menu-item,
-.ep-sidebar-menu:not(.el-menu--collapse) > .el-sub-menu > .el-sub-menu__title {
-  width: calc(100% - 8px);
-  margin-right: 4px;
-  margin-left: 4px;
-  padding-right: 16px !important;
-  padding-left: 16px !important;
-}
-
-.ep-sidebar-menu:not(.el-menu--collapse) .el-sub-menu > .el-menu > .el-menu-item {
-  width: calc(100% - 8px);
-  margin-right: 4px;
-  margin-left: 4px;
-  padding-left: 44px !important;
-  padding-right: 12px !important;
-}
-
-.ep-sidebar-menu:not(.el-menu--collapse) > .el-sub-menu > .el-sub-menu__title {
-  padding-right: 36px !important;
-}
-
-.ep-sidebar-menu:not(.el-menu--collapse) > .el-sub-menu > .el-sub-menu__title .el-sub-menu__icon-arrow {
-  /* Let flex layout place the arrow after the title text.  This is more
-     reliable than an absolute offset when Element Plus recalculates menu
-     widths during sidebar transitions. */
-  position: static !important;
-  flex: 0 0 auto;
-  margin: 0 0 0 auto !important;
-  right: auto !important;
-  left: auto !important;
-  top: auto !important;
-}
-
-/* Compact data-dense entries across the admin pages.  Keep the custom rack
-   U-position canvas untouched; these rules only target Element Plus tables
-   and the settings submenu. */
-.ep-main .el-table th.el-table__cell {
-  padding-top: 8px;
-  padding-bottom: 8px;
-}
-
-.ep-main .el-table td.el-table__cell {
-  padding-top: 9px;
-  padding-bottom: 9px;
-}
-
-.ep-main .el-table th .cell {
-  font-size: 12px;
-  line-height: 18px;
-  font-weight: 600;
-}
-
-.ep-main .el-table .cell {
-  font-size: 13px;
-  line-height: 20px;
-}
-
-.ep-main .el-table .el-button {
-  font-size: 13px;
-}
-
-.ep-main .el-table .el-tag {
-  min-height: 22px;
-  height: 22px;
-  padding: 0 8px;
-  font-size: 12px;
-  line-height: 20px;
-}
-
-.ep-sidebar-menu:not(.el-menu--collapse) .el-sub-menu .el-menu-item {
-  height: 36px !important;
-  min-height: 36px;
-  line-height: 36px !important;
-  margin-top: 1px;
-  margin-bottom: 1px;
-  font-size: 13px;
-}
-
 /* The navigation toggle belongs to the page header, immediately beside the
    sidebar edge, so it remains available without taking space in the menu. */
 .ep-main .page-heading {
@@ -916,27 +280,9 @@ body {
 .ep-main .ep-main-collapse-button {
   flex: 0 0 32px;
   width: 32px;
-  height: 32px;
-  min-height: 32px;
+  min-width: 32px;
   margin: 0;
-  padding: 0 !important;
-  border-radius: 8px;
-  color: var(--itam-sidebar-muted) !important;
-}
-
-.ep-main .ep-main-collapse-button:hover,
-.ep-main .ep-main-collapse-button:focus-visible {
-  background: var(--itam-sidebar-hover) !important;
-  color: var(--itam-primary-blue) !important;
-}
-
-.ep-main .ep-main-collapse-button .el-icon {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 20px;
-  height: 20px;
-  margin: 0;
+  padding: 0;
 }
 
 .import-error-list {
@@ -1046,7 +392,6 @@ body {
   margin-left: auto;
 }
 
-.import-preview-changes,
 .import-preview-errors {
   line-height: 1.55;
   white-space: normal;
@@ -1056,126 +401,22 @@ body {
   color: var(--el-color-danger);
 }
 
-.import-preview-errors--summary {
-  cursor: help;
-}
-
-.import-preview-label {
-  color: var(--el-text-color-secondary);
-}
-
-.import-preview-arrow {
-  margin: 0 5px;
-  color: var(--el-text-color-secondary);
-}
-
-/* Final compact-page pass.  This block intentionally comes last so the
-   legacy compatibility rules above cannot re-introduce different heights or
-   table row spacing on individual pages. */
-.ep-main .el-input__wrapper,
-.ep-main .el-select__wrapper,
-.ep-main .el-date-editor.el-input,
-.ep-main .el-date-editor.el-input__wrapper,
-.ep-main .el-input-number,
-.ep-main .el-input-number .el-input__wrapper,
-.ep-main .itam-search-field {
-  height: var(--itam-control-height);
-  min-height: var(--itam-control-height);
-  box-sizing: border-box;
-}
-
-.ep-main .el-button:not(.is-circle):not(.is-link):not(.is-text):not(.ep-main-collapse-button),
-.ep-main .el-upload .el-button {
-  height: var(--itam-control-height);
-  min-height: var(--itam-control-height);
-  box-sizing: border-box;
-  white-space: nowrap;
-}
-
-.ep-main .el-table th.el-table__cell {
-  padding-top: 8px;
-  padding-bottom: 8px;
-}
-
-.ep-main .el-table td.el-table__cell {
-  padding-top: 10px;
-  padding-bottom: 10px;
-}
-
-.ep-main .el-table .cell {
-  line-height: 20px;
-}
-
-.ep-main .el-table .el-button.is-link,
-.ep-main .el-table .el-button.is-text {
-  height: 30px;
-  min-height: 30px;
-}
-
-.ep-main .itam-search-field {
-  width: min(390px, 100%);
-}
-
-.ep-main .itam-search-field .el-input__wrapper {
-  height: var(--itam-control-height);
-  min-height: var(--itam-control-height);
-  border-radius: var(--itam-control-radius) 0 0 var(--itam-control-radius);
-}
-
-.ep-main .itam-search-field .el-input-group__append {
-  height: var(--itam-control-height);
-  min-height: var(--itam-control-height);
-  padding: 0;
-  background: var(--el-fill-color-blank);
-  border-left: 1px solid var(--el-border-color);
-  border-radius: 0 var(--itam-control-radius) var(--itam-control-radius) 0;
-}
-
-.ep-main .itam-search-field .itam-search-button {
-  width: 42px;
-  height: var(--itam-control-height);
-  min-height: var(--itam-control-height);
-  margin: 0;
-  padding: 0;
-  border: 0;
-  border-radius: 0 var(--itam-control-radius) var(--itam-control-radius) 0;
-}
-
-.ep-main .ep-toolbar:not(.page-toolbar) {
-  gap: var(--itam-control-gap);
-  row-gap: 8px;
-}
-
-.ep-main .ep-toolbar:not(.page-toolbar) > .itam-search-field {
-  flex: 0 1 390px;
-}
-
-.ep-main .el-pagination {
-  min-height: var(--itam-control-height);
-  margin-top: 12px;
-  align-items: center;
-}
-
-.rack-mounted-toggle .el-form-item__content {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-}
-
-@media (max-width: 900px) {
-  .ep-main .ep-toolbar:not(.page-toolbar) > .itam-search-field {
-    flex: 1 1 100%;
-    width: 100%;
-    max-width: none;
-  }
-}
-
 /* Asset detail drawer: keep the identity and current state visible while
    the longer configuration sections scroll independently below it. */
+.asset-detail-drawer {
+  display: flex;
+  min-height: 0;
+  flex-direction: column;
+}
+
 .asset-detail-drawer .el-drawer__header {
-  margin-bottom: 0;
-  padding: 18px 22px 16px;
-  border-bottom: 1px solid var(--el-border-color-lighter);
+  flex: 0 0 auto;
+}
+
+.asset-detail-drawer .el-drawer__content {
+  display: flex;
+  min-height: 0;
+  flex-direction: column;
 }
 
 .asset-drawer-heading {
@@ -1213,13 +454,6 @@ body {
   line-height: 18px;
 }
 
-.asset-drawer-heading h2 {
-  margin: 2px 0 0;
-  color: var(--el-text-color-primary);
-  font-size: 20px;
-  line-height: 28px;
-}
-
 .asset-drawer-meta {
   max-width: 380px;
   margin: 2px 0 0;
@@ -1231,51 +465,10 @@ body {
   white-space: nowrap;
 }
 
-.asset-drawer-context {
-  display: grid;
-  gap: 4px;
-  margin-top: 8px;
-}
-
-.asset-drawer-context-row {
-  display: grid;
-  grid-template-columns: 56px minmax(0, 1fr);
-  gap: 8px;
-  min-width: 0;
-  color: var(--el-text-color-regular);
-  font-size: 12px;
-  line-height: 18px;
-}
-
-.asset-drawer-context-row span {
-  color: var(--el-text-color-secondary);
-}
-
-.asset-drawer-context-row strong {
-  min-width: 0;
-  overflow: hidden;
-  font-weight: 500;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.asset-drawer-close {
-  flex: 0 0 32px;
-  width: 32px;
-  height: 32px;
-  min-height: 32px;
-  margin: 0;
-  color: var(--el-text-color-secondary);
-}
-
-.asset-drawer-close:hover,
-.asset-drawer-close:focus-visible {
-  color: var(--itam-primary-blue);
-  background: var(--el-color-primary-light-9);
-}
-
 .asset-detail-drawer .el-drawer__body {
-  padding: 0;
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
 }
 
 .asset-detail-summary {
@@ -1298,15 +491,11 @@ body {
 
 .asset-detail-summary span {
   color: var(--el-text-color-secondary);
-  font-size: 12px;
-  line-height: 18px;
 }
 
 .asset-detail-summary strong {
   overflow: hidden;
   color: var(--el-color-primary);
-  font-size: 16px;
-  line-height: 22px;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
@@ -1316,7 +505,7 @@ body {
 }
 
 .asset-detail-drawer .drawer-content {
-  padding: 0 18px 24px;
+  padding-bottom: 8px;
 }
 
 .asset-detail-content {
@@ -1348,47 +537,35 @@ body {
   margin-top: 4px;
 }
 
-.asset-detail-section {
-  padding: 18px 0;
-  border-bottom: 1px solid var(--el-border-color-lighter);
-}
-
-.asset-detail-section:first-child {
-  padding-top: 18px;
-}
-
-.asset-detail-section h3 {
-  margin: 0 0 12px;
-  color: var(--el-text-color-primary);
-  font-size: 14px;
-  font-weight: 600;
-  line-height: 20px;
-}
-
-.asset-detail-fields {
+.asset-depreciation-metrics {
   display: grid;
-  grid-template-columns: 92px minmax(0, 1fr);
-  gap: 9px 14px;
-  margin: 0;
-  font-size: 13px;
-  line-height: 20px;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 10px;
+  margin-bottom: 14px;
 }
 
-.asset-detail-fields dt {
-  color: var(--el-text-color-secondary);
-}
-
-.asset-detail-fields dd {
+.asset-depreciation-metric {
+  display: grid;
+  gap: 2px;
   min-width: 0;
-  margin: 0;
-  color: var(--el-text-color-primary);
-  overflow-wrap: anywhere;
-  word-break: break-word;
+  padding: 10px 12px;
+  border: 1px solid var(--el-border-color-lighter);
+  border-radius: 6px;
+  background: var(--el-fill-color-lighter);
 }
 
-.asset-detail-fields small {
+.asset-depreciation-metric span {
   color: var(--el-text-color-secondary);
-  font-size: 11px;
+}
+
+.asset-depreciation-metric strong {
+  color: var(--el-text-color-primary);
+  font-variant-numeric: tabular-nums;
+}
+
+.asset-depreciation-empty {
+  margin: 0;
+  color: var(--el-text-color-secondary);
 }
 
 .asset-detail-technical {
@@ -1402,105 +579,12 @@ body {
   gap: 8px;
 }
 
-.asset-depreciation-status-row {
-  display: flex;
-  align-items: baseline;
-  justify-content: space-between;
-  gap: 12px;
-  margin-bottom: 12px;
-  color: var(--el-text-color-secondary);
-  font-size: 13px;
-}
-
-.asset-depreciation-status-row strong {
-  color: var(--el-text-color-primary);
-  font-weight: 600;
-}
-
-.asset-depreciation-metrics {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 10px 14px;
-}
-
-.asset-depreciation-metric {
-  display: grid;
-  gap: 2px;
-  min-width: 0;
-}
-
-.asset-depreciation-metric span,
-.asset-depreciation-progress__heading span,
-.asset-depreciation-progress__detail {
-  color: var(--el-text-color-secondary);
-  font-size: 12px;
-  line-height: 18px;
-}
-
-.asset-depreciation-metric strong {
-  color: var(--el-text-color-primary);
-  font-size: 14px;
-  font-variant-numeric: tabular-nums;
-  line-height: 20px;
-}
-
-.asset-depreciation-progress {
-  margin-top: 14px;
-}
-
-.asset-depreciation-progress__heading {
-  display: flex;
-  justify-content: space-between;
-  gap: 12px;
-  margin-bottom: 6px;
-}
-
-.asset-depreciation-progress__heading strong {
-  color: var(--el-text-color-primary);
-  font-size: 12px;
-  font-variant-numeric: tabular-nums;
-}
-
-.asset-depreciation-progress__track {
-  height: 6px;
-  overflow: hidden;
-  border-radius: 999px;
-  background: var(--el-fill-color-light);
-}
-
-.asset-depreciation-progress__track span {
-  display: block;
-  height: 100%;
-  border-radius: inherit;
-  background: var(--el-color-primary);
-  transition: width 180ms ease;
-}
-
-.asset-depreciation-progress__detail {
-  display: block;
-  margin-top: 5px;
-  font-variant-numeric: tabular-nums;
-}
-
-.asset-depreciation-config {
-  margin-top: 14px;
-}
-
-.asset-depreciation-empty {
-  color: var(--el-text-color-secondary);
-  font-size: 13px;
-}
-
 .asset-detail-tags {
   display: flex;
   flex-wrap: wrap;
   gap: 6px;
   max-height: 88px;
   overflow-y: auto;
-}
-
-.asset-detail-custom-fields {
-  margin-top: 12px;
 }
 
 .asset-detail-custom-group + .asset-detail-custom-group {
@@ -1512,17 +596,11 @@ body {
   padding: 0 0 7px;
   color: var(--el-text-color-regular);
   border-bottom: 1px solid var(--el-border-color-lighter);
-  font-size: 13px;
   font-weight: 600;
-  line-height: 19px;
 }
 
-.asset-detail-custom-group .asset-detail-custom-fields {
+.asset-detail-custom-group .description-list {
   margin-top: 10px;
-}
-
-.asset-detail-custom-section--historical h4 {
-  color: var(--el-text-color-secondary);
 }
 
 .dynamic-field-display {
@@ -1546,79 +624,12 @@ body {
   color: var(--el-text-color-secondary);
 }
 
-.asset-detail-section .detail-notes {
+.asset-detail-content .detail-notes {
   margin: 0;
   color: var(--el-text-color-regular);
   line-height: 1.65;
   white-space: pre-wrap;
   overflow-wrap: anywhere;
-}
-
-.asset-detail-activity-list {
-  display: grid;
-  gap: 0;
-}
-
-.asset-detail-activity-item {
-  display: grid;
-  grid-template-columns: 76px minmax(0, 1fr);
-  gap: 10px;
-  padding: 9px 0;
-  border-bottom: 1px solid var(--el-border-color-lighter);
-}
-
-.asset-detail-activity-item:last-child {
-  padding-bottom: 0;
-  border-bottom: 0;
-}
-
-.asset-detail-activity-item time {
-  color: var(--el-text-color-secondary);
-  font-size: 12px;
-  font-variant-numeric: tabular-nums;
-  line-height: 20px;
-}
-
-.asset-detail-activity-item > div {
-  min-width: 0;
-  color: var(--el-text-color-regular);
-  font-size: 13px;
-  line-height: 20px;
-}
-
-.asset-detail-activity-item strong {
-  color: var(--el-text-color-primary);
-  font-weight: 500;
-}
-
-.asset-detail-activity-item small,
-.asset-detail-activity-item p {
-  display: block;
-  margin: 3px 0 0;
-  color: var(--el-text-color-secondary);
-  font-size: 12px;
-  line-height: 18px;
-}
-
-.asset-detail-activity-item p {
-  white-space: pre-wrap;
-  overflow-wrap: anywhere;
-}
-
-.asset-detail-drawer .detail-section {
-  padding: 16px 0;
-}
-
-.asset-detail-drawer .detail-section h3 {
-  margin-bottom: 11px;
-  font-size: 14px;
-}
-
-.asset-detail-drawer .detail-section dl {
-  grid-template-columns: 96px minmax(0, 1fr);
-  gap: 8px 12px;
-  font-size: 13px;
-  line-height: 20px;
 }
 
 @media (max-width: 560px) {
@@ -1630,56 +641,15 @@ body {
     gap: 10px;
   }
 
-  .asset-drawer-context-row {
-    grid-template-columns: 52px minmax(0, 1fr);
-  }
-
   .asset-drawer-title-row {
     align-items: flex-start;
     flex-direction: column;
     gap: 4px;
   }
 
-  .asset-detail-fields {
-    grid-template-columns: 84px minmax(0, 1fr);
-    gap: 8px 10px;
-  }
-
   .asset-depreciation-metrics {
     grid-template-columns: minmax(0, 1fr);
   }
-
-  .asset-detail-activity-item {
-    grid-template-columns: 68px minmax(0, 1fr);
-    gap: 8px;
-  }
-}
-
-/* Keep page controls visually separated from the data below.  Some list
-   pages render their table through PagedTable, so the table is not a direct
-   sibling of the toolbar; the wrapper needs the spacing and divider. */
-.ep-main .el-card__body > .ep-toolbar + .paged-table {
-  box-sizing: border-box;
-  margin-top: 14px;
-  padding-top: 14px;
-  border-top: 1px solid var(--el-border-color-lighter);
-}
-
-/* Card-header toolbars already have their own header divider.  A little
-   breathing room before the table keeps the header and first row from
-   appearing stuck together on settings, rack-management and dashboard
-   cards. */
-.ep-main .el-card__body > .el-table {
-  box-sizing: border-box;
-  margin-top: 12px;
-  border-top: 1px solid var(--el-border-color-lighter);
-}
-
-/* Preserve a clear separation for any direct table that follows a page
-   toolbar, including future pages that do not use PagedTable yet. */
-.ep-main .el-card__body > .ep-toolbar + .el-table,
-.ep-main .ep-toolbar + .table-scroll {
-  margin-top: 14px;
 }
 
 /* Inventory center */
@@ -1691,24 +661,6 @@ body {
   display: flex;
   justify-content: flex-start;
   margin: -4px 0 10px;
-}
-
-.inventory-list-empty {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  flex-wrap: wrap;
-  gap: 6px 10px;
-  min-height: 72px;
-  color: var(--el-text-color-secondary);
-}
-
-.inventory-list-empty .el-button {
-  padding: 0;
-}
-
-.inventory-list-empty--error {
-  color: var(--el-color-danger);
 }
 
 .inventory-scope-preview {
@@ -1800,61 +752,229 @@ body {
   margin-bottom: 12px;
 }
 
-.repair-list-empty {
+.repair-fault-link,
+.repair-asset-link {
+  display: flex;
+  justify-content: flex-start;
+  width: 100%;
+  min-width: 0;
+  padding-right: 0;
+  padding-left: 0;
+}
+
+.repair-fault-link > span,
+.repair-asset-link > span,
+.repair-fault-link > span > span,
+.repair-asset-link > span > span {
+  display: block;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.repair-row-actions {
   display: inline-flex;
   align-items: center;
-  justify-content: center;
-  flex-wrap: wrap;
-  gap: 6px 10px;
-  min-height: 72px;
-  color: var(--el-text-color-secondary);
+  justify-content: flex-start;
+  min-width: 0;
+  white-space: nowrap;
 }
 
-.repair-list-empty small {
-  flex-basis: 100%;
-  color: var(--el-text-color-secondary);
-}
-
-.repair-list-empty--error {
-  color: var(--el-color-danger);
-}
-.inventory-detail-heading {
-  display: flex;
-  align-items: flex-start;
-  justify-content: space-between;
-  gap: 16px;
-  padding: 4px 0 2px;
-}
-.inventory-detail-heading h2 {
-  margin: 8px 0 4px;
-  font-size: 22px;
-  color: #1d2b43;
-}
-.inventory-detail-heading p {
-  margin: 0;
-  color: #77869b;
-  font-size: 13px;
-}
-.inventory-summary-grid {
+.repair-action-context {
   display: grid;
-  grid-template-columns: repeat(6, minmax(0, 1fr));
+  gap: 6px;
+  min-width: 0;
+  margin-bottom: 16px;
+  padding: 12px 14px;
+  border: 1px solid var(--el-border-color-lighter);
+  border-radius: var(--el-border-radius-base);
+  background: var(--el-fill-color-lighter);
+}
+
+.repair-action-context__heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
   gap: 12px;
+  min-width: 0;
+}
+
+.repair-action-context__fault {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  min-width: 0;
+}
+
+.repair-action-context__label,
+.repair-action-context__meta {
+  color: var(--el-text-color-secondary);
+  font-size: 12px;
+  line-height: 18px;
+}
+
+.repair-action-context__label {
+  flex: 0 0 auto;
+}
+
+.repair-action-context__fault strong {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--el-text-color-primary);
+  font-size: 14px;
+  font-weight: 600;
+  line-height: 20px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.repair-action-context__heading .status-tag {
+  flex: 0 0 auto;
+}
+
+.repair-action-context__description {
+  margin: 0;
+  color: var(--el-text-color-regular);
+  font-size: 13px;
+  line-height: 20px;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.repair-action-form--readonly .el-input__wrapper,
+.repair-action-form--readonly .el-textarea__inner {
+  background-color: var(--el-fill-color-lighter);
+}
+.inventory-summary-strip {
+  display: grid;
+  grid-template-columns: repeat(5, minmax(84px, 1fr)) minmax(200px, 1.45fr);
+  min-width: 0;
+  overflow: hidden;
+  border: 1px solid var(--el-border-color-lighter);
+  border-radius: var(--el-border-radius-base);
+  background: var(--el-bg-color);
+}
+.inventory-summary-metric,
+.inventory-summary-progress {
+  min-width: 0;
+  padding: 12px 14px;
+}
+.inventory-summary-metric + .inventory-summary-metric,
+.inventory-summary-progress {
+  border-left: 1px solid var(--el-border-color-lighter);
+}
+.inventory-summary-metric > span,
+.inventory-summary-progress__header > span,
+.inventory-summary-progress > small {
+  display: block;
+  color: var(--el-text-color-secondary);
+  font-size: 12px;
+  line-height: 18px;
+}
+.inventory-summary-metric > strong {
+  display: block;
+  margin-top: 4px;
+  color: var(--el-text-color-primary);
+  font-size: 20px;
+  font-weight: 600;
+  line-height: 24px;
+}
+.inventory-summary-metric--warning > strong {
+  color: var(--el-color-warning-dark-2);
+}
+.inventory-summary-progress {
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+}
+.inventory-summary-progress__header {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+}
+.inventory-summary-progress__header > strong {
+  color: var(--el-text-color-primary);
+  font-size: 14px;
+  font-weight: 600;
+  line-height: 18px;
+  white-space: nowrap;
+}
+.inventory-summary-progress > small {
+  margin-top: 2px;
+}
+.inventory-summary-progress .el-progress {
+  width: 100%;
+  margin-top: 8px;
+}
+.inventory-progress-cell {
+  display: grid;
+  grid-template-columns: auto minmax(44px, 1fr);
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+.inventory-progress-cell > span {
+  color: var(--el-text-color-secondary);
+  font-size: 12px;
+  line-height: 20px;
+  white-space: nowrap;
+}
+.inventory-progress-cell .el-progress {
+  width: 100%;
+  min-width: 0;
+}
+.inventory-task-name,
+.inventory-asset-cell {
+  display: inline-flex;
+  justify-content: flex-start;
+  max-width: 100%;
+  min-width: 0;
+  overflow: hidden;
+  padding-right: 0;
+  padding-left: 0;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.inventory-task-name > span,
+.inventory-asset-cell > span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 .inventory-item-form { margin-top: 16px; }
 .inventory-row-actions {
-  display: flex;
+  display: inline-flex;
   align-items: center;
-  flex-wrap: wrap;
-  gap: 0 6px;
+  flex-wrap: nowrap;
+  max-width: 100%;
+  gap: 4px;
+  white-space: nowrap;
 }
 .inventory-task-actions {
-  display: flex;
+  display: inline-flex;
   align-items: center;
-  flex-wrap: wrap;
-  gap: 0 6px;
+  flex-wrap: nowrap;
+  max-width: 100%;
+  gap: 4px;
+  white-space: nowrap;
 }
 .inventory-task-actions .el-button { margin-left: 0; }
 .inventory-row-actions .el-button { margin-left: 0; }
+.inventory-item-toolbar-actions {
+  display: inline-flex;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: var(--itam-button-gap, 8px);
+  white-space: nowrap;
+}
+.inventory-more-action {
+  display: inline-flex;
+  align-items: center;
+  white-space: nowrap;
+}
 .inventory-batch-bar {
   display: flex;
   align-items: center;
@@ -1868,20 +988,14 @@ body {
   color: var(--el-color-primary-dark-2);
   font-size: 13px;
 }
-.inventory-bulk-resolution-dialog .el-dialog__body {
-  max-height: calc(100vh - 240px);
-  overflow-y: auto;
-}
-.inventory-bulk-normal-dialog .el-dialog__body {
-  max-height: calc(100vh - 240px);
-  overflow-y: auto;
-}
 .inventory-bulk-normal-summary {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: 8px 14px;
   margin: 0 0 14px;
-  color: var(--el-text-color-primary);
-  font-size: 16px;
-  font-weight: 600;
 }
+.inventory-bulk-normal-summary span { color: var(--el-text-color-secondary); }
+.inventory-bulk-normal-summary strong { color: var(--el-text-color-primary); }
 .inventory-bulk-normal-help {
   margin: 14px 0 0;
   color: var(--el-text-color-secondary);
@@ -1917,31 +1031,58 @@ body {
   font-size: 13px;
   overflow-wrap: anywhere;
 }
-.inventory-resolution-dialog .el-dialog__body {
-  max-height: calc(100vh - 220px);
-  overflow-y: auto;
-}
-.inventory-resolution-asset,
-.inventory-resolution-exception,
+.inventory-resolution-summary__header,
 .inventory-resolution-readonly__grid,
 .inventory-resolution-change {
   display: flex;
   align-items: center;
   gap: 8px;
 }
-.inventory-resolution-asset {
+
+.inventory-resolution-summary {
+  display: grid;
+  gap: 12px;
+  margin-bottom: 16px;
+}
+
+.inventory-resolution-summary__header {
   justify-content: space-between;
   gap: 16px;
-  padding: 2px 0 14px;
-  border-bottom: 1px solid var(--el-border-color-lighter);
 }
+
+.inventory-resolution-summary__header > .el-button {
+  flex: 0 0 auto;
+}
+
 .inventory-resolution-asset__main {
   display: grid;
   gap: 4px;
   min-width: 0;
 }
+
+.inventory-resolution-summary__facts {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px 16px;
+}
+
+.inventory-resolution-summary__facts > div {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+}
+
+.inventory-resolution-summary__facts > div > strong {
+  color: var(--el-text-color-primary);
+  overflow-wrap: anywhere;
+  word-break: break-word;
+}
+
+.inventory-resolution-summary__note {
+  grid-column: 1 / -1;
+}
+
 .inventory-resolution-asset__main strong,
-.inventory-resolution-location-card strong,
 .inventory-resolution-change strong {
   color: var(--el-text-color-primary);
   overflow-wrap: anywhere;
@@ -1949,7 +1090,7 @@ body {
 }
 .inventory-resolution-asset__main span,
 .inventory-resolution-muted,
-.inventory-resolution-location-card span,
+.inventory-resolution-summary__facts span,
 .inventory-resolution-readonly__grid span,
 .inventory-resolution-readonly__note > span,
 .inventory-resolution-change span {
@@ -1962,20 +1103,6 @@ body {
   color: var(--el-text-color-primary);
   font-size: 13px;
   font-weight: 600;
-}
-.inventory-resolution-location-grid {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 10px;
-}
-.inventory-resolution-location-card {
-  display: grid;
-  gap: 6px;
-  min-width: 0;
-  padding: 10px 12px;
-  border: 1px solid var(--el-border-color-lighter);
-  border-radius: var(--el-border-radius-base);
-  background: var(--el-fill-color-light);
 }
 .inventory-resolution-readonly__grid {
   display: grid;
@@ -2008,55 +1135,39 @@ body {
   gap: 4px;
   min-width: 0;
 }
-.asset-inventory-history { display: grid; gap: 10px; }
-.asset-inventory-history-item {
-  padding: 10px 12px;
-  border: 1px solid #e3e9f2;
-  border-radius: 8px;
-  background: #fafcff;
-}
-.asset-inventory-history-head {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 8px;
-}
-.asset-inventory-history-item small { color: #7c8ba0; }
-.asset-inventory-history-item p { margin: 6px 0; color: #465672; white-space: pre-wrap; }
 @media (max-width: 1100px) {
-  .inventory-summary-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+  .inventory-summary-strip { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+  .inventory-summary-metric:nth-child(3n + 1) { border-left: 0; }
+  .inventory-summary-metric:nth-child(n + 4) { border-top: 1px solid var(--el-border-color-lighter); }
+  .inventory-summary-progress {
+    grid-column: 1 / -1;
+    border-top: 1px solid var(--el-border-color-lighter);
+    border-left: 0;
+  }
 }
 @media (max-width: 650px) {
-  .inventory-summary-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
-  .inventory-detail-heading { flex-direction: column; }
+  .inventory-summary-strip { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .inventory-summary-metric:nth-child(3n + 1) { border-left: 1px solid var(--el-border-color-lighter); }
+  .inventory-summary-metric:nth-child(odd) { border-left: 0; }
+  .inventory-summary-metric:nth-child(n + 3) { border-top: 1px solid var(--el-border-color-lighter); }
+  .inventory-summary-progress { grid-column: 1 / -1; }
 }
 @media (max-width: 700px) {
   .inventory-batch-bar { align-items: flex-start; flex-direction: column; }
-  .inventory-resolution-location-grid,
   .inventory-resolution-readonly__grid,
   .inventory-resolution-change { grid-template-columns: 1fr; }
-  .inventory-resolution-asset { align-items: flex-start; flex-direction: column; gap: 8px; }
+  .inventory-resolution-summary__facts { grid-template-columns: 1fr; }
+  .inventory-resolution-summary__note { grid-column: auto; }
+  .inventory-resolution-summary__header { align-items: flex-start; flex-direction: column; gap: 8px; }
 }
 
 /* Final button baseline: business text buttons share one semantic palette
    and one layout rhythm. Icon-only controls and the rack canvas controls are
    intentionally excluded so their compact dimensions remain unchanged. */
 :root {
-  --itam-button-height: 36px;
   --itam-button-gap: 8px;
-  --itam-button-border: #cbd5e1;
-  --itam-button-text: #334155;
-  --itam-button-hover-bg: #f7faff;
-  --itam-button-danger: #dc2626;
-  --itam-button-danger-border: #fecaca;
 }
 
-.ep-main .ep-toolbar:not(.page-toolbar) {
-  flex-wrap: nowrap;
-  align-items: center;
-}
-
-.ep-main .ep-toolbar-actions,
 .ep-main .ep-table-actions,
 .ep-main .el-dialog__footer {
   display: inline-flex;
@@ -2064,95 +1175,11 @@ body {
   gap: var(--itam-button-gap);
 }
 
-.ep-main .ep-toolbar-actions {
-  flex: 0 0 auto;
-  margin-left: auto;
-  flex-wrap: nowrap;
-}
-
 .ep-main .ep-table-actions {
   justify-content: flex-start;
   flex-wrap: nowrap;
 }
 
-.ep-main .el-button:not(.is-link):not(.is-text):not(.is-circle):not(.ep-main-collapse-button),
-.ep-main .el-upload .el-button,
-.login-button {
-  min-height: var(--itam-button-height);
-  height: var(--itam-button-height);
-  box-sizing: border-box;
-  padding: 0 16px;
-  border-radius: 7px;
-  font-size: 14px;
-  font-weight: 500;
-  line-height: 1;
-  white-space: nowrap;
-}
-
-.ep-main .el-button:not(.el-button--primary):not(.el-button--danger):not(.el-button--warning):not(.is-link):not(.is-text):not(.is-circle):not(.ep-main-collapse-button),
-.ep-main .el-upload .el-button:not(.el-button--primary):not(.el-button--danger):not(.el-button--warning),
-.login-button {
-  --el-button-text-color: var(--itam-button-text);
-  --el-button-bg-color: #fff;
-  --el-button-border-color: var(--itam-button-border);
-  --el-button-hover-text-color: var(--itam-primary-blue);
-  --el-button-hover-bg-color: var(--itam-button-hover-bg);
-  --el-button-hover-border-color: var(--itam-primary-blue);
-  --el-button-active-text-color: var(--itam-primary-blue);
-  --el-button-active-bg-color: var(--el-color-primary-light-9);
-  --el-button-active-border-color: var(--itam-primary-blue);
-}
-
-.ep-main .el-button--primary,
-.login-button {
-  --el-button-bg-color: var(--itam-primary-blue);
-  --el-button-border-color: var(--itam-primary-blue);
-  --el-button-text-color: #fff;
-  --el-button-hover-bg-color: #3b82f6;
-  --el-button-hover-border-color: #3b82f6;
-  --el-button-hover-text-color: #fff;
-  --el-button-active-bg-color: #1d4ed8;
-  --el-button-active-border-color: #1d4ed8;
-  --el-button-active-text-color: #fff;
-}
-
-.ep-main .el-button--danger {
-  --el-button-bg-color: #fff;
-  --el-button-border-color: var(--itam-button-danger-border);
-  --el-button-text-color: var(--itam-button-danger);
-  --el-button-hover-bg-color: #fff5f5;
-  --el-button-hover-border-color: var(--itam-button-danger);
-  --el-button-hover-text-color: var(--itam-button-danger);
-  --el-button-active-bg-color: #fee2e2;
-  --el-button-active-border-color: var(--itam-button-danger);
-  --el-button-active-text-color: var(--itam-button-danger);
-}
-
-.ep-main .el-button.is-link {
-  min-height: 30px;
-  height: 30px;
-  margin: 0;
-  padding: 4px 0;
-  font-size: 13px;
-  white-space: nowrap;
-}
-
-.ep-main .el-button.is-link:not(.el-button--primary):not(.el-button--danger):not(.el-button--warning) {
-  --el-button-text-color: #64748b;
-  --el-button-hover-text-color: var(--itam-primary-blue);
-}
-
-.ep-main .el-button.is-link.el-button--primary {
-  --el-button-text-color: var(--itam-primary-blue);
-  --el-button-hover-text-color: #1d4ed8;
-}
-
-.ep-main .el-button.is-link.el-button--danger {
-  --el-button-text-color: var(--itam-button-danger);
-  --el-button-hover-text-color: #b91c1c;
-}
-
-.ep-main .ep-toolbar-actions .el-button + .el-button,
 .ep-main .ep-table-actions .el-button + .el-button,
 .ep-main .el-dialog__footer .el-button + .el-button {
   margin-left: 0;
@@ -2170,80 +1197,6 @@ body {
   align-items: center;
   justify-content: flex-end;
   gap: var(--itam-button-gap);
-}
-
-.el-dialog__footer .el-button:not(.is-link):not(.is-text):not(.is-circle) {
-  min-height: var(--itam-button-height);
-  height: var(--itam-button-height);
-  margin-left: 0;
-  padding: 0 16px;
-  border-radius: 7px;
-  font-size: 14px;
-  font-weight: 500;
-  white-space: nowrap;
-}
-
-.el-dialog__footer .el-button:not(.el-button--primary):not(.el-button--danger):not(.el-button--warning):not(.is-link):not(.is-text):not(.is-circle) {
-  --el-button-text-color: var(--itam-button-text);
-  --el-button-bg-color: #fff;
-  --el-button-border-color: var(--itam-button-border);
-  --el-button-hover-text-color: var(--itam-primary-blue);
-  --el-button-hover-bg-color: var(--itam-button-hover-bg);
-  --el-button-hover-border-color: var(--itam-primary-blue);
-}
-
-.el-dialog__footer .el-button--primary {
-  --el-button-bg-color: var(--itam-primary-blue);
-  --el-button-border-color: var(--itam-primary-blue);
-  --el-button-text-color: #fff;
-  --el-button-hover-bg-color: #3b82f6;
-  --el-button-hover-border-color: #3b82f6;
-  --el-button-hover-text-color: #fff;
-  --el-button-active-bg-color: #1d4ed8;
-  --el-button-active-border-color: #1d4ed8;
-  --el-button-active-text-color: #fff;
-}
-
-.el-dialog__footer .el-button--danger {
-  --el-button-bg-color: #fff;
-  --el-button-border-color: var(--itam-button-danger-border);
-  --el-button-text-color: var(--itam-button-danger);
-  --el-button-hover-bg-color: #fff5f5;
-  --el-button-hover-border-color: var(--itam-button-danger);
-  --el-button-hover-text-color: var(--itam-button-danger);
-}
-
-.ep-main .el-button:disabled,
-.ep-main .el-upload.is-disabled .el-button,
-.login-button:disabled {
-  opacity: 0.5;
-}
-
-
-.spare-detail-card h3 {
-  margin: 18px 0 10px;
-  color: #273651;
-  font-size: 15px;
-}
-
-.spare-detail-card h3:first-of-type {
-  margin-top: 12px;
-}
-
-.spare-history-title {
-  border-top: 1px solid #edf1f6;
-  padding-top: 18px;
-}
-
-.spare-detail-filters {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 8px;
-  margin-bottom: 8px;
-}
-
-.spare-detail-filters .el-select {
-  width: 220px;
 }
 
 .spare-location-panel {
@@ -2302,18 +1255,8 @@ body {
   white-space: nowrap;
 }
 
-.spare-location-empty {
-  padding: 10px 0;
-}
-
 .spare-operation-context {
   margin-bottom: 14px;
-}
-
-.spare-operation-hint {
-  margin-top: 4px;
-  color: #7183a0;
-  font-size: 12px;
 }
 
 .spare-transaction-drawer-title {
@@ -2339,20 +1282,10 @@ body {
   }
 }
 
-@media (max-width: 1100px) {
-  .ep-main .ep-toolbar:not(.page-toolbar) {
-    flex-wrap: wrap;
-  }
-
-  .ep-main .ep-toolbar-actions {
-    flex-wrap: wrap;
-  }
-}
-
 /* -------------------------------------------------------------------------
-   Infrix light brand and navigation finish
-   Keep these rules last: a few legacy styles in style.css/feature-styles.css
-   still target the old dark shell and the old sprite-based navigation.
+   Infrix light brand finish
+   Keep these rules last so the shell brand remains stable alongside the
+   legacy page styles while Element Plus owns the Menu states.
    ------------------------------------------------------------------------- */
 :root {
   --itam-primary-blue: #2563eb;
@@ -2362,12 +1295,6 @@ body {
   --itam-sidebar-icon: #7183a0;
   --itam-sidebar-muted: #7183a0;
   --itam-sidebar-hover: #f7f9fc;
-  --itam-sidebar-active: #eef4ff;
-}
-
-.ep-sidebar {
-  background: var(--itam-sidebar-bg) !important;
-  border-right: 1px solid var(--itam-sidebar-border) !important;
 }
 
 .sidebar-brand {
@@ -2416,292 +1343,6 @@ body {
   width: 32px !important;
   height: 32px !important;
   margin: 0 !important;
-}
-
-.ep-sidebar-menu,
-.ep-sidebar .el-menu,
-.ep-sidebar .el-sub-menu .el-menu {
-  background: var(--itam-sidebar-bg) !important;
-}
-
-.ep-sidebar-menu .el-menu-item,
-.ep-sidebar-menu .el-sub-menu__title {
-  box-sizing: border-box;
-  height: 44px !important;
-  min-height: 44px !important;
-  line-height: 44px !important;
-  color: var(--itam-sidebar-icon) !important;
-  font-size: 14px;
-  font-weight: 500;
-  transition: background-color 0.16s ease, color 0.16s ease;
-}
-
-.ep-sidebar-menu .el-menu-item .el-icon,
-.ep-sidebar-menu .el-sub-menu__title > .el-icon {
-  display: inline-flex;
-  width: 22px;
-  height: 22px;
-  margin-right: 10px;
-  align-items: center;
-  justify-content: center;
-  color: var(--itam-sidebar-icon) !important;
-  font-size: 19px;
-  vertical-align: middle;
-}
-
-.ep-sidebar-menu .el-menu-item:hover,
-.ep-sidebar-menu .el-sub-menu__title:hover {
-  color: var(--itam-sidebar-text) !important;
-  background: var(--itam-sidebar-hover) !important;
-}
-
-.ep-sidebar-menu .el-menu-item:hover .el-icon,
-.ep-sidebar-menu .el-sub-menu__title:hover > .el-icon,
-.ep-sidebar-menu .el-sub-menu__title:hover .el-sub-menu__icon-arrow {
-  color: var(--itam-sidebar-text) !important;
-}
-
-.ep-sidebar-menu > .el-menu-item.is-active,
-.ep-sidebar-menu > .el-menu-item.is-active:hover {
-  color: var(--itam-primary-blue) !important;
-  background: var(--itam-sidebar-active) !important;
-  font-weight: 600;
-}
-
-.ep-sidebar-menu > .el-menu-item.is-active .el-icon,
-.ep-sidebar-menu .el-sub-menu .el-menu-item.is-active .el-icon,
-.ep-sidebar-menu .el-sub-menu .el-menu-item.is-active {
-  color: var(--itam-primary-blue) !important;
-}
-
-/* A submenu parent is a navigation group, not the active destination. */
-.ep-sidebar-menu > .el-sub-menu.is-active > .el-sub-menu__title,
-.ep-sidebar-menu > .el-sub-menu.is-active > .el-sub-menu__title:hover {
-  color: var(--itam-sidebar-icon) !important;
-  background: transparent !important;
-  font-weight: 500;
-}
-
-.ep-sidebar-menu > .el-sub-menu.is-active > .el-sub-menu__title > .el-icon,
-.ep-sidebar-menu > .el-sub-menu.is-active > .el-sub-menu__title .el-sub-menu__icon-arrow {
-  color: var(--itam-sidebar-icon) !important;
-}
-
-.ep-sidebar-menu .el-sub-menu .el-menu-item.is-active,
-.ep-sidebar-menu .el-sub-menu .el-menu-item.is-active:hover {
-  color: var(--itam-primary-blue) !important;
-  background: var(--itam-sidebar-active) !important;
-  font-weight: 600;
-}
-
-/* Active destinations fill the complete navigation row.  Keeping the same
-   rule for expanded and collapsed menus prevents rounded, inset highlights
-   from appearing when the sidebar changes width. */
-.ep-sidebar-menu > .el-menu-item.is-active,
-.ep-sidebar-menu > .el-menu-item.is-active:hover,
-.ep-sidebar-menu .el-sub-menu .el-menu-item.is-active,
-.ep-sidebar-menu .el-sub-menu .el-menu-item.is-active:hover {
-  width: 100% !important;
-  margin-left: 0 !important;
-  margin-right: 0 !important;
-  border-radius: 0 !important;
-}
-
-.ep-sidebar-menu:not(.el-menu--collapse) > .el-sub-menu > .el-sub-menu__title {
-  position: relative !important;
-  display: flex !important;
-  width: calc(100% - 8px) !important;
-  max-width: none !important;
-  padding-right: 42px !important;
-}
-
-.ep-sidebar-menu:not(.el-menu--collapse) > .el-sub-menu > .el-sub-menu__title > .el-sub-menu__icon-arrow,
-.ep-sidebar-menu:not(.el-menu--collapse) > .el-sub-menu > .el-sub-menu__title .el-sub-menu__icon-arrow {
-  position: absolute !important;
-  /* Match the arrow top with the first-level text instead of centering it
-     against the full menu row. */
-  top: 14px !important;
-  right: 14px !important;
-  left: auto !important;
-  margin: 0 !important;
-}
-
-.ep-sidebar-menu.el-menu--collapse > .el-menu-item,
-.ep-sidebar-menu.el-menu--collapse > .el-sub-menu > .el-sub-menu__title {
-  width: 64px !important;
-  min-width: 64px !important;
-  height: 44px !important;
-  padding: 0 !important;
-  justify-content: center;
-}
-
-.ep-sidebar-menu.el-menu--collapse > .el-menu-item .el-icon,
-.ep-sidebar-menu.el-menu--collapse > .el-sub-menu > .el-sub-menu__title > .el-icon {
-  width: 22px !important;
-  height: 22px;
-  margin: 0 !important;
-  font-size: 19px;
-}
-
-.ep-sidebar-menu.el-menu--collapse .el-sub-menu__icon-arrow {
-  display: none !important;
-}
-
-/* Collapsed navigation popups intentionally reuse the same metrics as the
-   first-level sidebar links. The popup is an extension of the sidebar rather
-   than a floating card, while the child list gets only a subtle background
-   separation. */
-.ep-sidebar-submenu-popper.el-popper {
-  width: 216px;
-  min-width: 216px;
-  max-width: 216px;
-  padding: 0 !important;
-  overflow: hidden;
-  border: 0 !important;
-  border-radius: 0 !important;
-  background: var(--itam-sidebar-active) !important;
-  box-shadow: none !important;
-}
-
-.ep-sidebar-submenu-popper.el-menu--popup-container {
-  width: 216px;
-  min-width: 216px;
-  padding: 0;
-  overflow: hidden;
-  border: 0;
-  border-radius: 0;
-  background: var(--itam-sidebar-active);
-}
-
-.ep-sidebar-submenu-popper.el-menu--popup-container::before {
-  display: flex;
-  width: 100%;
-  height: 44px;
-  box-sizing: border-box;
-  align-items: center;
-  margin: 0;
-  padding: 0 16px;
-  border-radius: 0;
-  background: var(--itam-sidebar-active);
-  color: var(--itam-sidebar-text);
-  font-size: 14px;
-  font-weight: 500;
-  line-height: 44px;
-  white-space: nowrap;
-}
-
-.ep-sidebar-submenu-popper--assets.el-menu--popup-container::before {
-  content: "资产管理";
-}
-
-.ep-sidebar-submenu-popper--racks.el-menu--popup-container::before {
-  content: "机房资源";
-}
-
-.ep-sidebar-submenu-popper--settings.el-menu--popup-container::before {
-  content: "系统设置";
-}
-
-.ep-sidebar-submenu-popper.el-menu--popup-container > .el-menu--popup {
-  width: 216px;
-  min-width: 216px;
-  box-sizing: border-box;
-  padding: 4px 0;
-  background: var(--itam-sidebar-hover);
-}
-
-.ep-sidebar-submenu-popper.el-menu--popup-container > .el-menu--popup > .el-menu-item {
-  width: calc(100% - 8px);
-  height: 44px !important;
-  min-height: 44px !important;
-  box-sizing: border-box;
-  margin: 4px;
-  padding: 0 16px !important;
-  border-radius: 8px;
-  color: var(--itam-sidebar-text) !important;
-  font-size: 14px;
-  font-weight: 500;
-  line-height: 44px !important;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-
-.ep-sidebar-submenu-popper.el-menu--popup-container > .el-menu--popup > .el-menu-item:hover,
-.ep-sidebar-submenu-popper.el-menu--popup-container > .el-menu--popup > .el-menu-item.is-active {
-  color: var(--itam-primary-blue) !important;
-  background: var(--itam-sidebar-active) !important;
-}
-
-/* Popup active rows use the same full-width treatment as the sidebar rows. */
-.ep-sidebar-submenu-popper.el-menu--popup-container > .el-menu--popup > .el-menu-item.is-active,
-.ep-sidebar-submenu-popper.el-menu--popup-container > .el-menu--popup > .el-menu-item.is-active:hover {
-  width: 100% !important;
-  margin-left: 0 !important;
-  margin-right: 0 !important;
-  border-radius: 0 !important;
-}
-
-/* A leaf item has no popup menu container. Keep its direct tooltip compact and
-   consistent with the submenu card without adding a second title row. */
-.ep-sidebar-submenu-popper.el-popper:not(:has(.el-menu--popup-container)) {
-  min-width: 0;
-  width: auto;
-  height: 44px;
-  box-sizing: border-box;
-  padding: 0 16px !important;
-  display: flex;
-  align-items: center;
-  margin-left: -12px;
-  background: var(--itam-sidebar-active) !important;
-  color: var(--itam-sidebar-text) !important;
-  font-size: 14px;
-  line-height: 44px;
-  white-space: nowrap;
-}
-
-.ep-sidebar-submenu-popper.el-popper:not(:has(.el-menu--popup-container)) .el-popper__arrow {
-  display: none;
-}
-
-/* Final navigation state normalization.  This intentionally sits after the
-   legacy sidebar rules so every active destination, including nested and
-   collapsed popup items, uses the same full-width, square highlight. */
-.ep-sidebar-menu .el-menu-item.is-active,
-.ep-sidebar-menu .el-menu-item.is-active:hover,
-.ep-sidebar-submenu-popper.el-menu--popup-container .el-menu-item.is-active,
-.ep-sidebar-submenu-popper.el-menu--popup-container .el-menu-item.is-active:hover {
-  width: 100% !important;
-  margin-left: 0 !important;
-  margin-right: 0 !important;
-  border-radius: 0 !important;
-}
-
-/* A popup is visually attached to the sidebar.  Its top title and a leaf
-   tooltip use the sidebar's selected-state color, while the child list keeps
-   its own slightly different surface. */
-.ep-sidebar-submenu-popper.el-popper,
-.ep-sidebar-submenu-popper.el-menu--popup-container,
-.ep-sidebar-submenu-popper.el-menu--popup-container::before,
-.ep-sidebar-submenu-popper.el-popper:not(:has(.el-menu--popup-container)) {
-  background: var(--itam-sidebar-active) !important;
-}
-
-.ep-sidebar-submenu-popper.el-menu--popup-container > .el-menu--popup {
-  background: var(--itam-sidebar-hover) !important;
-}
-
-.ep-collapse-button,
-.ep-main .ep-main-collapse-button {
-  color: var(--itam-sidebar-muted) !important;
-}
-
-.ep-collapse-button:hover,
-.ep-collapse-button:focus-visible,
-.ep-main .ep-main-collapse-button:hover,
-.ep-main .ep-main-collapse-button:focus-visible {
-  color: var(--itam-primary-blue) !important;
-  background: var(--itam-sidebar-hover) !important;
 }
 
 /* Login uses the same quiet light palette as the white sidebar. */
@@ -2759,226 +1400,6 @@ body {
   color: var(--itam-sidebar-icon) !important;
 }
 
-.login-card .el-input__wrapper {
-  min-height: 42px !important;
-  border: 1px solid #dce5f0;
-  box-shadow: none !important;
-}
-
-.login-card .el-input__wrapper.is-focus {
-  border-color: var(--itam-primary-blue);
-  box-shadow: 0 0 0 1px var(--itam-primary-blue) !important;
-}
-
-.login-card .el-input__prefix-inner .el-icon,
-.login-card .el-input__suffix-inner .el-icon {
-  color: var(--itam-sidebar-icon);
-  font-size: 18px;
-}
-
-.login-card .el-input__inner {
-  height: 40px !important;
-}
-
-/* Shared KPI cards.  Dashboard is the visual source of truth for the
-   dimensions; all other summary strips use this component and these tokens. */
-:root {
-  --itam-stat-card-height: 106px;
-  --itam-stat-card-compact-height: 92px;
-  --itam-stat-card-gap: 14px;
-  --itam-stat-card-radius: 12px;
-}
-
-/* Dashboard and facility management share one KPI grid so their cards have
-   identical dimensions, regardless of the page-specific layout around them. */
-.statistic-card-grid {
-  display: grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
-  grid-auto-rows: var(--itam-stat-card-height);
-  gap: var(--itam-stat-card-gap);
-  width: 100%;
-  min-width: 0;
-  align-items: stretch;
-}
-
-.statistic-card-grid > .statistic-card {
-  height: 100%;
-  min-height: 0;
-  align-self: stretch;
-}
-
-.facility-stat-grid {
-  margin-bottom: 16px;
-}
-
-.statistic-card {
-  min-width: 0;
-  height: var(--itam-stat-card-height);
-  border: 1px solid var(--color-border-soft);
-  border-radius: var(--itam-stat-card-radius);
-  background: var(--color-surface);
-  box-shadow: var(--shadow-card);
-  overflow: hidden;
-}
-
-.statistic-card.is-clickable {
-  cursor: pointer;
-}
-
-.statistic-card.is-clickable:focus-visible {
-  outline: 2px solid var(--itam-primary-blue);
-  outline-offset: 2px;
-}
-
-.statistic-card > .el-card__body {
-  display: flex;
-  align-items: center;
-  height: 100%;
-  box-sizing: border-box;
-  padding: 18px 20px;
-  overflow: hidden;
-}
-
-.statistic-card__body {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  width: 100%;
-  min-width: 0;
-  height: 100%;
-}
-
-.statistic-card__icon {
-  display: grid;
-  place-items: center;
-  width: 52px;
-  height: 52px;
-  flex: 0 0 52px;
-  border-radius: var(--radius-lg);
-  font-size: 24px;
-}
-
-.statistic-card__icon img {
-  display: block;
-  width: 40px;
-  height: 40px;
-  object-fit: contain;
-}
-
-.statistic-card--blue .statistic-card__icon { color: var(--color-brand-primary); background: var(--color-brand-primary-soft); }
-.statistic-card--green .statistic-card__icon { color: var(--color-success); background: #e8fbf4; }
-.statistic-card--purple .statistic-card__icon { color: #7c4ce8; background: #f1ebff; }
-.statistic-card--orange .statistic-card__icon { color: var(--color-warning); background: #fff2e2; }
-.statistic-card--red .statistic-card__icon { color: var(--color-danger); background: #ffebe9; }
-.statistic-card--gray .statistic-card__icon { color: var(--color-info); background: #f0f3f7; }
-
-.statistic-card__content {
-  display: grid;
-  align-content: center;
-  min-width: 0;
-}
-
-.statistic-card__label,
-.statistic-card__subtitle {
-  display: block;
-  overflow: hidden;
-  color: var(--color-text-secondary);
-  font-size: 13px;
-  line-height: 1.25;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.statistic-card__value {
-  display: flex;
-  align-items: baseline;
-  gap: 5px;
-  min-width: 0;
-  margin-top: 7px;
-}
-
-.statistic-card__value strong {
-  color: var(--color-text-primary);
-  font-size: 30px;
-  font-weight: 600;
-  line-height: 1;
-}
-
-.statistic-card__value small {
-  color: var(--color-text-muted);
-  font-size: 13px;
-}
-
-.statistic-card__subtitle {
-  margin-top: 5px;
-  color: var(--color-text-muted);
-  font-size: 11px;
-}
-
-.facility-stat-grid .statistic-card,
-.inventory-summary-grid .statistic-card {
-  height: var(--itam-stat-card-height);
-}
-
-@media (max-height: 820px) and (min-width: 901px) {
-  .statistic-card-grid {
-    grid-auto-rows: var(--itam-stat-card-compact-height);
-  }
-
-  .facility-stat-grid .statistic-card,
-  .inventory-summary-grid .statistic-card {
-    height: var(--itam-stat-card-compact-height);
-  }
-
-  .facility-stat-grid .statistic-card > .el-card__body,
-  .inventory-summary-grid .statistic-card > .el-card__body {
-    padding: 14px 16px;
-  }
-
-  .facility-stat-grid .statistic-card__icon,
-  .inventory-summary-grid .statistic-card__icon {
-    width: 44px;
-    height: 44px;
-    flex-basis: 44px;
-    border-radius: 11px;
-  }
-
-  .facility-stat-grid .statistic-card__icon img,
-  .inventory-summary-grid .statistic-card__icon img {
-    width: 34px;
-    height: 34px;
-  }
-
-  .facility-stat-grid .statistic-card__value strong,
-  .inventory-summary-grid .statistic-card__value strong {
-    font-size: 26px;
-  }
-}
-
-@media (max-width: 1150px) {
-  .statistic-card-grid {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-    grid-auto-rows: var(--itam-stat-card-height);
-  }
-
-  .statistic-card {
-    height: auto;
-    min-height: var(--itam-stat-card-height);
-  }
-}
-
-@media (max-width: 560px) {
-  .statistic-card-grid {
-    grid-template-columns: 1fr;
-  }
-
-  .statistic-card,
-  .facility-stat-grid .statistic-card,
-  .inventory-summary-grid .statistic-card {
-    min-height: var(--itam-stat-card-height);
-  }
-}
-
 /* License list: keep the page local loading/error states and capacity details
    compact without changing the shared page tokens. */
 .ep-main .license-list-card {
@@ -2990,54 +1411,14 @@ body {
   table-layout: fixed;
 }
 
-.ep-main .license-table .el-table__cell .cell {
+.ep-main .license-table .el-table__body-wrapper .cell {
   min-width: 0;
-}
-
-.license-list-error {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 12px;
-  margin-bottom: 12px;
-  padding: 10px 12px;
-  border: 1px solid color-mix(in srgb, var(--el-color-danger) 28%, var(--color-border));
-  border-radius: var(--radius-sm);
-  background: color-mix(in srgb, var(--el-color-danger) 5%, var(--color-surface));
-  color: var(--color-text-primary);
-}
-
-.license-list-error__copy {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: baseline;
-  gap: 4px 10px;
-  min-width: 0;
-}
-
-.license-list-error__copy span {
-  color: var(--color-text-secondary);
-  font-size: 13px;
-}
-
-.license-table-empty,
-.license-table-empty-placeholder {
-  min-height: 100px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  gap: 10px;
-  color: var(--color-text-secondary);
-}
-
-.license-table-empty-placeholder {
-  visibility: hidden;
 }
 
 .license-capacity-cell {
   display: flex;
-  flex-direction: column;
-  gap: 5px;
+  align-items: center;
+  gap: 8px;
   min-width: 0;
 }
 
@@ -3049,9 +1430,11 @@ body {
 }
 
 .license-capacity-values {
+  flex: 0 1 auto;
   justify-content: space-between;
   gap: 8px;
   color: var(--color-text-primary);
+  line-height: 20px;
   white-space: nowrap;
 }
 
@@ -3061,7 +1444,10 @@ body {
 }
 
 .license-capacity-progress {
+  flex: 1 1 auto;
   gap: 8px;
+  min-width: 0;
+  line-height: 20px;
 }
 
 .license-capacity-progress .el-progress {
@@ -3082,310 +1468,13 @@ body {
   font-weight: 600;
 }
 
-@media (max-width: 760px) {
-  .license-list-error {
-    align-items: flex-start;
-  }
-}
-
-/* Final sidebar interaction rules. Keep hover and active destinations
-   visually identical and make both states fill the entire menu row. */
-.ep-sidebar-menu .el-menu-item:hover,
-.ep-sidebar-menu .el-menu-item.is-active,
-.ep-sidebar-menu .el-menu-item.is-active:hover,
-.ep-sidebar-menu .el-sub-menu__title:hover,
-.ep-sidebar-menu .el-sub-menu.is-active > .el-sub-menu__title:hover {
-  width: 100% !important;
-  margin-left: 0 !important;
-  margin-right: 0 !important;
-  border-radius: 0 !important;
-  background: var(--itam-sidebar-active) !important;
-  color: var(--itam-primary-blue) !important;
-}
-
-.ep-sidebar-menu .el-menu-item:hover .el-icon,
-.ep-sidebar-menu .el-menu-item.is-active .el-icon,
-.ep-sidebar-menu .el-sub-menu__title:hover > .el-icon,
-.ep-sidebar-menu .el-sub-menu__title:hover .el-sub-menu__icon-arrow,
-.ep-sidebar-menu .el-sub-menu.is-active > .el-sub-menu__title:hover > .el-icon,
-.ep-sidebar-menu .el-sub-menu.is-active > .el-sub-menu__title:hover .el-sub-menu__icon-arrow {
-  color: var(--itam-primary-blue) !important;
-}
-
-/* The popup child surface stays a separate layer, but its hover and active
-   rows use exactly the same full-width highlight as the sidebar. */
-.ep-sidebar-submenu-popper.el-menu--popup-container > .el-menu--popup > .el-menu-item:hover,
-.ep-sidebar-submenu-popper.el-menu--popup-container > .el-menu--popup > .el-menu-item.is-active,
-.ep-sidebar-submenu-popper.el-menu--popup-container > .el-menu--popup > .el-menu-item.is-active:hover {
-  width: 100% !important;
-  margin-left: 0 !important;
-  margin-right: 0 !important;
-  border-radius: 0 !important;
-  background: var(--itam-sidebar-active) !important;
-  color: var(--itam-primary-blue) !important;
-}
-
-/* Match the specificity of the legacy width/margin rules in expanded menus.
-   Without these scoped variants those older selectors can leave nested rows
-   inset even though their background has been normalized above. */
-.ep-sidebar-menu:not(.el-menu--collapse) > .el-menu-item:hover,
-.ep-sidebar-menu:not(.el-menu--collapse) > .el-menu-item.is-active,
-.ep-sidebar-menu:not(.el-menu--collapse) > .el-menu-item.is-active:hover,
-.ep-sidebar-menu:not(.el-menu--collapse) > .el-sub-menu > .el-sub-menu__title:hover,
-.ep-sidebar-menu:not(.el-menu--collapse) .el-sub-menu > .el-menu > .el-menu-item:hover,
-.ep-sidebar-menu:not(.el-menu--collapse) .el-sub-menu > .el-menu > .el-menu-item.is-active,
-.ep-sidebar-menu:not(.el-menu--collapse) .el-sub-menu > .el-menu > .el-menu-item.is-active:hover {
-  width: 100% !important;
-  margin-left: 0 !important;
-  margin-right: 0 !important;
-  border-radius: 0 !important;
-}
-
-/* In collapsed mode 100% resolves to the 64px sidebar row, preserving the
-   centered icon while removing the old rounded inset highlight. */
-.ep-sidebar-menu.el-menu--collapse > .el-menu-item:hover,
-.ep-sidebar-menu.el-menu--collapse > .el-menu-item.is-active,
-.ep-sidebar-menu.el-menu--collapse > .el-menu-item.is-active:hover,
-.ep-sidebar-menu.el-menu--collapse > .el-sub-menu > .el-sub-menu__title:hover {
-  width: 100% !important;
-  margin-left: 0 !important;
-  margin-right: 0 !important;
-  border-radius: 0 !important;
-}
-
-/* Unified business-page search and filter controls.  Page-specific toolbars
-   can still decide their grouping, but the controls themselves share one
-   predictable desktop size and one responsive collapse rule. */
-:root {
-  --itam-filter-search-width: 320px;
-  --itam-filter-select-width: 160px;
-  --itam-filter-date-width: 160px;
-}
-
-.ep-main .itam-filter-search,
 .ep-main .ep-global-search {
   box-sizing: border-box;
-  flex: 0 1 var(--itam-filter-search-width) !important;
-  width: var(--itam-filter-search-width) !important;
-  max-width: var(--itam-filter-search-width) !important;
+  flex: 0 1 320px !important;
+  width: 320px !important;
+  max-width: 320px !important;
   min-width: 0 !important;
 }
-
-.ep-main .itam-filter-select {
-  box-sizing: border-box;
-  flex: 0 0 var(--itam-filter-select-width) !important;
-  width: var(--itam-filter-select-width) !important;
-  min-width: var(--itam-filter-select-width) !important;
-  max-width: var(--itam-filter-select-width) !important;
-}
-
-.ep-main .itam-filter-date {
-  box-sizing: border-box;
-  flex: 0 0 var(--itam-filter-date-width) !important;
-  width: var(--itam-filter-date-width) !important;
-  min-width: var(--itam-filter-date-width) !important;
-  max-width: var(--itam-filter-date-width) !important;
-}
-
-.ep-main .itam-filter-search-value {
-  box-sizing: border-box;
-  flex: 0 0 var(--itam-filter-select-width) !important;
-  width: var(--itam-filter-select-width) !important;
-  min-width: var(--itam-filter-select-width) !important;
-  max-width: var(--itam-filter-select-width) !important;
-}
-
-.ep-main .facility-panel .itam-filter-search {
-  flex: 1 1 auto !important;
-  width: 100% !important;
-  max-width: 100% !important;
-  min-width: 0 !important;
-}
-
-.ep-main .itam-filter-search .el-input__wrapper,
-.ep-main .itam-filter-search .el-input-group__append,
-.ep-main .itam-filter-search .itam-search-button,
-.ep-main .ep-global-search .el-input__wrapper,
-.ep-main .ep-global-search .el-input-group__append,
-.ep-main .ep-global-search .itam-search-button {
-  height: var(--itam-control-height);
-  min-height: var(--itam-control-height);
-  box-sizing: border-box;
-}
-
-.ep-main .ep-toolbar:not(.page-toolbar) {
-  /* Keep desktop toolbars on one line.  Dense pages can still opt into
-     wrapping at the responsive breakpoint below. */
-  flex-wrap: nowrap;
-  align-items: center;
-  column-gap: var(--itam-control-gap);
-  row-gap: var(--itam-control-gap);
-}
-
-.ep-main .ep-toolbar-actions {
-  margin-left: auto;
-}
-
-@media (min-width: 1101px) {
-  /* Keep the compact filter bars on one desktop row.  At narrower widths the
-     responsive rule below deliberately allows the controls to wrap. */
-  .ep-main .ep-toolbar:not(.page-toolbar) {
-    flex-wrap: nowrap;
-    white-space: nowrap;
-  }
-}
-
-/* -------------------------------------------------------------------------
-   Shared Element Plus theme foundation
-   -------------------------------------------------------------------------
-   Keep component behavior in Element Plus and express the visual contract
-   through stable component classes and the semantic tokens at the top of
-   this file. Feature pages can still opt into their own layout classes
-   without redefining control colors, radius, or focus treatment. */
-.el-button {
-  font-weight: 500;
-  border-radius: var(--radius-md);
-  transition: color 0.15s ease, background-color 0.15s ease,
-    border-color 0.15s ease, box-shadow 0.15s ease;
-}
-
-.el-button:not(.is-link):not(.is-text):not(.is-circle):not(.is-round) {
-  min-height: var(--control-height);
-}
-
-.el-button.is-link,
-.el-button.is-text {
-  border-radius: var(--radius-sm);
-}
-
-.el-button:focus-visible,
-.el-textarea__inner:focus-visible {
-  outline: 2px solid color-mix(in srgb, var(--color-brand-primary) 35%, transparent);
-  outline-offset: 1px;
-}
-
-/* Element Plus already provides the focused control treatment through the
-   wrapper's inset box-shadow.  Do not add a second outer focus ring when a
-   user clicks into a text/select control; keep the visible keyboard focus
-   treatment on the native textarea itself below. */
-.el-input__wrapper:focus-within,
-.el-select__wrapper:focus-within,
-.el-input-number .el-input__wrapper:focus-within {
-  outline: none;
-}
-
-.el-textarea__inner:focus {
-  outline: none;
-}
-
-.el-input__wrapper,
-.el-select__wrapper,
-.el-date-editor.el-input,
-.el-date-editor.el-input__wrapper,
-.el-input-number .el-input__wrapper {
-  border-radius: var(--radius-md);
-  box-shadow: 0 0 0 1px var(--color-border) inset;
-  transition: box-shadow 0.15s ease, background-color 0.15s ease;
-}
-
-.el-input__wrapper:hover,
-.el-select__wrapper:hover,
-.el-date-editor.el-input:hover,
-.el-date-editor.el-input__wrapper:hover,
-.el-input-number .el-input__wrapper:hover {
-  box-shadow: 0 0 0 1px var(--color-brand-primary) inset;
-}
-
-.el-input__wrapper.is-focus,
-.el-select__wrapper.is-focused,
-.el-input-number .el-input__wrapper.is-focus {
-  box-shadow: 0 0 0 1px var(--color-brand-primary) inset;
-}
-
-.el-textarea__inner {
-  border-radius: var(--radius-md);
-  border-color: var(--color-border);
-}
-
-.el-card {
-  border-color: var(--color-border);
-  border-radius: var(--radius-md);
-  box-shadow: var(--shadow-card);
-}
-
-.el-card__header {
-  border-bottom-color: var(--color-border-soft);
-}
-
-.el-table {
-  --el-table-border-color: var(--color-border-soft);
-  --el-table-header-bg-color: #f7f9fc;
-  --el-table-row-hover-bg-color: #f8fbff;
-  color: var(--color-text-secondary);
-}
-
-.el-table th.el-table__cell {
-  color: var(--color-text-muted);
-  font-weight: 600;
-}
-
-.el-pagination {
-  min-height: 40px;
-  color: var(--color-text-secondary);
-}
-
-.el-tabs__header {
-  margin-bottom: 0;
-}
-
-.el-tabs__item {
-  color: var(--color-text-secondary);
-  font-size: var(--body-size);
-}
-
-.el-tabs__item.is-active {
-  color: var(--color-brand-primary);
-}
-
-.el-tag {
-  border-radius: 999px;
-  font-weight: 500;
-}
-
-.el-dialog {
-  border-radius: var(--radius-lg);
-  box-shadow: var(--shadow-overlay);
-}
-
-.el-dialog__header {
-  border-bottom: 1px solid var(--color-border-soft);
-  margin-right: 0;
-  padding: var(--space-5) var(--space-5) var(--space-4);
-}
-
-.el-dialog__body {
-  padding: var(--space-5);
-}
-
-.el-dialog__footer {
-  border-top: 1px solid var(--color-border-soft);
-  padding: var(--space-4) var(--space-5);
-}
-
-.el-drawer {
-  box-shadow: var(--shadow-overlay);
-}
-
-.el-form-item {
-  margin-bottom: var(--space-4);
-}
-
-.el-form-item__label {
-  color: var(--color-text-secondary);
-  font-size: var(--body-size);
-  line-height: var(--control-height);
-}
-
 .user-account-form .el-input,
 .user-account-form .el-select,
 .user-account-form .user-account-role {
@@ -3395,10 +1484,6 @@ body {
 .user-account-form .el-input__prefix,
 .user-account-form .el-select__prefix {
   color: #7183a0;
-}
-
-.user-account-status .el-form-item__content {
-  min-height: var(--itam-control-height);
 }
 
 .user-more-action {
@@ -3413,7 +1498,7 @@ body {
 
 .profile-readonly-grid {
   display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
+  grid-template-columns: repeat(12, minmax(0, 1fr));
   gap: 1px;
   overflow: hidden;
   border: 1px solid var(--el-border-color-lighter);
@@ -3422,6 +1507,7 @@ body {
 
 .profile-readonly-grid > div {
   display: grid;
+  grid-column: span 6;
   gap: 4px;
   min-width: 0;
   padding: 11px 13px;
@@ -3447,18 +1533,15 @@ body {
 
 @media (max-width: 560px) {
   .profile-readonly-grid {
-    grid-template-columns: 1fr;
+    grid-template-columns: repeat(12, minmax(0, 1fr));
   }
-}
 
-@media (max-width: 1100px) {
-  .ep-main .ep-toolbar:not(.page-toolbar) {
-    flex-wrap: wrap;
+  .profile-readonly-grid > div {
+    grid-column: 1 / -1;
   }
 }
 
 @media (max-width: 900px) {
-  .ep-main .itam-filter-search,
   .ep-main .ep-global-search {
     flex: 1 1 100% !important;
     width: 100% !important;
@@ -3466,44 +1549,14 @@ body {
     min-width: 0 !important;
   }
 
-  .ep-main .ep-toolbar-spacer {
-    display: none;
-  }
 }
 
-@media (max-width: 760px) {
-  .ep-main .itam-filter-select,
-  .ep-main .itam-filter-date,
-  .ep-main .itam-filter-search-value {
-    flex: 1 1 160px !important;
-    width: auto !important;
-    max-width: none !important;
-    min-width: 0 !important;
-  }
-}
-
-@media (max-width: 560px) {
-  .ep-main .itam-filter-select,
-  .ep-main .itam-filter-date,
-  .ep-main .itam-filter-search-value {
-    flex: 1 1 100% !important;
-    width: 100% !important;
-  }
-
-  .ep-main .ep-toolbar-actions {
-    width: 100%;
-    margin-left: 0;
-  }
-}
-
-/* App-shell global search.  The input keeps the shared control geometry while
-   the result surface is allowed to be wider than the field for readable
-   cross-module context. */
+/* App-shell global search. Element Plus owns the popper position and surface;
+   these rules only keep the reference width and the result list readable. */
 .ep-main .global-search {
-  position: relative;
-  flex: 0 1 var(--itam-filter-search-width) !important;
-  width: var(--itam-filter-search-width) !important;
-  max-width: var(--itam-filter-search-width) !important;
+  flex: 0 1 320px !important;
+  width: 320px !important;
+  max-width: 320px !important;
   min-width: 0 !important;
 }
 
@@ -3516,18 +1569,8 @@ body {
 }
 
 .global-search-panel {
-  position: absolute;
-  top: calc(100% + 8px);
-  right: 0;
-  z-index: 20;
-  width: min(520px, calc(100vw - (var(--page-padding-inline) * 2)));
   max-height: min(560px, calc(100vh - var(--header-height) - 24px));
   overflow-y: auto;
-  padding: 8px;
-  border: 1px solid var(--color-border);
-  border-radius: var(--radius-lg);
-  background: var(--color-surface);
-  box-shadow: var(--shadow-overlay);
 }
 
 .global-search-panel__header,
@@ -3542,7 +1585,7 @@ body {
   min-height: 34px;
   padding: 0 10px;
   color: var(--color-text-primary);
-  font-size: var(--caption-size);
+  font-size: var(--el-font-size-extra-small);
   font-weight: 600;
   letter-spacing: 0.02em;
 }
@@ -3561,7 +1604,7 @@ body {
   min-height: 48px;
   padding: 12px 16px;
   color: var(--color-text-muted);
-  font-size: var(--caption-size);
+  font-size: var(--el-font-size-extra-small);
 }
 
 .global-search-section {
@@ -3576,27 +1619,18 @@ body {
   min-height: 32px;
   padding: 0 10px;
   color: var(--color-text-secondary);
-  font-size: var(--caption-size);
+  font-size: var(--el-font-size-extra-small);
   font-weight: 600;
 }
 
-.global-search-section__header button {
-  border: 0;
-  background: transparent;
-  color: var(--color-brand-primary);
-  cursor: pointer;
-  font: inherit;
-  font-weight: 500;
+.global-search-section__view-all.el-button {
+  flex: 0 0 auto;
+  min-height: auto;
   padding: 3px 0;
+  font-weight: 500;
 }
 
-.global-search-section__header button:hover,
-.global-search-section__header button:focus-visible {
-  color: var(--color-brand-primary-hover);
-  text-decoration: underline;
-}
-
-.global-search-result {
+.global-search-result.el-button {
   display: grid;
   grid-template-columns: auto minmax(0, 1fr) auto;
   align-items: center;
@@ -3605,7 +1639,7 @@ body {
   min-height: 58px;
   padding: 9px 10px;
   border: 1px solid transparent;
-  border-radius: var(--radius-md);
+  border-radius: var(--el-border-radius-base);
   background: transparent;
   color: var(--color-text-primary);
   cursor: pointer;
@@ -3613,13 +1647,13 @@ body {
   font: inherit;
 }
 
-.global-search-result:hover,
-.global-search-result.is-active {
+.global-search-result.el-button:hover,
+.global-search-result.el-button.is-active {
   border-color: var(--color-border-soft);
   background: var(--color-brand-primary-soft);
 }
 
-.global-search-result:focus-visible {
+.global-search-result.el-button:focus-visible {
   outline: 2px solid var(--color-brand-primary);
   outline-offset: -2px;
 }
@@ -3631,7 +1665,7 @@ body {
   min-width: 38px;
   height: 24px;
   padding: 0 7px;
-  border-radius: var(--radius-sm);
+  border-radius: var(--el-border-radius-small);
   font-size: 11px;
   font-weight: 600;
   white-space: nowrap;
@@ -3667,13 +1701,13 @@ body {
 
 .global-search-result__body strong {
   color: var(--color-text-primary);
-  font-size: var(--body-size);
+  font-size: var(--el-font-size-base);
   font-weight: 600;
 }
 
 .global-search-result__body small {
   color: var(--color-text-muted);
-  font-size: var(--caption-size);
+  font-size: var(--el-font-size-extra-small);
   line-height: 1.4;
 }
 
@@ -3685,7 +1719,7 @@ body {
 .global-search-section__error {
   padding: 8px 10px;
   color: var(--color-danger);
-  font-size: var(--caption-size);
+  font-size: var(--el-font-size-extra-small);
 }
 
 @media (max-width: 900px) {
@@ -3695,7 +1729,7 @@ body {
   }
 
   .global-search-panel {
-    width: min(520px, calc(100vw - 28px));
+    max-height: calc(100vh - var(--header-height) - 32px);
   }
 }
 
@@ -3739,28 +1773,8 @@ body,
   width: 100%;
 }
 
-.ep-main .ep-toolbar-actions {
-  min-width: 0;
-  max-width: 100%;
-}
-
-/* Dialogs and drawers are teleported to document.body, so the page-scoped
-   control rules above cannot reach them.  Keep their controls on the same
-   height and footer rhythm as the routed pages without changing component
-   behavior or relying on a page-specific wrapper. */
-.el-dialog .el-input__wrapper,
-.el-dialog .el-select__wrapper,
-.el-dialog .el-date-editor.el-input,
-.el-dialog .el-date-editor.el-input__wrapper,
-.el-dialog .el-input-number,
-.el-dialog .el-input-number .el-input__wrapper,
-.el-dialog .el-button:not(.is-circle):not(.is-link):not(.is-text) {
-  min-height: var(--itam-control-height);
-  height: var(--itam-control-height);
-  box-sizing: border-box;
-  border-radius: var(--itam-control-radius);
-}
-
+/* Dialogs and drawers are teleported to document.body. Their shell/footer
+   layout remains global, while the controls inside keep Element Plus defaults. */
 .el-dialog textarea.el-textarea__inner {
   min-height: 82px;
   height: auto;
@@ -3779,162 +1793,15 @@ body,
   margin-left: 0;
 }
 
-.asset-toolbar-actions,
 .asset-toolbar-table-actions {
   display: flex;
   min-width: 0;
   align-items: center;
   gap: var(--space-sm, 8px);
-}
-
-.asset-toolbar-actions {
-  justify-content: flex-end;
-  flex-wrap: wrap;
 }
 
 .asset-toolbar-table-actions {
   flex-wrap: nowrap;
-}
-
-.asset-ledger-advanced-filters {
-  padding: 2px 2px 0;
-}
-
-.asset-ledger-advanced-filters .el-form-item {
-  margin-bottom: var(--space-md, 12px);
-}
-
-.asset-ledger-advanced-filters .el-select,
-.asset-ledger-advanced-filters .el-input {
-  width: 100%;
-}
-
-.asset-ledger-filter-popover {
-  box-sizing: border-box;
-  max-width: calc(100vw - 24px);
-}
-
-.asset-ledger-filter-popover .asset-ledger-advanced-filters {
-  max-height: min(560px, calc(100vh - 180px));
-  overflow-y: auto;
-}
-
-.asset-ledger-dynamic-filter-section {
-  display: grid;
-  gap: var(--space-sm, 8px);
-}
-
-.asset-ledger-dynamic-filter-heading,
-.asset-ledger-dynamic-filter-actions,
-.asset-ledger-dynamic-filter-buttons {
-  display: flex;
-  align-items: center;
-  gap: var(--space-sm, 8px);
-}
-
-.asset-ledger-dynamic-filter-heading,
-.asset-ledger-dynamic-filter-actions {
-  justify-content: space-between;
-}
-
-.asset-ledger-dynamic-filter-heading {
-  color: var(--el-text-color-primary);
-  font-size: 13px;
-  font-weight: 600;
-}
-
-.asset-ledger-dynamic-filter-note {
-  color: var(--el-text-color-secondary);
-  font-size: 12px;
-  font-weight: 400;
-}
-
-.asset-ledger-dynamic-filter-row {
-  display: grid;
-  grid-template-columns: minmax(150px, 1.4fr) minmax(110px, 1fr) minmax(150px, 1.2fr) auto;
-  align-items: start;
-  gap: var(--space-sm, 8px);
-  min-width: 0;
-}
-
-.asset-ledger-dynamic-filter-row > .el-select,
-.asset-ledger-dynamic-filter-row > .el-input,
-.asset-ledger-dynamic-filter-row > .el-date-editor {
-  width: 100%;
-  min-width: 0;
-}
-
-.asset-ledger-dynamic-filter-row > .el-button {
-  min-height: var(--itam-control-height);
-  margin: 0;
-}
-
-.asset-ledger-dynamic-filter-section .el-divider {
-  margin: 4px 0 12px;
-}
-
-@media (max-width: 720px) {
-  .asset-ledger-filter-popover {
-    width: calc(100vw - 24px) !important;
-  }
-
-  .asset-ledger-dynamic-filter-row {
-    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) auto;
-  }
-
-  .asset-ledger-dynamic-filter-row > :nth-child(3) {
-    grid-column: 1 / -1;
-  }
-
-  .asset-ledger-dynamic-filter-actions {
-    align-items: flex-start;
-    flex-wrap: wrap;
-  }
-}
-
-.asset-ledger-error {
-  display: flex;
-  min-height: 180px;
-  align-items: center;
-  justify-content: center;
-  gap: var(--space-lg, 16px);
-  padding: var(--space-xl, 24px);
-  color: var(--el-text-color-secondary);
-  text-align: left;
-}
-
-.asset-ledger-error__copy {
-  display: grid;
-  gap: var(--space-xs, 4px);
-  min-width: 0;
-}
-
-.asset-ledger-error__copy strong {
-  color: var(--el-text-color-primary);
-  font-weight: 600;
-}
-
-.asset-ledger-error__copy span {
-  max-width: 560px;
-  overflow: hidden;
-  color: var(--el-text-color-secondary);
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.asset-ledger-empty {
-  display: flex;
-  min-height: 120px;
-  align-items: center;
-  justify-content: center;
-  gap: var(--space-sm, 8px);
-  padding: var(--space-lg, 16px);
-  color: var(--el-text-color-secondary);
-}
-
-.asset-ledger-empty strong {
-  color: var(--el-text-color-secondary);
-  font-weight: 500;
 }
 
 @media (max-width: 640px) {
@@ -3948,56 +1815,10 @@ body,
     flex: 1 1 auto;
   }
 
-  .asset-ledger-error {
-    align-items: flex-start;
-    flex-direction: column;
-  }
-
-  .asset-ledger-error__copy span {
-    max-width: 100%;
-    white-space: normal;
-  }
-}
-
-.asset-table-header-filter {
-  display: inline-flex;
-  align-items: center;
-  min-width: 0;
-  gap: 2px;
-}
-
-.asset-table-header-filter__label {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.asset-table-header-filter__trigger {
-  width: 22px;
-  height: 22px;
-  padding: 2px;
-  color: var(--el-text-color-secondary);
-}
-
-.asset-table-header-filter__trigger.is-active {
-  color: var(--el-color-primary);
-}
-
-.asset-table-filter-select {
-  width: 100%;
 }
 
 /* Asset ledger table: keep the identity, location and row actions legible
    without adding a second table pattern to the shared PagedTable component. */
-.ep-main .asset-ledger-table .el-table__row {
-  cursor: pointer;
-}
-
-.ep-main .asset-ledger-table .el-table__row > td {
-  padding-top: 8px;
-  padding-bottom: 8px;
-}
-
 .asset-ledger-column-fixed {
   color: var(--el-text-color-secondary);
   font-size: 11px;
@@ -4021,6 +1842,54 @@ body,
   white-space: nowrap;
 }
 
+/* Keep the filter reference as one compact control so Element Plus can anchor
+   its popper to the complete header label, rather than to an icon at the edge. */
+.asset-table-header-dropdown.el-dropdown {
+  display: flex;
+  width: max-content;
+  max-width: 100%;
+  line-height: inherit;
+}
+
+.asset-table-header-dropdown-trigger.el-button {
+  display: inline-flex;
+  max-width: 100%;
+  min-width: 0;
+  align-items: center;
+  gap: 4px;
+  border-width: 0;
+  padding: 0;
+  line-height: inherit;
+  text-align: left;
+}
+
+.asset-table-header-dropdown-trigger__label {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.asset-table-header-dropdown-trigger .el-icon {
+  flex: 0 0 auto;
+}
+
+.asset-table-header-dropdown-option {
+  display: inline-flex;
+  align-items: center;
+}
+
+.asset-table-header-dropdown-option__check {
+  flex: 0 0 14px;
+  width: 14px;
+  visibility: hidden;
+}
+
+.asset-table-header-dropdown-option__check.is-selected {
+  color: var(--el-color-primary);
+  visibility: visible;
+}
+
 .asset-identity-cell,
 .asset-location-cell {
   display: block;
@@ -4031,50 +1900,14 @@ body,
 }
 
 .asset-identity-cell {
+  display: flex;
+  justify-content: flex-start;
   width: 100%;
-  padding: 0;
-  border: 0;
-  background: transparent;
-  color: inherit;
-  font: inherit;
-  text-align: left;
-  cursor: pointer;
-}
-
-.asset-identity-cell:hover .asset-identity-cell__name,
-.asset-identity-cell:focus-visible .asset-identity-cell__name {
-  color: var(--el-color-primary);
-}
-
-.asset-identity-cell__name,
-.asset-identity-cell__number {
-  display: block;
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  padding-right: 0;
+  padding-left: 0;
 }
 
 .asset-identity-cell__name {
-  color: var(--el-text-color-primary);
-  font-weight: 500;
-}
-
-.asset-identity-cell__number {
-  margin-top: 2px;
-  color: var(--el-text-color-secondary);
-  font-size: 12px;
-}
-
-.asset-location-cell {
-  display: grid;
-  gap: 2px;
-  line-height: 1.35;
-  white-space: normal;
-}
-
-.asset-location-cell__primary,
-.asset-location-cell__secondary {
   display: block;
   min-width: 0;
   overflow: hidden;
@@ -4082,13 +1915,8 @@ body,
   white-space: nowrap;
 }
 
-.asset-location-cell__primary {
-  color: var(--el-text-color-primary);
-}
-
-.asset-location-cell__secondary {
-  color: var(--el-text-color-secondary);
-  font-size: 12px;
+.asset-number-cell {
+  font-variant-numeric: tabular-nums;
 }
 
 .asset-row-actions {
@@ -4102,16 +1930,11 @@ body,
 
 .asset-row-actions .el-button {
   flex: 0 0 auto;
-  padding: 4px 2px;
 }
 
 .asset-row-actions .el-dropdown {
   display: inline-flex;
   flex: 0 0 auto;
-}
-
-.asset-row-actions .el-dropdown .el-button {
-  min-width: 28px;
 }
 
 .el-dropdown-menu__item.asset-row-danger {
@@ -4139,27 +1962,6 @@ body,
   color: var(--el-color-danger);
 }
 
-.asset-depreciation-toggle {
-  display: flex;
-  align-items: center;
-  flex-wrap: wrap;
-  gap: 12px;
-}
-
-.asset-depreciation-unit {
-  margin-left: 8px;
-  color: var(--el-text-color-secondary);
-  font-size: 13px;
-}
-
-.asset-depreciation-help {
-  display: block;
-  margin-top: 5px;
-  color: var(--el-text-color-secondary);
-  font-size: 12px;
-  line-height: 18px;
-}
-
 .asset-form-load-error {
   display: grid;
   min-height: 260px;
@@ -4177,21 +1979,12 @@ body,
 }
 
 .asset-custom-field-group__title {
-  margin: 0 0 8px;
-  padding-bottom: 6px;
+  margin: 0 0 10px;
+  padding: 0;
   color: var(--el-text-color-regular);
-  border-bottom: 1px solid var(--el-border-color-lighter);
   font-size: 13px;
   font-weight: 600;
   line-height: 1.4;
-}
-
-.asset-custom-field-help {
-  margin-top: 6px;
-  color: var(--el-text-color-secondary);
-  font-size: 12px;
-  line-height: 1.5;
-  overflow-wrap: anywhere;
 }
 
 .asset-custom-schema-state {
@@ -4203,37 +1996,17 @@ body,
 }
 
 /* Shared CRUD form dialog shell. Business components own their fields and
-   validation; this layer only establishes the same frame and rhythm. */
+   validation; this layer only establishes scroll and form geometry. */
 .form-dialog {
-  width: min(var(--form-dialog-width, 720px), calc(100vw - 48px));
-  max-width: calc(100vw - 48px);
+  max-width: calc(100vw - 32px);
   max-height: 82vh;
   display: flex;
   flex-direction: column;
   overflow: hidden;
 }
 
-.form-dialog--small {
-  --form-dialog-width: 520px;
-}
-
-.form-dialog--medium {
-  --form-dialog-width: 720px;
-}
-
-.form-dialog--large {
-  --form-dialog-width: 960px;
-}
-
-.form-dialog--small .form-dialog__grid {
-  grid-template-columns: minmax(0, 1fr);
-}
-
 .form-dialog .el-dialog__header {
   flex: 0 0 auto;
-  margin-right: 0;
-  padding: 0;
-  border-bottom: 1px solid var(--color-border-soft);
 }
 
 .form-dialog__header {
@@ -4241,60 +2014,40 @@ body,
   align-items: flex-start;
   justify-content: space-between;
   gap: 16px;
-  min-height: 72px;
-  padding: 20px var(--dialog-padding-x) 16px;
+  width: 100%;
 }
 
 .form-dialog__heading {
   min-width: 0;
 }
 
-.form-dialog__heading h2 {
-  margin: 0;
-  color: var(--color-text-primary);
-  font-size: 18px;
-  font-weight: 600;
-  line-height: 24px;
-}
-
 .form-dialog__description {
-  max-width: 680px;
   margin: 4px 0 0;
-  color: var(--color-text-secondary);
-  font-size: 13px;
-  line-height: 18px;
-}
-
-.form-dialog__close {
-  flex: 0 0 auto;
-  width: 32px;
-  height: 32px;
-  margin: -4px -8px 0 0;
-  color: var(--color-text-muted);
-}
-
-.form-dialog__close:hover,
-.form-dialog__close:focus-visible {
-  color: var(--color-text-primary);
-  background: var(--color-border-soft);
+  color: var(--el-text-color-secondary);
+  font-size: var(--el-font-size-small);
+  line-height: var(--el-line-height-primary);
 }
 
 .form-dialog .el-dialog__body {
   flex: 1 1 auto;
   min-height: 0;
   max-height: none;
-  padding: 0;
   overflow-x: hidden;
   overflow-y: auto;
 }
 
 .form-dialog__body {
   min-width: 0;
-  padding: var(--dialog-padding-y) var(--dialog-padding-x);
 }
 
-.form-dialog__body > .el-form,
-.form-dialog__body > form {
+.form-dialog__form-container {
+  width: 100%;
+  max-width: none;
+  margin: 0;
+}
+
+.form-dialog__form-container > .el-form,
+.form-dialog__form-container > form {
   min-width: 0;
 }
 
@@ -4308,8 +2061,6 @@ body,
 
 .form-dialog .el-dialog__footer {
   flex: 0 0 auto;
-  padding: 0;
-  border-top: 0;
 }
 
 .form-dialog__footer {
@@ -4317,19 +2068,7 @@ body,
   align-items: center;
   justify-content: flex-end;
   gap: 12px;
-  padding: 16px var(--dialog-padding-x);
-  border-top: 1px solid var(--color-border-soft);
-  background: var(--color-surface);
-}
-
-.form-dialog__footer .el-button {
-  min-width: 88px;
-  height: var(--control-height);
-  margin-left: 0 !important;
-}
-
-.form-dialog__footer .el-button--primary {
-  min-width: 104px;
+  margin-left: 0;
 }
 
 .form-dialog .el-form-item {
@@ -4337,21 +2076,12 @@ body,
   margin-bottom: 0;
 }
 
-.form-dialog .el-form-item__label {
-  height: auto;
-  margin-bottom: 6px;
-  color: var(--color-text-secondary);
-  font-size: 13px;
-  font-weight: 500;
-  line-height: 20px;
-}
-
 .form-dialog .el-form-item__content {
   min-width: 0;
-  line-height: var(--control-height);
 }
 
 .form-dialog .el-input,
+.form-dialog .el-textarea,
 .form-dialog .el-select,
 .form-dialog .el-date-editor,
 .form-dialog .el-input-number,
@@ -4359,62 +2089,197 @@ body,
   width: 100%;
 }
 
+.form-dialog .horizontal-form .el-textarea__inner {
+  min-height: 80px;
+}
+
 .form-dialog__section + .form-dialog__section {
-  margin-top: var(--dialog-section-gap);
+  margin-top: 24px;
 }
 
-.form-dialog__section-title {
-  margin: 0 0 12px;
-  padding-bottom: 8px;
-  color: var(--color-text-primary);
+.form-dialog .form-dialog__section-title {
+  display: flex;
+  align-items: center;
+  min-height: 26px;
+  margin: 0 0 16px;
+  padding: 0 0 10px;
   border-bottom: 1px solid var(--color-border-soft);
-  font-size: 15px;
+  color: var(--color-text-primary);
+  font-size: 16px;
   font-weight: 600;
-  line-height: 20px;
+  line-height: 24px;
 }
 
-.form-dialog__section-title + .form-dialog__grid,
-.form-dialog__section-title + .el-form-item {
+.form-dialog .form-dialog__section-title + .horizontal-form__rows,
+.form-dialog .form-dialog__section-title + .el-form-item {
   margin-top: 0;
 }
 
 .form-dialog__subsection-title {
-  margin: 16px 0 12px;
+  margin: 24px 0 12px;
   color: var(--color-text-secondary);
   font-size: 13px;
   font-weight: 600;
   line-height: 20px;
 }
 
-.form-dialog__grid {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 16px 24px;
-}
-
-.form-dialog__grid > *,
-.form-dialog__field--full,
-.form-dialog__span-2 {
+.form-dialog__subsection {
   min-width: 0;
 }
 
-.form-dialog__field--full,
-.form-dialog__span-2 {
-  grid-column: 1 / -1;
+.horizontal-form__rows {
+  display: grid;
+  row-gap: 16px;
 }
 
-.form-dialog__error {
-  margin: 8px 0 0;
-  color: var(--color-danger);
+.horizontal-form__rows > .el-form-item {
+  display: grid;
+  grid-template-columns: minmax(104px, max-content) minmax(0, 1fr) auto;
+  column-gap: 16px;
+  align-items: start;
+  min-width: 0;
+  margin: 0;
+}
+
+.horizontal-form__rows > .el-form-item > .el-form-item__label {
+  grid-column: 1;
+  white-space: nowrap;
+}
+
+.horizontal-form__rows > .el-form-item > .el-form-item__content {
+  grid-column: 2;
+  min-width: 0;
+  width: 100%;
+  max-width: none;
+  margin-left: 0 !important;
+}
+
+.horizontal-form__rows > .el-form-item > .el-form-item__content > .el-input,
+.horizontal-form__rows > .el-form-item > .el-form-item__content > .el-select,
+.horizontal-form__rows > .el-form-item > .el-form-item__content > .el-date-editor,
+.horizontal-form__rows > .el-form-item > .el-form-item__content > .el-input-number,
+.horizontal-form__rows > .el-form-item > .el-form-item__content > .el-color-picker {
+  width: 100%;
+}
+
+.form-dialog .asset-select {
+  width: 100%;
+  min-width: 0;
+}
+
+.asset-select-popper {
+  max-width: calc(100vw - 32px);
+}
+
+.asset-select-popper .el-select-dropdown__item {
+  height: auto;
+  min-height: 56px;
+  padding-top: 8px;
+  padding-bottom: 8px;
+  line-height: 18px;
+  white-space: normal;
+}
+
+.asset-select__option {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+}
+
+.asset-select__option-primary,
+.asset-select__option-secondary {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.asset-select__option-primary {
+  color: var(--color-text-primary);
+  font-size: 14px;
+  font-weight: 500;
+}
+
+.asset-select__option-secondary {
+  color: var(--color-text-secondary);
+  font-size: 12px;
+  line-height: 16px;
+}
+
+.asset-select__empty {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  min-height: 40px;
+  padding: 8px 12px;
+  color: var(--color-text-secondary);
+  font-size: 13px;
+  line-height: 20px;
+  text-align: center;
+}
+
+.horizontal-form__rows > .el-form-item > .el-form-item__content > .el-form-item__error {
+  position: static;
+}
+
+.money-input,
+.form-dialog .money-input {
+  width: 100%;
+}
+
+.horizontal-form__help {
+  display: flex;
+  flex: 0 0 100%;
+  align-items: flex-start;
+  gap: 6px;
+  width: 100%;
+  max-width: 100%;
+  min-width: 0;
+  margin-top: 6px;
+  color: var(--color-text-secondary);
   font-size: 12px;
   line-height: 18px;
+  overflow-wrap: anywhere;
 }
 
-.form-dialog__hint {
-  margin: 8px 0 0;
+.horizontal-form__help-icon {
+  flex: 0 0 auto;
+  margin-top: 2px;
   color: var(--color-text-muted);
+  font-size: 13px;
+}
+
+.horizontal-form__help-text {
+  min-width: 0;
+}
+
+.horizontal-form .form-hint {
+  display: block;
+  margin-top: 5px;
+  color: var(--color-text-secondary);
   font-size: 12px;
   line-height: 18px;
+  overflow-wrap: anywhere;
+}
+
+.horizontal-form .color-input .el-color-picker {
+  width: 40px;
+  flex: 0 0 40px;
+}
+
+.horizontal-form .color-input .el-input {
+  width: auto;
+  flex: 1;
+}
+
+.action-dialog .form-dialog__section-title {
+  margin: 0 0 16px;
+  padding: 0;
+  color: var(--color-text-primary);
+  font-size: 14px;
+  font-weight: 600;
+  line-height: 20px;
 }
 
 .form-dialog__section .el-divider {
@@ -4423,35 +2288,226 @@ body,
 
 @media (max-width: 768px) {
   .form-dialog {
-    width: calc(100vw - 24px);
-    max-width: calc(100vw - 24px);
+    width: calc(100vw - 32px);
+    max-width: calc(100vw - 32px);
   }
 
-  .form-dialog__grid {
-    grid-template-columns: minmax(0, 1fr);
+  .form-dialog__form-container {
+    max-width: 100%;
   }
 
-  .form-dialog__field--full,
-  .form-dialog__span-2 {
-    grid-column: auto;
+  .horizontal-form__rows > .el-form-item {
+    grid-template-columns: minmax(88px, max-content) minmax(0, 1fr) auto;
+    column-gap: 12px;
+  }
+
+}
+
+@media (max-width: 560px) {
+  .form-dialog .el-dialog__body {
+    max-height: none;
+  }
+}
+
+/* Business actions and preview/result flows keep the Element Plus dialog
+   frame; only the body is made scrollable when the content is tall. */
+.action-dialog {
+  display: flex;
+  flex-direction: column;
+  max-width: calc(100vw - 32px);
+  max-height: 82vh;
+  overflow: hidden;
+}
+
+.action-dialog .el-dialog__header {
+  flex: 0 0 auto;
+}
+
+.action-dialog__header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+  width: 100%;
+}
+
+.action-dialog__heading,
+.action-dialog__footer-state,
+.action-dialog__footer-actions {
+  min-width: 0;
+}
+
+.action-dialog__description {
+  max-width: 720px;
+  margin: 4px 0 0;
+  color: var(--el-text-color-secondary);
+  font-size: var(--el-font-size-small);
+  line-height: 18px;
+}
+
+.action-dialog .el-dialog__body {
+  display: flex;
+  flex: 1 1 auto;
+  min-height: 0;
+  max-height: none;
+  overflow: hidden;
+}
+
+.action-dialog__body {
+  display: block;
+  flex: 1 1 auto;
+  width: 100%;
+  box-sizing: border-box;
+  min-width: 0;
+  min-height: 0;
+  overflow-x: hidden;
+  overflow-y: auto;
+}
+
+.action-dialog__body > .el-form,
+.action-dialog__body > form,
+.action-dialog__body > .action-dialog__loading {
+  width: 100%;
+  min-width: 0;
+}
+
+.action-dialog__loading {
+  min-height: 180px;
+}
+
+.action-dialog__alert {
+  margin-bottom: 16px;
+}
+
+.action-dialog .el-alert {
+  margin-bottom: 16px;
+}
+
+.action-dialog .el-alert:last-child {
+  margin-bottom: 0;
+}
+
+.action-dialog .el-dialog__footer {
+  flex: 0 0 auto;
+}
+
+.action-dialog__footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.action-dialog__footer-state {
+  color: var(--el-text-color-secondary);
+  font-size: var(--el-font-size-small);
+  line-height: var(--el-line-height-primary);
+}
+
+.action-dialog__footer-actions {
+  display: inline-flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: var(--itam-button-gap);
+}
+
+.action-dialog__footer-actions .el-button {
+  margin-left: 0;
+}
+
+.action-dialog .el-form-item {
+  min-width: 0;
+  margin-bottom: 16px;
+}
+
+.action-dialog .el-form-item:last-child {
+  margin-bottom: 0;
+}
+
+.action-dialog .el-form-item__content {
+  min-width: 0;
+}
+
+.action-dialog .el-form-item__error {
+  position: static;
+}
+
+.action-dialog .el-input,
+.action-dialog .el-textarea,
+.action-dialog .el-select,
+.action-dialog .el-date-editor,
+.action-dialog .el-input-number,
+.action-dialog .itam-search-field {
+  width: 100%;
+}
+
+.action-dialog .el-textarea__inner {
+  min-height: 80px;
+}
+
+.action-dialog .form-grid {
+  min-width: 0;
+  gap: 16px 20px;
+}
+
+.action-dialog .form-dialog__section {
+  min-width: 0;
+}
+
+.action-dialog .form-dialog__section + .form-dialog__section {
+  margin-top: 20px;
+}
+
+.action-dialog .form-hint,
+.action-dialog .action-dialog__help {
+  display: block;
+  margin: 6px 0 0;
+  color: var(--color-text-secondary);
+  font-size: 12px;
+  line-height: 18px;
+  overflow-wrap: anywhere;
+}
+
+.action-dialog__summary {
+  min-width: 0;
+  padding: 12px 14px;
+  border: 1px solid var(--el-border-color-lighter);
+  border-radius: var(--el-border-radius-base);
+  background: var(--el-fill-color-lighter);
+}
+
+.action-dialog__result {
+  min-width: 0;
+}
+
+.action-dialog__result .el-result {
+  padding: 12px 0 16px;
+}
+
+.action-dialog .el-table {
+  max-width: 100%;
+}
+
+@media (max-width: 768px) {
+  .action-dialog {
+    width: calc(100vw - 32px) !important;
+    max-width: calc(100vw - 32px);
   }
 }
 
 @media (max-width: 560px) {
-  .form-dialog__header,
-  .form-dialog__body,
-  .form-dialog__footer {
-    padding-right: 16px;
-    padding-left: 16px;
+  .action-dialog__footer {
+    align-items: flex-end;
+    flex-direction: column;
+    gap: 10px;
   }
 
-  .form-dialog__header {
-    min-height: 64px;
-    padding-top: 16px;
-    padding-bottom: 12px;
+  .action-dialog__footer-state,
+  .action-dialog__footer-actions {
+    width: 100%;
   }
 
-  .form-dialog .el-dialog__body {
-    max-height: none;
+  .action-dialog__footer-actions .el-button {
+    flex: 1 1 0;
   }
 }

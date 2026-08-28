@@ -28,6 +28,16 @@ from .models import (
     SpareStockTransaction,
     Tag,
 )
+from .enum_contracts import (
+    ASSET_STATUS_VALUES,
+    INVENTORY_EXCEPTION_STATUS_VALUES,
+    INVENTORY_RESOLUTION_ACTION_VALUES,
+    SPARE_UNIT_LABELS,
+    STOCK_INBOUND_OPERATION_TYPES,
+    STOCK_OUTBOUND_OPERATION_TYPES,
+    STOCK_SOURCE_OPERATION_TYPES,
+    STOCK_TARGET_OPERATION_TYPES,
+)
 from .roles import user_has_capability
 
 
@@ -46,12 +56,7 @@ def _optional_date(data, key):
         raise ValidationError({key: "日期格式应为 YYYY-MM-DD"}) from exc
 
 
-INVENTORY_EXCEPTION_STATUSES = frozenset({
-    "location_mismatch",
-    "not_found",
-    "info_mismatch",
-    "other",
-})
+INVENTORY_EXCEPTION_STATUSES = frozenset(INVENTORY_EXCEPTION_STATUS_VALUES)
 
 
 def reset_inventory_resolution(item):
@@ -218,7 +223,7 @@ def inventory_task_can_delete(task, items=None):
 
 def validate_inventory_resolution_request(action, note="", *, bulk=False):
     """Validate request-level resolution rules shared by single and bulk APIs."""
-    if action not in dict(InventoryItem.RESOLUTION_ACTION):
+    if action not in INVENTORY_RESOLUTION_ACTION_VALUES:
         raise DRFValidationError({"action": "无效的盘点异常处理方式"})
     if bulk and action == "update_asset":
         raise DRFValidationError({"action": "批量处理不支持更新资产台账，请逐条处理位置异常。"})
@@ -638,7 +643,9 @@ def apply_asset_tags(asset: Asset, tags, *, submitted=True):
     AssetTag.objects.bulk_create([AssetTag(asset=asset, tag=tag) for tag in tag_objects])
 
 
-REPAIR_RESTORE_STATUSES = frozenset({"in_stock", "in_use", "idle"})
+REPAIR_RESTORE_STATUSES = frozenset(
+    status for status in ASSET_STATUS_VALUES if status in {"in_stock", "in_use", "idle"}
+)
 
 
 def _write_fault_status_audit(
@@ -839,19 +846,17 @@ def apply_spare_stock_transaction(validated_data, operator):
     part = SparePart.objects.select_for_update().filter(pk=validated_data["part"].pk).first()
     if part is None:
         raise ValidationError({"part": "备件不存在"})
-    if not part.is_active:
-        raise ValidationError({"part": "停用的备件不能进行库存操作"})
 
     source_dc_id = getattr(validated_data.get("source_data_center"), "pk", None)
     source_room_id = getattr(validated_data.get("source_server_room"), "pk", None)
     target_dc_id = getattr(validated_data.get("target_data_center"), "pk", None)
     target_room_id = getattr(validated_data.get("target_server_room"), "pk", None)
 
-    if operation_type in {"outbound", "scrap", "transfer"}:
+    if operation_type in STOCK_SOURCE_OPERATION_TYPES:
         source_dc, source_room = _spare_location(source_dc_id, source_room_id, role="source_data_center")
     else:
         source_dc = source_room = None
-    if operation_type in {"inbound", "transfer", "adjustment"}:
+    if operation_type in STOCK_TARGET_OPERATION_TYPES:
         target_dc, target_room = _spare_location(
             target_dc_id,
             target_room_id,
@@ -860,13 +865,14 @@ def apply_spare_stock_transaction(validated_data, operator):
     else:
         target_dc = target_room = None
 
-    if operation_type == "adjustment" and validated_data.get("target_quantity") is None:
-        raise ValidationError({"target_quantity": "盘点调整必须填写调整后库存"})
+    adjustment_quantity = validated_data.get("adjustment_quantity")
+    if operation_type == "adjustment" and adjustment_quantity is None:
+        raise ValidationError({"adjustment_quantity": "盘点调整必须填写调整数量"})
     quantity = int(validated_data.get("quantity") or 0)
     if operation_type != "adjustment" and quantity <= 0:
         raise ValidationError({"quantity": "数量必须大于 0"})
-    if operation_type == "adjustment" and int(validated_data["target_quantity"]) < 0:
-        raise ValidationError({"target_quantity": "调整后库存不能小于 0"})
+    if operation_type == "adjustment" and int(adjustment_quantity) == 0:
+        raise ValidationError({"adjustment_quantity": "调整数量不能为 0"})
     if operation_type == "transfer" and (
         source_dc.id == target_dc.id and (source_room.id if source_room else None) == (target_room.id if target_room else None)
     ):
@@ -904,26 +910,29 @@ def apply_spare_stock_transaction(validated_data, operator):
 
     source_stock = _locked_spare_stock(part, source_dc, source_room) if source_dc else None
     target_stock = _locked_spare_stock(part, target_dc, target_room) if target_dc else None
-    if source_stock and operation_type in {"outbound", "scrap", "transfer"} and source_stock.quantity < quantity:
+    if source_stock and operation_type in STOCK_SOURCE_OPERATION_TYPES and source_stock.quantity < quantity:
         source_label = source_dc.name if source_dc else "来源地点"
         if source_room:
             source_label = f"{source_label} / {source_room.name}"
         raise ValidationError({
-            "quantity": f"备件“{part.name}”在{source_label}库存不足，当前仅有 {source_stock.quantity}{part.unit}，最多可操作 {source_stock.quantity}{part.unit}",
+            "quantity": f"备件“{part.name}”在{source_label}库存不足，当前仅有 {source_stock.quantity}{SPARE_UNIT_LABELS.get(part.unit, part.unit)}，最多可操作 {source_stock.quantity}{SPARE_UNIT_LABELS.get(part.unit, part.unit)}",
         })
 
     before_quantity = 0
     after_quantity = 0
-    if operation_type == "inbound":
+    quantity_delta = 0
+    if operation_type in STOCK_INBOUND_OPERATION_TYPES:
         before_quantity = target_stock.quantity
         target_stock.quantity += quantity
         target_stock.save(update_fields=["quantity", "updated_at"])
         after_quantity = target_stock.quantity
-    elif operation_type in {"outbound", "scrap"}:
+        quantity_delta = quantity
+    elif operation_type in STOCK_OUTBOUND_OPERATION_TYPES:
         before_quantity = source_stock.quantity
         source_stock.quantity -= quantity
         source_stock.save(update_fields=["quantity", "updated_at"])
         after_quantity = source_stock.quantity
+        quantity_delta = -quantity
     elif operation_type == "transfer":
         before_quantity = source_stock.quantity
         source_stock.quantity -= quantity
@@ -931,19 +940,22 @@ def apply_spare_stock_transaction(validated_data, operator):
         source_stock.save(update_fields=["quantity", "updated_at"])
         target_stock.save(update_fields=["quantity", "updated_at"])
         after_quantity = source_stock.quantity
+        quantity_delta = -quantity
     else:
         before_quantity = target_stock.quantity
-        after_quantity = int(validated_data["target_quantity"])
-        if after_quantity == before_quantity:
-            raise ValidationError({"target_quantity": "调整后库存与当前库存一致，无需调整"})
+        after_quantity = before_quantity + int(adjustment_quantity)
+        if after_quantity < 0:
+            raise ValidationError({"adjustment_quantity": "调整后库存不能小于 0"})
         target_stock.quantity = after_quantity
         target_stock.save(update_fields=["quantity", "updated_at"])
-        quantity = abs(after_quantity - before_quantity)
+        quantity = abs(int(adjustment_quantity))
+        quantity_delta = int(adjustment_quantity)
 
     return SpareStockTransaction.objects.create(
         part=part,
         operation_type=operation_type,
         quantity=quantity,
+        quantity_delta=quantity_delta,
         source_data_center=source_dc,
         source_server_room=source_room,
         target_data_center=target_dc,

@@ -43,10 +43,6 @@ export function useRepairs(deps: RepairsDeps) {
   const showRepairModal = ref(false);
   const selectedFault = ref<FaultEvent | null>(null);
   const faultForm = ref({ asset: "", occurred_at: "", reason: "", description: "" });
-  const faultAssetSearch = ref("");
-  const faultAssetOptions = ref<Asset[]>([]);
-  const faultAssetLoading = ref(false);
-  const faultAssetRequestId = ref(0);
   const repairForm = ref({ provider: "", started_at: "", finished_at: "", notes: "" });
   const repairListLoading = ref(false);
   const repairListError = ref("");
@@ -54,6 +50,8 @@ export function useRepairs(deps: RepairsDeps) {
   const repairRequestId = ref(0);
   const faultSaving = ref(false);
   const repairSaving = ref(false);
+  const faultError = ref("");
+  const repairError = ref("");
   const appliedRepairFilters = ref({
     keyword: "",
     status: "",
@@ -66,8 +64,7 @@ export function useRepairs(deps: RepairsDeps) {
   }
   function openFaultModal(assetId?: number | Event) {
     if (assetId instanceof Event) assetId = undefined;
-    faultAssetRequestId.value += 1;
-    faultAssetLoading.value = false;
+    faultError.value = "";
     const selected = typeof assetId === "number" ? deps.assets.value.find((item) => item.id === assetId) : undefined;
     faultForm.value = {
       asset: selected ? String(selected.id) : "",
@@ -75,30 +72,7 @@ export function useRepairs(deps: RepairsDeps) {
       reason: "",
       description: "",
     };
-    faultAssetSearch.value = selected ? `${selected.asset_no} · ${selected.name}` : "";
-    faultAssetOptions.value = selected ? [selected] : [];
     showFaultModal.value = true;
-  }
-  async function searchFaultAssets() {
-    const keyword = faultAssetSearch.value.trim();
-    const requestId = ++faultAssetRequestId.value;
-    if (!keyword) {
-      faultAssetOptions.value = [];
-      faultAssetLoading.value = false;
-      return;
-    }
-    faultAssetLoading.value = true;
-    try {
-      const payload = await deps.request<PageResult<Asset> | Asset[]>(`/assets/?search=${encodeURIComponent(keyword)}&page_size=20&compact=1`);
-      if (requestId !== faultAssetRequestId.value) return;
-      faultAssetOptions.value = pageItems(payload);
-      if (faultAssetOptions.value.length === 1) faultForm.value.asset = String(faultAssetOptions.value[0].id);
-    } catch (error) {
-      if (requestId !== faultAssetRequestId.value || isAbortError(error)) return;
-      deps.actionMessage.value = error instanceof Error ? error.message : "资产搜索失败";
-    } finally {
-      if (requestId === faultAssetRequestId.value) faultAssetLoading.value = false;
-    }
   }
   function registerFaultFromSelection() {
     if (deps.selectedAssetIds.value.length !== 1) {
@@ -108,6 +82,7 @@ export function useRepairs(deps: RepairsDeps) {
     openFaultModal(deps.selectedAssetIds.value[0]);
   }
   function openRepairModal(fault: FaultEvent) {
+    repairError.value = "";
     selectedFault.value = fault;
     repairForm.value = {
       provider: fault.repair?.provider || "",
@@ -213,8 +188,8 @@ export function useRepairs(deps: RepairsDeps) {
     repairKeyword.value = queryValue(query, "search");
     repairStatus.value = status === "true" || status === "false" ? status : "";
     focusedFaultId.value = /^\d+$/.test(fault) && Number(fault) > 0 ? Number(fault) : null;
-    repairStart.value = "";
-    repairEnd.value = "";
+    repairStart.value = queryValue(query, "start");
+    repairEnd.value = queryValue(query, "end");
     repairPage.value = 1;
   }
 
@@ -253,6 +228,7 @@ export function useRepairs(deps: RepairsDeps) {
   }
   async function createFault(): Promise<boolean> {
     if (faultSaving.value) return false;
+    faultError.value = "";
     faultSaving.value = true;
     try {
       await deps.request("/fault-events/", {
@@ -261,7 +237,8 @@ export function useRepairs(deps: RepairsDeps) {
         body: JSON.stringify({ ...faultForm.value, asset: Number(faultForm.value.asset) }),
       });
     } catch (error) {
-      deps.actionMessage.value = error instanceof Error ? error.message : "故障登记失败";
+      faultError.value = error instanceof Error ? error.message : "故障登记失败";
+      deps.actionMessage.value = faultError.value;
       return false;
     } finally {
       faultSaving.value = false;
@@ -273,6 +250,11 @@ export function useRepairs(deps: RepairsDeps) {
   }
   async function saveRepair(): Promise<boolean> {
     if (!selectedFault.value || repairSaving.value) return false;
+    if (selectedFault.value.is_closed) {
+      deps.actionMessage.value = "已完成的故障只能查看维修结果";
+      return false;
+    }
+    repairError.value = "";
     const timeError = repairTimeError();
     if (timeError) {
       deps.actionMessage.value = timeError;
@@ -294,7 +276,8 @@ export function useRepairs(deps: RepairsDeps) {
         await deps.request("/repair-records/", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload) });
       }
     } catch (error) {
-      deps.actionMessage.value = error instanceof Error ? error.message : "维修记录保存失败";
+      repairError.value = error instanceof Error ? error.message : "维修记录保存失败";
+      deps.actionMessage.value = repairError.value;
       return false;
     } finally {
       repairSaving.value = false;
@@ -342,9 +325,9 @@ export function useRepairs(deps: RepairsDeps) {
 
   return {
     repairRows, repairCount, repairPage, repairPageSize, repairKeyword, repairStatus, repairStart, repairEnd,
-    showFaultModal, showRepairModal, selectedFault, faultForm, faultAssetSearch, faultAssetOptions, faultAssetLoading,
-    repairListLoading, repairListError, exportingRepairs, faultSaving, repairSaving,
-    repairForm, repairTimeError, openFaultModal, searchFaultAssets, registerFaultFromSelection, openRepairModal, loadRepairs,
+    showFaultModal, showRepairModal, selectedFault, faultForm,
+    repairListLoading, repairListError, exportingRepairs, faultSaving, repairSaving, faultError, repairError,
+    repairForm, repairTimeError, openFaultModal, registerFaultFromSelection, openRepairModal, loadRepairs,
     searchRepairs, onRepairStatusChange, onRepairDateChange, resetRepairFilters, retryRepairList,
     syncFiltersFromQuery,
     createFault, saveRepair, exportRepairs, changeRepairPage, changeRepairPageSize,

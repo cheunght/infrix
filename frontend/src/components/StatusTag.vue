@@ -1,46 +1,34 @@
 <script setup lang="ts">
 import { computed } from "vue";
 
-export type StatusTagType = "success" | "warning" | "danger" | "info" | "primary";
+export type { StatusTagType } from "../status";
+import type { StatusTagType } from "../status";
 
 const props = withDefaults(
   defineProps<{
     label: string;
-    status?: string;
-    type?: StatusTagType;
+    tone?: StatusTagType;
+    size?: "small" | "default" | "large";
   }>(),
   {
-    status: "",
-    type: undefined,
+    tone: undefined,
+    size: "default",
   },
 );
 
-const statusTypeMap: Record<string, StatusTagType> = {
-  active: "success",
-  enabled: "success",
-  in_use: "success",
-  in_stock: "info",
-  normal: "success",
-  completed: "success",
-  expiring: "warning",
-  pending: "warning",
-  reserved: "warning",
-  repair: "warning",
-  idle: "info",
-  in_progress: "warning",
-  expired: "danger",
-  over_limit: "danger",
-  fault: "danger",
-  disabled: "info",
-  inactive: "info",
-  retired: "info",
-};
-
-const resolvedType = computed<StatusTagType>(() => {
-  return props.type || statusTypeMap[props.status] || "info";
+const resolvedType = computed<"primary" | "success" | "warning" | "danger" | "info" | undefined>(() => {
+  if (!props.tone || props.tone === "neutral") return "info";
+  return props.tone;
 });
 </script>
 
 <template>
-  <el-tag :type="resolvedType">{{ label }}</el-tag>
+  <el-tag
+    class="status-tag"
+    :type="resolvedType"
+    :size="size"
+    effect="light"
+  >
+    {{ label }}
+  </el-tag>
 </template>

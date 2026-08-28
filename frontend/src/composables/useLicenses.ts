@@ -1,8 +1,9 @@
 import { computed, ref, type Ref } from "vue";
 import type { LocationQuery } from "vue-router";
 import { buildExportQuery, isAbortError, pageItems, pageTotal, type PageResult } from "../api";
-import type { DictionaryItem, SoftwareLicense } from "../types";
+import type { DictionaryItem, LicenseStatus, SoftwareLicense } from "../types";
 import type { RequestFn } from "../types/page-context";
+import { LICENSE_STATUS_OPTIONS } from "../business-enums";
 
 export interface LicensesDeps {
   request: RequestFn;
@@ -21,7 +22,7 @@ export function useLicenses(deps: LicensesDeps) {
   const licensePage = ref(1);
   const licensePageSize = ref(50);
   const licenseKeyword = ref("");
-  const licenseStatus = ref("");
+  const licenseStatus = ref<LicenseStatus | "">("");
   const licenseManufacturer = ref("");
   const licenseListLoading = ref(false);
   const licenseListError = ref("");
@@ -107,9 +108,8 @@ export function useLicenses(deps: LicensesDeps) {
 
   function syncFiltersFromQuery(query: LocationQuery) {
     const status = queryValue(query, "status");
-    const validStatuses = new Set(["normal", "expiring", "expired", "over_limit"]);
     licenseKeyword.value = queryValue(query, "search");
-    licenseStatus.value = validStatuses.has(status) ? status : "";
+    licenseStatus.value = LICENSE_STATUS_OPTIONS.find((option) => option.value === status)?.value || "";
     const manufacturer = queryValue(query, "manufacturer");
     licenseManufacturer.value = /^\d+$/.test(manufacturer) ? manufacturer : "";
     licensePage.value = 1;

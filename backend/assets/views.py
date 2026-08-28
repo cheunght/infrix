@@ -1,5 +1,5 @@
 from django.conf import settings
-from django.db.models import BooleanField, Case, CharField, Count, Exists, F, OuterRef, Q, Prefetch, Sum, Value, When
+from django.db.models import BooleanField, Count, Exists, F, OuterRef, Q, Prefetch, Sum
 from django.db.models.functions import Coalesce
 from django.db import connection, transaction
 from django.db.models.expressions import RawSQL
@@ -28,8 +28,21 @@ from openpyxl import Workbook
 from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
 from openpyxl.utils import get_column_letter
 from urllib.parse import quote
-from .models import AuthThrottleState, AuditLog, Asset, AssetCustomValue, AssetNetworkAddress, AssetTag, CustomField, CustomFieldOption, DataCenter, DeviceType, FaultEvent, InventoryItem, InventoryTask, MaintenanceContract, Manufacturer, ProcurementRecord, Rack, RackUnitAllocation, RepairRecord, ServerRoom, SoftwareLicense, SparePart, SpareStock, SpareStockTransaction, Tag, UserSecurityProfile
-from .serializers import AdminPasswordResetSerializer, AuditLogSerializer, AssetDetailSerializer, AssetListSerializer, AssetSerializer, AssetWriteSerializer, CurrentUserProfileSerializer, CustomFieldOptionSerializer, CustomFieldRuntimeSchemaSerializer, CustomFieldSerializer, DataCenterSerializer, DeviceTypeSerializer, FaultEventSerializer, GroupSerializer, InventoryBulkNormalResponseSerializer, InventoryBulkNormalSerializer, InventoryBulkResolutionResponseSerializer, InventoryBulkResolutionSerializer, InventoryInspectorSerializer, InventoryItemSerializer, InventoryResolutionSerializer, InventoryScopePreviewQuerySerializer, InventoryScopePreviewSerializer, InventoryTaskSerializer, ManufacturerSerializer, RackSerializer, RepairRecordSerializer, ServerRoomSerializer, SoftwareLicenseSerializer, SparePartDetailSerializer, SparePartSerializer, SpareStockSerializer, SpareStockTransactionSerializer, TagSerializer, UserSerializer, _default_references_option
+from .models import AuthThrottleState, AuditLog, Asset, AssetCustomValue, AssetNetworkAddress, AssetTag, CustomField, CustomFieldOption, DataCenter, DeviceType, FaultEvent, InventoryItem, InventoryTask, MaintenanceContract, Manufacturer, ProcurementRecord, Rack, RackUnitAllocation, RepairRecord, ServerRoom, SoftwareLicense, SparePart, SparePartCategory, SpareStock, SpareStockTransaction, Tag, UserSecurityProfile
+from .enum_contracts import (
+    ASSET_STATUS_LABELS,
+    ASSET_STATUS_VALUES,
+    INVENTORY_ITEM_STATUS_LABELS,
+    INVENTORY_ITEM_STATUS_VALUES,
+    INVENTORY_RESOLUTION_ACTION_LABELS,
+    INVENTORY_RESOLUTION_STATUS_LABELS,
+    INVENTORY_RESOLUTION_STATUS_VALUES,
+    RACK_STATUS_VALUES,
+    SPARE_UNIT_LABELS,
+    STOCK_OPERATION_TYPE_LABELS,
+    STOCK_OPERATION_TYPE_VALUES,
+)
+from .serializers import AdminPasswordResetSerializer, AuditLogSerializer, AssetDetailSerializer, AssetListSerializer, AssetSerializer, AssetWriteSerializer, CurrentUserProfileSerializer, CustomFieldOptionSerializer, CustomFieldRuntimeSchemaSerializer, CustomFieldSerializer, DataCenterSerializer, DeviceTypeSerializer, FaultEventSerializer, GroupSerializer, InventoryBulkNormalResponseSerializer, InventoryBulkNormalSerializer, InventoryBulkResolutionResponseSerializer, InventoryBulkResolutionSerializer, InventoryInspectorSerializer, InventoryItemSerializer, InventoryResolutionSerializer, InventoryScopePreviewQuerySerializer, InventoryScopePreviewSerializer, InventoryTaskSerializer, ManufacturerSerializer, RackSerializer, RepairRecordSerializer, ServerRoomSerializer, SoftwareLicenseSerializer, SparePartCategorySerializer, SparePartDetailSerializer, SparePartSerializer, SpareStockSerializer, SpareStockTransactionSerializer, TagSerializer, UserSerializer, _default_references_option
 from .services import (
     apply_spare_stock_transaction,
     confirm_inventory_item_normal,
@@ -43,10 +56,10 @@ from .services import (
 )
 from .inventory import get_inventory_scope_assets
 from .depreciation import calculate_asset_depreciation
-from .license_status import filter_licenses_by_status, license_status_counts, license_status_value
-from .audit import asset_audit_snapshot, asset_custom_value_changes, model_snapshot, software_license_audit_snapshot, write_audit_log
+from .license_status import LICENSE_STATUS_KEYS, LICENSE_STATUS_LABELS, filter_licenses_by_status, license_status_counts, license_status_value
+from .audit import asset_audit_snapshot, asset_custom_value_changes, model_snapshot, software_license_audit_snapshot, spare_part_audit_snapshot, write_audit_log
 from .imports import AssetImportService, ImportFileError, ImportValidationError, build_import_template
-from .permissions import BusinessRolePermission, CanExportAssets, CanExportFaults, CanExportInventory, CanExportLicenses, CanExportRacks, CanExportSpares, CanImportAssets, CanManageInventory, CanViewAssetCustomFieldSchema, CanViewAssetTagsRuntime, CanViewAuditLog, CanViewDashboard, CanViewInventory, CanViewLicenses, CanViewManufacturerRuntime, IsSystemAdministrator
+from .permissions import BusinessRolePermission, CanExportAssets, CanExportFaults, CanExportInventory, CanExportLicenses, CanExportRacks, CanExportSpares, CanImportAssets, CanManageInventory, CanViewAssetCustomFieldSchema, CanViewAssetTagsRuntime, CanViewAuditLog, CanViewDashboard, CanViewInventory, CanViewLicenses, CanViewManufacturerRuntime, CanViewSparePartCategoryRuntime, IsSystemAdministrator
 from .roles import ROLE_DEFINITIONS, ROLE_NAME_TO_CODE, user_capabilities, user_has_capability, user_role_code
 from .reporting import (
     DashboardScopeError,
@@ -601,26 +614,51 @@ class RackViewSet(AuditedModelViewSetMixin, viewsets.ModelViewSet):
     filterset_fields = ["room", "room__data_center", "code", "status"]
     search_fields = ["code", "name", "rack_type", "owner_name", "room__name", "room__data_center__name"]
 
+    @extend_schema(
+        parameters=[
+            OpenApiParameter(
+                name="device_type",
+                type=OpenApiTypes.INT,
+                required=False,
+                description="按已分配资产的设备类型 ID 筛选机柜。",
+            ),
+        ]
+    )
+    def list(self, request, *args, **kwargs):
+        return super().list(request, *args, **kwargs)
+
     def get_queryset(self):
         queryset = super().get_queryset()
         device_type = self.request.query_params.get("device_type", "").strip()
         if device_type:
-            queryset = queryset.filter(allocations__asset__device_type__name=device_type).distinct()
+            try:
+                device_type_id = int(device_type)
+            except ValueError:
+                return queryset.none()
+            if device_type_id <= 0:
+                return queryset.none()
+            queryset = queryset.filter(allocations__asset__device_type_id=device_type_id).distinct()
         active = self.request.query_params.get("is_active", "true").strip().lower()
         if self.action in {"retrieve", "update", "partial_update", "destroy"}:
             return queryset.order_by("room__data_center__name", "room__name", "code")
         if active in {"true", "false"}:
             queryset = queryset.filter(is_active=active == "true")
         status = self.request.query_params.get("status", "").strip()
-        if status in {"in_use", "reserved", "disabled"}:
+        if status in RACK_STATUS_VALUES:
             queryset = queryset.filter(status=status)
         return queryset.order_by("room__data_center__name", "room__name", "code")
 
+    @transaction.atomic
     def perform_destroy(self, instance):
+        from django.db.models.deletion import ProtectedError
+
+        instance = Rack.objects.select_for_update().get(pk=instance.pk)
         if instance.allocations.exists():
-            from rest_framework.exceptions import ValidationError as DRFValidationError
             raise DRFValidationError("机柜仍有资产占用，不能删除，请先迁移资产或停用机柜")
-        super().perform_destroy(instance)
+        try:
+            super().perform_destroy(instance)
+        except ProtectedError as exc:
+            raise DRFValidationError("机柜仍有资产占用，不能删除，请先迁移资产或停用机柜") from exc
 
 
 class ServerRoomViewSet(AuditedModelViewSetMixin, viewsets.ModelViewSet):
@@ -808,6 +846,8 @@ class ManufacturerViewSet(DictionaryViewSet):
                 "assets.manage",
                 "licenses.view",
                 "licenses.manage",
+                "spares.view",
+                "spares.manage",
             )
         )
 
@@ -815,6 +855,7 @@ class ManufacturerViewSet(DictionaryViewSet):
         return super().get_queryset().annotate(
             assets_count=Count("assets", distinct=True),
             licenses_count=Count("software_licenses", distinct=True),
+            spare_parts_count=Count("spare_parts", distinct=True),
         )
 
     def perform_create(self, serializer):
@@ -822,16 +863,18 @@ class ManufacturerViewSet(DictionaryViewSet):
         instance = serializer.instance
         instance.assets_count = 0
         instance.licenses_count = 0
+        instance.spare_parts_count = 0
 
     def perform_update(self, serializer):
         super().perform_update(serializer)
         instance = serializer.instance
         instance.assets_count = instance.assets.count()
         instance.licenses_count = instance.software_licenses.count()
+        instance.spare_parts_count = instance.spare_parts.count()
 
     def perform_destroy(self, instance):
-        if instance.assets.exists() or instance.software_licenses.exists():
-            raise DRFValidationError("厂商正在被资产或软件许可使用，不能删除，请先停用")
+        if instance.assets.exists() or instance.software_licenses.exists() or instance.spare_parts.exists():
+            raise DRFValidationError("厂商正在被资产、软件许可或备件使用，不能删除，请先停用")
         super().perform_destroy(instance)
 
 
@@ -839,6 +882,39 @@ class DeviceTypeViewSet(DictionaryViewSet):
     queryset = DeviceType.objects.all()
     serializer_class = DeviceTypeSerializer
     audit_resource = "device_type"
+
+
+class SparePartCategoryViewSet(AuditedModelViewSetMixin, viewsets.ModelViewSet):
+    queryset = SparePartCategory.objects.annotate(spare_parts_count=Count("spare_parts", distinct=True)).order_by("name", "id")
+    serializer_class = SparePartCategorySerializer
+    permission_classes = [BusinessRolePermission]
+    permission_resource = "settings"
+    audit_resource = "spare_part_category"
+    filter_backends = [DjangoFilterBackend, SearchFilter, OrderingFilter]
+    filterset_fields = ["is_active"]
+    search_fields = ["name", "code"]
+    ordering_fields = ["name", "code", "created_at", "updated_at"]
+
+    def get_permissions(self):
+        if self.request.method in {"GET", "HEAD", "OPTIONS"} or self.action in {"list", "retrieve"}:
+            return [CanViewSparePartCategoryRuntime()]
+        return super().get_permissions()
+
+    def get_queryset(self):
+        queryset = super().get_queryset()
+        if self.action in {"retrieve", "update", "partial_update", "destroy"}:
+            return queryset
+        active = self.request.query_params.get("is_active", "true").strip().lower()
+        if "settings.manage" not in user_capabilities(self.request.user):
+            active = "true"
+        if active in {"true", "false"}:
+            queryset = queryset.filter(is_active=active == "true")
+        return queryset
+
+    def perform_destroy(self, instance):
+        if instance.spare_parts.exists():
+            raise DRFValidationError("备件类型正在被备件使用，不能删除，请先停用")
+        super().perform_destroy(instance)
 
 
 class CustomFieldViewSet(AuditedModelViewSetMixin, viewsets.ModelViewSet):
@@ -992,26 +1068,25 @@ class TagViewSet(AuditedModelViewSetMixin, viewsets.ModelViewSet):
 
 
 class SparePartViewSet(AuditedModelViewSetMixin, viewsets.ModelViewSet):
-    queryset = SparePart.objects.select_related("manufacturer").annotate(
+    queryset = SparePart.objects.select_related("manufacturer", "category").annotate(
         total_quantity=Coalesce(Sum("stocks__quantity"), 0),
         location_count=Count("stocks", distinct=True),
-        part_type_label_search=Case(
-            *[
-                When(part_type=code, then=Value(label))
-                for code, label in SparePart.PART_TYPES
-            ],
-            default=Value(""),
-            output_field=CharField(),
-        ),
-    ).order_by("name", "part_type", "id")
+        stock_movement_exists=Exists(SpareStockTransaction.objects.filter(part=OuterRef("pk"))),
+    ).order_by("name", "category__name", "id")
     serializer_class = SparePartSerializer
     permission_classes = [BusinessRolePermission]
     permission_resource = "spares"
     audit_resource = "spare_part"
     filter_backends = [DjangoFilterBackend, SearchFilter, OrderingFilter]
-    filterset_fields = ["part_type", "manufacturer", "is_active"]
-    search_fields = ["name", "part_type", "part_type_label_search", "manufacturer__name", "model", "specification", "notes"]
-    ordering_fields = ["name", "part_type", "created_at", "updated_at"]
+    filterset_fields = ["category", "manufacturer"]
+    search_fields = [
+        "code", "name", "category__name", "category__code", "manufacturer__name", "model", "specification",
+        "storage_location", "notes",
+    ]
+    ordering_fields = ["code", "name", "category", "category__name", "safety_stock", "created_at", "updated_at"]
+
+    def audit_snapshot(self, instance):
+        return spare_part_audit_snapshot(instance)
 
     def get_serializer_class(self):
         if self.action == "retrieve":
@@ -1031,14 +1106,48 @@ class SparePartViewSet(AuditedModelViewSetMixin, viewsets.ModelViewSet):
             queryset = queryset.filter(stocks__server_room_id=server_room)
         if data_center or server_room:
             queryset = queryset.distinct()
-        if self.action in {"retrieve", "update", "partial_update", "destroy"}:
-            return queryset
-        active = self.request.query_params.get("is_active", "true").strip().lower()
-        if "spares.manage" not in user_capabilities(self.request.user):
-            active = "true"
-        if active in {"true", "false"}:
-            queryset = queryset.filter(is_active=active == "true")
         return queryset
+
+    @transaction.atomic
+    def perform_create(self, serializer):
+        initial_quantity = serializer.validated_data.pop("initial_quantity", 0)
+        initial_data_center = serializer.validated_data.pop("initial_data_center", None)
+        initial_server_room = serializer.validated_data.pop("initial_server_room", None)
+        instance = serializer.save()
+        after = self.audit_snapshot(instance)
+        write_audit_log(
+            self.request,
+            action="create",
+            resource_type=self.audit_resource,
+            resource_id=instance.pk,
+            after=after,
+            extra=self.audit_extra(None, after, action="create"),
+        )
+        if initial_quantity <= 0:
+            return
+        try:
+            transaction_row = apply_spare_stock_transaction(
+                {
+                    "part": instance,
+                    "operation_type": "initial",
+                    "quantity": initial_quantity,
+                    "target_data_center": initial_data_center,
+                    "target_server_room": initial_server_room,
+                    "reference": "初始库存",
+                    "notes": "新增备件时登记的初始库存",
+                },
+                self.request.user,
+            )
+        except DjangoValidationError as exc:
+            detail = getattr(exc, "message_dict", None) or {"detail": "; ".join(exc.messages)}
+            raise DRFValidationError(detail) from exc
+        write_audit_log(
+            self.request,
+            action="create",
+            resource_type="spare_stock_transaction",
+            resource_id=transaction_row.pk,
+            after=SpareStockTransactionSerializer(transaction_row).data,
+        )
 
     @transaction.atomic
     def perform_destroy(self, instance):
@@ -1050,17 +1159,16 @@ class SparePartViewSet(AuditedModelViewSetMixin, viewsets.ModelViewSet):
         except SparePart.DoesNotExist as exc:
             raise DRFValidationError("备件不存在") from exc
         if locked_part.transactions.exists():
-            raise DRFValidationError("备件存在库存流水，不能删除，请先停用")
-        if locked_part.stocks.filter(quantity__gt=0).exists():
-            raise DRFValidationError("备件仍有库存余额，不能删除，请先出库或报废")
-        # Zero-balance rows are only bookkeeping placeholders. They can be
-        # removed when the part has no immutable transaction history.
+            raise DRFValidationError("该备件已有库存流水，无法删除。")
+        # Stock balances without a movement are not historical records. They
+        # must be removed before the part because their FK is also PROTECT;
+        # deletion eligibility is determined only by transaction history.
         locked_part.stocks.all().delete()
         super().perform_destroy(locked_part)
 
 
 class SpareStockViewSet(viewsets.ReadOnlyModelViewSet):
-    queryset = SpareStock.objects.select_related("part", "part__manufacturer", "data_center", "server_room").order_by(
+    queryset = SpareStock.objects.select_related("part", "part__category", "part__manufacturer", "data_center", "server_room").order_by(
         "part__name", "data_center__name", "server_room__name", "id"
     )
     serializer_class = SpareStockSerializer
@@ -1073,7 +1181,7 @@ class SpareStockViewSet(viewsets.ReadOnlyModelViewSet):
 
 class SpareStockTransactionViewSet(viewsets.ModelViewSet):
     queryset = SpareStockTransaction.objects.select_related(
-        "part", "part__manufacturer", "operator", "source_data_center", "source_server_room",
+        "part", "part__category", "part__manufacturer", "operator", "source_data_center", "source_server_room",
         "target_data_center", "target_server_room",
     ).order_by("-created_at", "-id")
     serializer_class = SpareStockTransactionSerializer
@@ -1083,7 +1191,29 @@ class SpareStockTransactionViewSet(viewsets.ModelViewSet):
     filter_backends = [DjangoFilterBackend, SearchFilter, OrderingFilter]
     filterset_fields = ["part", "operation_type", "source_data_center", "target_data_center", "operator"]
     search_fields = ["part__name", "part__model", "reference", "notes", "operator__username"]
-    ordering_fields = ["created_at", "quantity", "operation_type"]
+    ordering_fields = ["created_at", "quantity_delta", "before_quantity", "after_quantity", "operation_type"]
+
+    def get_queryset(self):
+        queryset = super().get_queryset()
+        start = self.request.query_params.get("start", "").strip()
+        end = self.request.query_params.get("end", "").strip()
+        if start:
+            try:
+                queryset = queryset.filter(created_at__date__gte=date.fromisoformat(start))
+            except ValueError:
+                return queryset.none()
+        if end:
+            try:
+                queryset = queryset.filter(created_at__date__lte=date.fromisoformat(end))
+            except ValueError:
+                return queryset.none()
+        return queryset
+
+    def list(self, request, *args, **kwargs):
+        errors = _date_filter_errors(request, ("start", "end"))
+        if errors:
+            return Response(errors, status=400)
+        return super().list(request, *args, **kwargs)
 
     @transaction.atomic
     def perform_create(self, serializer):
@@ -1354,7 +1484,7 @@ def _inventory_snapshot(asset):
     return {
         "asset_no": asset.asset_no,
         "name": asset.name,
-        "asset_type": asset.asset_type,
+        "device_type_name": asset.device_type.name if asset.device_type_id else "",
         "serial_number": asset.serial_number,
         "status": asset.status,
         "business_ip": network.get("business", ""),
@@ -1542,8 +1672,8 @@ class InventoryTaskViewSet(AuditedModelViewSetMixin, viewsets.ModelViewSet):
     @extend_schema(
         parameters=[
             OpenApiParameter(name="search", type=OpenApiTypes.STR, required=False),
-            OpenApiParameter(name="status", type=OpenApiTypes.STR, required=False),
-            OpenApiParameter(name="resolution_status", type=OpenApiTypes.STR, required=False),
+            OpenApiParameter(name="status", type=OpenApiTypes.STR, required=False, enum=INVENTORY_ITEM_STATUS_VALUES),
+            OpenApiParameter(name="resolution_status", type=OpenApiTypes.STR, required=False, enum=INVENTORY_RESOLUTION_STATUS_VALUES),
         ],
         responses=OpenApiTypes.BINARY,
         description="导出当前盘点任务在当前明细筛选条件下的完整结果集，不受分页参数影响。",
@@ -1578,18 +1708,18 @@ class InventoryTaskViewSet(AuditedModelViewSetMixin, viewsets.ModelViewSet):
             _append_excel_row(sheet, [
                 task.name, task.data_center.name, task.server_room.name if task.server_room_id else "整个数据中心",
                 task.inspector.get_full_name() or task.inspector.username, item.asset.asset_no, item.asset.name,
-                item.asset.serial_number or "", item.asset.asset_type,
+                item.asset.serial_number or "", snapshot.get("device_type_name", ""),
                 snapshot.get("business_ip", ""), snapshot.get("management_ip", ""), snapshot.get("oob_ip", ""),
                 snapshot.get("rack_code", ""), system_u,
-                dict(InventoryItem.STATUS).get(item.status, item.status),
+                INVENTORY_ITEM_STATUS_LABELS.get(item.status, item.status),
                 item.actual_rack.room.data_center.name if item.actual_rack_id else "",
                 item.actual_rack.room.name if item.actual_rack_id else "",
                 item.actual_rack.code if item.actual_rack_id else "", actual_u,
                 timezone.localtime(item.checked_at).replace(tzinfo=None) if item.checked_at else "",
                 item.checked_by.get_full_name() or item.checked_by.username if item.checked_by_id else "",
                 item.notes,
-                dict(InventoryItem.RESOLUTION_STATUS).get(item.resolution_status, item.resolution_status),
-                dict(InventoryItem.RESOLUTION_ACTION).get(item.resolution_action, "") if item.resolution_action else "",
+                INVENTORY_RESOLUTION_STATUS_LABELS.get(item.resolution_status, item.resolution_status),
+                INVENTORY_RESOLUTION_ACTION_LABELS.get(item.resolution_action, "") if item.resolution_action else "",
                 item.resolved_by.get_full_name() or item.resolved_by.username if item.resolved_by_id else "",
                 timezone.localtime(item.resolved_at).replace(tzinfo=None) if item.resolved_at else "",
                 item.resolution_note,
@@ -2182,7 +2312,7 @@ def asset_import(request):
 @extend_schema(
     parameters=[
         OpenApiParameter(name="search", type=OpenApiTypes.STR, required=False),
-        OpenApiParameter(name="status", type=OpenApiTypes.STR, required=False, enum=[code for code, _ in Asset.STATUS]),
+        OpenApiParameter(name="status", type=OpenApiTypes.STR, required=False, enum=ASSET_STATUS_VALUES),
         OpenApiParameter(name="device_type", type=OpenApiTypes.INT, required=False),
         OpenApiParameter(name="manufacturer", type=OpenApiTypes.INT, required=False),
         OpenApiParameter(name="model", type=OpenApiTypes.STR, required=False),
@@ -2225,13 +2355,13 @@ def asset_export(request):
         ).distinct().prefetch_related("options").order_by("device_type__name", "sort_order", "id")
     ) if assets else []
     headers = [
-        "资产编号", "资产名称", "资产类型", "设备类型", "厂商", "型号", "厂商/型号", "序列号", "用途", "状态", "使用人", "部门",
+        "资产编号", "资产名称", "设备类型", "厂商", "型号", "厂商/型号", "序列号", "用途", "状态", "使用人", "部门",
         "数据中心", "机房", "机柜", "起始 U", "结束 U", "业务 IP", "管理 IP", "带外 IP", "采购日期",
         "供应商", "采购单号", "采购金额", "折旧方法", "折旧起算日", "折旧年限", "残值率", "资产原值", "预计残值", "月折旧额", "累计折旧", "当前净值", "折旧状态",
         "维保厂商", "维保合同号", "维保开始日", "维保到期日", "维保备注", "备注", "标签",
     ]
     headers.extend([field.name or field.key for field in custom_fields])
-    status_labels = dict(Asset.STATUS)
+    status_labels = ASSET_STATUS_LABELS
     book = Workbook()
     sheet = book.active
     sheet.title = "资产台账"
@@ -2263,7 +2393,7 @@ def asset_export(request):
             custom_by_key[field.key] = value
         tag_text = ", ".join(item.tag.name for item in asset.asset_tags.all())
         row_values = [
-            asset.asset_no, asset.name, asset.asset_type, asset.device_type.name if asset.device_type_id else "",
+            asset.asset_no, asset.name, asset.device_type.name if asset.device_type_id else "",
             asset.manufacturer.name if asset.manufacturer_id else "", asset.model or "", asset.manufacturer_model, asset.serial_number or "", asset.purpose, status_labels.get(asset.status, asset.status), asset.owner_name,
             asset.department.name if asset.department_id else "",
             rack.rack.room.data_center.name if rack else (asset.asset_data_center.name if asset.asset_data_center_id else ""), rack.rack.room.name if rack else "", rack.rack.code if rack else "",
@@ -2339,9 +2469,8 @@ def license_summary(request):
     counts = license_status_counts()
     return Response({
         **counts,
-        # Keep the previous summary keys for existing clients.
+        # This is a non-status reporting alias retained for dashboard clients.
         "within_90_days": counts["expiring"],
-        "over_license_risk": counts["over_limit"],
     })
 
 
@@ -2353,7 +2482,7 @@ def license_summary(request):
             name="status",
             type=OpenApiTypes.STR,
             required=False,
-            enum=["normal", "expiring", "expired"],
+            enum=LICENSE_STATUS_KEYS,
         ),
     ],
     responses=OpenApiTypes.BINARY,
@@ -2371,7 +2500,7 @@ def license_export(request):
     if limit_response:
         return limit_response
 
-    status_labels = {"normal": "正常", "expiring": "即将到期", "expired": "已过期"}
+    status_labels = LICENSE_STATUS_LABELS
     book = Workbook()
     sheet = book.active
     sheet.title = "软件许可"
@@ -2395,15 +2524,14 @@ def _spare_part_export_queryset(request):
         SparePartViewSet,
         request,
         filter_backends=[DjangoFilterBackend, SearchFilter],
-    ).order_by("name", "part_type", "id")
+    ).order_by("name", "category__name", "id")
 
 
 @extend_schema(
     parameters=[
         OpenApiParameter(name="search", type=OpenApiTypes.STR, required=False),
-        OpenApiParameter(name="part_type", type=OpenApiTypes.STR, required=False),
+        OpenApiParameter(name="category", type=OpenApiTypes.INT, required=False),
         OpenApiParameter(name="manufacturer", type=OpenApiTypes.INT, required=False),
-        OpenApiParameter(name="is_active", type=OpenApiTypes.STR, required=False),
         OpenApiParameter(name="data_center", type=OpenApiTypes.INT, required=False),
         OpenApiParameter(name="server_room", type=OpenApiTypes.INT, required=False),
     ],
@@ -2422,13 +2550,13 @@ def spare_part_export(request):
     sheet = book.active
     sheet.title = "备件管理"
     _append_excel_row(sheet, [
-        "备件名称", "备件类型", "厂商", "型号", "规格", "计量单位", "库存数量", "库存地点数", "状态", "备注",
+        "备件编码", "备件名称", "备件类型", "厂商", "型号", "规格", "计量单位", "库存数量", "安全库存", "库存地点数", "存放位置", "备注",
     ])
     for part in queryset:
         _append_excel_row(sheet, [
-            part.name, part.get_part_type_display(), part.manufacturer.name if part.manufacturer_id else "", part.model,
-            part.specification, part.unit, part.total_quantity, part.location_count,
-            "启用" if part.is_active else "停用", part.notes,
+            part.code, part.name, part.category.name, part.manufacturer.name if part.manufacturer_id else "", part.model,
+            part.specification, SPARE_UNIT_LABELS.get(part.unit, part.unit), part.total_quantity, part.safety_stock, part.location_count,
+            part.storage_location, part.notes,
         ])
     _style_export_sheet(sheet, max_width=36)
     return _xlsx_response(book, f"备件管理_{_export_timestamp()}.xlsx")
@@ -2437,10 +2565,12 @@ def spare_part_export(request):
 @extend_schema(
     parameters=[
         OpenApiParameter(name="part", type=OpenApiTypes.INT, required=False),
-        OpenApiParameter(name="operation_type", type=OpenApiTypes.STR, required=False),
+        OpenApiParameter(name="operation_type", type=OpenApiTypes.STR, required=False, enum=STOCK_OPERATION_TYPE_VALUES),
         OpenApiParameter(name="source_data_center", type=OpenApiTypes.INT, required=False),
         OpenApiParameter(name="target_data_center", type=OpenApiTypes.INT, required=False),
         OpenApiParameter(name="search", type=OpenApiTypes.STR, required=False),
+        OpenApiParameter(name="start", type=OpenApiTypes.DATE, required=False),
+        OpenApiParameter(name="end", type=OpenApiTypes.DATE, required=False),
     ],
     responses=OpenApiTypes.BINARY,
     description="导出当前备件库存流水筛选结果，不受分页参数影响。",
@@ -2448,6 +2578,9 @@ def spare_part_export(request):
 @api_view(["GET"])
 @permission_classes([CanExportSpares])
 def spare_transaction_export(request):
+    errors = _date_filter_errors(request, ("start", "end"))
+    if errors:
+        return Response(errors, status=400)
     queryset = _filtered_view_queryset(
         SpareStockTransactionViewSet,
         request,
@@ -2457,18 +2590,19 @@ def spare_transaction_export(request):
     if limit_response:
         return limit_response
 
-    operation_labels = dict(SpareStockTransaction.OPERATION_TYPES)
+    operation_labels = STOCK_OPERATION_TYPE_LABELS
     book = Workbook()
     sheet = book.active
     sheet.title = "库存流水"
     _append_excel_row(sheet, [
-        "备件名称", "备件类型", "操作", "数量", "计量单位", "来源数据中心", "来源机房",
+        "备件编码", "备件名称", "备件类型", "操作", "变化数量", "计量单位", "来源数据中心", "来源机房",
         "目标数据中心", "目标机房", "操作前库存", "操作后库存", "操作人", "参考单号/用途", "备注", "发生时间",
     ])
     for row in queryset:
+        movement_quantity = row.quantity_delta
         _append_excel_row(sheet, [
-            row.part.name, row.part.get_part_type_display(), operation_labels.get(row.operation_type, row.operation_type),
-            row.quantity, row.part.unit,
+            row.part.code, row.part.name, row.part.category.name, operation_labels.get(row.operation_type, row.operation_type),
+            movement_quantity, SPARE_UNIT_LABELS.get(row.part.unit, row.part.unit),
             row.source_data_center.name if row.source_data_center_id else "",
             row.source_server_room.name if row.source_server_room_id else "",
             row.target_data_center.name if row.target_data_center_id else "",

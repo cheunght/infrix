@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { Search } from "@element-plus/icons-vue";
+import { Loading, Search } from "@element-plus/icons-vue";
 
 withDefaults(
   defineProps<{
@@ -31,21 +31,11 @@ const emit = defineEmits<{
     :placeholder="placeholder"
     :disabled="disabled"
     :aria-label="ariaLabel"
+    :prefix-icon="Search"
+    :suffix-icon="loading ? Loading : undefined"
     clearable
     @update:model-value="emit('update:modelValue', $event)"
     @keyup.enter="emit('search')"
     @clear="() => { emit('clear'); emit('search'); }"
-  >
-    <template #append>
-      <el-button
-        class="itam-search-button"
-        :icon="Search"
-        :loading="loading"
-        :disabled="disabled"
-        :aria-label="ariaLabel"
-        :title="ariaLabel"
-        @click="emit('search')"
-      />
-    </template>
-  </el-input>
+  />
 </template>

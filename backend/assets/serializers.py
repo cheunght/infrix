@@ -1,7 +1,7 @@
 from django.core.exceptions import ValidationError as DjangoValidationError
 from django.db import IntegrityError, transaction
 from collections import Counter
-from django.db.models import Count, Q
+from django.db.models import Count, Q, Sum
 from rest_framework import serializers
 from rest_framework.exceptions import ValidationError as DRFValidationError
 from django.contrib.auth.models import Group, User
@@ -13,9 +13,20 @@ from decimal import Decimal, InvalidOperation
 from typing import Any
 import json
 import re
-from .models import AuditLog, Asset, AssetCustomValue, AssetNetworkAddress, AssetTag, CustomField, CustomFieldOption, DataCenter, DeviceType, FaultEvent, InventoryItem, InventoryTask, MaintenanceContract, Manufacturer, ProcurementRecord, Rack, RackUnitAllocation, RepairRecord, ServerRoom, SoftwareLicense, SparePart, SpareStock, SpareStockTransaction, Tag, UserSecurityProfile
+from .models import AuditLog, Asset, AssetCustomValue, AssetNetworkAddress, AssetTag, CustomField, CustomFieldOption, DataCenter, DeviceType, FaultEvent, InventoryItem, InventoryTask, MaintenanceContract, Manufacturer, ProcurementRecord, Rack, RackUnitAllocation, RepairRecord, ServerRoom, SoftwareLicense, SparePart, SparePartCategory, SpareStock, SpareStockTransaction, Tag, UserSecurityProfile
 from .depreciation import DepreciationValidationError, calculate_asset_depreciation, validate_depreciation_configuration
-from .license_status import license_status_value
+from .enum_contracts import (
+    INVENTORY_ITEM_STATUS_LABELS,
+    INVENTORY_RESOLUTION_ACTION_LABELS,
+    INVENTORY_RESOLUTION_STATUS_LABELS,
+    RACK_STATUS_LABELS,
+    RACK_STATUS_VALUES,
+    STOCK_SOURCE_OPERATION_TYPES,
+    STOCK_TARGET_OPERATION_TYPES,
+    STOCK_OPERATION_TYPE_LABELS,
+    STOCK_OPERATION_TYPE_VALUES,
+)
+from .license_status import LICENSE_STATUS_LABELS, license_status_value
 from .services import apply_asset_custom_values, apply_asset_tags, apply_spare_stock_transaction, configure_asset, inventory_snapshot_location, inventory_task_can_delete, validate_inventory_resolution_request
 from .roles import ROLE_AUDITOR, ROLE_DEFINITIONS, ROLE_NAME_TO_CODE, preset_group_for_code, user_role_code
 
@@ -183,6 +194,7 @@ class BaseDictionarySerializer(serializers.ModelSerializer):
 
 class ManufacturerSerializer(BaseDictionarySerializer):
     licenses_count = serializers.IntegerField(read_only=True, default=0)
+    spare_parts_count = serializers.IntegerField(read_only=True, default=0)
 
     def validate_code(self, value):
         value = (value or "").strip()
@@ -197,7 +209,10 @@ class ManufacturerSerializer(BaseDictionarySerializer):
 
     class Meta(BaseDictionarySerializer.Meta):
         model = Manufacturer
-        fields = ["id", "name", "code", "is_active", "assets_count", "licenses_count", "created_at", "updated_at"]
+        fields = [
+            "id", "name", "code", "is_active", "assets_count", "licenses_count", "spare_parts_count",
+            "created_at", "updated_at",
+        ]
 
 
 class ManufacturerReferenceSerializer(serializers.ModelSerializer):
@@ -493,14 +508,86 @@ class TagSerializer(serializers.ModelSerializer):
         read_only_fields = ["id", "assets_count", "created_at", "updated_at"]
 
 
+class SparePartCategorySerializer(serializers.ModelSerializer):
+    spare_parts_count = serializers.IntegerField(read_only=True)
+
+    def validate_name(self, value):
+        value = (value or "").strip()
+        if not value:
+            raise serializers.ValidationError("备件类型名称不能为空")
+        queryset = SparePartCategory.objects.filter(name__iexact=value)
+        if self.instance:
+            queryset = queryset.exclude(pk=self.instance.pk)
+        if queryset.exists():
+            raise serializers.ValidationError("备件类型名称已存在")
+        return value
+
+    def validate_code(self, value):
+        value = (value or "").strip()
+        if not value:
+            raise serializers.ValidationError("备件类型编码不能为空")
+        queryset = SparePartCategory.objects.filter(code__iexact=value)
+        if self.instance:
+            queryset = queryset.exclude(pk=self.instance.pk)
+        if queryset.exists():
+            raise serializers.ValidationError("备件类型编码已存在")
+        return value
+
+    class Meta:
+        model = SparePartCategory
+        fields = ["id", "name", "code", "is_active", "spare_parts_count", "created_at", "updated_at"]
+        read_only_fields = ["id", "spare_parts_count", "created_at", "updated_at"]
+
+
+SPARE_UNIT_CHANGE_ERROR = "该备件已有库存流水，无法修改计量单位。"
+
+
 class SparePartSerializer(serializers.ModelSerializer):
+    category_name = serializers.CharField(source="category.name", read_only=True)
+    category_code = serializers.CharField(source="category.code", read_only=True)
     manufacturer_name = serializers.CharField(source="manufacturer.name", read_only=True, allow_null=True)
     total_quantity = serializers.IntegerField(read_only=True)
     location_count = serializers.IntegerField(read_only=True)
-    part_type_label = serializers.SerializerMethodField()
+    has_stock_movements = serializers.SerializerMethodField()
+    is_low_stock = serializers.SerializerMethodField()
+    safety_stock = serializers.IntegerField(required=False, min_value=0)
+    initial_quantity = serializers.IntegerField(write_only=True, required=False, min_value=0, default=0)
+    initial_data_center = serializers.PrimaryKeyRelatedField(
+        queryset=DataCenter.objects.filter(is_active=True),
+        write_only=True,
+        required=False,
+        allow_null=True,
+    )
+    initial_server_room = serializers.PrimaryKeyRelatedField(
+        queryset=ServerRoom.objects.filter(is_active=True),
+        write_only=True,
+        required=False,
+        allow_null=True,
+    )
 
-    def get_part_type_label(self, obj) -> str:
-        return dict(SparePart.PART_TYPES).get(obj.part_type, obj.part_type)
+    INITIAL_STOCK_FIELDS = {"initial_quantity", "initial_data_center", "initial_server_room"}
+    DIRECT_STOCK_FIELDS = {"quantity", "current_stock", "total_quantity"}
+
+    def get_is_low_stock(self, obj) -> bool:
+        total_quantity = getattr(obj, "total_quantity", None)
+        if total_quantity is None:
+            total_quantity = obj.stocks.aggregate(total=Sum("quantity"))["total"] or 0
+        return total_quantity <= obj.safety_stock
+
+    def get_has_stock_movements(self, obj) -> bool:
+        annotated = getattr(obj, "stock_movement_exists", None)
+        return bool(annotated) if annotated is not None else obj.transactions.exists()
+
+    def validate_code(self, value):
+        value = (value or "").strip()
+        if not value:
+            raise serializers.ValidationError("备件编码不能为空")
+        queryset = SparePart.objects.filter(code__iexact=value)
+        if self.instance:
+            queryset = queryset.exclude(pk=self.instance.pk)
+        if queryset.exists():
+            raise serializers.ValidationError("备件编码已存在")
+        return value
 
     def validate_name(self, value):
         value = (value or "").strip()
@@ -514,29 +601,87 @@ class SparePartSerializer(serializers.ModelSerializer):
             raise serializers.ValidationError("计量单位不能为空")
         return value
 
+    def validate_category(self, value):
+        if not value.is_active and (self.instance is None or value.pk != self.instance.category_id):
+            raise serializers.ValidationError("停用的备件类型不能用于新增或变更备件")
+        return value
+
+    def validate_manufacturer(self, value):
+        if value and not value.is_active and (
+            self.instance is None or value.pk != self.instance.manufacturer_id
+        ):
+            raise serializers.ValidationError("停用的厂商不能用于新增或变更备件")
+        return value
+
+    def validate_storage_location(self, value):
+        return (value or "").strip()
+
+    def validate(self, attrs):
+        submitted_fields = set(self.initial_data)
+        if self.instance and submitted_fields & self.INITIAL_STOCK_FIELDS:
+            raise serializers.ValidationError({
+                "initial_quantity": "编辑备件时不能修改初始库存，请通过库存流水调整",
+            })
+        if submitted_fields & self.DIRECT_STOCK_FIELDS:
+            raise serializers.ValidationError({
+                "quantity": "当前库存只能通过入库、出库、调拨或盘点调整改变",
+            })
+
+        initial_quantity = attrs.get("initial_quantity", 0)
+        initial_data_center = attrs.get("initial_data_center")
+        initial_server_room = attrs.get("initial_server_room")
+        if self.instance is None and initial_quantity > 0 and not initial_data_center:
+            raise serializers.ValidationError({"initial_data_center": "有初始库存时必须选择数据中心"})
+        if initial_server_room and not initial_data_center:
+            raise serializers.ValidationError({"initial_data_center": "选择初始库存机房前必须选择数据中心"})
+        if initial_server_room and initial_server_room.data_center_id != initial_data_center.pk:
+            raise serializers.ValidationError({"initial_server_room": "初始库存机房不属于所选数据中心"})
+
+        if self.instance and "unit" in attrs and attrs["unit"] != self.instance.unit:
+            if self.instance.transactions.exists():
+                raise serializers.ValidationError({"unit": SPARE_UNIT_CHANGE_ERROR})
+        return attrs
+
+    def update(self, instance, validated_data):
+        for field in self.INITIAL_STOCK_FIELDS:
+            validated_data.pop(field, None)
+        requested_unit = validated_data.get("unit")
+        if requested_unit is not None and requested_unit != instance.unit:
+            # The movement service locks the part before changing stock. Lock
+            # the same row here so a concurrent first movement cannot race a
+            # unit change after serializer validation has completed.
+            with transaction.atomic():
+                locked_instance = SparePart.objects.select_for_update().get(pk=instance.pk)
+                if locked_instance.unit != requested_unit and locked_instance.transactions.exists():
+                    raise serializers.ValidationError({"unit": SPARE_UNIT_CHANGE_ERROR})
+                return super().update(locked_instance, validated_data)
+        return super().update(instance, validated_data)
+
     class Meta:
         model = SparePart
         fields = [
-            "id", "name", "part_type", "part_type_label", "manufacturer", "manufacturer_name", "model",
-            "specification", "unit", "is_active", "notes", "total_quantity", "location_count",
+            "id", "code", "name", "category", "category_name", "category_code", "manufacturer", "manufacturer_name", "model",
+            "specification", "unit", "safety_stock", "storage_location", "notes", "total_quantity", "location_count", "has_stock_movements",
+            "is_low_stock", "initial_quantity", "initial_data_center", "initial_server_room",
             "created_at", "updated_at",
         ]
-        read_only_fields = ["id", "manufacturer_name", "part_type_label", "total_quantity", "location_count", "created_at", "updated_at"]
+        read_only_fields = [
+            "id", "category_name", "category_code", "manufacturer_name", "total_quantity", "location_count",
+            "is_low_stock", "has_stock_movements", "created_at", "updated_at",
+        ]
 
 
 class SpareStockSerializer(serializers.ModelSerializer):
+    part_code = serializers.CharField(source="part.code", read_only=True)
     part_name = serializers.CharField(source="part.name", read_only=True)
-    part_type_label = serializers.SerializerMethodField()
+    category_name = serializers.CharField(source="part.category.name", read_only=True)
     data_center_name = serializers.CharField(source="data_center.name", read_only=True)
     server_room_name = serializers.CharField(source="server_room.name", read_only=True, allow_null=True)
-
-    def get_part_type_label(self, obj) -> str:
-        return dict(SparePart.PART_TYPES).get(obj.part.part_type, obj.part.part_type)
 
     class Meta:
         model = SpareStock
         fields = [
-            "id", "part", "part_name", "part_type_label", "data_center", "data_center_name",
+            "id", "part", "part_code", "part_name", "category_name", "data_center", "data_center_name",
             "server_room", "server_room_name", "quantity", "updated_at",
         ]
         read_only_fields = fields
@@ -544,33 +689,53 @@ class SpareStockSerializer(serializers.ModelSerializer):
 
 class SpareStockTransactionSerializer(serializers.ModelSerializer):
     operation_type_label = serializers.SerializerMethodField()
+    part_code = serializers.CharField(source="part.code", read_only=True)
     part_name = serializers.CharField(source="part.name", read_only=True)
+    category_name = serializers.CharField(source="part.category.name", read_only=True)
     unit = serializers.CharField(source="part.unit", read_only=True)
     source_data_center_name = serializers.CharField(source="source_data_center.name", read_only=True, allow_null=True)
     source_server_room_name = serializers.CharField(source="source_server_room.name", read_only=True, allow_null=True)
     target_data_center_name = serializers.CharField(source="target_data_center.name", read_only=True, allow_null=True)
     target_server_room_name = serializers.CharField(source="target_server_room.name", read_only=True, allow_null=True)
     operator_name = serializers.SerializerMethodField()
-    target_quantity = serializers.IntegerField(write_only=True, required=False, min_value=0)
+    quantity_delta = serializers.IntegerField(read_only=True)
+    adjustment_quantity = serializers.IntegerField(write_only=True, required=False)
 
     def get_operation_type_label(self, obj) -> str:
-        return dict(SpareStockTransaction.OPERATION_TYPES).get(obj.operation_type, obj.operation_type)
+        return STOCK_OPERATION_TYPE_LABELS.get(obj.operation_type, obj.operation_type)
 
     def get_operator_name(self, obj) -> str:
         return (obj.operator.get_full_name() or obj.operator.username) if obj.operator else "已删除账号"
 
+    def to_representation(self, instance):
+        data = super().to_representation(instance)
+        data["adjustment_quantity"] = (
+            instance.after_quantity - instance.before_quantity
+            if instance.operation_type == "adjustment"
+            else None
+        )
+        return data
+
     def validate(self, attrs):
         operation_type = attrs.get("operation_type")
-        if operation_type not in dict(SpareStockTransaction.OPERATION_TYPES):
+        if operation_type not in STOCK_OPERATION_TYPE_VALUES:
             raise serializers.ValidationError({"operation_type": "不支持的库存操作类型"})
         quantity = attrs.get("quantity", 0)
         if operation_type != "adjustment" and quantity <= 0:
             raise serializers.ValidationError({"quantity": "数量必须大于 0"})
-        if operation_type == "adjustment" and "target_quantity" not in self.initial_data:
-            raise serializers.ValidationError({"target_quantity": "盘点调整必须填写调整后库存"})
-        if operation_type in {"outbound", "scrap", "transfer"} and not attrs.get("source_data_center"):
+        if operation_type == "adjustment":
+            if "quantity" in self.initial_data:
+                raise serializers.ValidationError({"quantity": "盘点调整请使用 adjustment_quantity"})
+            adjustment_quantity = attrs.get("adjustment_quantity")
+            if adjustment_quantity is None:
+                raise serializers.ValidationError({"adjustment_quantity": "盘点调整必须填写调整数量"})
+            if adjustment_quantity == 0:
+                raise serializers.ValidationError({"adjustment_quantity": "调整数量不能为 0"})
+        elif "adjustment_quantity" in attrs:
+            raise serializers.ValidationError({"adjustment_quantity": "只有盘点调整支持调整数量"})
+        if operation_type in STOCK_SOURCE_OPERATION_TYPES and not attrs.get("source_data_center"):
             raise serializers.ValidationError({"source_data_center": "必须选择来源数据中心"})
-        if operation_type in {"inbound", "transfer", "adjustment"} and not attrs.get("target_data_center"):
+        if operation_type in STOCK_TARGET_OPERATION_TYPES and not attrs.get("target_data_center"):
             raise serializers.ValidationError({"target_data_center": "必须选择目标数据中心"})
         if operation_type == "transfer" and not attrs.get("target_data_center"):
             raise serializers.ValidationError({"target_data_center": "调拨必须选择目标数据中心"})
@@ -579,15 +744,15 @@ class SpareStockTransactionSerializer(serializers.ModelSerializer):
     class Meta:
         model = SpareStockTransaction
         fields = [
-            "id", "part", "part_name", "unit", "operation_type", "operation_type_label", "quantity",
+            "id", "part", "part_code", "part_name", "category_name", "unit", "operation_type", "operation_type_label", "quantity",
             "source_data_center", "source_data_center_name", "source_server_room", "source_server_room_name",
             "target_data_center", "target_data_center_name", "target_server_room", "target_server_room_name",
-            "before_quantity", "after_quantity", "operator", "operator_name", "reference", "notes", "created_at",
-            "target_quantity",
+            "quantity_delta", "before_quantity", "after_quantity", "operator", "operator_name", "reference", "notes", "created_at",
+            "adjustment_quantity",
         ]
         read_only_fields = [
-            "id", "part_name", "unit", "operation_type_label", "source_data_center_name", "source_server_room_name",
-            "target_data_center_name", "target_server_room_name", "before_quantity", "after_quantity", "operator",
+            "id", "part_code", "part_name", "unit", "operation_type_label", "source_data_center_name", "source_server_room_name",
+            "target_data_center_name", "target_server_room_name", "quantity_delta", "before_quantity", "after_quantity", "operator",
             "operator_name", "created_at",
         ]
 
@@ -597,13 +762,14 @@ class SparePartDetailSerializer(SparePartSerializer):
     recent_transactions = serializers.SerializerMethodField()
 
     def get_stock_locations(self, obj) -> list[dict[str, Any]]:
-        stocks = obj.stocks.select_related("data_center", "server_room").order_by(
+        stocks = obj.stocks.select_related("part", "part__category", "part__manufacturer", "data_center", "server_room").order_by(
             "data_center__name", "server_room__name", "id"
         )
         return SpareStockSerializer(stocks, many=True).data
 
     def get_recent_transactions(self, obj) -> list[dict[str, Any]]:
         transactions = obj.transactions.select_related(
+            "part", "part__category", "part__manufacturer",
             "operator", "source_data_center", "source_server_room",
             "target_data_center", "target_server_room",
         ).order_by("-created_at", "-id")[:20]
@@ -646,19 +812,12 @@ class SoftwareLicenseSerializer(serializers.ModelSerializer):
         return self._status(obj)
 
     def get_status_label(self, obj) -> str:
-        return {"expired": "已过期", "expiring": "即将到期", "normal": "正常"}[self._status(obj)]
+        return LICENSE_STATUS_LABELS[self._status(obj)]
 
     def get_days_remaining(self, obj) -> int | None:
         return (obj.expiry_date - timezone.localdate()).days if obj.expiry_date else None
 
     def validate(self, attrs):
-        removed_fields = {
-            field: "厂商字段已统一为 Manufacturer，请使用 manufacturer_id"
-            for field in ("vendor", "publisher", "manufacturer_name", "software_vendor")
-            if field in self.initial_data
-        }
-        if removed_fields:
-            raise serializers.ValidationError(removed_fields)
         authorized_count = attrs.get("authorized_count", self.instance.authorized_count if self.instance else 0)
         used_count = attrs.get("used_count", self.instance.used_count if self.instance else 0)
         if authorized_count < 0 or used_count < 0:
@@ -746,7 +905,6 @@ class RackUnitAllocationSerializer(serializers.ModelSerializer):
     units = serializers.IntegerField(read_only=True)
     asset_no = serializers.CharField(source="asset.asset_no", read_only=True)
     asset_name = serializers.CharField(source="asset.name", read_only=True)
-    asset_type = serializers.CharField(source="asset.asset_type", read_only=True)
     manufacturer_model = serializers.CharField(source="asset.manufacturer_model", read_only=True)
     manufacturer_name = serializers.CharField(source="asset.manufacturer.name", read_only=True, allow_null=True)
     model_name = serializers.CharField(source="asset.model", read_only=True)
@@ -761,7 +919,7 @@ class RackUnitAllocationSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = RackUnitAllocation
-        fields = ["id", "asset", "rack", "rack_code", "data_center", "data_center_id", "server_room", "start_u", "end_u", "units", "asset_no", "asset_name", "asset_type", "device_type_name", "device_type_color", "manufacturer_name", "model_name", "manufacturer_model", "serial_number", "status"]
+        fields = ["id", "asset", "rack", "rack_code", "data_center", "data_center_id", "server_room", "start_u", "end_u", "units", "asset_no", "asset_name", "device_type_name", "device_type_color", "manufacturer_name", "model_name", "manufacturer_model", "serial_number", "status"]
 
 
 class RackUnitAllocationDetailSerializer(serializers.ModelSerializer):
@@ -1004,7 +1162,7 @@ class AssetListSerializer(serializers.ModelSerializer):
     class Meta:
         model = Asset
         fields = [
-            "id", "created_at", "updated_at", "asset_no", "name", "asset_type",
+            "id", "created_at", "updated_at", "asset_no", "name",
             "manufacturer", "manufacturer_name", "device_type",
             "device_type_name", "asset_data_center", "asset_data_center_name", "model", "model_name", "manufacturer_model",
             "serial_number", "purpose", "status", "department", "owner_name", "notes",
@@ -1071,7 +1229,7 @@ class AssetDetailSerializer(serializers.ModelSerializer):
     class Meta:
         model = Asset
         fields = [
-            "id", "created_at", "updated_at", "asset_no", "name", "asset_type", "manufacturer", "manufacturer_name", "device_type", "device_type_name", "asset_data_center", "asset_data_center_name", "model", "model_name", "manufacturer_model",
+            "id", "created_at", "updated_at", "asset_no", "name", "manufacturer", "manufacturer_name", "device_type", "device_type_name", "asset_data_center", "asset_data_center_name", "model", "model_name", "manufacturer_model",
             "serial_number", "purpose", "status", "department", "owner_name", "notes", "depreciation_start_date", "depreciation_years", "residual_rate", "depreciation_method",
             "network_addresses", "rack_allocation", "procurement_records", "maintenance_contracts", "inventory_records", "tags", "custom_fields", "custom_values",
             "depreciation",
@@ -1107,8 +1265,8 @@ class AssetWriteSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = Asset
-        fields = ["id", "created_at", "updated_at", "asset_no", "name", "asset_type", "manufacturer", "manufacturer_id", "device_type", "asset_data_center", "model", "manufacturer_model", "serial_number", "purpose", "status", "department", "owner_name", "notes", "depreciation_start_date", "depreciation_years", "residual_rate", "depreciation_method", "configuration", "tags", "custom_values"]
-        read_only_fields = ["id", "created_at", "updated_at", "asset_type"]
+        fields = ["id", "created_at", "updated_at", "asset_no", "name", "manufacturer", "manufacturer_id", "device_type", "asset_data_center", "model", "manufacturer_model", "serial_number", "purpose", "status", "department", "owner_name", "notes", "depreciation_start_date", "depreciation_years", "residual_rate", "depreciation_method", "configuration", "tags", "custom_values"]
+        read_only_fields = ["id", "created_at", "updated_at"]
 
     def _stored_procurement_amount(self):
         if not self.instance:
@@ -1208,10 +1366,6 @@ class AssetWriteSerializer(serializers.ModelSerializer):
             raise serializers.ValidationError({field: "折旧派生值只读，不能提交"})
         if "status_before_repair" in self.initial_data:
             raise serializers.ValidationError({"status_before_repair": "该字段由维修流程维护"})
-        if "category" in self.initial_data:
-            raise serializers.ValidationError({"category": "设备分类字段已移除，请使用设备类型"})
-        if "asset_type" in self.initial_data:
-            raise serializers.ValidationError({"asset_type": "资产类型字段仅用于展示，请使用设备类型"})
         manufacturer = attrs.get("manufacturer")
         if manufacturer and not manufacturer.is_active and (not self.instance or self.instance.manufacturer_id != manufacturer.pk):
             raise serializers.ValidationError({"manufacturer_id": "停用的厂商不能用于新资产或修改资产"})
@@ -1221,7 +1375,6 @@ class AssetWriteSerializer(serializers.ModelSerializer):
         if not device_type.is_active and (not self.instance or self.instance.device_type_id != device_type.pk):
             raise serializers.ValidationError({"device_type": "停用的设备类型不能用于新资产或修改资产"})
         attrs["device_type"] = device_type
-        attrs["asset_type"] = device_type.name
         asset_data_center = attrs.get("asset_data_center")
         if asset_data_center and not asset_data_center.is_active:
             if not self.instance or self.instance.asset_data_center_id != asset_data_center.pk:
@@ -1330,13 +1483,8 @@ class InventoryScopePreviewSerializer(serializers.Serializer):
     warnings = serializers.ListField(child=serializers.CharField())
 
 
-INVENTORY_STATUS_LABELS = dict(InventoryItem.STATUS)
-INVENTORY_RESOLUTION_STATUS_LABELS = dict(InventoryItem.RESOLUTION_STATUS)
-INVENTORY_RESOLUTION_ACTION_LABELS = dict(InventoryItem.RESOLUTION_ACTION)
-
-
 class InventoryResolutionSerializer(serializers.Serializer):
-    action = serializers.ChoiceField(choices=InventoryItem.RESOLUTION_ACTION)
+    action = serializers.ChoiceField(choices=tuple(INVENTORY_RESOLUTION_ACTION_LABELS.items()))
     note = serializers.CharField(required=False, allow_blank=True, trim_whitespace=True)
 
     def validate(self, attrs):
@@ -1415,7 +1563,7 @@ class InventoryItemSerializer(serializers.ModelSerializer):
     task_name = serializers.CharField(source="task.name", read_only=True)
     asset_no = serializers.CharField(source="asset.asset_no", read_only=True)
     asset_name = serializers.CharField(source="asset.name", read_only=True)
-    asset_type = serializers.CharField(source="asset.asset_type", read_only=True)
+    device_type_name = serializers.CharField(source="asset.device_type.name", read_only=True, allow_null=True)
     serial_number = serializers.CharField(source="asset.serial_number", read_only=True, allow_null=True)
     status_label = serializers.SerializerMethodField()
     checked_by_name = serializers.SerializerMethodField()
@@ -1432,7 +1580,7 @@ class InventoryItemSerializer(serializers.ModelSerializer):
     resolved_by_name = serializers.SerializerMethodField()
 
     def get_status_label(self, obj) -> str:
-        return INVENTORY_STATUS_LABELS.get(obj.status, obj.status)
+        return INVENTORY_ITEM_STATUS_LABELS.get(obj.status, obj.status)
 
     def get_checked_by_name(self, obj) -> str:
         return (obj.checked_by.get_full_name() or obj.checked_by.username) if obj.checked_by else ""
@@ -1528,7 +1676,7 @@ class InventoryItemSerializer(serializers.ModelSerializer):
     class Meta:
         model = InventoryItem
         fields = [
-            "id", "task", "task_name", "asset", "asset_no", "asset_name", "asset_type", "serial_number",
+            "id", "task", "task_name", "asset", "asset_no", "asset_name", "device_type_name", "serial_number",
             "system_data_center", "system_server_room", "system_rack_code", "system_start_u", "system_end_u",
             "status", "status_label", "checked_at", "checked_by", "checked_by_name",
             "actual_rack", "actual_data_center", "actual_server_room", "actual_rack_code",
@@ -1538,7 +1686,7 @@ class InventoryItemSerializer(serializers.ModelSerializer):
             "created_at", "updated_at",
         ]
         read_only_fields = [
-            "id", "task", "task_name", "asset", "asset_no", "asset_name", "asset_type", "serial_number",
+            "id", "task", "task_name", "asset", "asset_no", "asset_name", "device_type_name", "serial_number",
             "system_data_center", "system_server_room", "system_rack_code", "system_start_u", "system_end_u",
             "status_label", "checked_at", "checked_by", "checked_by_name", "actual_data_center",
             "actual_server_room", "actual_rack_code", "resolution_status", "resolution_status_label",
@@ -1661,21 +1809,16 @@ class RackSerializer(serializers.ModelSerializer):
         return max((obj.total_u or 0) - self.get_used_u(obj), 0)
 
     def get_status_label(self, obj) -> str:
-        return dict(Rack.STATUS).get(obj.status, obj.status)
+        return RACK_STATUS_LABELS.get(obj.status, obj.status)
 
     class Meta:
         model = Rack
         fields = [
             "id", "created_at", "updated_at", "room", "code", "name", "rack_type",
-            "owner_name", "notes", "vendor", "total_u", "is_active", "status", "status_label",
+            "owner_name", "notes", "total_u", "is_active", "status", "status_label",
             "data_center_name", "server_room_name", "assets_count", "used_u", "free_u", "allocations",
         ]
         read_only_fields = ["id", "created_at", "updated_at", "data_center_name", "server_room_name", "assets_count", "used_u", "free_u", "status_label", "allocations"]
-        extra_kwargs = {
-            # The legacy database column is retained for migration safety, but
-            # vendor is no longer part of the rack management API response.
-            "vendor": {"write_only": True, "required": False},
-        }
 
     def validate_code(self, value):
         value = (value or "").strip()
@@ -1704,7 +1847,7 @@ class RackSerializer(serializers.ModelSerializer):
             status = "in_use" if attrs["is_active"] else "disabled"
             attrs["status"] = status
         attrs["is_active"] = status != "disabled"
-        if status not in dict(Rack.STATUS):
+        if status not in RACK_STATUS_VALUES:
             raise serializers.ValidationError({"status": "机柜状态不正确"})
         return attrs
 

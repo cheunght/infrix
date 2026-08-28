@@ -37,7 +37,6 @@ function update(value: unknown) {
   <el-input
     v-else-if="field.field_type === 'number'"
     :model-value="modelValue"
-    type="number"
     inputmode="decimal"
     placeholder="输入数字"
     clearable

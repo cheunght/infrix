@@ -1,8 +1,9 @@
 <script setup lang="ts">
 import { ArrowRight, Loading, Search } from "@element-plus/icons-vue";
-import { computed, onBeforeUnmount, onMounted, ref, watch } from "vue";
+import { computed, ref, watch } from "vue";
 import type { Asset, FaultEvent, Rack } from "../types";
 import type { GlobalSearchModule, GlobalSearchState } from "../composables/useGlobalSearch";
+import { rackStatusLabel } from "../business-enums";
 
 const props = defineProps<{
   modelValue: string;
@@ -24,8 +25,14 @@ type SearchEntry =
   | { module: "racks"; item: Rack }
   | { module: "faults"; item: FaultEvent };
 
-const root = ref<HTMLElement | null>(null);
 const activeIndex = ref(-1);
+const popoverVisible = computed({
+  get: () => props.state.open,
+  set: (visible: boolean) => {
+    if (visible) emit("focus");
+    else emit("close");
+  },
+});
 const activeEntries = computed<SearchEntry[]>(() => [
   ...(props.state.allowed.assets
     ? props.state.assets.map((item) => ({ module: "assets" as const, item }))
@@ -99,8 +106,7 @@ function rackLocation(rack: Rack) {
 }
 
 function rackStatus(rack: Rack) {
-  return rack.status_label
-    || (rack.status === "reserved" ? "预留" : rack.status === "disabled" || rack.is_active === false ? "停用" : "使用中");
+  return rackStatusLabel(rack.status, rack.is_active);
 }
 
 function faultSummary(fault: FaultEvent) {
@@ -128,48 +134,45 @@ function hasMore(module: GlobalSearchModule) {
   return props.state.faultTotal > props.state.faults.length;
 }
 
-function onDocumentPointerDown(event: PointerEvent) {
-  const target = event.target as Node | null;
-  if (target && !root.value?.contains(target)) emit("close");
-}
-
-function onFocusOut(event: FocusEvent) {
-  const nextTarget = event.relatedTarget as Node | null;
-  if (!nextTarget || !root.value?.contains(nextTarget)) emit("close");
-}
-
-onMounted(() => document.addEventListener("pointerdown", onDocumentPointerDown));
-onBeforeUnmount(() => document.removeEventListener("pointerdown", onDocumentPointerDown));
 </script>
 
 <template>
-  <div ref="root" class="ep-global-search global-search" @focusout="onFocusOut">
-    <el-input
-      class="global-search-input itam-search-field"
-      :model-value="modelValue"
-      placeholder="搜索资产 / 机柜 / 故障"
-      aria-label="全局搜索资产、机柜或故障"
-      role="combobox"
-      aria-autocomplete="list"
-      :aria-expanded="state.open ? 'true' : 'false'"
-      :aria-controls="state.open ? 'global-search-results' : undefined"
-      :aria-activedescendant="activeIndex >= 0 ? optionId(activeIndex) : undefined"
-      clearable
-      @update:model-value="emit('update:modelValue', String($event ?? ''))"
-      @focus="emit('focus')"
-      @keydown.down.stop.prevent="moveActive(1)"
-      @keydown.up.stop.prevent="moveActive(-1)"
-      @keydown.enter.stop.prevent="activateActive()"
-      @keydown.esc.stop.prevent="closeWithEscape()"
-    >
-      <template #prefix><el-icon><Search /></el-icon></template>
-      <template #suffix>
-        <el-icon v-if="state.loading" class="global-search-loading"><Loading /></el-icon>
-      </template>
-    </el-input>
+  <el-popover
+    v-model:visible="popoverVisible"
+    class="ep-global-search global-search"
+    placement="bottom-end"
+    :width="520"
+    effect="light"
+    popper-class="global-search-popover"
+    :persistent="false"
+  >
+    <template #reference>
+      <el-input
+        class="global-search-input itam-search-field"
+        :model-value="modelValue"
+        placeholder="搜索资产 / 机柜 / 故障"
+        aria-label="全局搜索资产、机柜或故障"
+        role="combobox"
+        aria-autocomplete="list"
+        :aria-expanded="state.open ? 'true' : 'false'"
+        :aria-controls="state.open ? 'global-search-results' : undefined"
+        :aria-activedescendant="activeIndex >= 0 ? optionId(activeIndex) : undefined"
+        clearable
+        @update:model-value="emit('update:modelValue', String($event ?? ''))"
+        @focus="emit('focus')"
+        @keydown.down.stop.prevent="moveActive(1)"
+        @keydown.up.stop.prevent="moveActive(-1)"
+        @keydown.enter.stop.prevent="activateActive()"
+        @keydown.esc.stop.prevent="closeWithEscape()"
+      >
+        <template #prefix><el-icon><Search /></el-icon></template>
+        <template #suffix>
+          <el-icon v-if="state.loading" class="global-search-loading"><Loading /></el-icon>
+        </template>
+      </el-input>
+    </template>
 
     <div
-      v-if="state.open"
       id="global-search-results"
       class="global-search-panel"
       role="region"
@@ -191,13 +194,14 @@ onBeforeUnmount(() => document.removeEventListener("pointerdown", onDocumentPoin
       >
         <div class="global-search-section__header">
           <span>资产</span>
-          <button v-if="hasMore('assets')" type="button" @click="emit('view-all', 'assets')">查看全部资产结果</button>
+          <el-button v-if="hasMore('assets')" link class="global-search-section__view-all" @click="emit('view-all', 'assets')">查看全部资产结果</el-button>
         </div>
-        <button
+        <el-button
           v-for="(asset, index) in state.assets"
           :id="optionId(entryIndex('assets', index))"
           :key="asset.id"
-          type="button"
+          text
+          native-type="button"
           class="global-search-result"
           :class="{ 'is-active': activeIndex === entryIndex('assets', index) }"
           role="option"
@@ -208,10 +212,10 @@ onBeforeUnmount(() => document.removeEventListener("pointerdown", onDocumentPoin
           <span class="global-search-result__marker global-search-result__marker--asset">资产</span>
           <span class="global-search-result__body">
             <strong>{{ asset.asset_no }} · {{ asset.name }}</strong>
-            <small>{{ asset.device_type_name || asset.asset_type || "未分类" }} · {{ assetLocation(asset) }}</small>
+            <small>{{ asset.device_type_name || "未分类" }} · {{ assetLocation(asset) }}</small>
           </span>
           <el-icon class="global-search-result__arrow"><ArrowRight /></el-icon>
-        </button>
+        </el-button>
         <div v-if="state.assetError" class="global-search-section__error" role="alert">
           资产结果加载失败：{{ state.assetError }}
         </div>
@@ -223,13 +227,14 @@ onBeforeUnmount(() => document.removeEventListener("pointerdown", onDocumentPoin
       >
         <div class="global-search-section__header">
           <span>机柜</span>
-          <button v-if="hasMore('racks')" type="button" @click="emit('view-all', 'racks')">查看全部机柜结果</button>
+          <el-button v-if="hasMore('racks')" link class="global-search-section__view-all" @click="emit('view-all', 'racks')">查看全部机柜结果</el-button>
         </div>
-        <button
+        <el-button
           v-for="(rack, index) in state.racks"
           :id="optionId(entryIndex('racks', index))"
           :key="rack.id"
-          type="button"
+          text
+          native-type="button"
           class="global-search-result"
           :class="{ 'is-active': activeIndex === entryIndex('racks', index) }"
           role="option"
@@ -243,7 +248,7 @@ onBeforeUnmount(() => document.removeEventListener("pointerdown", onDocumentPoin
             <small>{{ rackLocation(rack) }} · {{ rackStatus(rack) }}</small>
           </span>
           <el-icon class="global-search-result__arrow"><ArrowRight /></el-icon>
-        </button>
+        </el-button>
         <div v-if="state.rackError" class="global-search-section__error" role="alert">
           机柜结果加载失败：{{ state.rackError }}
         </div>
@@ -255,13 +260,14 @@ onBeforeUnmount(() => document.removeEventListener("pointerdown", onDocumentPoin
       >
         <div class="global-search-section__header">
           <span>故障</span>
-          <button v-if="hasMore('faults')" type="button" @click="emit('view-all', 'faults')">查看全部故障结果</button>
+          <el-button v-if="hasMore('faults')" link class="global-search-section__view-all" @click="emit('view-all', 'faults')">查看全部故障结果</el-button>
         </div>
-        <button
+        <el-button
           v-for="(fault, index) in state.faults"
           :id="optionId(entryIndex('faults', index))"
           :key="fault.id"
-          type="button"
+          text
+          native-type="button"
           class="global-search-result"
           :class="{ 'is-active': activeIndex === entryIndex('faults', index) }"
           role="option"
@@ -276,7 +282,7 @@ onBeforeUnmount(() => document.removeEventListener("pointerdown", onDocumentPoin
             <small>{{ faultStatus(fault) }} · {{ formatDateTime(fault.occurred_at) }}</small>
           </span>
           <el-icon class="global-search-result__arrow"><ArrowRight /></el-icon>
-        </button>
+        </el-button>
         <div v-if="state.faultError" class="global-search-section__error" role="alert">
           故障结果加载失败：{{ state.faultError }}
         </div>
@@ -289,5 +295,5 @@ onBeforeUnmount(() => document.removeEventListener("pointerdown", onDocumentPoin
         未找到与“{{ state.query }}”相关的资产、机柜或故障
       </div>
     </div>
-  </div>
+  </el-popover>
 </template>

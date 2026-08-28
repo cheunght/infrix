@@ -1,31 +1,45 @@
 <script setup lang="ts">
 import { computed, toRefs } from "vue";
 import type { AssetDetail, InventoryItem } from "../types";
-import { statusLabel } from "../status";
+import { statusLabel, statusTone } from "../status";
+import {
+  businessOptionLabel,
+  businessOptionTone,
+  INVENTORY_ITEM_STATUS_OPTIONS,
+  INVENTORY_RESOLUTION_STATUS_OPTIONS,
+} from "../business-enums";
 import {
   depreciationMethodLabel,
   depreciationStatusLabel,
-  formatDepreciationProgress,
   formatMoneyDecimalString,
   formatResidualRate,
 } from "../depreciation";
 import StatusTag, { type StatusTagType } from "./StatusTag.vue";
 import DynamicFieldDisplay from "./fields/DynamicFieldDisplay.vue";
+import DetailSection from "./DetailSection.vue";
+import DescriptionList from "./DescriptionList.vue";
 
-const props = defineProps<{
+const props = withDefaults(defineProps<{
   asset: AssetDetail | null;
   loading: boolean;
   error: string;
   showSummary?: boolean;
+  descriptionColumns?: 1 | 2;
   retry?: () => void | Promise<void>;
-}>();
+}>(), {
+  descriptionColumns: 2,
+});
 
-const { asset, loading, error, showSummary, retry } = toRefs(props);
+const { asset, loading, error, showSummary, descriptionColumns } = toRefs(props);
 
 type DetailField = {
+  key: string;
   label: string;
   raw: unknown;
   value: string;
+  wide?: boolean;
+  className?: string;
+  title?: string;
 };
 
 function hasContent(value: unknown): boolean {
@@ -42,18 +56,34 @@ function displayValue(value: unknown): string {
   return String(value);
 }
 
-function makeField(label: string, raw: unknown): DetailField {
-  return { label, raw, value: displayValue(raw) };
+function makeField(
+  key: string,
+  label: string,
+  raw: unknown,
+  formatter: (value: unknown) => string = displayValue,
+): DetailField {
+  return {
+    key,
+    label,
+    raw,
+    value: hasContent(raw) ? formatter(raw) : "—",
+  };
 }
 
 function fieldsWithContent(fields: DetailField[]): DetailField[] {
   return fields.filter((field) => hasContent(field.raw));
 }
 
-function formatDateTime(value: string | null): string {
-  if (!value) return "—";
-  const date = new Date(value);
-  if (Number.isNaN(date.getTime())) return value;
+function formatDate(value: unknown): string {
+  if (!hasContent(value)) return "—";
+  const text = String(value);
+  return text.match(/^\d{4}-\d{2}-\d{2}/)?.[0] || text;
+}
+
+function formatDateTime(value: unknown): string {
+  if (!hasContent(value)) return "—";
+  const date = new Date(String(value));
+  if (Number.isNaN(date.getTime())) return String(value);
   return date.toLocaleString("zh-CN", {
     month: "2-digit",
     day: "2-digit",
@@ -63,19 +93,15 @@ function formatDateTime(value: string | null): string {
 }
 
 function inventoryStatusType(status: string): StatusTagType {
-  if (status === "normal") return "success";
-  if (status === "pending") return "warning";
-  if (["location_mismatch", "not_found", "info_mismatch", "other"].includes(status)) return "danger";
-  return "info";
+  return businessOptionTone(INVENTORY_ITEM_STATUS_OPTIONS, status, "info");
 }
 
 function inventoryRecordLabel(record: InventoryItem): string {
-  const resolution = record.resolution_status === "resolved"
-    ? "已处理"
-    : record.resolution_status === "pending"
-      ? "待处理"
-      : "";
-  return [record.status_label, resolution].filter(Boolean).join(" · ");
+  const statusLabel = record.status_label || businessOptionLabel(INVENTORY_ITEM_STATUS_OPTIONS, record.status);
+  const resolution = record.resolution_status === "not_required"
+    ? ""
+    : businessOptionLabel(INVENTORY_RESOLUTION_STATUS_OPTIONS, record.resolution_status);
+  return [statusLabel, resolution].filter(Boolean).join(" · ");
 }
 
 function networkValue(role: string): string {
@@ -97,12 +123,12 @@ const basicFields = computed<DetailField[]>(() => {
   const current = asset.value;
   if (!current) return [];
   return [
-    makeField("设备类型", current.device_type_name || current.asset_type),
-    makeField("厂商", current.manufacturer_name),
-    makeField("型号", current.model_name || current.model || current.manufacturer_model),
-    makeField("序列号", current.serial_number),
-    makeField("用途", current.purpose),
-    makeField("使用人", current.owner_name),
+    makeField("device-type", "设备类型", current.device_type_name),
+    makeField("manufacturer", "厂商", current.manufacturer_name),
+    makeField("model", "型号", current.model_name || current.model || current.manufacturer_model),
+    makeField("serial-number", "序列号", current.serial_number),
+    makeField("purpose", "用途", current.purpose),
+    makeField("owner", "使用人", current.owner_name),
   ];
 });
 
@@ -111,22 +137,33 @@ const locationFields = computed<DetailField[]>(() => {
   if (!current) return [];
   const rack = current.rack_allocation;
   const dataCenter = rack?.data_center || current.asset_data_center_name || current.data_center;
-  const room = rack?.server_room;
-  const rackCode = rack?.rack_code;
-  const uRange = rack && rack.start_u != null && rack.end_u != null
+
+  if (!rack) {
+    return [
+      makeField("placement-status", "位置状态", "未上架"),
+      ...(hasContent(dataCenter) ? [makeField("data-center", "数据中心", dataCenter)] : []),
+    ];
+  }
+
+  const uRange = rack.start_u != null && rack.end_u != null
     ? `U${rack.start_u}–U${rack.end_u} (${rack.units}U)`
     : null;
   return [
-    makeField("数据中心", dataCenter),
-    makeField("机房", room),
-    makeField("机柜", rackCode),
-    makeField("U 位", uRange),
+    makeField("data-center", "数据中心", dataCenter),
+    makeField("server-room", "机房", rack.server_room),
+    makeField("rack", "机柜", rack.rack_code),
+    makeField("u-position", "U 位", uRange),
   ];
 });
 
-const networkFields = computed<DetailField[]>(() =>
-  ["business", "management", "oob"].map((role) => makeField(roleLabel(role), networkValue(role))),
-);
+const networkFields = computed<DetailField[]>(() => [
+  "business",
+  "management",
+  "oob",
+].map((role) => ({
+  ...makeField(role, roleLabel(role), networkValue(role)),
+  className: "asset-detail-technical",
+})));
 
 const procurementFields = computed<DetailField[]>(() => {
   const current = asset.value;
@@ -134,14 +171,14 @@ const procurementFields = computed<DetailField[]>(() => {
   const procurement = current.procurement_records?.[0];
   const maintenance = current.maintenance_contracts?.[0];
   return [
-    makeField("采购日期", procurement?.purchase_date || current.purchase_date),
-    makeField("供应商", procurement?.supplier || current.supplier),
-    makeField("采购单号", procurement?.order_no || current.purchase_order_no),
-    makeField("采购金额", procurement?.amount),
-    makeField("维保厂商", maintenance?.provider || current.maintenance_provider),
-    makeField("维保合同", maintenance?.contract_no),
-    makeField("维保开始日", maintenance?.start_date),
-    makeField("维保到期", maintenance?.expiry_date || current.maintenance_expiry_date),
+    makeField("purchase-date", "采购日期", procurement?.purchase_date || current.purchase_date, formatDate),
+    makeField("supplier", "供应商", procurement?.supplier || current.supplier),
+    makeField("purchase-order", "采购单号", procurement?.order_no || current.purchase_order_no),
+    makeField("purchase-amount", "采购金额", procurement?.amount, formatMoneyDecimalString),
+    makeField("maintenance-provider", "维保厂商", maintenance?.provider || current.maintenance_provider),
+    makeField("maintenance-contract", "维保合同", maintenance?.contract_no),
+    makeField("maintenance-start", "维保开始日", maintenance?.start_date, formatDate),
+    makeField("maintenance-expiry", "维保到期", maintenance?.expiry_date || current.maintenance_expiry_date, formatDate),
   ];
 });
 
@@ -153,27 +190,27 @@ const hasBasicFields = computed(() => visibleBasicFields.value.length > 0);
 const hasLocationFields = computed(() => visibleLocationFields.value.length > 0);
 const hasNetworkFields = computed(() => visibleNetworkFields.value.length > 0);
 const hasNotes = computed(() => hasContent(asset.value?.notes));
-const inventoryRecords = computed(() => asset.value?.inventory_records || []);
 
 const depreciation = computed(() => asset.value?.depreciation || null);
 const depreciationStatus = computed(() => depreciation.value?.status || "unconfigured");
-const depreciationStatusText = computed(() => depreciationStatus.value === "not_started"
-  ? "折旧尚未开始"
-  : depreciationStatusLabel(depreciationStatus.value));
-const depreciationProgressText = computed(() => formatDepreciationProgress(
-  depreciation.value?.progress,
-  depreciation.value?.elapsed_months,
-  depreciation.value?.total_months,
-));
-const depreciationProgressWidth = computed(() => depreciationProgressText.value === "—" ? "0%" : depreciationProgressText.value);
+
+function depreciationStatusTone(status: string): StatusTagType {
+  if (status === "depreciating") return "success";
+  if (status === "not_started") return "warning";
+  if (status === "fully_depreciated") return "info";
+  return "neutral";
+}
+
 const depreciationConfigFields = computed<DetailField[]>(() => {
   const current = depreciation.value;
   if (!current || current.status === "unconfigured") return [];
   return [
-    makeField("起算日", current.start_date),
-    makeField("折旧年限", current.years == null ? null : `${current.years} 年`),
-    makeField("残值率", formatResidualRate(current.residual_rate)),
-    makeField("折旧方法", depreciationMethodLabel(current.method)),
+    makeField("depreciation-status", "状态", current.status, (value) => depreciationStatusLabel(String(value))),
+    makeField("depreciation-method", "折旧方法", current.method, (value) => depreciationMethodLabel(String(value))),
+    makeField("depreciation-start", "起算日", current.start_date, formatDate),
+    makeField("depreciation-years", "折旧年限", current.years, (value) => `${value} 年`),
+    makeField("depreciation-rate", "残值率", current.residual_rate, formatResidualRate),
+    makeField("depreciation-residual-value", "预计残值", current.residual_value, formatMoneyDecimalString),
   ];
 });
 const visibleDepreciationConfigFields = computed(() => fieldsWithContent(depreciationConfigFields.value));
@@ -181,10 +218,9 @@ const depreciationMetricFields = computed<DetailField[]>(() => {
   const current = depreciation.value;
   if (!current || current.status === "unconfigured") return [];
   return [
-    makeField("当前净值", formatMoneyDecimalString(current.net_book_value)),
-    makeField("累计折旧", formatMoneyDecimalString(current.accumulated_depreciation)),
-    makeField("资产原值", formatMoneyDecimalString(current.original_value)),
-    makeField("预计残值", formatMoneyDecimalString(current.residual_value)),
+    makeField("depreciation-original", "资产原值", current.original_value, formatMoneyDecimalString),
+    makeField("depreciation-accumulated", "累计折旧", current.accumulated_depreciation, formatMoneyDecimalString),
+    makeField("depreciation-net", "当前净值", current.net_book_value, formatMoneyDecimalString),
   ];
 });
 
@@ -206,6 +242,13 @@ const maintenanceState = computed<{ label: string; status: string; type: StatusT
   if (daysRemaining < 0) return { label: "已过期", status: "expired", type: "danger" };
   if (daysRemaining <= 30) return { label: "即将到期", status: "expiring", type: "warning" };
   return { label: "正常", status: "normal", type: "success" };
+});
+
+const procurementDetailFields = computed<DetailField[]>(() => {
+  const state = maintenanceState.value;
+  return state
+    ? [...visibleProcurementFields.value, makeField("maintenance-status", "维保状态", state.status, () => state.label)]
+    : visibleProcurementFields.value;
 });
 
 type AssetCustomField = NonNullable<AssetDetail["custom_fields"]>[number];
@@ -267,19 +310,36 @@ const historicalFieldGroups = computed<HistoricalFieldGroup[]>(() => {
   return Array.from(groups.values());
 });
 
+function fieldLabel(field: AssetCustomField): string {
+  return `${field.name || field.key}${field.is_active ? "" : "（已停用）"}`;
+}
 
+function dynamicFieldItems(fields: AssetCustomField[]): DetailField[] {
+  return fields.map((field) => ({
+    key: `field-${field.id}`,
+    label: fieldLabel(field),
+    raw: field.value,
+    value: displayValue(field.value),
+    wide: field.field_type === "textarea" || field.field_type === "multiselect",
+  }));
+}
+
+const inventoryRecords = computed(() => asset.value?.inventory_records || []);
 const recentInventoryRecords = computed(() => [...inventoryRecords.value]
   .filter((record) => Boolean(record.checked_at))
   .sort((a, b) => {
     const timeDifference = new Date(b.checked_at || 0).getTime() - new Date(a.checked_at || 0).getTime();
     return timeDifference || b.id - a.id;
-  })
-  .slice(0, 5));
+  }));
 const latestInventoryRecord = computed(() => recentInventoryRecords.value[0] || null);
-
-function fieldLabel(field: AssetCustomField): string {
-  return field.name || field.key;
-}
+const relatedRecordFields = computed<DetailField[]>(() => {
+  if (!inventoryRecords.value.length) return [];
+  const latest = latestInventoryRecord.value;
+  return [
+    makeField("inventory-count", "盘点记录", inventoryRecords.value.length, (value) => `${value} 次`),
+    ...(latest ? [makeField("latest-inventory", "最近盘点", latest.checked_at, formatDateTime)] : []),
+  ];
+});
 
 function retryDetail() {
   void props.retry?.();
@@ -304,159 +364,110 @@ function retryDetail() {
         </div>
         <div>
           <span>当前状态</span>
-          <StatusTag :status="asset.status" :label="statusLabel(asset.status)" />
+          <StatusTag :tone="statusTone(asset.status)" :label="statusLabel(asset.status)" />
         </div>
       </div>
 
-      <section v-if="hasBasicFields" class="asset-detail-section">
-        <h3>基本信息</h3>
-        <dl class="asset-detail-fields">
-          <template v-for="field in visibleBasicFields" :key="field.label">
-            <dt>{{ field.label }}</dt>
-            <dd>{{ field.value }}</dd>
-          </template>
-        </dl>
-      </section>
+      <DetailSection v-if="hasBasicFields" title="基本信息">
+        <DescriptionList :items="visibleBasicFields" :columns="descriptionColumns" />
+      </DetailSection>
 
-      <section v-if="hasLocationFields" class="asset-detail-section">
-        <h3>位置与归属</h3>
-        <dl class="asset-detail-fields">
-          <template v-for="field in visibleLocationFields" :key="field.label">
-            <dt>{{ field.label }}</dt>
-            <dd>{{ field.value }}</dd>
-          </template>
-        </dl>
-      </section>
+      <DetailSection v-if="hasLocationFields" title="位置与归属">
+        <DescriptionList :items="visibleLocationFields" :columns="descriptionColumns" />
+      </DetailSection>
 
-      <section v-if="hasNetworkFields" class="asset-detail-section">
-        <h3>网络信息</h3>
-        <dl class="asset-detail-fields">
-          <template v-for="field in visibleNetworkFields" :key="field.label">
-            <dt>{{ field.label }}</dt>
-            <dd class="asset-detail-technical">{{ field.value }}</dd>
-          </template>
-        </dl>
-      </section>
+      <DetailSection v-if="hasNetworkFields" title="网络信息">
+        <DescriptionList :items="visibleNetworkFields" :columns="descriptionColumns" />
+      </DetailSection>
 
-      <section v-if="visibleProcurementFields.length || maintenanceState" class="asset-detail-section">
-        <h3>采购与维保</h3>
-        <dl class="asset-detail-fields">
-          <template v-for="field in visibleProcurementFields" :key="field.label">
-            <dt>{{ field.label }}</dt>
-            <dd>{{ field.value }}</dd>
+      <DetailSection v-if="procurementDetailFields.length" title="采购与维保">
+        <DescriptionList :items="procurementDetailFields" :columns="descriptionColumns">
+          <template #value-maintenance-status>
+            <StatusTag
+              v-if="maintenanceState"
+              :tone="maintenanceState.type"
+              :label="maintenanceState.label"
+            />
           </template>
-          <template v-if="maintenanceState">
-            <dt>维保状态</dt>
-            <dd class="asset-detail-inline-value">
-              <StatusTag :status="maintenanceState.status" :type="maintenanceState.type" :label="maintenanceState.label" />
-            </dd>
-          </template>
-        </dl>
-      </section>
+        </DescriptionList>
+      </DetailSection>
 
-      <section class="asset-detail-section asset-depreciation-section">
-        <h3>折旧信息</h3>
-        <div v-if="depreciationStatus === 'unconfigured'" class="asset-depreciation-empty">未配置折旧</div>
+      <DetailSection title="折旧信息">
+        <p v-if="depreciationStatus === 'unconfigured'" class="asset-depreciation-empty">
+          未配置折旧
+        </p>
         <template v-else>
-          <div class="asset-depreciation-status-row">
-            <span>状态</span>
-            <strong>{{ depreciationStatusText }}</strong>
-          </div>
           <div class="asset-depreciation-metrics">
-            <div v-for="field in depreciationMetricFields" :key="field.label" class="asset-depreciation-metric">
+            <div v-for="field in depreciationMetricFields" :key="field.key" class="asset-depreciation-metric">
               <span>{{ field.label }}</span>
               <strong>{{ field.value }}</strong>
             </div>
           </div>
-          <div class="asset-depreciation-progress">
-            <div class="asset-depreciation-progress__heading">
-              <span>折旧进度</span>
-              <strong>{{ depreciationProgressText }}</strong>
-            </div>
-            <div class="asset-depreciation-progress__track" aria-hidden="true">
-              <span :style="{ width: depreciationProgressWidth }" />
-            </div>
-            <span v-if="depreciation?.elapsed_months != null && depreciation?.total_months != null" class="asset-depreciation-progress__detail">
-              {{ depreciation.elapsed_months }} / {{ depreciation.total_months }} 个月
-            </span>
-          </div>
-          <dl v-if="visibleDepreciationConfigFields.length" class="asset-detail-fields asset-depreciation-config">
-            <template v-for="field in visibleDepreciationConfigFields" :key="field.label">
-              <dt>{{ field.label }}</dt>
-              <dd>{{ field.value }}</dd>
+          <DescriptionList
+            v-if="visibleDepreciationConfigFields.length"
+            :items="visibleDepreciationConfigFields"
+            :columns="descriptionColumns"
+            class="asset-depreciation-config"
+          >
+            <template #value-depreciation-status>
+              <StatusTag
+                :tone="depreciationStatusTone(depreciationStatus)"
+                :label="depreciationStatusLabel(depreciationStatus)"
+              />
             </template>
-          </dl>
+          </DescriptionList>
         </template>
-      </section>
+      </DetailSection>
 
-      <section v-if="latestInventoryRecord" class="asset-detail-section">
-        <h3>业务状态</h3>
-        <dl class="asset-detail-fields">
-          <dt>最近盘点</dt>
-          <dd class="asset-detail-inline-value">
-            <StatusTag
-              :status="latestInventoryRecord.status"
-              :type="inventoryStatusType(latestInventoryRecord.status)"
-              :label="inventoryRecordLabel(latestInventoryRecord)"
-            />
-            <span>{{ formatDateTime(latestInventoryRecord.checked_at) }}</span>
-          </dd>
-        </dl>
-      </section>
-
-      <section v-if="asset" class="asset-detail-section">
-        <h3>标签</h3>
-        <div v-if="asset.tags?.length" class="asset-detail-tags">
-          <el-tag v-for="tag in asset.tags" :key="tag.id" size="small" :type="tag.is_active ? undefined : 'info'">
+      <DetailSection v-if="asset.tags?.length" title="标签">
+        <div class="asset-detail-tags">
+          <el-tag
+            v-for="tag in asset.tags"
+            :key="tag.id"
+            :type="tag.is_active ? undefined : 'info'"
+          >
             {{ tag.name }}<template v-if="!tag.is_active">（已停用）</template>
           </el-tag>
         </div>
-        <span v-else class="asset-detail-empty-value">—</span>
-      </section>
+      </DetailSection>
 
-      <section v-for="group in currentFieldGroups" :key="group.name" class="asset-detail-section asset-detail-custom-section">
-        <h3>{{ group.name }}</h3>
-        <dl class="asset-detail-fields asset-detail-custom-fields">
-          <template v-for="field in group.fields" :key="field.id">
-            <dt>{{ fieldLabel(field) }}<small v-if="!field.is_active">（已停用）</small></dt>
-            <dd><DynamicFieldDisplay :field="field" :value="field.value" /></dd>
+      <DetailSection v-for="group in currentFieldGroups" :key="group.name" :title="group.name">
+        <DescriptionList :items="dynamicFieldItems(group.fields)" :columns="descriptionColumns">
+          <template v-for="field in group.fields" #[`value-field-${field.id}`]>
+            <DynamicFieldDisplay :field="field" :value="field.value" />
           </template>
-        </dl>
-      </section>
+        </DescriptionList>
+      </DetailSection>
 
-      <section v-if="historicalFieldGroups.length" class="asset-detail-section asset-detail-custom-section asset-detail-custom-section--historical">
-        <h3>历史扩展字段</h3>
+      <DetailSection v-if="historicalFieldGroups.length" title="历史扩展字段">
         <div v-for="group in historicalFieldGroups" :key="group.key" class="asset-detail-custom-group">
           <h4>历史扩展字段 · {{ group.deviceTypeName }}</h4>
-          <dl class="asset-detail-fields asset-detail-custom-fields">
-            <template v-for="field in group.fields" :key="field.id">
-              <dt>{{ fieldLabel(field) }}<small v-if="!field.is_active">（已停用）</small></dt>
-              <dd><DynamicFieldDisplay :field="field" :value="field.value" /></dd>
+          <DescriptionList :items="dynamicFieldItems(group.fields)" :columns="descriptionColumns">
+            <template v-for="field in group.fields" #[`value-field-${field.id}`]>
+              <DynamicFieldDisplay :field="field" :value="field.value" />
             </template>
-          </dl>
+          </DescriptionList>
         </div>
-      </section>
+      </DetailSection>
 
-      <section v-if="hasNotes" class="asset-detail-section">
-        <h3>备注</h3>
+      <DetailSection v-if="hasNotes" title="备注">
         <p class="detail-notes">{{ asset.notes }}</p>
-      </section>
+      </DetailSection>
 
-      <section v-if="recentInventoryRecords.length" class="asset-detail-section">
-        <h3>最近动态</h3>
-        <div class="asset-detail-activity-list">
-          <div v-for="record in recentInventoryRecords" :key="record.id" class="asset-detail-activity-item">
-            <time>{{ formatDateTime(record.checked_at) }}</time>
-            <div>
-              <strong>盘点结果：{{ record.status_label }}</strong>
-              <span v-if="record.resolution_status === 'resolved'"> · 异常已处理</span>
-              <span v-else-if="record.resolution_status === 'pending'"> · 异常待处理</span>
-              <small v-if="record.task_name">{{ record.task_name }}</small>
-              <p v-if="record.notes">{{ record.notes }}</p>
-            </div>
-          </div>
-        </div>
-      </section>
+      <DetailSection v-if="relatedRecordFields.length" title="关联记录">
+        <DescriptionList :items="relatedRecordFields" :columns="descriptionColumns">
+          <template #value-latest-inventory>
+            <span class="asset-detail-inline-value">
+              <StatusTag
+                v-if="latestInventoryRecord"
+                :tone="inventoryStatusType(latestInventoryRecord.status)"
+                :label="inventoryRecordLabel(latestInventoryRecord)"
+              />
+              <span v-if="latestInventoryRecord">{{ formatDateTime(latestInventoryRecord.checked_at) }}</span>
+            </span>
+          </template>
+        </DescriptionList>
+      </DetailSection>
     </template>
   </div>
 </template>

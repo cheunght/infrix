@@ -10,13 +10,6 @@
   --page-section-gap: 16px;
   --page-toolbar-gap: 12px;
   --page-header-min-height: 48px;
-  --page-tabs-height: 44px;
-  --page-toolbar-height: 36px;
-  --page-toolbar-min-height: var(--page-toolbar-height);
-  --page-primary-action-width: 104px;
-  --page-primary-action-height: 36px;
-  --panel-radius: var(--radius-md, 8px);
-  --content-radius: var(--panel-radius);
   --page-content-min-height: 0px;
 }
 
@@ -94,7 +87,7 @@ header.page-header.page-header--compact {
 .page-header__title {
   margin: 0;
   color: var(--itam-sidebar-text, #24324a);
-  font-size: var(--page-title-size, 20px);
+  font-size: var(--el-font-size-extra-large, 20px);
   font-weight: 600;
   line-height: 24px;
 }
@@ -102,7 +95,7 @@ header.page-header.page-header--compact {
 .page-header__description {
   margin: 0;
   color: var(--itam-sidebar-muted, #7183a0);
-  font-size: var(--page-description-size, 13px);
+  font-size: var(--el-font-size-small, 13px);
   line-height: 18px;
 }
 
@@ -119,7 +112,6 @@ header.page-header.page-header--compact {
   display: flex;
   align-items: center;
   gap: var(--space-lg);
-  height: var(--page-tabs-height);
   min-width: 0;
 }
 
@@ -133,93 +125,122 @@ header.page-header.page-header--compact {
   flex: 0 0 auto;
   align-items: center;
   gap: var(--space-sm);
-  min-height: var(--page-tabs-height);
+  min-height: var(--el-component-size);
   padding: 0;
 }
 
 .page-tabs {
-  height: var(--page-tabs-height);
+  min-width: 0;
   margin: 0;
-  border-bottom: 1px solid var(--el-border-color-lighter);
 }
 
 .page-tabs .el-tabs__header {
   margin: 0;
 }
 
-.page-tabs .el-tabs__nav-wrap::after {
-  background-color: transparent;
-}
-
-.page-tabs .el-tabs__item {
-  height: var(--page-tabs-height);
-  line-height: var(--page-tabs-height);
-  padding: 0 var(--space-lg);
-  color: var(--el-text-color-secondary);
-}
-
-.page-tabs .el-tabs__item.is-active {
-  color: var(--itam-primary-blue, #2563eb);
-}
-
-.page-tabs .el-tabs__active-bar {
-  height: 2px;
-  background-color: var(--itam-primary-blue, #2563eb);
-}
-
-/* A toolbar is a stable six-slot rail.  The empty tracks are intentional;
-   controls never reflow left just because a page has fewer filters. */
+/* Keep the toolbar's semantic order in two stable groups.  The left group
+   owns search and filters; the right group owns actions.  Each group can move
+   as a unit when the available rail narrows. */
 .page-toolbar,
 .ep-main .page-toolbar {
   box-sizing: border-box;
-  display: grid;
-  grid-template-columns: 320px 160px 160px 120px minmax(0, 1fr) 104px;
-  column-gap: var(--page-toolbar-gap);
-  row-gap: var(--page-toolbar-gap);
+  display: flex;
+  flex-direction: row;
+  flex-wrap: wrap;
   align-items: center;
+  justify-content: flex-start;
+  gap: var(--page-toolbar-gap);
   width: 100%;
-  min-height: var(--page-toolbar-height);
-  height: var(--page-toolbar-height);
+  min-height: var(--el-component-size);
   margin: 0;
   padding: 0;
 }
 
-.page-toolbar > .toolbar-slot {
-  box-sizing: border-box;
-  min-width: 0;
-  width: 100%;
+.page-toolbar__left {
+  display: flex;
+  flex: 0 0 auto;
+  flex-direction: row;
+  flex-wrap: nowrap;
+  align-items: center;
+  gap: var(--page-toolbar-gap);
+  width: max-content;
+  min-width: max-content;
+  max-width: 100%;
 }
 
-.page-toolbar > .toolbar-search { grid-column: 1; }
-.page-toolbar > .toolbar-filter-primary { grid-column: 2; }
-.page-toolbar > .toolbar-filter-secondary { grid-column: 3; }
-.page-toolbar > .toolbar-filter-extra { grid-column: 4; overflow: visible; }
-.page-toolbar > .toolbar-spacer {
-  grid-column: 5;
+.page-toolbar__right {
+  display: flex;
+  flex: 0 0 auto;
+  flex-direction: row;
+  flex-wrap: nowrap;
+  align-items: center;
+  justify-content: flex-end;
+  gap: var(--page-toolbar-gap);
   min-width: 0;
+  max-width: 100%;
+  margin-left: auto;
 }
-.page-toolbar > .toolbar-primary-action {
-  grid-column: 6;
-  justify-self: end;
-  width: var(--page-primary-action-width);
+
+.page-toolbar__left > .toolbar-slot,
+.page-toolbar__right > .toolbar-slot {
+  box-sizing: border-box;
+  flex: 0 1 auto;
+  min-width: 0;
+  max-width: 100%;
+}
+
+.page-toolbar__left > .toolbar-search {
+  flex: 0 0 320px;
+  min-width: 320px;
+}
+
+.page-toolbar__left > .toolbar-filters {
+  display: flex;
+  flex: 0 0 auto;
+  flex-direction: row;
+  align-items: center;
+  gap: var(--page-toolbar-gap);
+  flex-wrap: nowrap;
+  min-width: max-content;
+  overflow: visible;
+}
+
+.page-toolbar__right > .toolbar-primary-action,
+.page-toolbar__right > .toolbar-secondary-actions {
+  flex: 0 0 auto;
+  width: max-content;
+  max-width: 100%;
   overflow: visible;
 }
 
 .page-toolbar__actions {
   display: flex;
-  width: var(--page-primary-action-width);
+  flex: 0 0 auto;
+  flex-direction: row;
+  flex-wrap: nowrap;
+  width: max-content;
+  max-width: 100%;
   min-width: 0;
   align-items: center;
   justify-content: flex-end;
   gap: var(--space-sm);
 }
 
-/* Export is a secondary toolbar action that sits beside the fixed-width
-   primary action. Let the action rail grow without changing the filter grid. */
-.page-toolbar > .toolbar-primary-action:has(.toolbar-export-action),
+.page-toolbar__filter-group {
+  display: flex;
+  flex: 0 0 auto;
+  flex-direction: row;
+  flex-wrap: nowrap;
+  align-items: center;
+  gap: var(--page-toolbar-gap);
+  min-width: max-content;
+  max-width: 100%;
+}
+
+/* Export is a secondary action; allow its native button width to determine the
+   action rail instead of reserving a second fixed control track. */
 .page-toolbar__actions:has(.toolbar-export-action) {
   width: max-content;
-  min-width: max-content;
   max-width: none;
 }
 
@@ -229,11 +250,6 @@ header.page-header.page-header--compact {
   margin-left: 0;
 }
 
-.toolbar-legacy {
-  grid-column: 1 / -1;
-  min-width: 0;
-}
-
 .toolbar-slot > .itam-search-field,
 .toolbar-slot > .el-input,
 .toolbar-slot > .el-select,
@@ -241,65 +257,42 @@ header.page-header.page-header--compact {
 .toolbar-slot > .el-button,
 .toolbar-slot > .el-popover {
   box-sizing: border-box;
-  width: 100%;
-  max-width: 100%;
   min-width: 0;
+}
+
+/* A filter control owns its business width at the toolbar boundary.  Keep
+   Element Plus in charge of the trigger's visuals while preventing the
+   flex rail from reducing a Select to its arrow. */
+.toolbar-filters > .el-select,
+.page-toolbar__filter-group > .el-select {
+  flex: 0 0 160px;
+  width: min(160px, 100%);
+  max-width: 100%;
+  min-width: min(128px, 100%);
+}
+
+/* Date inputs need a wider readable basis than Selects.  They are uncommon in
+   the first-level rail today, but should remain usable if a page places one
+   there instead of moving it into a More Filters panel. */
+.toolbar-filters > .el-date-editor,
+.page-toolbar__filter-group > .el-date-editor {
+  flex: 0 0 220px;
+  width: min(220px, 100%);
+  max-width: 100%;
+  min-width: min(180px, 100%);
+}
+
+.toolbar-filters > .el-input,
+.page-toolbar__filter-group > .el-input {
+  flex: 0 0 220px;
+  width: min(220px, 100%);
+  max-width: 100%;
+  min-width: min(160px, 100%);
 }
 
 .toolbar-search > .itam-search-field {
-  flex: 0 0 320px !important;
-  width: 320px !important;
-  max-width: 320px !important;
-  min-width: 320px !important;
-}
-
-.toolbar-filter-primary > .el-select,
-.toolbar-filter-secondary > .el-select,
-.toolbar-filter-primary > .el-date-editor,
-.toolbar-filter-secondary > .el-date-editor {
-  flex: 0 0 160px !important;
-  width: 160px !important;
-  max-width: 160px !important;
-  min-width: 160px !important;
-}
-
-.toolbar-filter-extra > .el-button,
-.toolbar-extra-action {
-  flex: 0 0 120px;
-  width: 120px;
-  min-width: 120px;
-  max-width: 120px;
-}
-
-.toolbar-extra-group {
-  display: flex;
-  width: max-content;
-  min-width: 0;
-  align-items: center;
-  gap: var(--space-sm);
-}
-
-.toolbar-extra-panel {
-  display: grid;
-  min-width: 0;
-  gap: var(--space-sm);
-}
-
-.toolbar-extra-popover-actions {
-  display: flex;
-  align-items: center;
-  justify-content: flex-end;
-  flex-wrap: wrap;
-  gap: var(--space-sm);
-  padding-top: var(--space-sm);
-  border-top: 1px solid var(--el-border-color-lighter);
-}
-
-.toolbar-extra-panel > .el-select,
-.toolbar-extra-panel > .el-date-editor,
-.toolbar-extra-panel > .el-input {
-  width: 100%;
-  min-width: 0;
+  width: min(100%, 320px);
+  max-width: 100%;
 }
 
 .toolbar-secondary-action {
@@ -310,25 +303,9 @@ header.page-header.page-header--compact {
 /* The first-level create action is a page-layout primitive. */
 .page-primary-action.el-button {
   box-sizing: border-box;
-  flex: 0 0 var(--page-primary-action-width);
-  width: var(--page-primary-action-width);
-  min-width: var(--page-primary-action-width);
-  max-width: var(--page-primary-action-width);
-  height: var(--page-primary-action-height);
-  min-height: var(--page-primary-action-height);
-  margin: 0 !important;
-  padding: 0 12px !important;
-  border-radius: var(--itam-control-radius, 7px);
-  font-size: 14px;
-  font-weight: 500;
-  line-height: 1;
   justify-content: center;
   text-align: center;
   white-space: nowrap;
-}
-
-.page-primary-action .el-icon {
-  display: none;
 }
 
 .page-content {
@@ -338,10 +315,12 @@ header.page-header.page-header--compact {
 }
 
 .page-content--surface {
-  padding: var(--space-lg);
-  background: var(--el-bg-color, #fff);
-  border: 1px solid var(--el-border-color-lighter);
-  border-radius: var(--content-radius);
+  min-height: var(--page-content-min-height);
+}
+
+.page-content--surface > .el-card__body {
+  min-width: 0;
+  min-height: var(--page-content-min-height);
 }
 
 .paged-table {
@@ -351,8 +330,12 @@ header.page-header.page-header--compact {
   flex-direction: column;
 }
 
-.paged-table > .el-pagination {
-  margin-top: auto;
+.paged-table__footer {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  justify-content: flex-end;
+  margin-top: var(--space-lg);
 }
 
 .page-section {
@@ -380,7 +363,7 @@ header.page-header.page-header--compact {
 .page-section__title {
   margin: 0;
   color: var(--color-text-primary, #172033);
-  font-size: var(--section-title-size, 16px);
+  font-size: var(--el-font-size-medium, 16px);
   font-weight: 600;
   line-height: 22px;
 }
@@ -388,7 +371,7 @@ header.page-header.page-header--compact {
 .page-section__description {
   margin: var(--space-xs) 0 0;
   color: var(--color-text-muted, #7183a0);
-  font-size: var(--caption-size, 12px);
+  font-size: var(--el-font-size-extra-small, 12px);
   line-height: 18px;
 }
 
@@ -403,101 +386,89 @@ header.page-header.page-header--compact {
   min-width: 0;
 }
 
-@media (max-width: 1199px) {
-  .page-toolbar,
-  .ep-main .page-toolbar {
-    grid-template-columns: minmax(0, 1fr) 160px 160px 120px;
-    grid-template-rows: var(--page-toolbar-height) var(--page-toolbar-height);
-    height: auto;
-    min-height: var(--page-toolbar-height);
-  }
-
-  .page-toolbar > .toolbar-search {
-    grid-column: 1;
-    grid-row: 1;
-  }
-
-  .page-toolbar > .toolbar-filter-primary {
-    grid-column: 2;
-    grid-row: 1;
-  }
-
-  .page-toolbar > .toolbar-filter-secondary {
-    grid-column: 3;
-    grid-row: 1;
-  }
-
-  .page-toolbar > .toolbar-filter-extra {
-    grid-column: 4;
-    grid-row: 1;
-  }
-
-  .page-toolbar > .toolbar-spacer {
-    display: none;
-  }
-
-  .page-toolbar > .toolbar-primary-action {
-    grid-column: 4;
-    grid-row: 2;
-  }
-
-  .toolbar-search > .itam-search-field {
-    flex: 1 1 auto !important;
-    width: 100% !important;
-    max-width: none !important;
-    min-width: 0 !important;
-  }
-}
-
 @media (max-width: 760px) {
   .page-header {
     align-items: flex-start;
     flex-direction: column;
   }
 
-  .page-toolbar,
-  .ep-main .page-toolbar {
-    grid-template-columns: minmax(0, 1fr);
-    grid-template-rows: none;
-    height: auto;
+  .page-toolbar {
+    align-items: stretch;
   }
 
-  .page-toolbar > .toolbar-slot {
-    grid-column: 1;
-    grid-row: auto;
-  }
-
-  .page-toolbar > .toolbar-primary-action {
-    justify-self: end;
-  }
-
-  .toolbar-search > .itam-search-field,
-  .toolbar-filter-primary > .el-select,
-  .toolbar-filter-secondary > .el-select,
-  .toolbar-filter-primary > .el-date-editor,
-  .toolbar-filter-secondary > .el-date-editor {
-    width: 100% !important;
-    max-width: none !important;
-    min-width: 0 !important;
-  }
-
-  .toolbar-extra-group {
-    max-width: 100%;
+  .page-toolbar__left {
+    flex: 1 1 100%;
     flex-wrap: wrap;
+    width: 100%;
+    min-width: 0;
+  }
+
+  .page-toolbar__right {
+    flex: 0 0 100%;
+    flex-wrap: wrap;
+    width: 100%;
+    max-width: none;
+    margin-left: 0;
+    justify-content: flex-end;
+  }
+
+  .page-toolbar__left > .toolbar-search,
+  .page-toolbar__left > .toolbar-filters {
+    flex: 1 1 100%;
+    width: 100%;
+    max-width: none;
+    min-width: 0;
+    flex-wrap: wrap;
+  }
+
+  .page-toolbar__filter-group {
+    flex-wrap: wrap;
+  }
+
+  .toolbar-search > .itam-search-field {
+    width: 100%;
+    max-width: none;
+    min-width: 0;
+  }
+
+  .page-toolbar__left > .toolbar-filters,
+  .page-toolbar__filter-group {
+    flex: 1 1 100%;
+    width: 100%;
+    max-width: none;
+    min-width: 0;
+  }
+
+  .page-toolbar__filter-group > .el-select,
+  .toolbar-filters > .el-select {
+    flex: 1 1 100%;
+    width: 100%;
+    max-width: none;
+    min-width: min(128px, 100%);
+  }
+
+  .page-toolbar__filter-group > .el-date-editor,
+  .toolbar-filters > .el-date-editor {
+    flex: 1 1 100%;
+    width: 100%;
+    max-width: none;
+    min-width: min(180px, 100%);
+  }
+
+  .page-toolbar__filter-group > .el-input,
+  .toolbar-filters > .el-input {
+    flex: 1 1 100%;
+    width: 100%;
+    max-width: none;
+    min-width: min(160px, 100%);
   }
 
   .page-header__actions {
     width: 100%;
   }
 
-  .page-tabs .el-tabs__item {
-    padding-inline: var(--space-md);
-  }
-
   .page-tabs-row {
     align-items: flex-start;
-    height: auto;
-    min-height: var(--page-tabs-height);
     flex-wrap: wrap;
     gap: var(--space-sm) var(--space-lg);
   }
@@ -515,11 +486,10 @@ header.page-header.page-header--compact {
   .page-section__actions {
     width: 100%;
   }
-}
 
-@media (max-width: 560px) {
-  .page-content--surface {
-    padding: var(--space-md);
+  .paged-table__footer {
+    justify-content: flex-start;
+    flex-wrap: wrap;
   }
 }
 
@@ -547,14 +517,21 @@ header.page-header.page-header--compact {
   overflow-y: auto;
 }
 
+.shell-main {
+  box-sizing: border-box;
+  min-width: 0;
+  min-height: 0;
+  flex: 1 1 auto;
+  flex-direction: column;
+  overflow: hidden;
+}
+
 .ep-main {
   box-sizing: border-box;
-  display: flex;
   flex: 1 1 auto;
   width: auto;
-  height: 100dvh;
+  height: auto;
   min-height: 0;
-  flex-direction: column;
   padding: 0;
   overflow-x: hidden;
   overflow-y: auto;

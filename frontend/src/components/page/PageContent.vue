@@ -12,9 +12,17 @@ withDefaults(
 </script>
 
 <template>
+  <el-card
+    v-if="surface"
+    shadow="never"
+    class="page-content page-content--surface"
+    :style="{ '--page-content-min-height': minHeight }"
+  >
+    <slot />
+  </el-card>
   <section
+    v-else
     class="page-content"
-    :class="{ 'page-content--surface': surface }"
     :style="{ '--page-content-min-height': minHeight }"
   >
     <slot />

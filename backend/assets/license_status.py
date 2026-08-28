@@ -8,7 +8,11 @@ from django.utils import timezone
 from .models import SoftwareLicense
 
 LICENSE_STATUS_KEYS = ("normal", "expiring", "expired")
-LEGACY_LICENSE_STATUS_KEY = "over_limit"
+LICENSE_STATUS_LABELS = {
+    "normal": "正常",
+    "expiring": "即将到期",
+    "expired": "已过期",
+}
 
 
 def license_status_value(obj, today=None):
@@ -42,9 +46,7 @@ def filter_licenses_by_status(queryset, status, today=None):
     today = today or timezone.localdate()
     expiry_limit = today + timedelta(days=90)
     within_limit = Q(used_count__lte=F("authorized_count"))
-    if status == "over_limit":
-        # Kept as a safe compatibility query for older clients. Current
-        # writes and the database constraint make this status unreachable.
+    if status and status not in LICENSE_STATUS_KEYS:
         return queryset.none()
     if status == "expired":
         return queryset.filter(within_limit, expiry_date__lt=today)
@@ -73,7 +75,5 @@ def license_status_counts(queryset=None, today=None):
     counts = {status: 0 for status in LICENSE_STATUS_KEYS}
     for row in rows:
         counts[row["_license_status"]] = row["count"]
-    # Keep the legacy response key without exposing it as a current status.
-    counts[LEGACY_LICENSE_STATUS_KEY] = 0
     counts["total"] = sum(counts[status] for status in LICENSE_STATUS_KEYS)
     return counts

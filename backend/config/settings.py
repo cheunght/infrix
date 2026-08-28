@@ -282,7 +282,6 @@ SPECTACULAR_SETTINGS = {
         "RackStatusEnum": "assets.models.Rack.STATUS",
         "InventoryItemStatusEnum": "assets.models.InventoryItem.STATUS",
         "InventoryTaskStatusEnum": "assets.models.InventoryTask.STATUS",
-        "PartTypeEnum": "assets.models.SparePart.PART_TYPES",
         "OperationTypeEnum": "assets.models.SpareStockTransaction.OPERATION_TYPES",
         "RoleEnum": "assets.models.AssetNetworkAddress.ROLE",
         "FieldTypeEnum": "assets.models.CustomField.FIELD_TYPES",

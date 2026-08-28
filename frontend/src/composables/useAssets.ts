@@ -17,6 +17,7 @@ import type {
   Tag,
 } from "../types";
 import type { AssetFilters, AssetFormState, RequestFn } from "../types/page-context";
+import { isAssetStatus } from "../business-enums";
 import {
   DEPRECIATION_METHOD_STRAIGHT_LINE,
   depreciationStatusLabel,
@@ -28,7 +29,7 @@ import {
 export type StaticAssetColumnKey =
   | "asset_no"
   | "name"
-  | "asset_type"
+  | "device_type"
   | "manufacturer"
   | "manufacturer_model"
   | "purpose"
@@ -154,13 +155,14 @@ export interface AssetsDeps {
 }
 
 const defaultColumns: AssetColumnOption[] = [
-  { key: "asset_no", label: "资产", defaultVisible: true, required: true },
-  { key: "asset_type", label: "设备类型", defaultVisible: true },
+  { key: "name", label: "资产名称", defaultVisible: true, required: true },
+  { key: "asset_no", label: "资产编号", defaultVisible: true, required: true },
+  { key: "device_type", label: "设备类型", defaultVisible: true },
+  { key: "manufacturer", label: "厂商", defaultVisible: true },
   { key: "status", label: "状态", defaultVisible: true, required: true },
   { key: "rack_code", label: "位置", defaultVisible: true },
-  { key: "manufacturer_model", label: "型号", defaultVisible: true },
-  { key: "maintenance_expiry_date", label: "保修到期", defaultVisible: true },
-  { key: "manufacturer", label: "厂商" },
+  { key: "manufacturer_model", label: "型号" },
+  { key: "maintenance_expiry_date", label: "保修到期" },
   { key: "purpose", label: "用途" },
   { key: "serial_number", label: "序列号" },
   { key: "owner_name", label: "使用人" },
@@ -179,9 +181,8 @@ const defaultColumns: AssetColumnOption[] = [
   { key: "notes", label: "备注" },
 ];
 
-const legacyColumnKeys: StaticAssetColumnKey[] = ["name", "u_range"];
+const legacyColumnKeys: StaticAssetColumnKey[] = ["u_range"];
 const legacyColumnAliases: Partial<Record<StaticAssetColumnKey, StaticAssetColumnKey>> = {
-  name: "asset_no",
   u_range: "rack_code",
 };
 const supportedColumnKeys = new Set<StaticAssetColumnKey>([
@@ -208,7 +209,6 @@ function emptyAssetForm(): AssetFormState {
   return {
     asset_no: "",
     name: "",
-    asset_type: "",
     manufacturer_id: "",
     model: "",
     device_type: "",
@@ -266,7 +266,6 @@ function loadSavedColumns(): AssetColumnKey[] {
 const assetFormFieldNames = new Set([
   "asset_no",
   "name",
-  "asset_type",
   "manufacturer",
   "model",
   "device_type",
@@ -647,8 +646,8 @@ export function useAssets(deps: AssetsDeps) {
     return params;
   }
 
-  async function loadAssets(version = deps.beginLoad()): Promise<void> {
-    if (!deps.authenticated.value) return;
+  async function loadAssets(version = deps.beginLoad()): Promise<boolean> {
+    if (!deps.authenticated.value) return false;
     ensureAssetListCustomSchema();
     ensureAssetFilterCustomSchema();
     if (deps.isCurrentLoad(version)) {
@@ -658,15 +657,14 @@ export function useAssets(deps: AssetsDeps) {
     const params = assetQueryParams();
     try {
       const payload = await deps.request<PageResult<Asset> | Asset[]>(`/assets/?${params.toString()}`);
-      if (!payload || !deps.isCurrentLoad(version)) return;
+      if (!payload || !deps.isCurrentLoad(version)) return false;
 
       const nextAssets = pageItems(payload);
       const nextCount = pageTotal(payload);
       const maxPage = Math.max(1, Math.ceil(nextCount / assetPageSize.value));
       if (assetPage.value > maxPage) {
         assetPage.value = maxPage;
-        await loadAssets();
-        return;
+        return loadAssets();
       }
 
       assets.value = nextAssets;
@@ -674,12 +672,14 @@ export function useAssets(deps: AssetsDeps) {
       selectedAssetIds.value = selectedAssetIds.value.filter((id) =>
         assets.value.some((asset) => asset.id === id),
       );
+      return true;
     } catch (error) {
       if (deps.isCurrentLoad(version) && !isAbortError(error)) {
         assetListError.value = invalidCustomFilterError(error) || (error instanceof Error && error.message
           ? error.message
           : "资产数据加载失败，请稍后重试");
       }
+      return false;
     } finally {
       if (deps.isCurrentLoad(version)) assetListLoading.value = false;
     }
@@ -863,7 +863,6 @@ export function useAssets(deps: AssetsDeps) {
         ...emptyAssetForm(),
         asset_no: detail.asset_no,
         name: detail.name,
-        asset_type: detail.asset_type,
         manufacturer_id: detail.manufacturer ? String(detail.manufacturer) : "",
         model: detail.model_name || detail.manufacturer_model || "",
         device_type: detail.device_type ? String(detail.device_type) : "",
@@ -1014,7 +1013,6 @@ export function useAssets(deps: AssetsDeps) {
     assetFormSaving.value = true;
     try {
       const {
-        asset_type: _assetType,
         data_center,
         asset_data_center,
         server_room_id,
@@ -1103,20 +1101,27 @@ export function useAssets(deps: AssetsDeps) {
         }),
       });
       showAssetModal.value = false;
-      deps.actionMessage.value = editingAsset.value ? "资产及关联信息已更新" : "资产及关联信息已保存";
+      const wasEditing = Boolean(editingAssetId);
       editingAsset.value = null;
       assetForm.value = emptyAssetForm();
       depreciationStartTouched.value = false;
       assetCustomFieldHistoryValues.value = {};
       assetCustomFieldUserEditedKeys.clear();
       await loadAssets();
+      let refreshFailed = Boolean(assetListError.value);
       if (
         editingAssetId &&
         deps.showAssetDetail.value &&
         detailAssetId.value === editingAssetId
       ) {
         await openAssetDetail(editingAssetId);
+        refreshFailed = refreshFailed || Boolean(deps.detailError.value);
       }
+      deps.actionMessage.value = refreshFailed
+        ? "资产已保存，但页面刷新失败"
+        : wasEditing
+          ? "资产及关联信息已更新"
+          : "资产及关联信息已保存";
     } catch (error) {
       const parsed = extractAssetFormErrors(error);
       assetFormFieldErrors.value = parsed.fields;
@@ -1148,7 +1153,9 @@ export function useAssets(deps: AssetsDeps) {
       await deps.request(`/assets/${asset.id}/`, { method: "DELETE" });
       selectedAssetIds.value = selectedAssetIds.value.filter((id) => id !== asset.id);
       deps.actionMessage.value = "资产已删除";
-      await loadAssets();
+      if (!(await loadAssets())) {
+        deps.actionMessage.value = "资产已删除，但列表刷新失败：请稍后重试";
+      }
     } catch (error) {
       deps.actionMessage.value = error instanceof Error ? error.message : "资产删除失败";
     }
@@ -1169,10 +1176,13 @@ export function useAssets(deps: AssetsDeps) {
       }
     }
     selectedAssetIds.value = [];
-    deps.actionMessage.value = failures.length
+    const mutationMessage = failures.length
       ? `已删除 ${success} 项，${failures.length} 项删除失败：${failures.join("、")}`
       : `已删除 ${success} 项资产`;
-    await loadAssets();
+    deps.actionMessage.value = mutationMessage;
+    if (!(await loadAssets())) {
+      deps.actionMessage.value = `${mutationMessage}，但列表刷新失败：请稍后重试`;
+    }
   }
 
   async function exportAssets() {
@@ -1227,7 +1237,7 @@ export function useAssets(deps: AssetsDeps) {
     const values: Record<StaticAssetColumnKey, string> = {
       asset_no: asset.asset_no,
       name: asset.name,
-      asset_type: asset.device_type_name || asset.asset_type || "—",
+      device_type: asset.device_type_name || "—",
       manufacturer: asset.manufacturer_name || "—",
       manufacturer_model: asset.model || asset.manufacturer_model || "—",
       purpose: asset.purpose || "—",
@@ -1382,7 +1392,6 @@ export function useAssets(deps: AssetsDeps) {
     }
   }
   async function syncAssetDeviceType() {
-    const deviceType = deps.deviceTypes.value.find((item) => String(item.id) === assetForm.value.device_type);
     const nextType = assetForm.value.device_type;
     const previousType = assetCustomFieldDeviceType.value;
     const previousValues = assetForm.value.custom_values || {};
@@ -1397,7 +1406,6 @@ export function useAssets(deps: AssetsDeps) {
       }
     }
     if (previousType !== nextType) resetCustomValuesForDeviceType(previousType);
-    if (deviceType) assetForm.value.asset_type = deviceType.name;
     await loadAssetCustomSchema(nextType);
   }
   function changeAssetDataCenter() {
@@ -1426,18 +1434,18 @@ export function useAssets(deps: AssetsDeps) {
       assetForm.value.rack_end_u = "";
     }
   }
-  function searchLedger() {
+  async function searchLedger(): Promise<void> {
     assetPage.value = 1;
     if (deps.page.value !== "ledger") {
       deps.goToLedger();
       return;
     }
-    return loadAssets();
+    await loadAssets();
   }
-  function applyAssetCustomFilters(filters: AssetCustomFilter[]) {
+  async function applyAssetCustomFilters(filters: AssetCustomFilter[]): Promise<void> {
     appliedCustomFilters.value = filters.map((filter) => ({ ...filter }));
     assetPage.value = 1;
-    return loadAssets();
+    await loadAssets();
   }
 
   function queryValue(query: LocationQuery, key: string): string {
@@ -1458,19 +1466,27 @@ export function useAssets(deps: AssetsDeps) {
   function syncFiltersFromQuery(query: LocationQuery) {
     assetSearch.value = queryValue(query, "search");
     const status = queryValue(query, "status");
+    const deviceType = queryValue(query, "device_type");
+    const manufacturer = queryValue(query, "manufacturer");
+    const model = queryValue(query, "model");
     const dataCenter = queryValue(query, "data_center");
     const warranty = queryValue(query, "warranty");
     const tagIds = queryList(query, "tags");
-    const validStatuses = new Set(["in_stock", "in_use", "idle", "repair", "retired"]);
     const validWarranties = new Set(["within_30_days", "expired"]);
 
-    assetFilters.status = validStatuses.has(status) ? status : "";
+    assetFilters.status = isAssetStatus(status) ? status : "";
+    assetFilters.deviceType = /^\d+$/.test(deviceType) && Number(deviceType) > 0 ? deviceType : "";
+    assetFilters.manufacturer = /^\d+$/.test(manufacturer) && Number(manufacturer) > 0 ? manufacturer : "";
+    assetFilters.model = model;
     assetFilters.dataCenter = /^\d+$/.test(dataCenter) && Number(dataCenter) > 0 ? dataCenter : "";
     assetFilters.warranty = validWarranties.has(warranty) ? warranty : "";
     assetFilters.tag = tagIds;
+    draftCustomFilters.value = [];
+    appliedCustomFilters.value = [];
+    assetPage.value = 1;
   }
 
-  function resetAssetFilters() {
+  async function resetAssetFilters(): Promise<void> {
     assetSearch.value = "";
     assetFilters.status = "";
     assetFilters.deviceType = "";
@@ -1482,17 +1498,26 @@ export function useAssets(deps: AssetsDeps) {
     draftCustomFilters.value = [];
     appliedCustomFilters.value = [];
     assetPage.value = 1;
-    if (deps.clearRouteQuery?.(["search", "status", "data_center", "warranty", "tags"])) return;
-    return loadAssets();
+    if (deps.clearRouteQuery?.([
+      "search",
+      "status",
+      "device_type",
+      "manufacturer",
+      "model",
+      "data_center",
+      "warranty",
+      "tags",
+    ])) return;
+    await loadAssets();
   }
-  function changeAssetPage(pageNumber: number) {
+  async function changeAssetPage(pageNumber: number): Promise<void> {
     assetPage.value = Math.min(Math.max(pageNumber, 1), Math.max(1, Math.ceil(assetCount.value / assetPageSize.value)));
-    return loadAssets();
+    await loadAssets();
   }
-  function changeAssetPageSize(size?: number) {
+  async function changeAssetPageSize(size?: number): Promise<void> {
     if (size) assetPageSize.value = size;
     assetPage.value = 1;
-    return loadAssets();
+    await loadAssets();
   }
   return {
     assets,

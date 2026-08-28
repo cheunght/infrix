@@ -1,6 +1,5 @@
 <script setup lang="ts">
 import { computed } from "vue";
-import { Close } from "@element-plus/icons-vue";
 
 type FormDialogSize = "small" | "medium" | "large";
 
@@ -41,14 +40,22 @@ const emit = defineEmits<{
 }>();
 
 const dialogWidth = computed(() => ({
-  small: "520px",
-  medium: "720px",
-  large: "960px",
+  small: "480px",
+  medium: "680px",
+  large: "820px",
 }[props.size]));
 const dialogClass = computed(() => [
   "form-dialog",
   `form-dialog--${props.size}`,
 ]);
+
+function canClose() {
+  return !props.closeDisabled && !props.saving;
+}
+
+function beforeClose(done: () => void) {
+  if (canClose()) done();
+}
 </script>
 
 <template>
@@ -57,33 +64,22 @@ const dialogClass = computed(() => [
     :class="dialogClass"
     :width="dialogWidth"
     :destroy-on-close="destroyOnClose"
-    :close-on-click-modal="closeOnClickModal && !saving"
-    :close-on-press-escape="closeOnPressEscape && !closeDisabled && !saving"
-    :show-close="false"
+    :close-on-click-modal="closeOnClickModal && canClose()"
+    :close-on-press-escape="closeOnPressEscape && canClose()"
+    :show-close="showClose"
+    :before-close="beforeClose"
     @update:model-value="emit('update:modelValue', $event)"
     @close="emit('close')"
     @closed="emit('closed')"
     @open="emit('open')"
     @opened="emit('opened')"
   >
-    <template #header="{ close, titleId }">
+    <template #header="{ titleId }">
       <div class="form-dialog__header">
         <div class="form-dialog__heading">
-          <h2 :id="titleId">{{ title }}</h2>
+          <span :id="titleId" class="el-dialog__title">{{ title }}</span>
           <p v-if="description" class="form-dialog__description">{{ description }}</p>
         </div>
-        <el-button
-          v-if="showClose"
-          class="form-dialog__close"
-          text
-          circle
-          :disabled="closeDisabled || saving"
-          aria-label="关闭"
-          title="关闭"
-          @click="close"
-        >
-          <el-icon><Close /></el-icon>
-        </el-button>
       </div>
     </template>
 
@@ -94,7 +90,9 @@ const dialogClass = computed(() => [
           <el-skeleton :rows="loadingRows" animated />
         </slot>
       </div>
-      <slot v-else />
+      <div v-else class="form-dialog__form-container">
+        <slot />
+      </div>
     </div>
 
     <template #footer>

@@ -9,7 +9,12 @@ export type SettingsSection =
   | "custom-fields"
   | "tags";
 
-export type RackSection = "view" | "rooms";
+// The old data-center and room sections remain accepted as compatibility input
+// for callers and deep links, but both now resolve to the unified locations
+// view. Only the locations and rack-view sections are rendered by the app.
+export type RackSection = "locations" | "view" | "data-centers" | "rooms";
+export type LocationTypeFilter = "all" | "data-center" | "room";
+export type LocationStatusFilter = "all" | "active" | "inactive";
 
 // App.vue owns the shell and page data context; routed records select the page
 // component while their meta remains the source of truth for navigation state.
@@ -61,21 +66,33 @@ export const routes: RouteRecordRaw[] = [
   {
     path: "/racks",
     name: "racks",
-    redirect: { name: "racks-rooms" },
+    redirect: { name: "racks-locations" },
   },
   pageRoute(
-    "/racks/rooms",
-    "racks-rooms",
+    "/racks/locations",
+    "racks-locations",
     "racks",
-    "机房机柜管理",
-    { rackSection: "rooms" },
-    ["/racks-rooms"],
+    "位置管理",
+    { rackSection: "locations" },
+    ["/racks-locations"],
   ),
+  {
+    path: "/racks/data-centers",
+    name: "racks-data-centers",
+    redirect: (to) => ({ name: "racks-locations", query: to.query }),
+    alias: ["/racks-data-centers"],
+  },
+  {
+    path: "/racks/rooms",
+    name: "racks-rooms",
+    redirect: (to) => ({ name: "racks-locations", query: to.query }),
+    alias: ["/racks-rooms"],
+  },
   pageRoute(
     "/racks/view",
     "racks-view",
     "racks",
-    "机房机柜管理",
+    "机柜视图",
     { rackSection: "view" },
     ["/racks-view"],
   ),
@@ -146,7 +163,11 @@ export function routeForPage(
 ): RouteLocationRaw {
   if (page === "ledger") return { name: "assets" };
   if (page === "racks") {
-    return { name: options.rackSection === "view" ? "racks-view" : "racks-rooms" };
+    return {
+      name: options.rackSection === "view"
+        ? "racks-view"
+        : "racks-locations",
+    };
   }
   if (page === "settings") {
     const section = options.settingsSection || "dictionaries";

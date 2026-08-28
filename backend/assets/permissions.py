@@ -53,9 +53,23 @@ class CanViewManufacturerRuntime(BasePermission):
                 "assets.manage",
                 "licenses.view",
                 "licenses.manage",
+                "spares.view",
+                "spares.manage",
                 "settings.view",
                 "settings.manage",
             )
+        )
+
+
+class CanViewSparePartCategoryRuntime(BasePermission):
+    """Allow spare part forms to read categories without granting dictionary CRUD."""
+
+    message = "当前角色没有读取备件类型的权限"
+
+    def has_permission(self, request, view):
+        return any(
+            user_has_capability(request.user, capability)
+            for capability in ("spares.view", "spares.manage", "settings.manage")
         )
 
 

@@ -1,11 +1,14 @@
 """Stable metadata shared by the read-only dashboard reporting services."""
 
+from ..enum_contracts import ASSET_STATUS_LABELS
+
+
 STATUS_METADATA = (
-    ("in_use", "使用中", "#16A34A"),
-    ("in_stock", "在库", "#2563EB"),
-    ("repair", "维修中", "#D97706"),
-    ("idle", "闲置", "#8B5CF6"),
-    ("retired", "已报废", "#98A2B3"),
+    ("in_use", ASSET_STATUS_LABELS["in_use"], "#16A34A"),
+    ("in_stock", ASSET_STATUS_LABELS["in_stock"], "#2563EB"),
+    ("repair", ASSET_STATUS_LABELS["repair"], "#D97706"),
+    ("idle", ASSET_STATUS_LABELS["idle"], "#8B5CF6"),
+    ("retired", ASSET_STATUS_LABELS["retired"], "#98A2B3"),
 )
 
 STATUS_METADATA_MAP = {

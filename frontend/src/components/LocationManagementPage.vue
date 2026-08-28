@@ -1,0 +1,260 @@
+<script setup lang="ts">
+import { computed } from "vue";
+import { MoreFilled } from "@element-plus/icons-vue";
+import ResourceState from "./ResourceState.vue";
+import StatusTag from "./StatusTag.vue";
+import type { DataCenter, ServerRoom } from "../types";
+import type { RackSharedContext } from "../types/page-context";
+
+const props = defineProps<{ context: RackSharedContext }>();
+const context = props.context;
+const dataCenters = context.dataCenters;
+const serverRooms = context.serverRooms;
+const facilitySummary = context.facilitySummary;
+const can = context.can;
+const locationSearch = context.locationSearch;
+const locationType = context.locationType;
+const locationStatus = context.locationStatus;
+const locationDataCenter = context.locationDataCenter;
+const locationManagementLoading = context.locationManagementLoading;
+const locationManagementError = context.locationManagementError;
+const dataCenterActionId = context.dataCenterActionId;
+const updatingRoomId = context.updatingRoomId;
+
+type LocationNodeType = "data-center" | "room";
+type LocationTreeRow = {
+  key: string;
+  id: number;
+  nodeType: LocationNodeType;
+  name: string;
+  address?: string;
+  data_center?: number;
+  data_center_name?: string;
+  is_active: boolean;
+  rooms_count?: number;
+  racks_count?: number;
+  assets_count?: number;
+  total_u?: number;
+  used_u?: number;
+  children?: LocationTreeRow[];
+};
+
+const treeProps = { children: "children" };
+
+const roomCapacityById = computed(() => new Map(
+  (facilitySummary.value?.rooms || []).map((room) => [
+    room.id,
+    {
+      total: room.total_u == null ? undefined : Number(room.total_u),
+      used: room.used_u == null ? undefined : Number(room.used_u),
+    },
+  ]),
+));
+
+const locationRows = computed<LocationTreeRow[]>(() => {
+  const search = locationSearch.value.trim().toLocaleLowerCase();
+  const roomsByDataCenter = new Map<number, ServerRoom[]>();
+  for (const room of serverRooms.value) {
+    const rows = roomsByDataCenter.get(room.data_center) || [];
+    rows.push(room);
+    roomsByDataCenter.set(room.data_center, rows);
+  }
+
+  const matchesText = (values: Array<string | undefined>) =>
+    !search || values.some((value) => String(value || "").toLocaleLowerCase().includes(search));
+  const matchesStatus = (isActive: boolean) =>
+    locationStatus.value === "all" || (locationStatus.value === "active" ? isActive : !isActive);
+
+  return dataCenters.value.flatMap((center) => {
+    if (locationDataCenter.value && String(center.id) !== locationDataCenter.value) return [];
+    const centerMatchesText = matchesText([center.name, center.address]);
+    const centerMatchesStatus = matchesStatus(center.is_active);
+    const availableRooms = (roomsByDataCenter.get(center.id) || []).filter((room) => matchesStatus(room.is_active));
+    const matchingRooms = availableRooms.filter((room) => matchesText([room.name, room.data_center_name]));
+    const visibleRooms = centerMatchesText ? availableRooms : matchingRooms;
+
+    if (locationType.value === "data-center" && (!centerMatchesText || !centerMatchesStatus)) return [];
+    if (locationType.value === "room" && !visibleRooms.length) return [];
+    if (locationType.value === "all" && !((centerMatchesText && centerMatchesStatus) || matchingRooms.length)) return [];
+
+    const children = locationType.value === "data-center"
+      ? undefined
+      : visibleRooms.map((room): LocationTreeRow => {
+          const capacity = roomCapacityById.value.get(room.id);
+          return {
+            key: `room:${room.id}`,
+            id: room.id,
+            nodeType: "room",
+            name: room.name,
+            data_center: room.data_center,
+            data_center_name: room.data_center_name,
+            is_active: room.is_active,
+            racks_count: room.racks_count,
+            assets_count: room.assets_count,
+            ...(capacity?.total == null ? {} : { total_u: capacity.total }),
+            ...(capacity?.used == null ? {} : { used_u: capacity.used }),
+          };
+        });
+
+    return [{
+      key: `data-center:${center.id}`,
+      id: center.id,
+      nodeType: "data-center",
+      name: center.name,
+      address: center.address,
+      is_active: center.is_active,
+      rooms_count: center.rooms_count,
+      assets_count: center.assets_count,
+      ...(children?.length ? { children } : {}),
+    }];
+  });
+});
+
+const hasLocationFilters = computed(() => Boolean(
+  locationSearch.value.trim() ||
+  locationType.value !== "all" ||
+  locationStatus.value !== "all" ||
+  locationDataCenter.value,
+));
+const emptyDescription = computed(() =>
+  hasLocationFilters.value ? "没有匹配条件的位置" : "暂无数据中心或机房",
+);
+
+function locationAssetCount(row: LocationTreeRow) {
+  return row.assets_count == null ? "—" : row.assets_count;
+}
+
+function locationCapacity(row: LocationTreeRow) {
+  if (row.nodeType === "data-center") return `${row.rooms_count ?? 0} 个机房`;
+  if (!row.is_active || row.total_u == null || row.used_u == null) return "—";
+  return `${row.used_u} / ${row.total_u} U`;
+}
+
+function roomHasAssociations(row: LocationTreeRow) {
+  return Boolean(row.racks_count || row.assets_count);
+}
+
+function dataCenterHasAssociations(row: LocationTreeRow) {
+  return Boolean(row.rooms_count || row.assets_count);
+}
+
+function findDataCenter(row: LocationTreeRow) {
+  return dataCenters.value.find((center) => center.id === row.id) || null;
+}
+
+function findRoom(row: LocationTreeRow) {
+  return serverRooms.value.find((room) => room.id === row.id) || null;
+}
+
+function handleDataCenterCommand(row: LocationTreeRow, command: string) {
+  const center = findDataCenter(row);
+  if (!center) return;
+  if (command === "new-room") {
+    context.openRoomModal(undefined, center.id);
+  } else if (command === "enable" || command === "disable") {
+    void context.updateDataCenterStatus(center, command === "enable");
+  } else if (command === "delete" && !dataCenterHasAssociations(row)) {
+    void context.deleteDataCenter(center);
+  }
+}
+
+function handleRoomCommand(row: LocationTreeRow, command: string) {
+  const room = findRoom(row);
+  if (!room) return;
+  if (command === "view-racks") {
+    context.openRackSection("view", {
+      data_center: String(room.data_center),
+      room: String(room.id),
+    });
+  } else if (command === "edit") {
+    context.openRoomModal(room);
+  } else if (command === "enable" || command === "disable") {
+    void context.updateRoomStatus(room, command === "enable");
+  } else if (command === "delete" && !roomHasAssociations(row)) {
+    void context.deleteRoom(room);
+  }
+}
+</script>
+
+<template>
+  <section class="location-management-workspace" aria-label="位置管理">
+    <ResourceState
+      :error="locationManagementError"
+      @retry="context.retryLocationManagement"
+    >
+      <el-table
+        class="location-management-table"
+        v-loading="locationManagementLoading"
+        :data="locationRows"
+        row-key="key"
+        default-expand-all
+        :tree-props="treeProps"
+      >
+        <template #empty>
+          <el-empty :image-size="56" :description="emptyDescription">
+            <el-button v-if="hasLocationFilters" link type="primary" @click="context.resetLocationFilters">清除筛选</el-button>
+          </el-empty>
+        </template>
+        <el-table-column label="名称" min-width="220">
+          <template #default="{ row }">
+            <span :class="row.nodeType === 'data-center' ? 'location-name location-name--parent' : 'location-name'">
+              {{ row.name }}
+            </span>
+          </template>
+        </el-table-column>
+        <el-table-column label="类型" width="100">
+          <template #default="{ row }">{{ row.nodeType === "data-center" ? "数据中心" : "机房" }}</template>
+        </el-table-column>
+        <el-table-column label="位置 / 地址" min-width="220">
+          <template #default="{ row }">{{ row.nodeType === "data-center" ? (row.address || "—") : (row.data_center_name || "—") }}</template>
+        </el-table-column>
+        <el-table-column label="容量概览" width="150">
+          <template #default="{ row }">{{ locationCapacity(row) }}</template>
+        </el-table-column>
+        <el-table-column label="资产数" width="90" align="right">
+          <template #default="{ row }">{{ locationAssetCount(row) }}</template>
+        </el-table-column>
+        <el-table-column label="状态" width="100" align="center">
+          <template #default="{ row }">
+            <StatusTag size="small" :tone="row.is_active ? 'success' : 'info'" :label="row.is_active ? '启用' : '停用'" />
+          </template>
+        </el-table-column>
+        <el-table-column label="操作" width="230" fixed="right">
+          <template #default="{ row }">
+            <div class="ep-table-actions" @click.stop>
+              <template v-if="row.nodeType === 'data-center'">
+                <template v-if="can('racks.manage')">
+                  <el-button link type="primary" :disabled="dataCenterActionId === row.id" @click="context.openDataCenterModal(findDataCenter(row) || undefined)">编辑</el-button>
+                  <el-dropdown trigger="click" :disabled="dataCenterActionId === row.id" @command="handleDataCenterCommand(row, $event)">
+                    <el-button link :disabled="dataCenterActionId === row.id">更多<el-icon><MoreFilled /></el-icon></el-button>
+                    <template #dropdown>
+                      <el-dropdown-menu>
+                        <el-dropdown-item command="new-room">新建机房</el-dropdown-item>
+                        <el-dropdown-item :command="row.is_active ? 'disable' : 'enable'">{{ row.is_active ? "停用" : "启用" }}</el-dropdown-item>
+                        <el-dropdown-item divided command="delete" :disabled="dataCenterHasAssociations(row)" :title="dataCenterHasAssociations(row) ? '该数据中心仍有关联机房或资产' : undefined">删除</el-dropdown-item>
+                      </el-dropdown-menu>
+                    </template>
+                  </el-dropdown>
+                </template>
+                <span v-else>—</span>
+              </template>
+              <template v-else>
+                <el-button link type="primary" @click="handleRoomCommand(row, 'view-racks')">查看机柜</el-button>
+                <el-dropdown v-if="can('racks.manage')" trigger="click" :disabled="updatingRoomId === row.id" @command="handleRoomCommand(row, $event)">
+                  <el-button link :disabled="updatingRoomId === row.id">更多<el-icon><MoreFilled /></el-icon></el-button>
+                  <template #dropdown>
+                    <el-dropdown-menu>
+                      <el-dropdown-item command="edit">编辑</el-dropdown-item>
+                      <el-dropdown-item :command="row.is_active ? 'disable' : 'enable'">{{ row.is_active ? "停用" : "启用" }}</el-dropdown-item>
+                      <el-dropdown-item divided command="delete" :disabled="roomHasAssociations(row)" :title="roomHasAssociations(row) ? '该机房仍有关联机柜或资产' : undefined">删除</el-dropdown-item>
+                    </el-dropdown-menu>
+                  </template>
+                </el-dropdown>
+              </template>
+            </div>
+          </template>
+        </el-table-column>
+      </el-table>
+    </ResourceState>
+  </section>
+</template>

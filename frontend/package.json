@@ -5,8 +5,9 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
+    "check:ui-regressions": "node scripts/check-ui-regressions.mjs",
     "typecheck": "vue-tsc --noEmit",
-    "build": "npm run typecheck && vite build",
+    "build": "npm run check:ui-regressions && npm run typecheck && vite build",
     "preview": "vite preview"
   },
   "dependencies": {

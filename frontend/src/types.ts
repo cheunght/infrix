@@ -1,3 +1,27 @@
+import type {
+  AssetStatus,
+  InventoryResolutionAction,
+  InventoryResolutionStatus,
+  InventoryStatus,
+  InventoryTaskStatus,
+  LicenseStatus,
+  RackStatus,
+  SpareUnit,
+  StockOperationType,
+} from "./business-enums";
+
+export type {
+  AssetStatus,
+  InventoryResolutionAction,
+  InventoryResolutionStatus,
+  InventoryStatus,
+  InventoryTaskStatus,
+  LicenseStatus,
+  RackStatus,
+  SpareUnit,
+  StockOperationType,
+} from "./business-enums";
+
 export type Page =
   | "dashboard"
   | "ledger"
@@ -17,10 +41,28 @@ export type DictionaryItem = {
   is_active: boolean;
   assets_count?: number;
   licenses_count?: number;
+  spare_parts_count?: number;
   created_at?: string;
   updated_at?: string;
 };
+export type SparePartCategory = DictionaryItem & { code: string; spare_parts_count: number };
 export type Manufacturer = { id: number; name: string; code: string | null; is_active: boolean };
+export type SparePartFormState = {
+  code: string;
+  name: string;
+  category: string;
+  manufacturer: string;
+  model: string;
+  specification: string;
+  unit: SpareUnit;
+  initial_quantity: number;
+  initial_data_center: string;
+  initial_server_room: string;
+  current_quantity: number;
+  safety_stock: number;
+  storage_location: string;
+  notes: string;
+};
 export type CustomFieldOption = { id: number; field?: number; value: string; label: string; sort_order: number; is_active: boolean };
 export type CustomFieldValidationConfig = {
   min_length?: number;
@@ -93,7 +135,7 @@ export type DataCenter = {
   created_at?: string;
   updated_at?: string;
 };
-export type DashboardStatus = { status: string; label: string; count: number; color: string };
+export type DashboardStatus = { status: AssetStatus; label: string; count: number; color: string };
 export type DashboardDataCenterCapacity = {
   data_center_id: number;
   data_center: string;
@@ -159,7 +201,7 @@ export type DashboardRackCapacity = {
 export type DashboardInventorySummary = {
   task_id: number;
   task_name: string;
-  status: "in_progress" | "completed";
+  status: InventoryTaskStatus;
   total: number;
   checked: number;
   pending: number;
@@ -185,7 +227,6 @@ export type DashboardLicenseSummary = {
   normal: number;
   expiring: number;
   expired: number;
-  over_limit: number;
 };
 export type DepreciationStatus = "unconfigured" | "not_started" | "depreciating" | "fully_depreciated";
 export type DepreciationInfo = {
@@ -240,6 +281,7 @@ export type DashboardOverview = {
   recent_changes?: DashboardRecentChange[];
   licenses?: DashboardLicenseSummary;
 };
+
 export type AssetNetwork = { id: number; address: string; role: string; is_primary: boolean; notes?: string };
 export type AssetProcurement = { id: number; purchase_date: string; supplier: string; order_no: string; amount: string | null; notes: string };
 export type AssetMaintenance = { id: number; provider: string; contract_no: string; start_date: string | null; expiry_date: string | null; notes: string };
@@ -247,7 +289,6 @@ export type Asset = {
   id: number;
   asset_no: string;
   name: string;
-  asset_type: string;
   manufacturer?: number | null;
   manufacturer_name?: string;
   device_type?: number | null;
@@ -255,7 +296,7 @@ export type Asset = {
   model?: string;
   model_name?: string;
   manufacturer_model?: string;
-  status: string;
+  status: AssetStatus;
   purpose: string;
   serial_number: string | null;
   owner_name?: string;
@@ -299,9 +340,6 @@ export type AssetDetail = Asset & {
   custom_values: Record<string, unknown>;
   depreciation: DepreciationInfo;
 };
-export type InventoryStatus = "pending" | "normal" | "location_mismatch" | "not_found" | "info_mismatch" | "other";
-export type InventoryResolutionStatus = "not_required" | "pending" | "resolved";
-export type InventoryResolutionAction = "update_asset" | "keep_asset" | "confirm_missing" | "ignore";
 export type InventoryBulkResolutionResult = {
   item_id: number;
   asset_no: string;
@@ -333,7 +371,7 @@ export type InventoryItem = {
   asset: number;
   asset_no: string;
   asset_name: string;
-  asset_type: string;
+  device_type_name: string | null;
   serial_number: string | null;
   system_data_center: string;
   system_server_room: string;
@@ -386,10 +424,12 @@ export type InventoryTask = {
   inspector_name: string;
   start_at: string;
   end_at: string;
-  status: "in_progress" | "completed";
+  status: InventoryTaskStatus;
   completed_at: string | null;
   notes: string;
   can_delete: boolean;
+  created_at?: string;
+  updated_at?: string;
   summary: InventorySummary;
 };
 export type InventoryInspector = { id: number; username: string; display_name: string };
@@ -405,7 +445,6 @@ export type InventoryScopePreview = {
   includes_unracked: boolean;
   warnings: string[];
 };
-export type RackStatus = "in_use" | "reserved" | "disabled";
 export type RackFormState = {
   room: string;
   code: string;
@@ -430,12 +469,12 @@ export type Rack = {
   data_center_name?: string;
   server_room_name?: string;
   is_active?: boolean;
-  status?: RackStatus | string;
+  status?: RackStatus;
   status_label?: string;
   assets_count?: number;
   used_u?: number;
   free_u?: number;
-  allocations: Array<{ asset: number; start_u: number; end_u: number; units: number; asset_no: string; asset_name: string; asset_type: string; device_type_name?: string | null; device_type_color?: string | null; manufacturer_model?: string; serial_number?: string | null; status: string }>;
+  allocations: Array<{ asset: number; start_u: number; end_u: number; units: number; asset_no: string; asset_name: string; device_type_name?: string | null; device_type_color?: string | null; manufacturer_name?: string | null; model_name?: string | null; manufacturer_model?: string; serial_number?: string | null; status: string }>;
 };
 export type ServerRoom = { id: number; data_center: number; data_center_name: string; name: string; is_active: boolean; owner_name?: string; contact_phone?: string; notes?: string; racks_count: number; assets_count: number; created_at?: string; updated_at?: string };
 export type FacilitySummary = {
@@ -466,21 +505,26 @@ export type FaultEvent = { id: number; asset: number; asset_no: string; asset_na
 export type Role = { id: number; code: string; name: string; description: string; user_count?: number };
 export type ManagedUser = { id: number; username: string; display_name: string; first_name: string; last_name: string; email: string; is_active: boolean; is_staff: boolean; is_superuser: boolean; groups: number[]; assigned_role_code: string; assigned_role_name: string; last_login: string | null; date_joined: string };
 export type AuditLog = { id: number; actor_username: string | null; actor_display_name: string; action: string; resource_type: string; resource_id: string; payload: Record<string, unknown>; created_at: string };
-export type SoftwareLicense = { id: number; name: string; manufacturer: Manufacturer | null; license_type: string; authorized_count: number; used_count: number; utilization: number; remaining_count: number; expiry_date: string | null; status: "over_limit" | "expired" | "expiring" | "normal"; status_label: string; days_remaining: number | null; notes: string };
+export type SoftwareLicense = { id: number; name: string; manufacturer: Manufacturer | null; license_type: string; authorized_count: number; used_count: number; utilization: number; remaining_count: number; expiry_date: string | null; status: LicenseStatus; status_label: string; days_remaining: number | null; notes: string };
 export type SparePart = {
   id: number;
+  code: string;
   name: string;
-  part_type: string;
-  part_type_label: string;
+  category: number;
+  category_name: string;
+  category_code: string;
   manufacturer: number | null;
   manufacturer_name: string | null;
   model: string;
   specification: string;
-  unit: string;
-  is_active: boolean;
+  unit: SpareUnit;
+  safety_stock: number;
+  storage_location: string;
   notes: string;
   total_quantity: number;
   location_count: number;
+  has_stock_movements: boolean;
+  is_low_stock: boolean;
   created_at?: string;
   updated_at?: string;
 };
@@ -491,8 +535,9 @@ export type SparePartDetail = SparePart & {
 export type SpareStock = {
   id: number;
   part: number;
+  part_code: string;
   part_name: string;
-  part_type_label: string;
+  category_name: string;
   data_center: number;
   data_center_name: string;
   server_room: number | null;
@@ -503,11 +548,15 @@ export type SpareStock = {
 export type SpareTransaction = {
   id: number;
   part: number;
+  part_code: string;
   part_name: string;
-  unit: string;
-  operation_type: string;
+  category_name: string;
+  unit: SpareUnit;
+  operation_type: StockOperationType;
   operation_type_label: string;
   quantity: number;
+  quantity_delta: number;
+  adjustment_quantity: number | null;
   source_data_center: number | null;
   source_data_center_name: string | null;
   source_server_room: number | null;

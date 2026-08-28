@@ -54,6 +54,34 @@ def software_license_audit_snapshot(instance):
     return json_value(snapshot)
 
 
+def spare_part_audit_snapshot(instance):
+    """Keep spare part master-data changes readable in audit history."""
+    snapshot = model_snapshot(instance)
+    category = getattr(instance, "category", None)
+    snapshot["category"] = (
+        {
+            "id": category.pk,
+            "name": category.name,
+            "code": category.code,
+            "is_active": category.is_active,
+        }
+        if category is not None
+        else None
+    )
+    manufacturer = getattr(instance, "manufacturer", None)
+    snapshot["manufacturer"] = (
+        {
+            "id": manufacturer.pk,
+            "name": manufacturer.name,
+            "code": manufacturer.code,
+            "is_active": manufacturer.is_active,
+        }
+        if manufacturer is not None
+        else None
+    )
+    return json_value(snapshot)
+
+
 def asset_audit_snapshot(asset_id):
     """Build the same rich asset snapshot used by asset write audits."""
     from .serializers import AssetDetailSerializer

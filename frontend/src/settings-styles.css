@@ -25,26 +25,36 @@
   overflow-wrap: anywhere;
 }
 
-.settings-empty {
-  display: flex;
-  min-height: 120px;
-  align-items: center;
-  justify-content: center;
-  gap: var(--space-sm, 8px);
-  padding: var(--space-lg, 16px);
-  flex-wrap: wrap;
-  color: var(--el-text-color-secondary);
-}
-
-.form-grid-full {
-  grid-column: 1 / -1;
-}
-
 .custom-field-visibility-row {
   display: flex;
+  align-items: flex-start;
   flex-wrap: wrap;
   gap: 8px 18px;
   margin: 0;
+}
+
+.custom-field-visibility-option {
+  display: grid;
+  flex: 1 1 220px;
+  min-width: 220px;
+  gap: 6px;
+}
+
+.custom-field-visibility-control {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  min-height: 32px;
+}
+
+.custom-field-visibility-control .el-checkbox {
+  margin-right: 0;
+}
+
+.custom-field-visibility-option > .horizontal-form__help {
+  width: auto;
+  margin-top: 0;
+  flex: none;
 }
 
 .custom-field-validation {
@@ -53,48 +63,37 @@
 
 .custom-field-validation-grid {
   display: grid;
-  grid-template-columns: repeat(3, minmax(120px, 180px));
-  gap: 10px;
-  width: auto;
+  grid-template-columns: minmax(0, 520px);
+  gap: 12px;
+  width: 100%;
+  max-width: 520px;
 }
 
 .custom-field-validation-grid .el-input,
-.custom-field-validation-grid .el-input-number,
 .custom-field-validation-grid .el-date-editor {
   width: 100%;
-}
-
-.custom-field-form-help {
-  margin-top: 6px;
-  color: var(--el-text-color-secondary);
-  font-size: 12px;
-  line-height: 1.5;
-}
-
-.custom-field-option-hint {
-  margin-top: -2px;
 }
 
 .custom-field-validation .el-form-item__content {
   display: block;
 }
 
-.audit-log-table .cell {
+.audit-log-table .el-table__body-wrapper .cell {
   min-width: 0;
 }
 
-.audit-change-summary {
-  display: -webkit-box;
-  overflow: hidden;
-  color: var(--el-text-color-regular);
-  line-height: 1.5;
-  overflow-wrap: anywhere;
-  -webkit-box-orient: vertical;
-  -webkit-line-clamp: 2;
+/* Keep dictionary rows single-line while Element Plus recalculates the
+   shared column geometry when switching between dictionary sections. */
+.settings-dictionary-table .el-table__body-wrapper .cell {
+  white-space: nowrap;
 }
 
-.audit-detail-drawer .el-drawer__body {
-  padding: 0 24px 24px;
+.audit-change-summary {
+  display: block;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .audit-detail-intro {
@@ -167,7 +166,7 @@
   line-height: 1.5;
 }
 
-.audit-change-table .cell {
+.audit-change-table .el-table__body-wrapper .cell {
   white-space: normal;
   line-height: 1.5;
 }
@@ -213,23 +212,9 @@
   overflow-wrap: anywhere;
 }
 
-.custom-field-validation-grid .el-input-number,
-.custom-field-validation-grid .el-date-editor {
-  width: 100%;
-}
-
 @media (max-width: 720px) {
-  .custom-field-validation-grid {
-    grid-template-columns: 1fr;
-  }
-
   .audit-detail-drawer {
     width: 100% !important;
-  }
-
-  .audit-detail-drawer .el-drawer__body {
-    padding-right: 16px;
-    padding-left: 16px;
   }
 
   .audit-detail-meta {

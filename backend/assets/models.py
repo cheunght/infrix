@@ -47,7 +47,6 @@ class ServerRoom(Timestamped):
 class Rack(Timestamped):
     room = models.ForeignKey(ServerRoom, on_delete=models.PROTECT, related_name="racks")
     code = models.CharField(max_length=50)
-    vendor = models.CharField(max_length=100, blank=True)
     name = models.CharField(max_length=120, blank=True)
     rack_type = models.CharField(max_length=80, default="标准机柜", blank=True)
     owner_name = models.CharField(max_length=120, blank=True)
@@ -149,21 +148,35 @@ class Tag(Timestamped):
         return self.name
 
 
-class SparePart(Timestamped):
-    PART_TYPES = [
-        ("hard_disk", "备用硬盘"),
-        ("memory", "内存"),
-        ("power_module", "电源模块"),
-        ("optical_module", "光模块"),
-        ("network_card", "网卡"),
-        ("hba_card", "HBA 卡"),
-        ("fan", "风扇"),
-        ("raid_card", "RAID 卡"),
-        ("other", "其他"),
-    ]
+class SparePartCategory(Timestamped):
+    name = models.CharField(max_length=120, unique=True)
+    code = models.CharField(max_length=80, unique=True)
+    is_active = models.BooleanField(default=True)
 
+    class Meta:
+        ordering = ["name", "id"]
+
+    def __str__(self):
+        return self.name
+
+
+class SparePart(Timestamped):
+    class Unit(models.TextChoices):
+        PIECE = "piece", "个"
+        BLOCK = "block", "块"
+        STICK = "stick", "条"
+        ROOT = "root", "根"
+        SET = "set", "套"
+        PAIR = "pair", "对"
+        BOX = "box", "盒"
+
+    code = models.CharField(max_length=80, unique=True)
     name = models.CharField(max_length=160)
-    part_type = models.CharField(max_length=30, choices=PART_TYPES, default="other")
+    category = models.ForeignKey(
+        SparePartCategory,
+        on_delete=models.PROTECT,
+        related_name="spare_parts",
+    )
     manufacturer = models.ForeignKey(
         Manufacturer,
         null=True,
@@ -173,12 +186,13 @@ class SparePart(Timestamped):
     )
     model = models.CharField(max_length=160, blank=True)
     specification = models.CharField(max_length=255, blank=True)
-    unit = models.CharField(max_length=20, default="件")
-    is_active = models.BooleanField(default=True)
+    unit = models.CharField(max_length=20, choices=Unit.choices, default=Unit.PIECE)
+    safety_stock = models.PositiveIntegerField(default=0)
+    storage_location = models.CharField(max_length=255, blank=True)
     notes = models.TextField(blank=True)
 
     class Meta:
-        ordering = ["name", "part_type", "id"]
+        ordering = ["name", "category__name", "id"]
 
     def __str__(self):
         return self.name
@@ -212,16 +226,18 @@ class SpareStock(Timestamped):
 
 class SpareStockTransaction(Timestamped):
     OPERATION_TYPES = [
+        ("initial", "初始库存"),
         ("inbound", "入库"),
         ("outbound", "出库"),
         ("transfer", "调拨"),
-        ("adjustment", "盘点调整"),
+        ("adjustment", "调整"),
         ("scrap", "报废"),
     ]
 
     part = models.ForeignKey(SparePart, on_delete=models.PROTECT, related_name="transactions")
     operation_type = models.CharField(max_length=20, choices=OPERATION_TYPES)
     quantity = models.PositiveIntegerField(default=0)
+    quantity_delta = models.IntegerField()
     source_data_center = models.ForeignKey(
         DataCenter,
         null=True,
@@ -298,7 +314,6 @@ class Asset(Timestamped):
     STATUS = [("in_stock", "在库"), ("in_use", "在用"), ("idle", "闲置"), ("repair", "维修中"), ("retired", "已报废")]
     asset_no = models.CharField(max_length=80, unique=True)
     name = models.CharField(max_length=160)
-    asset_type = models.CharField(max_length=80)
     manufacturer_model = models.CharField(max_length=160, blank=True)
     serial_number = models.CharField(max_length=160, blank=True, unique=True, null=True)
     purpose = models.CharField(max_length=255, blank=True)

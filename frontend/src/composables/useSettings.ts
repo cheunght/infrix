@@ -6,10 +6,10 @@ import type {
   CustomField,
   CustomFieldForm,
   CustomFieldOption,
-  DataCenter,
   DictionaryItem,
   ManagedUser,
   Role,
+  SparePartCategory,
   Tag,
 } from "../types";
 import type { SettingsSection } from "../router";
@@ -24,7 +24,6 @@ export interface SettingsDeps {
   isAdmin: Ref<boolean>;
   currentUsername: Ref<string>;
   settingsSection: Ref<SettingsSection>;
-  dataCenters: Ref<DataCenter[]>;
   actionMessage: Ref<string>;
 }
 
@@ -54,7 +53,10 @@ function extractFieldErrors(error: unknown, allowedFields: readonly string[]): F
 export function useSettings(deps: SettingsDeps) {
   const manufacturers = ref<DictionaryItem[]>([]);
   const deviceTypes = ref<DictionaryItem[]>([]);
+  const spareCategories = ref<SparePartCategory[]>([]);
   const customFields = ref<CustomField[]>([]);
+  const customFieldPage = ref(1);
+  const customFieldPageSize = ref(50);
   const customFieldDeviceType = ref("");
   const customFieldActive = ref("all");
   const customFieldForm = ref<CustomFieldForm>({
@@ -99,6 +101,8 @@ export function useSettings(deps: SettingsDeps) {
   const customFieldOptionFormErrors = ref<FormErrors>({});
 
   const tags = ref<Tag[]>([]);
+  const tagPage = ref(1);
+  const tagPageSize = ref(50);
   const tagSearch = ref("");
   const tagActive = ref("all");
   const tagForm = ref({ name: "", is_active: true });
@@ -123,6 +127,7 @@ export function useSettings(deps: SettingsDeps) {
   const resettingUser = ref<ManagedUser | null>(null);
   const userResetForm = ref({ new_password: "", confirm_password: "" });
   const userResetSaving = ref(false);
+  const userResetError = ref("");
   const userResetFormErrors = ref<FormErrors>({});
   const userForm = ref({
     username: "",
@@ -194,11 +199,13 @@ export function useSettings(deps: SettingsDeps) {
       },
     ],
   };
-  const dictionarySection = ref<"manufacturers" | "device-types" | "data-centers">("manufacturers");
+  const dictionarySection = ref<"manufacturers" | "device-types" | "spare-categories">("manufacturers");
+  const dictionaryPage = ref(1);
+  const dictionaryPageSize = ref(50);
   const dictionarySearch = ref("");
   const showDictionaryModal = ref(false);
-  const editingDictionary = ref<DictionaryItem | DataCenter | null>(null);
-  const dictionaryForm = ref({ name: "", code: "", address: "", color: "#1677EF", is_active: true });
+  const editingDictionary = ref<DictionaryItem | null>(null);
+  const dictionaryForm = ref({ name: "", code: "", color: "#1677EF", is_active: true });
   const dictionaryLoading = ref(false);
   const dictionaryError = ref("");
   const dictionaryRequestId = ref(0);
@@ -228,8 +235,8 @@ export function useSettings(deps: SettingsDeps) {
     return error instanceof Error && error.message ? error.message : fallback;
   }
 
-  function dictionaryCapability(kind = dictionarySection.value) {
-    return kind === "data-centers" ? "racks.manage" : "settings.manage";
+  function dictionaryCapability(_kind = dictionarySection.value) {
+    return "settings.manage";
   }
 
   function canManageDictionary(kind = dictionarySection.value) {
@@ -240,28 +247,33 @@ export function useSettings(deps: SettingsDeps) {
     return Math.max(1, Math.ceil(total / pageSize));
   }
 
+  function pageSlice<T>(items: T[], page: number, pageSize: number): T[] {
+    const size = Math.max(1, pageSize);
+    const start = (Math.max(1, page) - 1) * size;
+    return items.slice(start, start + size);
+  }
+
   async function loadDictionaries(version = deps.beginLoad()): Promise<boolean> {
     const requestId = ++dictionaryRequestId.value;
     const params = new URLSearchParams({ page_size: "100", is_active: "all" });
     if (dictionarySearch.value.trim()) params.set("search", dictionarySearch.value.trim());
-    const dataCenterParams = new URLSearchParams({ page_size: "100", is_active: "all" });
-    if (dictionarySearch.value.trim()) dataCenterParams.set("search", dictionarySearch.value.trim());
     dictionaryLoading.value = true;
     dictionaryError.value = "";
     try {
-      const dataCenterRequest = deps.can("racks.view")
-        ? deps.request<PageResult<DataCenter> | DataCenter[]>(`/data-centers/?${dataCenterParams.toString()}`)
-        : Promise.resolve<DataCenter[]>([]);
-      const [manufacturerResult, deviceTypeResult, dataCenterResult] = await Promise.all([
+      const spareCategoryRequest = deps.can("spares.view") || deps.can("spares.manage") || deps.can("settings.manage")
+        ? deps.request<PageResult<SparePartCategory> | SparePartCategory[]>(`/spare-part-categories/?${params.toString()}`)
+        : Promise.resolve<SparePartCategory[]>([]);
+      const [manufacturerResult, deviceTypeResult, spareCategoryResult] = await Promise.all([
         deps.request<PageResult<DictionaryItem> | DictionaryItem[]>(`/manufacturers/?${params.toString()}`),
         deps.request<PageResult<DictionaryItem> | DictionaryItem[]>(`/device-types/?${params.toString()}`),
-        dataCenterRequest,
+        spareCategoryRequest,
       ]);
-      if (manufacturerResult == null || deviceTypeResult == null || dataCenterResult == null) return false;
+      if (manufacturerResult == null || deviceTypeResult == null || spareCategoryResult == null) return false;
       if (requestId !== dictionaryRequestId.value || !deps.isCurrentLoad(version)) return false;
       manufacturers.value = pageItems(manufacturerResult);
       deviceTypes.value = pageItems(deviceTypeResult);
-      deps.dataCenters.value = pageItems(dataCenterResult);
+      spareCategories.value = pageItems(spareCategoryResult);
+      dictionaryPage.value = Math.min(dictionaryPage.value, totalPages(currentDictionaryAllItems().length, dictionaryPageSize.value));
       return true;
     } catch (error) {
       if (requestId === dictionaryRequestId.value && deps.isCurrentLoad(version) && !isAbortError(error)) {
@@ -283,6 +295,7 @@ export function useSettings(deps: SettingsDeps) {
       const result = await deps.request<PageResult<CustomField> | CustomField[]>(`/custom-fields/?${params.toString()}`);
       if (result == null || requestId !== customFieldRequestId.value || !deps.isCurrentLoad(version)) return false;
       customFields.value = pageItems(result);
+      customFieldPage.value = Math.min(customFieldPage.value, totalPages(customFields.value.length, customFieldPageSize.value));
       return true;
     } catch (error) {
       if (requestId === customFieldRequestId.value && deps.isCurrentLoad(version) && !isAbortError(error)) {
@@ -326,6 +339,7 @@ export function useSettings(deps: SettingsDeps) {
       const result = await deps.request<PageResult<Tag> | Tag[]>(`/tags/?${params.toString()}`);
       if (result == null || requestId !== tagRequestId.value || !deps.isCurrentLoad(version)) return false;
       tags.value = pageItems(result);
+      tagPage.value = Math.min(tagPage.value, totalPages(tags.value.length, tagPageSize.value));
       return true;
     } catch (error) {
       if (requestId === tagRequestId.value && deps.isCurrentLoad(version) && !isAbortError(error)) {
@@ -511,6 +525,7 @@ export function useSettings(deps: SettingsDeps) {
 
   function openUserResetModal(user: ManagedUser) {
     resettingUser.value = user;
+    userResetError.value = "";
     userResetForm.value = { new_password: "", confirm_password: "" };
     userResetFormErrors.value = {};
     showUserResetModal.value = true;
@@ -565,6 +580,7 @@ export function useSettings(deps: SettingsDeps) {
     if (!user || userPendingId.value === user.id || userResetSaving.value) return;
     userPendingId.value = user.id;
     userResetSaving.value = true;
+    userResetError.value = "";
     userResetFormErrors.value = {};
     let saved = false;
     try {
@@ -576,7 +592,8 @@ export function useSettings(deps: SettingsDeps) {
       saved = true;
     } catch (error) {
       userResetFormErrors.value = extractFieldErrors(error, ["new_password", "confirm_password"]);
-      deps.actionMessage.value = errorMessage(error, "密码重置失败");
+      userResetError.value = errorMessage(error, "密码重置失败");
+      deps.actionMessage.value = userResetError.value;
     } finally {
       userResetSaving.value = false;
       userPendingId.value = null;
@@ -584,6 +601,7 @@ export function useSettings(deps: SettingsDeps) {
     if (!saved) return;
     showUserResetModal.value = false;
     resettingUser.value = null;
+    userResetError.value = "";
     userResetForm.value = { new_password: "", confirm_password: "" };
     deps.actionMessage.value = "用户密码已重置";
   }
@@ -916,39 +934,79 @@ export function useSettings(deps: SettingsDeps) {
     }
   }
 
-  const currentDictionaryItems = computed<Array<DictionaryItem | DataCenter>>(() =>
-    dictionarySection.value === "manufacturers"
+  function currentDictionaryAllItems(): Array<DictionaryItem | SparePartCategory> {
+    return dictionarySection.value === "manufacturers"
       ? manufacturers.value
       : dictionarySection.value === "device-types"
         ? deviceTypes.value
-        : deps.dataCenters.value,
+        : spareCategories.value;
+  }
+
+  const currentDictionaryItems = computed<Array<DictionaryItem | SparePartCategory>>(() =>
+    pageSlice(currentDictionaryAllItems(), dictionaryPage.value, dictionaryPageSize.value),
   );
+  const dictionaryCount = computed(() => currentDictionaryAllItems().length);
+  const customFieldTableItems = computed(() =>
+    pageSlice(customFields.value, customFieldPage.value, customFieldPageSize.value),
+  );
+  const customFieldCount = computed(() => customFields.value.length);
+  const tagTableItems = computed(() => pageSlice(tags.value, tagPage.value, tagPageSize.value));
+  const tagCount = computed(() => tags.value.length);
   const currentDictionaryLabel = computed(() =>
-    dictionarySection.value === "manufacturers" ? "厂商" : dictionarySection.value === "device-types" ? "设备类型" : "数据中心",
+    dictionarySection.value === "manufacturers"
+      ? "厂商"
+      : dictionarySection.value === "device-types"
+        ? "设备类型"
+        : "备件类型",
   );
-  function dictionaryItemUsed(item: DictionaryItem | DataCenter) {
+  function dictionaryItemUsed(item: DictionaryItem) {
     return (
       (item.assets_count || 0) > 0 ||
-      (dictionarySection.value === "manufacturers" && ((item as DictionaryItem).licenses_count || 0) > 0) ||
-      (dictionarySection.value === "data-centers" && ((item as DataCenter).rooms_count || 0) > 0)
+      (dictionarySection.value === "manufacturers" && (
+        ((item as DictionaryItem).licenses_count || 0) > 0 ||
+        ((item as DictionaryItem).spare_parts_count || 0) > 0
+      )) ||
+      (dictionarySection.value === "spare-categories" && ((item as SparePartCategory).spare_parts_count || 0) > 0)
     );
   }
-  function openDictionaryModal(item?: DictionaryItem | DataCenter) {
+  function openDictionaryModal(item?: DictionaryItem) {
     editingDictionary.value = item || null;
     dictionaryFormErrors.value = {};
     dictionaryForm.value = item
       ? {
           name: item.name,
           code: "code" in item ? item.code || "" : "",
-          address: "address" in item ? item.address || "" : "",
           color: "color" in item ? item.color || "#1677EF" : "#1677EF",
           is_active: item.is_active,
         }
-      : { name: "", code: "", address: "", color: "#1677EF", is_active: true };
+      : { name: "", code: "", color: "#1677EF", is_active: true };
     showDictionaryModal.value = true;
   }
   function retryDictionaries() {
     return loadDictionaries();
+  }
+
+  async function changeDictionarySection() {
+    dictionaryPage.value = 1;
+    await loadDictionaries();
+  }
+
+  async function searchDictionaries() {
+    dictionaryPage.value = 1;
+    await loadDictionaries();
+  }
+
+  function changeDictionaryPage(page: number) {
+    dictionaryPage.value = Math.min(
+      Math.max(page, 1),
+      totalPages(dictionaryCount.value, dictionaryPageSize.value),
+    );
+  }
+
+  function changeDictionaryPageSize(size: number) {
+    if (![20, 50, 100].includes(size)) return;
+    dictionaryPageSize.value = size;
+    dictionaryPage.value = 1;
   }
   async function saveDictionary() {
     if (dictionarySaving.value) return;
@@ -962,12 +1020,15 @@ export function useSettings(deps: SettingsDeps) {
     dictionaryFormErrors.value = {};
     let saved = false;
     try {
-      const base = section === "manufacturers" ? "manufacturers" : section === "device-types" ? "device-types" : "data-centers";
+      const base = section === "manufacturers"
+        ? "manufacturers"
+        : section === "device-types"
+          ? "device-types"
+          : "spare-part-categories";
       const method = editingDictionary.value ? "PATCH" : "POST";
       const path = editingDictionary.value ? `/${base}/${editingDictionary.value.id}/` : `/${base}/`;
       dictionaryForm.value.name = dictionaryForm.value.name.trim();
       dictionaryForm.value.code = dictionaryForm.value.code.trim();
-      dictionaryForm.value.address = dictionaryForm.value.address.trim();
       dictionaryForm.value.color = dictionaryForm.value.color.trim().toUpperCase();
       const payload = section === "device-types"
         ? {
@@ -975,19 +1036,13 @@ export function useSettings(deps: SettingsDeps) {
             color: dictionaryForm.value.color,
             is_active: dictionaryForm.value.is_active,
           }
-        : section === "data-centers"
-          ? {
-              name: dictionaryForm.value.name,
-              address: dictionaryForm.value.address,
-              is_active: dictionaryForm.value.is_active,
-            }
-          : section === "manufacturers"
-            ? { name: dictionaryForm.value.name, code: dictionaryForm.value.code || null, is_active: dictionaryForm.value.is_active }
-            : { name: dictionaryForm.value.name, is_active: dictionaryForm.value.is_active };
+        : section === "manufacturers"
+          ? { name: dictionaryForm.value.name, code: dictionaryForm.value.code || null, is_active: dictionaryForm.value.is_active }
+          : { name: dictionaryForm.value.name, code: dictionaryForm.value.code, is_active: dictionaryForm.value.is_active };
       await deps.request(path, { method, headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload) });
       saved = true;
     } catch (error) {
-      dictionaryFormErrors.value = extractFieldErrors(error, ["name", "code", "address", "color"]);
+      dictionaryFormErrors.value = extractFieldErrors(error, ["name", "code", "color"]);
       deps.actionMessage.value = errorMessage(error, `${label}保存失败`);
     } finally {
       dictionarySaving.value = false;
@@ -1008,7 +1063,11 @@ export function useSettings(deps: SettingsDeps) {
     }
     dictionaryActionId.value = item.id;
     try {
-      const base = section === "manufacturers" ? "manufacturers" : section === "device-types" ? "device-types" : "data-centers";
+      const base = section === "manufacturers"
+        ? "manufacturers"
+        : section === "device-types"
+          ? "device-types"
+          : "spare-part-categories";
       await deps.request(`/${base}/${item.id}/`, { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ is_active: !item.is_active }) });
       deps.actionMessage.value = item.is_active ? `${label}已停用` : `${label}已启用`;
       const refreshed = await loadDictionaries();
@@ -1021,10 +1080,10 @@ export function useSettings(deps: SettingsDeps) {
   }
   async function deleteDictionary(item: DictionaryItem) {
     if (dictionaryItemUsed(item)) {
-      deps.actionMessage.value = dictionarySection.value === "data-centers"
-        ? "数据中心仍包含机房或资产，不能删除，请先停用"
-        : dictionarySection.value === "manufacturers"
-          ? "厂商正在被资产或软件许可使用，不能删除，请先停用"
+      deps.actionMessage.value = dictionarySection.value === "manufacturers"
+        ? "厂商正在被资产、软件许可或备件使用，不能删除，请先停用"
+        : dictionarySection.value === "spare-categories"
+          ? "备件类型正在被备件使用，不能删除，请先停用"
           : "字典项正在被资产使用，请先停用";
       return;
     }
@@ -1038,7 +1097,11 @@ export function useSettings(deps: SettingsDeps) {
     dictionaryActionId.value = item.id;
     try {
       if (!(await deps.confirmAction(`确定删除${label}“${item.name}”吗？`))) return;
-      const base = section === "manufacturers" ? "manufacturers" : section === "device-types" ? "device-types" : "data-centers";
+      const base = section === "manufacturers"
+        ? "manufacturers"
+        : section === "device-types"
+          ? "device-types"
+          : "spare-part-categories";
       await deps.request(`/${base}/${item.id}/`, { method: "DELETE" });
       deps.actionMessage.value = `${label}已删除`;
       const refreshed = await loadDictionaries();
@@ -1081,8 +1144,44 @@ export function useSettings(deps: SettingsDeps) {
     return loadCustomFields();
   }
 
+  async function refreshCustomFieldList() {
+    customFieldPage.value = 1;
+    await loadCustomFields();
+  }
+
+  function changeCustomFieldPage(page: number) {
+    customFieldPage.value = Math.min(
+      Math.max(page, 1),
+      totalPages(customFieldCount.value, customFieldPageSize.value),
+    );
+  }
+
+  function changeCustomFieldPageSize(size: number) {
+    if (![20, 50, 100].includes(size)) return;
+    customFieldPageSize.value = size;
+    customFieldPage.value = 1;
+  }
+
   function retryTagList() {
     return loadTags();
+  }
+
+  async function refreshTagList() {
+    tagPage.value = 1;
+    await loadTags();
+  }
+
+  function changeTagPage(page: number) {
+    tagPage.value = Math.min(
+      Math.max(page, 1),
+      totalPages(tagCount.value, tagPageSize.value),
+    );
+  }
+
+  function changeTagPageSize(size: number) {
+    if (![20, 50, 100].includes(size)) return;
+    tagPageSize.value = size;
+    tagPage.value = 1;
   }
 
   function retryAuditLogs() {
@@ -1106,7 +1205,12 @@ export function useSettings(deps: SettingsDeps) {
   return {
     manufacturers,
     deviceTypes,
+    spareCategories,
     customFields,
+    customFieldTableItems,
+    customFieldCount,
+    customFieldPage,
+    customFieldPageSize,
     customFieldDeviceType,
     customFieldActive,
     customFieldForm,
@@ -1126,6 +1230,10 @@ export function useSettings(deps: SettingsDeps) {
     customFieldFormErrors,
     customFieldOptionFormErrors,
     tags,
+    tagTableItems,
+    tagCount,
+    tagPage,
+    tagPageSize,
     tagSearch,
     tagActive,
     tagForm,
@@ -1153,6 +1261,7 @@ export function useSettings(deps: SettingsDeps) {
     userResetFormRef,
     userResetFormRules,
     userResetSaving,
+    userResetError,
     userResetFormErrors,
     organizationLoading,
     organizationError,
@@ -1162,6 +1271,9 @@ export function useSettings(deps: SettingsDeps) {
     userPendingId,
     userFormErrors,
     dictionarySection,
+    dictionaryPage,
+    dictionaryPageSize,
+    dictionaryCount,
     dictionarySearch,
     showDictionaryModal,
     editingDictionary,
@@ -1181,10 +1293,16 @@ export function useSettings(deps: SettingsDeps) {
     loadDictionaries,
     loadCustomFields,
     retryCustomFieldList,
+    refreshCustomFieldList,
+    changeCustomFieldPage,
+    changeCustomFieldPageSize,
     loadCustomFieldOptions,
     retryCustomFieldOptions,
     loadTags,
     retryTagList,
+    refreshTagList,
+    changeTagPage,
+    changeTagPageSize,
     loadOrganization,
     retryOrganization,
     loadUsers,
@@ -1214,6 +1332,10 @@ export function useSettings(deps: SettingsDeps) {
     toggleTag,
     deleteTag,
     currentDictionaryItems,
+    changeDictionarySection,
+    searchDictionaries,
+    changeDictionaryPage,
+    changeDictionaryPageSize,
     currentDictionaryLabel,
     dictionaryItemUsed,
     openDictionaryModal,
