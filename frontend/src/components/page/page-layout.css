@@ -99,8 +99,7 @@ header.page-header.page-header--compact {
   line-height: 18px;
 }
 
-.page-header__actions,
-.page-toolbar__actions {
+.page-header__actions {
   display: flex;
   flex: 0 0 auto;
   align-items: center;
@@ -138,9 +137,9 @@ header.page-header.page-header--compact {
   margin: 0;
 }
 
-/* Keep the toolbar's semantic order in two stable groups.  The left group
-   owns search and filters; the right group owns actions.  Each group can move
-   as a unit when the available rail narrows. */
+/* Keep search/filters and actions in two flexible rails.  The rails stay on a
+   single line when the page has room and can wrap as complete groups when it
+   does not. Element Plus remains responsible for control geometry. */
 .page-toolbar,
 .ep-main .page-toolbar {
   box-sizing: border-box;
@@ -158,19 +157,18 @@ header.page-header.page-header--compact {
 
 .page-toolbar__left {
   display: flex;
-  flex: 0 0 auto;
+  flex: 1 1 520px;
   flex-direction: row;
-  flex-wrap: nowrap;
+  flex-wrap: wrap;
   align-items: center;
   gap: var(--page-toolbar-gap);
-  width: max-content;
-  min-width: max-content;
+  min-width: 0;
   max-width: 100%;
 }
 
 .page-toolbar__right {
   display: flex;
-  flex: 0 0 auto;
+  flex: 0 1 auto;
   flex-direction: row;
   flex-wrap: nowrap;
   align-items: center;
@@ -190,35 +188,38 @@ header.page-header.page-header--compact {
 }
 
 .page-toolbar__left > .toolbar-search {
-  flex: 0 0 320px;
-  min-width: 320px;
+  flex: 1 1 320px;
+  min-width: min(240px, 100%);
 }
 
 .page-toolbar__left > .toolbar-filters {
   display: flex;
+  /* A filter rail is a complete control group.  Let the outer toolbar wrap
+     the rail when needed, instead of shrinking its Selects into icon-only
+     triggers or letting the group overflow its own flex item. */
   flex: 0 0 auto;
   flex-direction: row;
   align-items: center;
   gap: var(--page-toolbar-gap);
   flex-wrap: nowrap;
-  min-width: max-content;
+  min-width: 0;
   overflow: visible;
 }
 
 .page-toolbar__right > .toolbar-primary-action,
 .page-toolbar__right > .toolbar-secondary-actions {
-  flex: 0 0 auto;
-  width: max-content;
+  flex: 0 1 auto;
+  width: auto;
   max-width: 100%;
   overflow: visible;
 }
 
 .page-toolbar__actions {
   display: flex;
-  flex: 0 0 auto;
+  flex: 0 1 auto;
   flex-direction: row;
   flex-wrap: nowrap;
-  width: max-content;
+  width: auto;
   max-width: 100%;
   min-width: 0;
   align-items: center;
@@ -233,15 +234,8 @@ header.page-header.page-header--compact {
   flex-wrap: nowrap;
   align-items: center;
   gap: var(--page-toolbar-gap);
-  min-width: max-content;
+  min-width: 0;
   max-width: 100%;
-}
-
-/* Export is a secondary action; allow its native button width to determine the
-   action rail instead of reserving a second fixed control track. */
-.page-toolbar__actions:has(.toolbar-export-action) {
-  width: max-content;
-  max-width: none;
 }
 
 .page-toolbar .el-button + .el-button,
@@ -260,15 +254,14 @@ header.page-header.page-header--compact {
   min-width: 0;
 }
 
-/* A filter control owns its business width at the toolbar boundary.  Keep
-   Element Plus in charge of the trigger's visuals while preventing the
-   flex rail from reducing a Select to its arrow. */
+/* Keep a Select readable without repainting its trigger. It may shrink to the
+   compact minimum, but never down to an arrow-only content box. */
 .toolbar-filters > .el-select,
 .page-toolbar__filter-group > .el-select {
-  flex: 0 0 160px;
-  width: min(160px, 100%);
+  flex: 0 1 160px;
+  width: 160px;
   max-width: 100%;
-  min-width: min(128px, 100%);
+  min-width: 128px;
 }
 
 /* Date inputs need a wider readable basis than Selects.  They are uncommon in
@@ -276,18 +269,18 @@ header.page-header.page-header--compact {
    there instead of moving it into a More Filters panel. */
 .toolbar-filters > .el-date-editor,
 .page-toolbar__filter-group > .el-date-editor {
-  flex: 0 0 220px;
-  width: min(220px, 100%);
+  flex: 0 1 220px;
+  width: 220px;
   max-width: 100%;
-  min-width: min(180px, 100%);
+  min-width: 180px;
 }
 
 .toolbar-filters > .el-input,
 .page-toolbar__filter-group > .el-input {
-  flex: 0 0 220px;
-  width: min(220px, 100%);
+  flex: 0 1 220px;
+  width: 220px;
   max-width: 100%;
-  min-width: min(160px, 100%);
+  min-width: 160px;
 }
 
 .toolbar-search > .itam-search-field {

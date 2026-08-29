@@ -1,8 +1,9 @@
 <script setup lang="ts">
 import { computed } from "vue";
-import { MoreFilled } from "@element-plus/icons-vue";
+import { CircleCheck, CircleClose, Delete, Edit, FolderAdd, Grid } from "@element-plus/icons-vue";
 import ResourceState from "./ResourceState.vue";
 import StatusTag from "./StatusTag.vue";
+import TableIconButton from "./TableIconButton.vue";
 import type { DataCenter, ServerRoom } from "../types";
 import type { RackSharedContext } from "../types/page-context";
 
@@ -63,7 +64,7 @@ const locationRows = computed<LocationTreeRow[]>(() => {
   const matchesText = (values: Array<string | undefined>) =>
     !search || values.some((value) => String(value || "").toLocaleLowerCase().includes(search));
   const matchesStatus = (isActive: boolean) =>
-    locationStatus.value === "all" || (locationStatus.value === "active" ? isActive : !isActive);
+    !locationStatus.value || (locationStatus.value === "active" ? isActive : !isActive);
 
   return dataCenters.value.flatMap((center) => {
     if (locationDataCenter.value && String(center.id) !== locationDataCenter.value) return [];
@@ -75,7 +76,7 @@ const locationRows = computed<LocationTreeRow[]>(() => {
 
     if (locationType.value === "data-center" && (!centerMatchesText || !centerMatchesStatus)) return [];
     if (locationType.value === "room" && !visibleRooms.length) return [];
-    if (locationType.value === "all" && !((centerMatchesText && centerMatchesStatus) || matchingRooms.length)) return [];
+    if (!locationType.value && !((centerMatchesText && centerMatchesStatus) || matchingRooms.length)) return [];
 
     const children = locationType.value === "data-center"
       ? undefined
@@ -110,12 +111,12 @@ const locationRows = computed<LocationTreeRow[]>(() => {
   });
 });
 
-const hasLocationFilters = computed(() => Boolean(
-  locationSearch.value.trim() ||
-  locationType.value !== "all" ||
-  locationStatus.value !== "all" ||
-  locationDataCenter.value,
-));
+  const hasLocationFilters = computed(() => Boolean(
+    locationSearch.value.trim() ||
+    locationType.value ||
+    locationStatus.value ||
+    locationDataCenter.value,
+  ));
 const emptyDescription = computed(() =>
   hasLocationFilters.value ? "没有匹配条件的位置" : "暂无数据中心或机房",
 );
@@ -224,32 +225,59 @@ function handleRoomCommand(row: LocationTreeRow, command: string) {
             <div class="ep-table-actions" @click.stop>
               <template v-if="row.nodeType === 'data-center'">
                 <template v-if="can('racks.manage')">
-                  <el-button link type="primary" :disabled="dataCenterActionId === row.id" @click="context.openDataCenterModal(findDataCenter(row) || undefined)">编辑</el-button>
-                  <el-dropdown trigger="click" :disabled="dataCenterActionId === row.id" @command="handleDataCenterCommand(row, $event)">
-                    <el-button link :disabled="dataCenterActionId === row.id">更多<el-icon><MoreFilled /></el-icon></el-button>
-                    <template #dropdown>
-                      <el-dropdown-menu>
-                        <el-dropdown-item command="new-room">新建机房</el-dropdown-item>
-                        <el-dropdown-item :command="row.is_active ? 'disable' : 'enable'">{{ row.is_active ? "停用" : "启用" }}</el-dropdown-item>
-                        <el-dropdown-item divided command="delete" :disabled="dataCenterHasAssociations(row)" :title="dataCenterHasAssociations(row) ? '该数据中心仍有关联机房或资产' : undefined">删除</el-dropdown-item>
-                      </el-dropdown-menu>
-                    </template>
-                  </el-dropdown>
+                  <TableIconButton
+                    :icon="Edit"
+                    label="编辑"
+                    type="primary"
+                    :disabled="dataCenterActionId === row.id"
+                    @click="context.openDataCenterModal(findDataCenter(row) || undefined)"
+                  />
+                  <TableIconButton
+                    :icon="FolderAdd"
+                    label="新建机房"
+                    :disabled="dataCenterActionId === row.id"
+                    @click="handleDataCenterCommand(row, 'new-room')"
+                  />
+                  <TableIconButton
+                    :icon="row.is_active ? CircleClose : CircleCheck"
+                    :label="row.is_active ? '停用' : '启用'"
+                    :disabled="dataCenterActionId === row.id"
+                    @click="handleDataCenterCommand(row, row.is_active ? 'disable' : 'enable')"
+                  />
+                  <TableIconButton
+                    :icon="Delete"
+                    label="删除"
+                    type="danger"
+                    :disabled="dataCenterActionId === row.id || dataCenterHasAssociations(row)"
+                    @click="handleDataCenterCommand(row, 'delete')"
+                  />
                 </template>
                 <span v-else>—</span>
               </template>
               <template v-else>
-                <el-button link type="primary" @click="handleRoomCommand(row, 'view-racks')">查看机柜</el-button>
-                <el-dropdown v-if="can('racks.manage')" trigger="click" :disabled="updatingRoomId === row.id" @command="handleRoomCommand(row, $event)">
-                  <el-button link :disabled="updatingRoomId === row.id">更多<el-icon><MoreFilled /></el-icon></el-button>
-                  <template #dropdown>
-                    <el-dropdown-menu>
-                      <el-dropdown-item command="edit">编辑</el-dropdown-item>
-                      <el-dropdown-item :command="row.is_active ? 'disable' : 'enable'">{{ row.is_active ? "停用" : "启用" }}</el-dropdown-item>
-                      <el-dropdown-item divided command="delete" :disabled="roomHasAssociations(row)" :title="roomHasAssociations(row) ? '该机房仍有关联机柜或资产' : undefined">删除</el-dropdown-item>
-                    </el-dropdown-menu>
-                  </template>
-                </el-dropdown>
+                <TableIconButton :icon="Grid" label="查看机柜" type="primary" @click="handleRoomCommand(row, 'view-racks')" />
+                <template v-if="can('racks.manage')">
+                  <TableIconButton
+                    :icon="Edit"
+                    label="编辑"
+                    type="primary"
+                    :disabled="updatingRoomId === row.id"
+                    @click="handleRoomCommand(row, 'edit')"
+                  />
+                  <TableIconButton
+                    :icon="row.is_active ? CircleClose : CircleCheck"
+                    :label="row.is_active ? '停用' : '启用'"
+                    :disabled="updatingRoomId === row.id"
+                    @click="handleRoomCommand(row, row.is_active ? 'disable' : 'enable')"
+                  />
+                  <TableIconButton
+                    :icon="Delete"
+                    label="删除"
+                    type="danger"
+                    :disabled="updatingRoomId === row.id || roomHasAssociations(row)"
+                    @click="handleRoomCommand(row, 'delete')"
+                  />
+                </template>
               </template>
             </div>
           </template>

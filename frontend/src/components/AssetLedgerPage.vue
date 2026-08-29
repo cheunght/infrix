@@ -1,7 +1,7 @@
 <!-- UX Reference: standard data-list page. Reuse interaction patterns, not asset-specific fields. -->
 <script setup lang="ts">
-import { computed, ref } from "vue";
-import { ArrowDown, ArrowUp, Check, Download, MoreFilled, Operation, Upload } from "@element-plus/icons-vue";
+import { computed, ref, watch } from "vue";
+import { ArrowDown, ArrowUp, Check, CopyDocument, Delete, Download, Edit, Operation, Upload } from "@element-plus/icons-vue";
 import type { Asset } from "../types";
 import PagedTable from "./PagedTable.vue";
 import SearchField from "./SearchField.vue";
@@ -11,10 +11,13 @@ import PageToolbar from "./page/PageToolbar.vue";
 import StatusTag from "./StatusTag.vue";
 import { statusTone } from "../status";
 import ResourceState from "./ResourceState.vue";
+import ActionDialogShell from "./ActionDialogShell.vue";
+import TableIconButton from "./TableIconButton.vue";
 import DynamicFieldDisplay from "./fields/DynamicFieldDisplay.vue";
 import type { AssetLedgerContext } from "../types/page-context";
 import { ASSET_STATUS_OPTIONS, isAssetStatus } from "../business-enums";
 import {
+  ASSET_SORT_FIELD_MAP,
   MAX_DYNAMIC_ASSET_COLUMNS,
 } from "../composables/useAssets";
 
@@ -44,13 +47,17 @@ const {
   can,
   openNewAssetModal,
   selectedAssetIds,
+  assetBatchDeleteSaving,
+  assetBatchDeleteResult,
+  showAssetBatchDeleteResult,
+  closeAssetBatchDeleteResult,
   deleteSelectedAssets,
   exportAssets,
   registerFaultFromSelection,
-  downloadImportTemplate,
   openImportDialog,
   assets,
   handleElementAssetSelection,
+  clearAssetSelection: clearSelectedAssets,
   openAssetDetail,
   assetValue,
   openAssetClone,
@@ -59,9 +66,26 @@ const {
   assetPage,
   assetPageSize,
   assetCount,
+  assetSortField,
+  assetSortOrder,
+  changeAssetSort,
   changeAssetPage,
   changeAssetPageSize,
 } = context;
+
+const assetTableRef = ref<{ clearSelection: () => void } | null>(null);
+
+const assetTableDefaultSort = computed(() => assetSortField.value && assetSortOrder.value
+  ? { prop: assetSortField.value, order: assetSortOrder.value }
+  : { prop: "", order: "" });
+
+const assetBatchDeleteFailures = computed(() =>
+  (assetBatchDeleteResult.value?.results || []).filter((result) => !result.success),
+);
+
+watch(selectedAssetIds, (ids) => {
+  if (!ids.length) assetTableRef.value?.clearSelection();
+});
 
 const activeTags = computed(() => tags.value.filter((item) => item.is_active));
 const activeDeviceTypes = computed(() => deviceTypes.value.filter((item) => item.is_active));
@@ -89,6 +113,12 @@ const assetColumnMinWidths: Record<string, number> = {
 
 function assetColumnMinWidth(column: { key: string; width?: number }): number {
   return column.width || assetColumnMinWidths[column.key] || 120;
+}
+
+function assetSortFieldForColumn(columnKey: string) {
+  return Object.prototype.hasOwnProperty.call(ASSET_SORT_FIELD_MAP, columnKey)
+    ? columnKey as keyof typeof ASSET_SORT_FIELD_MAP
+    : undefined;
 }
 
 function dynamicAssetValue(asset: Asset, columnKey: string): unknown {
@@ -122,11 +152,6 @@ function assetLocation(asset: Asset) {
 function assetName(asset: Asset): string {
   const name = assetValue(asset, "name").trim();
   return name && name !== "—" ? name : asset.asset_no || "未命名资产";
-}
-
-function handleAssetRowAction(command: string, asset: Asset) {
-  if (command === "clone") return openAssetClone(asset.id);
-  if (command === "delete") return deleteAsset(asset);
 }
 
 type AssetHeaderFilterKey = "device_type" | "status";
@@ -176,10 +201,8 @@ function handleAssetHeaderFilterCommand(columnKey: string, command: string) {
   return searchLedger();
 }
 
-function handleToolbarAction(command: string) {
-  if (command === "template") return downloadImportTemplate();
-  if (command === "fault") return registerFaultFromSelection();
-  if (command === "delete") return deleteSelectedAssets();
+function clearAssetSelection() {
+  clearSelectedAssets();
 }
 </script>
 
@@ -213,44 +236,48 @@ function handleToolbarAction(command: string) {
             </div>
           </template>
           <template #actions>
-            <div class="asset-toolbar-table-actions">
-              <el-popover placement="bottom" :width="300" trigger="click">
-                <template #reference><el-button :icon="Operation">显示列</el-button></template>
-                <div class="ep-column-list">
-                  <div class="asset-column-section">
-                    <div class="asset-column-section__title">基础字段</div>
-                    <el-checkbox v-for="column in assetColumnOptions" :key="column.key" :model-value="visibleAssetColumns.includes(column.key)" :disabled="column.required" :title="column.required ? '核心字段不可隐藏' : undefined" @change="toggleAssetColumn(column.key)">{{ column.label }}<span v-if="column.required" class="asset-ledger-column-fixed">（固定）</span></el-checkbox>
-                  </div>
-                  <div class="asset-column-section">
-                    <div class="asset-column-section__title">扩展字段</div>
-                    <div v-if="assetListCustomSchemaLoading" class="asset-column-section__state">正在加载扩展列配置…</div>
-                    <div v-else-if="assetListCustomSchemaError" class="asset-column-section__state asset-column-section__state--error">
-                      <span>扩展列配置加载失败</span>
-                      <el-button link type="primary" @click="retryAssetListCustomSchema">重试</el-button>
-                    </div>
-                    <template v-else>
-                      <el-checkbox v-for="column in assetDynamicColumnOptions" :key="column.key" :model-value="visibleAssetColumns.includes(column.key)" :disabled="dynamicColumnDisabled(column.key)" :title="[column.scopeLabel, column.field?.help_text].filter(Boolean).join(' · ') || undefined" @change="toggleAssetColumn(column.key)">
-                        <span>{{ column.label }}</span>
-                        <span v-if="column.scopeLabel" class="asset-column-option-scope">（{{ column.scopeLabel }}）</span>
-                      </el-checkbox>
-                      <div v-if="!assetDynamicColumnOptions.length" class="asset-column-section__state">暂无可配置的扩展列</div>
-                    </template>
-                  </div>
-                  <el-button link type="primary" @click="resetAssetColumns">恢复默认</el-button>
-                </div>
-              </el-popover>
-              <el-button v-if="can('assets.manage')" :icon="Upload" @click="openImportDialog">导入资产</el-button>
-              <el-dropdown v-if="can('assets.manage') || can('faults.manage')" trigger="click" @command="handleToolbarAction">
-                <el-button :icon="MoreFilled">更多操作</el-button>
-                <template #dropdown>
-                  <el-dropdown-menu>
-                    <el-dropdown-item v-if="can('assets.manage')" command="template">导入模板</el-dropdown-item>
-                    <el-dropdown-item v-if="can('faults.manage')" command="fault" :disabled="selectedAssetIds.length !== 1">登记故障</el-dropdown-item>
-                    <el-dropdown-item v-if="can('assets.manage')" command="delete" :disabled="!selectedAssetIds.length" divided>批量删除</el-dropdown-item>
-                  </el-dropdown-menu>
-                </template>
-              </el-dropdown>
+            <div v-if="selectedAssetIds.length" class="asset-batch-actions">
+              <el-tag type="info">已选择 {{ selectedAssetIds.length }} 项</el-tag>
+              <el-button v-if="can('faults.manage') && selectedAssetIds.length === 1" @click="registerFaultFromSelection">
+                登记故障
+              </el-button>
+              <el-button
+                v-if="can('assets.manage')"
+                type="danger"
+                :loading="assetBatchDeleteSaving"
+                :disabled="assetBatchDeleteSaving"
+                @click="deleteSelectedAssets"
+              >
+                批量删除
+              </el-button>
+              <el-button link :disabled="assetBatchDeleteSaving" @click="clearAssetSelection">取消选择</el-button>
             </div>
+            <el-popover placement="bottom" :width="300" trigger="click">
+              <template #reference><el-button :icon="Operation">显示列</el-button></template>
+              <div class="ep-column-list">
+                <div class="asset-column-section">
+                  <div class="asset-column-section__title">基础字段</div>
+                  <el-checkbox v-for="column in assetColumnOptions" :key="column.key" :model-value="visibleAssetColumns.includes(column.key)" :disabled="column.required" :title="column.required ? '核心字段不可隐藏' : undefined" @change="toggleAssetColumn(column.key)">{{ column.label }}<span v-if="column.required" class="asset-ledger-column-fixed">（固定）</span></el-checkbox>
+                </div>
+                <div class="asset-column-section">
+                  <div class="asset-column-section__title">扩展字段</div>
+                  <div v-if="assetListCustomSchemaLoading" class="asset-column-section__state">正在加载扩展列配置…</div>
+                  <div v-else-if="assetListCustomSchemaError" class="asset-column-section__state asset-column-section__state--error">
+                    <span>扩展列配置加载失败</span>
+                    <el-button link type="primary" @click="retryAssetListCustomSchema">重试</el-button>
+                  </div>
+                  <template v-else>
+                    <el-checkbox v-for="column in assetDynamicColumnOptions" :key="column.key" :model-value="visibleAssetColumns.includes(column.key)" :disabled="dynamicColumnDisabled(column.key)" :title="[column.scopeLabel, column.field?.help_text].filter(Boolean).join(' · ') || undefined" @change="toggleAssetColumn(column.key)">
+                      <span>{{ column.label }}</span>
+                      <span v-if="column.scopeLabel" class="asset-column-option-scope">（{{ column.scopeLabel }}）</span>
+                    </el-checkbox>
+                    <div v-if="!assetDynamicColumnOptions.length" class="asset-column-section__state">暂无可配置的扩展列</div>
+                  </template>
+                </div>
+                <el-button link type="primary" @click="resetAssetColumns">恢复默认</el-button>
+              </div>
+            </el-popover>
+            <el-button v-if="can('assets.manage')" :icon="Upload" @click="openImportDialog">导入资产</el-button>
             <el-button v-if="can('assets.export')" class="toolbar-secondary-action toolbar-export-action" :icon="Download" :loading="exportingAssets" :disabled="exportingAssets" @click="exportAssets">
               导出数据
             </el-button>
@@ -267,7 +294,16 @@ function handleToolbarAction(command: string) {
             <el-button link type="primary" @click="searchLedger">重新加载</el-button>
           </template>
           <PagedTable v-model:current-page="assetPage" v-model:page-size="assetPageSize" :total="assetCount" @update:current-page="changeAssetPage" @update:page-size="changeAssetPageSize">
-          <el-table class="asset-ledger-table" v-loading="assetListLoading" :data="assets" row-key="id" @selection-change="handleElementAssetSelection">
+          <el-table
+            ref="assetTableRef"
+            class="asset-ledger-table"
+            v-loading="assetListLoading"
+            :data="assets"
+            :default-sort="assetTableDefaultSort"
+            row-key="id"
+            @selection-change="handleElementAssetSelection"
+            @sort-change="changeAssetSort"
+          >
             <template #empty>
               <el-empty :image-size="56" :description="hasAssetFilters ? '没有符合当前筛选条件的资产' : '暂无资产'">
                 <el-button v-if="hasAssetFilters" link type="primary" @click="resetAssetFilters">清除筛选</el-button>
@@ -278,7 +314,9 @@ function handleToolbarAction(command: string) {
               v-for="column in visibleAssetColumnOptions"
               :key="column.key"
               :label="column.label"
+              :prop="column.key"
               :min-width="assetColumnMinWidth(column)"
+              :sortable="assetSortFieldForColumn(column.key) ? 'custom' : false"
             >
               <template #header>
                 <el-dropdown
@@ -289,19 +327,18 @@ function handleToolbarAction(command: string) {
                   @command="(command: string) => handleAssetHeaderFilterCommand(column.key, command)"
                   @visible-change="(visible: boolean) => handleAssetHeaderDropdownVisible(column.key, visible)"
                 >
-                  <el-button
-                    link
+                  <span
                     class="asset-table-header-dropdown-trigger"
-                    native-type="button"
                     :aria-expanded="assetHeaderDropdownOpen === column.key"
                     :aria-label="`按${column.label}筛选`"
+                    @click.stop
                   >
                     <span class="asset-table-header-dropdown-trigger__label">{{ column.label }}</span>
                     <el-icon aria-hidden="true">
                       <ArrowUp v-if="assetHeaderDropdownOpen === column.key" />
                       <ArrowDown v-else />
                     </el-icon>
-                  </el-button>
+                  </span>
                   <template #dropdown>
                     <el-dropdown-menu>
                       <el-dropdown-item v-for="option in assetHeaderFilterOptions(column.key)" :key="option.value" :command="option.value">
@@ -332,17 +369,10 @@ function handleToolbarAction(command: string) {
             </el-table-column>
             <el-table-column v-if="can('assets.manage')" label="操作" fixed="right" width="132">
               <template #default="{ row }">
-                <div class="asset-row-actions">
-                  <el-button link type="primary" @click.stop="openAssetEditor(row.id)">编辑</el-button>
-                  <el-dropdown trigger="click" @command="(command: string) => handleAssetRowAction(command, row)">
-                    <el-button link :icon="MoreFilled" aria-label="更多操作" @click.stop />
-                    <template #dropdown>
-                      <el-dropdown-menu>
-                        <el-dropdown-item v-if="can('assets.manage')" command="clone">克隆资产</el-dropdown-item>
-                        <el-dropdown-item v-if="can('assets.manage')" command="delete" divided class="asset-row-danger">删除资产</el-dropdown-item>
-                      </el-dropdown-menu>
-                    </template>
-                  </el-dropdown>
+                <div class="ep-table-actions">
+                  <TableIconButton :icon="Edit" label="编辑" type="primary" @click="openAssetEditor(row.id)" />
+                  <TableIconButton :icon="CopyDocument" label="克隆资产" @click="openAssetClone(row.id)" />
+                  <TableIconButton :icon="Delete" label="删除资产" type="danger" @click="deleteAsset(row)" />
                 </div>
               </template>
             </el-table-column>
@@ -351,4 +381,28 @@ function handleToolbarAction(command: string) {
         </ResourceState>
       </PageContent>
   </PageContainer>
+
+  <ActionDialogShell
+    v-model="showAssetBatchDeleteResult"
+    title="批量删除结果"
+    description="列表已按最新数据刷新，以下记录未能删除。"
+    size="medium"
+    :close-disabled="assetBatchDeleteSaving"
+    @close="closeAssetBatchDeleteResult"
+  >
+    <section v-if="assetBatchDeleteResult" class="action-dialog__result">
+      <el-alert
+        type="warning"
+        :closable="false"
+        :title="`成功删除 ${assetBatchDeleteResult.succeeded} 项，${assetBatchDeleteResult.failed} 项失败`"
+      />
+      <el-table v-if="assetBatchDeleteFailures.length" :data="assetBatchDeleteFailures" table-layout="fixed" class="batch-result-table">
+        <el-table-column prop="asset_no" label="资产编号" min-width="180" />
+        <el-table-column prop="reason" label="失败原因" min-width="300" show-overflow-tooltip />
+      </el-table>
+    </section>
+    <template #footer>
+      <el-button :disabled="assetBatchDeleteSaving" @click="closeAssetBatchDeleteResult">关闭</el-button>
+    </template>
+  </ActionDialogShell>
 </template>

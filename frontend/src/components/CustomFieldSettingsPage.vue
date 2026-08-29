@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed, proxyRefs, ref } from "vue";
+import { CircleCheck, CircleClose, Delete, Edit } from "@element-plus/icons-vue";
 import type { FormInstance, FormRules } from "element-plus";
 import type { CustomFieldContext } from "../types/page-context";
 import type { CustomField, CustomFieldValidationConfig } from "../types";
@@ -10,6 +11,7 @@ import StatusTag from "./StatusTag.vue";
 import PagedTable from "./PagedTable.vue";
 import FieldHelp from "./FieldHelp.vue";
 import FormDialogShell from "./FormDialogShell.vue";
+import TableIconButton from "./TableIconButton.vue";
 
 const props = defineProps<{ context: CustomFieldContext }>();
 const c = proxyRefs(props.context);
@@ -247,8 +249,8 @@ async function submitCustomFieldOption() {
             <el-select v-model="c.customFieldDeviceType" placeholder="全部设备类型" clearable :disabled="c.customFieldListLoading" @change="c.refreshCustomFieldList()">
               <el-option v-for="item in c.deviceTypes" :key="item.id" :label="item.name" :value="String(item.id)" />
             </el-select>
-            <el-select v-model="c.customFieldActive" placeholder="状态" :disabled="c.customFieldListLoading" @change="c.refreshCustomFieldList()">
-              <el-option label="全部状态" value="all" /><el-option label="启用" value="true" /><el-option label="停用" value="false" />
+            <el-select v-model="c.customFieldActive" placeholder="全部状态" clearable :disabled="c.customFieldListLoading" @change="c.refreshCustomFieldList()">
+              <el-option label="启用" value="true" /><el-option label="停用" value="false" />
             </el-select>
           </div>
         </template>
@@ -274,8 +276,8 @@ async function submitCustomFieldOption() {
       >
         <el-table v-loading="c.customFieldListLoading" :data="c.customFieldTableItems">
         <template #empty>
-          <el-empty :image-size="56" :description="c.customFieldDeviceType || (c.customFieldActive && c.customFieldActive !== 'all') ? '没有符合当前筛选条件的自定义字段' : '暂无自定义字段'">
-            <el-button v-if="c.customFieldDeviceType || (c.customFieldActive && c.customFieldActive !== 'all')" link type="primary" @click="c.customFieldDeviceType = ''; c.customFieldActive = 'all'; c.refreshCustomFieldList()">清除筛选</el-button>
+          <el-empty :image-size="56" :description="c.customFieldDeviceType || c.customFieldActive ? '没有符合当前筛选条件的自定义字段' : '暂无自定义字段'">
+            <el-button v-if="c.customFieldDeviceType || c.customFieldActive" link type="primary" @click="c.customFieldDeviceType = ''; c.customFieldActive = ''; c.refreshCustomFieldList()">清除筛选</el-button>
           </el-empty>
         </template>
         <el-table-column prop="name" label="字段名称" min-width="150" />
@@ -287,7 +289,32 @@ async function submitCustomFieldOption() {
         <el-table-column label="选项" min-width="180"><template #default="{ row }"><template v-if="['select','multiselect'].includes(row.field_type)"><el-tag v-for="option in (row.options || [])" :key="option.id" size="small" class="field-option-tag">{{ option.label }}</el-tag><el-button link type="primary" :disabled="!c.can('custom_fields.manage') || c.customFieldOptionLoading" @click="c.openCustomFieldOptionModal(row)">管理选项</el-button></template><span v-else>—</span></template></el-table-column>
         <el-table-column prop="assets_count" label="引用资产" width="100" />
         <el-table-column label="状态" width="80"><template #default="{ row }"><StatusTag size="small" :tone="row.is_active ? 'success' : 'info'" :label="row.is_active ? '启用' : '停用'" /></template></el-table-column>
-        <el-table-column label="操作" width="220" fixed="right"><template #default="{ row }"><div class="ep-table-actions"><el-button link type="primary" :disabled="!c.can('custom_fields.manage') || c.customFieldActionId === row.id || c.customFieldSaving" @click="openEditCustomField(row)">编辑</el-button><el-button link :disabled="!c.can('custom_fields.manage') || c.customFieldActionId === row.id" @click="c.toggleCustomField(row)">{{ row.is_active ? '停用' : '启用' }}</el-button><el-button link type="danger" :disabled="!c.can('custom_fields.manage') || c.customFieldActionId === row.id || (row.assets_count || 0) > 0" @click="c.deleteCustomField(row)">删除</el-button></div></template></el-table-column>
+        <el-table-column label="操作" width="220" fixed="right">
+          <template #default="{ row }">
+            <div class="ep-table-actions">
+              <TableIconButton
+                :icon="Edit"
+                label="编辑"
+                type="primary"
+                :disabled="!c.can('custom_fields.manage') || c.customFieldActionId === row.id || c.customFieldSaving"
+                @click="openEditCustomField(row)"
+              />
+              <TableIconButton
+                :icon="row.is_active ? CircleClose : CircleCheck"
+                :label="row.is_active ? '停用' : '启用'"
+                :disabled="!c.can('custom_fields.manage') || c.customFieldActionId === row.id"
+                @click="c.toggleCustomField(row)"
+              />
+              <TableIconButton
+                :icon="Delete"
+                label="删除"
+                type="danger"
+                :disabled="!c.can('custom_fields.manage') || c.customFieldActionId === row.id || (row.assets_count || 0) > 0"
+                @click="c.deleteCustomField(row)"
+              />
+            </div>
+          </template>
+        </el-table-column>
         </el-table>
       </PagedTable>
     </PageContent>
@@ -403,7 +430,27 @@ async function submitCustomFieldOption() {
       </el-alert>
       <el-table v-else v-loading="c.customFieldOptionLoading" :data="c.editingCustomField?.options || []" size="small">
         <template #empty><el-empty :image-size="48" description="暂无选项" /></template>
-        <el-table-column prop="value" label="稳定值" /><el-table-column prop="label" label="显示名称" /><el-table-column prop="sort_order" label="顺序" width="70" /><el-table-column label="状态" width="80"><template #default="{ row }"><StatusTag size="small" :tone="row.is_active ? 'success' : 'info'" :label="row.is_active ? '启用' : '停用'" /></template></el-table-column><el-table-column label="操作" width="160"><template #default="{ row }"><el-button link type="primary" :disabled="c.customFieldOptionActionId === row.id || c.customFieldOptionSaving" @click="c.openCustomFieldOptionModal(c.editingCustomField, row)">编辑</el-button><el-button link type="danger" :disabled="c.customFieldOptionActionId === row.id || c.customFieldOptionSaving" @click="c.deleteCustomFieldOption(row)">删除</el-button></template></el-table-column>
+        <el-table-column prop="value" label="稳定值" /><el-table-column prop="label" label="显示名称" /><el-table-column prop="sort_order" label="顺序" width="70" /><el-table-column label="状态" width="80"><template #default="{ row }"><StatusTag size="small" :tone="row.is_active ? 'success' : 'info'" :label="row.is_active ? '启用' : '停用'" /></template></el-table-column>
+        <el-table-column label="操作" width="160">
+          <template #default="{ row }">
+            <div class="ep-table-actions">
+              <TableIconButton
+                :icon="Edit"
+                label="编辑"
+                type="primary"
+                :disabled="c.customFieldOptionActionId === row.id || c.customFieldOptionSaving"
+                @click="c.openCustomFieldOptionModal(c.editingCustomField, row)"
+              />
+              <TableIconButton
+                :icon="Delete"
+                label="删除"
+                type="danger"
+                :disabled="c.customFieldOptionActionId === row.id || c.customFieldOptionSaving"
+                @click="c.deleteCustomFieldOption(row)"
+              />
+            </div>
+          </template>
+        </el-table-column>
       </el-table>
     </section>
     <section class="form-dialog__section custom-field-option-form-section">

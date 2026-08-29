@@ -362,6 +362,41 @@ class Asset(Timestamped):
         return f"{self.asset_no} {self.name}"
 
 
+DEFAULT_ASSET_STATUS_CHOICES = tuple(
+    choice for choice in Asset.STATUS if choice[0] != "repair"
+)
+
+
+class SystemSetting(Timestamped):
+    """The singleton row for runtime-adjustable application defaults.
+
+    This is deliberately a typed model rather than an arbitrary key/value
+    store.  Deployment credentials and infrastructure configuration remain in
+    Django settings/environment variables and never cross this boundary.
+    """
+
+    SINGLETON_ID = 1
+    PAGE_SIZE_CHOICES = ((20, "20"), (50, "50"), (100, "100"))
+
+    id = models.PositiveSmallIntegerField(
+        primary_key=True,
+        default=SINGLETON_ID,
+        editable=False,
+    )
+    default_page_size = models.PositiveSmallIntegerField(
+        choices=PAGE_SIZE_CHOICES,
+        default=50,
+    )
+    default_asset_status = models.CharField(
+        max_length=20,
+        choices=DEFAULT_ASSET_STATUS_CHOICES,
+        default="in_stock",
+    )
+
+    def __str__(self):
+        return "系统设置"
+
+
 class AssetCustomValue(Timestamped):
     asset = models.ForeignKey(Asset, on_delete=models.CASCADE, related_name="custom_values")
     field = models.ForeignKey(CustomField, on_delete=models.PROTECT, related_name="asset_values")

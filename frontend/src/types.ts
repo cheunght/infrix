@@ -25,6 +25,7 @@ export type {
 export type Page =
   | "dashboard"
   | "ledger"
+  | "asset-config"
   | "racks"
   | "repairs"
   | "licenses"
@@ -32,6 +33,24 @@ export type Page =
   | "inventory"
   | "settings"
   | "placeholder";
+
+export type SystemSettingKey = "default_page_size" | "default_asset_status";
+export type SystemSettingOption = { value: string | number; label: string };
+export type SystemSettingDefinition = {
+  key: SystemSettingKey;
+  label: string;
+  type: "integer" | "enum";
+  default: string | number;
+  options: SystemSettingOption[];
+  help_text: string;
+};
+export type SystemSettingsForm = {
+  default_page_size: number;
+  default_asset_status: AssetStatus;
+};
+export type SystemSettings = SystemSettingsForm & {
+  definitions: SystemSettingDefinition[];
+};
 
 export type DictionaryItem = {
   id: number;
@@ -105,6 +124,8 @@ export type AssetCustomFilter = {
   operator: CustomFieldFilterOperator;
   value: string;
 };
+export type AssetSortField = "asset_no" | "name" | "manufacturer_model" | "serial_number";
+export type AssetSortOrder = "ascending" | "descending" | null;
 export type CustomFieldForm = {
   device_type: string;
   key: string;
@@ -339,6 +360,32 @@ export type AssetDetail = Asset & {
   custom_fields: AssetCustomFieldValue[];
   custom_values: Record<string, unknown>;
   depreciation: DepreciationInfo;
+};
+export type AssetBatchDeleteResult = {
+  id: number;
+  asset_no: string;
+  success: boolean;
+  code: "" | "NOT_FOUND" | "PROTECTED" | "CONFLICT" | string;
+  reason: string;
+};
+export type AssetBatchDeleteResponse = {
+  requested: number;
+  succeeded: number;
+  failed: number;
+  results: AssetBatchDeleteResult[];
+};
+export type UserBatchStatusResult = {
+  id: number;
+  username: string;
+  success: boolean;
+  code: "" | "NOT_FOUND" | "PROTECTED" | "INVALID_STATE" | "CONFLICT" | string;
+  reason: string;
+};
+export type UserBatchStatusResponse = {
+  requested: number;
+  succeeded: number;
+  failed: number;
+  results: UserBatchStatusResult[];
 };
 export type InventoryBulkResolutionResult = {
   item_id: number;

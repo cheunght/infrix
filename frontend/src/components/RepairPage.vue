@@ -8,6 +8,7 @@ import PageContent from "./page/PageContent.vue";
 import PageToolbar from "./page/PageToolbar.vue";
 import StatusTag from "./StatusTag.vue";
 import ResourceState from "./ResourceState.vue";
+import TableIconButton from "./TableIconButton.vue";
 import { statusTone } from "../status";
 import type { FaultEvent } from "../types";
 import type { RepairContext } from "../types/page-context";
@@ -165,8 +166,13 @@ function repairActionIcon(fault: FaultEvent) {
             </el-table-column>
             <el-table-column v-if="can('faults.manage')" label="操作" fixed="right" width="132">
               <template #default="{ row }">
-                <div class="repair-row-actions">
-                  <el-button link type="primary" :icon="repairActionIcon(row)" @click="openRepairModal(row)">{{ repairActionLabel(row) }}</el-button>
+                <div class="ep-table-actions">
+                  <TableIconButton
+                    :icon="repairActionIcon(row)"
+                    :label="repairActionLabel(row)"
+                    type="primary"
+                    @click="openRepairModal(row)"
+                  />
                 </div>
               </template>
             </el-table-column>

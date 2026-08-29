@@ -1,8 +1,10 @@
 from django.conf import settings
 from django.db.models import BooleanField, Count, Exists, F, OuterRef, Q, Prefetch, Sum
 from django.db.models.functions import Coalesce
-from django.db import connection, transaction
+from django.db import DatabaseError, connection, transaction
 from django.db.models.expressions import RawSQL
+from django.db.models.deletion import ProtectedError
+from uuid import uuid4
 import re
 from decimal import Decimal, InvalidOperation
 from django.contrib.auth import authenticate, login, logout, update_session_auth_hash
@@ -28,7 +30,7 @@ from openpyxl import Workbook
 from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
 from openpyxl.utils import get_column_letter
 from urllib.parse import quote
-from .models import AuthThrottleState, AuditLog, Asset, AssetCustomValue, AssetNetworkAddress, AssetTag, CustomField, CustomFieldOption, DataCenter, DeviceType, FaultEvent, InventoryItem, InventoryTask, MaintenanceContract, Manufacturer, ProcurementRecord, Rack, RackUnitAllocation, RepairRecord, ServerRoom, SoftwareLicense, SparePart, SparePartCategory, SpareStock, SpareStockTransaction, Tag, UserSecurityProfile
+from .models import AuthThrottleState, AuditLog, Asset, AssetCustomValue, AssetNetworkAddress, AssetTag, CustomField, CustomFieldOption, DataCenter, DeviceType, FaultEvent, InventoryItem, InventoryTask, MaintenanceContract, Manufacturer, ProcurementRecord, Rack, RackUnitAllocation, RepairRecord, ServerRoom, SoftwareLicense, SparePart, SparePartCategory, SpareStock, SpareStockTransaction, SystemSetting, Tag, UserSecurityProfile
 from .enum_contracts import (
     ASSET_STATUS_LABELS,
     ASSET_STATUS_VALUES,
@@ -42,7 +44,7 @@ from .enum_contracts import (
     STOCK_OPERATION_TYPE_LABELS,
     STOCK_OPERATION_TYPE_VALUES,
 )
-from .serializers import AdminPasswordResetSerializer, AuditLogSerializer, AssetDetailSerializer, AssetListSerializer, AssetSerializer, AssetWriteSerializer, CurrentUserProfileSerializer, CustomFieldOptionSerializer, CustomFieldRuntimeSchemaSerializer, CustomFieldSerializer, DataCenterSerializer, DeviceTypeSerializer, FaultEventSerializer, GroupSerializer, InventoryBulkNormalResponseSerializer, InventoryBulkNormalSerializer, InventoryBulkResolutionResponseSerializer, InventoryBulkResolutionSerializer, InventoryInspectorSerializer, InventoryItemSerializer, InventoryResolutionSerializer, InventoryScopePreviewQuerySerializer, InventoryScopePreviewSerializer, InventoryTaskSerializer, ManufacturerSerializer, RackSerializer, RepairRecordSerializer, ServerRoomSerializer, SoftwareLicenseSerializer, SparePartCategorySerializer, SparePartDetailSerializer, SparePartSerializer, SpareStockSerializer, SpareStockTransactionSerializer, TagSerializer, UserSerializer, _default_references_option
+from .serializers import AdminPasswordResetSerializer, AssetBatchDeleteResponseSerializer, AssetBatchDeleteSerializer, AuditLogSerializer, AssetDetailSerializer, AssetListSerializer, AssetSerializer, AssetWriteSerializer, CurrentUserProfileSerializer, CustomFieldOptionSerializer, CustomFieldRuntimeSchemaSerializer, CustomFieldSerializer, DataCenterSerializer, DeviceTypeSerializer, FaultEventSerializer, GroupSerializer, InventoryBulkNormalResponseSerializer, InventoryBulkNormalSerializer, InventoryBulkResolutionResponseSerializer, InventoryBulkResolutionSerializer, InventoryInspectorSerializer, InventoryItemSerializer, InventoryResolutionSerializer, InventoryScopePreviewQuerySerializer, InventoryScopePreviewSerializer, InventoryTaskSerializer, ManufacturerSerializer, RackSerializer, RepairRecordSerializer, ServerRoomSerializer, SoftwareLicenseSerializer, SparePartCategorySerializer, SparePartDetailSerializer, SparePartSerializer, SpareStockSerializer, SpareStockTransactionSerializer, SystemResetSerializer, SystemSettingsSerializer, TagSerializer, UserBatchStatusResponseSerializer, UserBatchStatusSerializer, UserSerializer, _default_references_option
 from .services import (
     apply_spare_stock_transaction,
     confirm_inventory_item_normal,
@@ -59,7 +61,7 @@ from .depreciation import calculate_asset_depreciation
 from .license_status import LICENSE_STATUS_KEYS, LICENSE_STATUS_LABELS, filter_licenses_by_status, license_status_counts, license_status_value
 from .audit import asset_audit_snapshot, asset_custom_value_changes, model_snapshot, software_license_audit_snapshot, spare_part_audit_snapshot, write_audit_log
 from .imports import AssetImportService, ImportFileError, ImportValidationError, build_import_template
-from .permissions import BusinessRolePermission, CanExportAssets, CanExportFaults, CanExportInventory, CanExportLicenses, CanExportRacks, CanExportSpares, CanImportAssets, CanManageInventory, CanViewAssetCustomFieldSchema, CanViewAssetTagsRuntime, CanViewAuditLog, CanViewDashboard, CanViewInventory, CanViewLicenses, CanViewManufacturerRuntime, CanViewSparePartCategoryRuntime, IsSystemAdministrator
+from .permissions import BusinessRolePermission, CanExportAssets, CanExportFaults, CanExportInventory, CanExportLicenses, CanExportRacks, CanExportSpares, CanImportAssets, CanManageInventory, CanManageSystemSettings, CanResetSystem, CanViewAssetCustomFieldSchema, CanViewAssetTagsRuntime, CanViewAuditLog, CanViewDashboard, CanViewInventory, CanViewLicenses, CanViewManufacturerRuntime, CanViewSparePartCategoryRuntime, IsSystemAdministrator
 from .roles import ROLE_DEFINITIONS, ROLE_NAME_TO_CODE, user_capabilities, user_has_capability, user_role_code
 from .reporting import (
     DashboardScopeError,
@@ -68,6 +70,8 @@ from .reporting import (
     rack_effective_used_u,
     resolve_dashboard_scope,
 )
+from .system_reset import reset_system
+from .system_settings import get_system_settings, system_settings_snapshot
 
 
 EXPORT_MAX_ROWS = 10_000
@@ -260,15 +264,53 @@ def _custom_filter_multiselect_membership(value):
     return Q(json_value__contains=[value])
 
 
+def _batch_error_message(error, fallback):
+    detail = getattr(error, "detail", error)
+
+    def flatten(value):
+        if isinstance(value, dict):
+            return "；".join(flatten(child) for child in value.values())
+        if isinstance(value, (list, tuple)):
+            return "；".join(flatten(child) for child in value)
+        return str(value or "")
+
+    return flatten(detail) or fallback
+
+
+def _delete_asset_with_audit(instance, request, *, batch_operation_id=None):
+    before = asset_audit_snapshot(instance.pk)
+    resource_id = instance.pk
+    try:
+        instance.delete()
+    except ProtectedError as exc:
+        protected = list(exc.protected_objects)
+        if any(isinstance(item, InventoryItem) for item in protected):
+            raise DRFValidationError("资产存在历史盘点记录，不能删除") from exc
+        if any(isinstance(item, FaultEvent) for item in protected):
+            raise DRFValidationError("资产存在关联故障记录，不能删除") from exc
+        raise DRFValidationError("资产存在关联数据，不能删除") from exc
+    extra = {"batch_operation_id": str(batch_operation_id)} if batch_operation_id else None
+    write_audit_log(
+        request,
+        action="delete",
+        resource_type="asset",
+        resource_id=resource_id,
+        before=before,
+        extra=extra,
+    )
+
+
 class AssetViewSet(AuditedModelViewSetMixin, viewsets.ModelViewSet):
     max_custom_columns = 12
-    queryset = Asset.objects.select_related("department", "manufacturer", "device_type", "asset_data_center", "rack_allocation__rack__room__data_center").prefetch_related("network_addresses", "procurement_records", "maintenance_contracts", "asset_tags__tag", "custom_values__field__options").order_by("asset_no")
+    queryset = Asset.objects.select_related("department", "manufacturer", "device_type", "asset_data_center", "rack_allocation__rack__room__data_center").prefetch_related("network_addresses", "procurement_records", "maintenance_contracts", "asset_tags__tag", "custom_values__field__options").order_by("asset_no", "id")
     serializer_class = AssetSerializer
     permission_classes = [BusinessRolePermission]
     permission_resource = "assets"
     audit_resource = "asset"
-    filter_backends = [DjangoFilterBackend, SearchFilter]
+    filter_backends = [DjangoFilterBackend, SearchFilter, OrderingFilter]
     filterset_fields = ["status", "department", "manufacturer", "device_type", "model"]
+    ordering_fields = ["asset_no", "name", "manufacturer_model", "serial_number"]
+    ordering = ["asset_no", "id"]
     search_fields = [
         "asset_no", "name", "manufacturer_model", "serial_number", "purpose", "owner_name", "notes", "status",
         "manufacturer__name", "device_type__name", "device_type__color", "model", "department__name", "department__code",
@@ -331,6 +373,17 @@ class AssetViewSet(AuditedModelViewSetMixin, viewsets.ModelViewSet):
                 type=OpenApiTypes.STR,
                 required=False,
                 description="动态字段筛选；operator 按字段类型使用 eq、contains、gte 或 lte。多个条件为 AND。",
+            ),
+            OpenApiParameter(
+                name="ordering",
+                type=OpenApiTypes.STR,
+                required=False,
+                enum=[
+                    "asset_no", "-asset_no", "name", "-name",
+                    "manufacturer_model", "-manufacturer_model",
+                    "serial_number", "-serial_number",
+                ],
+                description="资产列表排序字段；支持资产编号、名称、厂商/型号和序列号，前缀 - 表示降序。",
             ),
         ]
     )
@@ -426,6 +479,17 @@ class AssetViewSet(AuditedModelViewSetMixin, viewsets.ModelViewSet):
         if tag or tag_ids:
             queryset = queryset.distinct()
         return queryset
+
+    def filter_queryset(self, queryset):
+        """Keep list pagination deterministic after applying the ordering whitelist."""
+        queryset = super().filter_queryset(queryset)
+        ordering = list(queryset.query.order_by or ())
+        if not ordering:
+            ordering = list(self.ordering)
+        if not any(str(term).lstrip("-") == "id" for term in ordering):
+            last_term = str(ordering[-1]) if ordering else "asset_no"
+            ordering.append("-id" if last_term.startswith("-") else "id")
+        return queryset.order_by(*ordering)
 
     def _tag_filter_ids(self):
         """Parse the multi-tag filter while retaining the legacy name filter."""
@@ -578,28 +642,72 @@ class AssetViewSet(AuditedModelViewSetMixin, viewsets.ModelViewSet):
 
     @transaction.atomic
     def perform_destroy(self, instance):
-        before = self.audit_snapshot(instance)
-        resource_id = instance.pk
-        try:
-            instance.delete()
-        except Exception as exc:
-            from django.db.models.deletion import ProtectedError
-            from rest_framework.exceptions import ValidationError as DRFValidationError
-            if isinstance(exc, ProtectedError):
-                protected = list(exc.protected_objects)
-                if any(isinstance(item, InventoryItem) for item in protected):
-                    raise DRFValidationError("资产存在历史盘点记录，不能删除") from exc
-                if any(isinstance(item, FaultEvent) for item in protected):
-                    raise DRFValidationError("资产存在关联故障记录，不能删除") from exc
-                raise DRFValidationError("资产存在关联数据，不能删除") from exc
-            raise
-        write_audit_log(
-            self.request,
-            action="delete",
-            resource_type=self.audit_resource,
-            resource_id=resource_id,
-            before=before,
-        )
+        _delete_asset_with_audit(instance, self.request)
+
+    @extend_schema(
+        request=AssetBatchDeleteSerializer,
+        responses=AssetBatchDeleteResponseSerializer,
+        description="批量删除资产；每条记录会重新执行单条删除保护并返回逐条结果。",
+    )
+    @action(detail=False, methods=["post"], url_path="batch-delete")
+    def batch_delete(self, request):
+        request_serializer = AssetBatchDeleteSerializer(data=request.data)
+        request_serializer.is_valid(raise_exception=True)
+        asset_ids = request_serializer.validated_data["ids"]
+        batch_operation_id = uuid4()
+        results = []
+        succeeded = 0
+        for asset_id in asset_ids:
+            asset_no = f"ID {asset_id}"
+            try:
+                with transaction.atomic():
+                    instance = Asset.objects.select_for_update().get(pk=asset_id)
+                    asset_no = instance.asset_no
+                    _delete_asset_with_audit(
+                        instance,
+                        request,
+                        batch_operation_id=batch_operation_id,
+                    )
+            except Asset.DoesNotExist:
+                results.append({
+                    "id": asset_id,
+                    "asset_no": f"ID {asset_id}",
+                    "success": False,
+                    "code": "NOT_FOUND",
+                    "reason": "资产不存在或已被删除",
+                })
+            except DRFValidationError as exc:
+                results.append({
+                    "id": asset_id,
+                    "asset_no": asset_no,
+                    "success": False,
+                    "code": "PROTECTED",
+                    "reason": _batch_error_message(exc, "资产当前不能删除"),
+                })
+            except DatabaseError:
+                results.append({
+                    "id": asset_id,
+                    "asset_no": asset_no,
+                    "success": False,
+                    "code": "CONFLICT",
+                    "reason": "资产当前存在关联数据，未删除",
+                })
+            else:
+                succeeded += 1
+                results.append({
+                    "id": asset_id,
+                    "asset_no": asset_no,
+                    "success": True,
+                    "code": "",
+                    "reason": "",
+                })
+        response_data = {
+            "requested": len(asset_ids),
+            "succeeded": succeeded,
+            "failed": len(asset_ids) - succeeded,
+            "results": results,
+        }
+        return Response(AssetBatchDeleteResponseSerializer(response_data).data)
 
 
 class RackViewSet(AuditedModelViewSetMixin, viewsets.ModelViewSet):
@@ -1315,6 +1423,7 @@ class UserViewSet(viewsets.ModelViewSet):
         self._validate_protected_update(serializer)
         before = _user_audit_snapshot(serializer.instance)
         instance = serializer.save()
+        batch_operation_id = getattr(self, "_batch_operation_id", None)
         write_audit_log(
             self.request,
             action="update",
@@ -1322,7 +1431,84 @@ class UserViewSet(viewsets.ModelViewSet):
             resource_id=instance.pk,
             before=before,
             after=_user_audit_snapshot(instance),
+            extra={"batch_operation_id": batch_operation_id} if batch_operation_id else None,
         )
+
+    @extend_schema(
+        request=UserBatchStatusSerializer,
+        responses=UserBatchStatusResponseSerializer,
+        description="批量启用或停用用户；每条记录会重新执行单条用户保护校验并返回逐条结果。",
+    )
+    @action(detail=False, methods=["post"], url_path="batch-status")
+    def batch_status(self, request):
+        request_serializer = UserBatchStatusSerializer(data=request.data)
+        request_serializer.is_valid(raise_exception=True)
+        user_ids = request_serializer.validated_data["ids"]
+        is_active = request_serializer.validated_data["is_active"]
+        batch_operation_id = str(uuid4())
+        results = []
+        succeeded = 0
+        self._batch_operation_id = batch_operation_id
+        try:
+            for user_id in user_ids:
+                username = f"ID {user_id}"
+                try:
+                    with transaction.atomic():
+                        instance = User.objects.select_for_update().prefetch_related("groups").get(pk=user_id)
+                        username = instance.username
+                        serializer = UserSerializer(
+                            instance=instance,
+                            data={"is_active": is_active},
+                            partial=True,
+                            context={"request": request},
+                        )
+                        serializer.is_valid(raise_exception=True)
+                        self.perform_update(serializer)
+                except User.DoesNotExist:
+                    results.append({
+                        "id": user_id,
+                        "username": username,
+                        "success": False,
+                        "code": "NOT_FOUND",
+                        "reason": "用户不存在或已被删除",
+                    })
+                except DRFValidationError as exc:
+                    detail = getattr(exc, "detail", {})
+                    code = "PROTECTED" if isinstance(detail, dict) and "is_active" in detail else "INVALID_STATE"
+                    results.append({
+                        "id": user_id,
+                        "username": username,
+                        "success": False,
+                        "code": code,
+                        "reason": _batch_error_message(exc, "用户当前不能更新状态"),
+                    })
+                except DatabaseError:
+                    results.append({
+                        "id": user_id,
+                        "username": username,
+                        "success": False,
+                        "code": "CONFLICT",
+                        "reason": "用户状态更新发生并发冲突，请重试",
+                    })
+                else:
+                    succeeded += 1
+                    results.append({
+                        "id": user_id,
+                        "username": username,
+                        "success": True,
+                        "code": "",
+                        "reason": "",
+                    })
+        finally:
+            delattr(self, "_batch_operation_id")
+
+        response_data = {
+            "requested": len(user_ids),
+            "succeeded": succeeded,
+            "failed": len(user_ids) - succeeded,
+            "results": results,
+        }
+        return Response(UserBatchStatusResponseSerializer(response_data).data)
 
     @action(detail=True, methods=["post"], url_path="reset-password")
     @transaction.atomic
@@ -2270,6 +2456,42 @@ def auth_change_password(request):
     )
     update_session_auth_hash(request, request.user)
     return Response({"ok": True, "password_change_required": False})
+
+
+@extend_schema(request=SystemResetSerializer, responses=OpenApiTypes.OBJECT)
+@api_view(["POST"])
+@permission_classes([CanResetSystem])
+def system_reset(request):
+    serializer = SystemResetSerializer(data=request.data)
+    serializer.is_valid(raise_exception=True)
+    return Response(reset_system(actor=request.user, request=request))
+
+
+@extend_schema(request=SystemSettingsSerializer, responses=SystemSettingsSerializer)
+@api_view(["GET", "PUT"])
+@permission_classes([CanManageSystemSettings])
+def system_settings(request):
+    if request.method == "GET":
+        return Response(SystemSettingsSerializer(get_system_settings()).data)
+
+    with transaction.atomic():
+        setting = get_system_settings()
+        setting = SystemSetting.objects.select_for_update().get(pk=setting.pk)
+        before = system_settings_snapshot(setting)
+        serializer = SystemSettingsSerializer(setting, data=request.data, partial=True)
+        serializer.is_valid(raise_exception=True)
+        setting = serializer.save()
+        after = system_settings_snapshot(setting)
+        if before != after:
+            write_audit_log(
+                request,
+                action="update",
+                resource_type="system_settings",
+                resource_id="system",
+                before=before,
+                after=after,
+            )
+    return Response(SystemSettingsSerializer(setting).data)
 
 
 @extend_schema(responses=OpenApiTypes.BINARY)

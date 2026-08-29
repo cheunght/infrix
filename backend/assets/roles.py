@@ -5,6 +5,7 @@ ROLE_SYSTEM_ADMIN = "system_admin"
 ROLE_ASSET_ADMIN = "asset_admin"
 ROLE_REPAIRER = "repairer"
 ROLE_AUDITOR = "auditor"
+SYSTEM_RESET_CAPABILITY = "system.reset"
 
 ROLE_DEFINITIONS = {
     ROLE_SYSTEM_ADMIN: {
@@ -99,7 +100,7 @@ def user_capabilities(user):
             for values in ROLE_CAPABILITIES.values()
             for capability in values
             if capability != "*"
-        } | {"organization.manage", "audit.view"})
+        } | {"organization.manage", "audit.view", SYSTEM_RESET_CAPABILITY})
     return sorted(capabilities)
 
 

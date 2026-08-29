@@ -10,22 +10,30 @@ import type {
   ManagedUser,
   Role,
   SparePartCategory,
+  SystemSettingDefinition,
+  SystemSettings,
+  SystemSettingsForm,
   Tag,
+  UserBatchStatusResponse,
 } from "../types";
 import type { SettingsSection } from "../router";
 import type { CapabilityFn, RequestFn } from "../types/page-context";
+import { applySystemSettings as applySystemSettingsSnapshot } from "../system-settings";
 
 export interface SettingsDeps {
   request: RequestFn;
   beginLoad: () => number;
   isCurrentLoad: (version: number) => boolean;
   confirmAction: (message: string) => Promise<boolean>;
+  reload: () => void;
   can: CapabilityFn;
   isAdmin: Ref<boolean>;
   currentUsername: Ref<string>;
   settingsSection: Ref<SettingsSection>;
   actionMessage: Ref<string>;
 }
+
+export const SYSTEM_RESET_CONFIRMATION = "RESET ITAM";
 
 type CustomFieldOptionForm = {
   value: string;
@@ -58,7 +66,7 @@ export function useSettings(deps: SettingsDeps) {
   const customFieldPage = ref(1);
   const customFieldPageSize = ref(50);
   const customFieldDeviceType = ref("");
-  const customFieldActive = ref("all");
+  const customFieldActive = ref("");
   const customFieldForm = ref<CustomFieldForm>({
     device_type: "",
     key: "",
@@ -104,7 +112,7 @@ export function useSettings(deps: SettingsDeps) {
   const tagPage = ref(1);
   const tagPageSize = ref(50);
   const tagSearch = ref("");
-  const tagActive = ref("all");
+  const tagActive = ref("");
   const tagForm = ref({ name: "", is_active: true });
   const editingTag = ref<Tag | null>(null);
   const showTagModal = ref(false);
@@ -121,6 +129,10 @@ export function useSettings(deps: SettingsDeps) {
   const userPage = ref(1);
   const userPageSize = ref(20);
   const userCount = ref(0);
+  const selectedUserIds = ref<number[]>([]);
+  const userBatchSaving = ref(false);
+  const userBatchResult = ref<UserBatchStatusResponse | null>(null);
+  const showUserBatchResult = ref(false);
   const showUserModal = ref(false);
   const editingUser = ref<ManagedUser | null>(null);
   const showUserResetModal = ref(false);
@@ -228,6 +240,31 @@ export function useSettings(deps: SettingsDeps) {
   const auditListLoading = ref(false);
   const auditListError = ref("");
   const auditRequestId = ref(0);
+  const systemSettings = ref<SystemSettings | null>(null);
+  const systemSettingsForm = ref<SystemSettingsForm>({
+    default_page_size: 50,
+    default_asset_status: "in_stock",
+  });
+  const systemSettingsLoading = ref(false);
+  const systemSettingsSaving = ref(false);
+  const systemSettingsError = ref("");
+  const systemSettingsFormErrors = ref<FormErrors>({});
+  const systemSettingsRequestId = ref(0);
+  const systemSettingsDefinitions = computed<SystemSettingDefinition[]>(
+    () => systemSettings.value?.definitions || [],
+  );
+  const systemSettingsDirty = computed(() => {
+    if (!systemSettings.value) return false;
+    return (
+      systemSettingsForm.value.default_page_size !== systemSettings.value.default_page_size
+      || systemSettingsForm.value.default_asset_status !== systemSettings.value.default_asset_status
+    );
+  });
+  const showSystemResetDialog = ref(false);
+  const systemResetConfirmation = ref("");
+  const systemResetConfirmationToken = ref(SYSTEM_RESET_CONFIRMATION);
+  const systemResetSaving = ref(false);
+  const systemResetError = ref("");
 
   const organizationError = computed(() => userListError.value || roleListError.value);
 
@@ -251,6 +288,34 @@ export function useSettings(deps: SettingsDeps) {
     const size = Math.max(1, pageSize);
     const start = (Math.max(1, page) - 1) * size;
     return items.slice(start, start + size);
+  }
+
+  function syncSystemSettingsForm(value: SystemSettings): void {
+    systemSettingsForm.value = {
+      default_page_size: value.default_page_size,
+      default_asset_status: value.default_asset_status,
+    };
+  }
+
+  async function loadSystemSettings(version = deps.beginLoad()): Promise<boolean> {
+    const requestId = ++systemSettingsRequestId.value;
+    systemSettingsLoading.value = true;
+    systemSettingsError.value = "";
+    try {
+      const result = await deps.request<SystemSettings>("/system/settings/");
+      if (result == null || requestId !== systemSettingsRequestId.value || !deps.isCurrentLoad(version)) return false;
+      systemSettings.value = result;
+      syncSystemSettingsForm(result);
+      applySystemSettingsSnapshot(result);
+      return true;
+    } catch (error) {
+      if (requestId === systemSettingsRequestId.value && deps.isCurrentLoad(version) && !isAbortError(error)) {
+        systemSettingsError.value = errorMessage(error, "系统参数加载失败");
+      }
+      return false;
+    } finally {
+      if (requestId === systemSettingsRequestId.value) systemSettingsLoading.value = false;
+    }
   }
 
   async function loadDictionaries(version = deps.beginLoad()): Promise<boolean> {
@@ -331,7 +396,7 @@ export function useSettings(deps: SettingsDeps) {
 
   async function loadTags(version = deps.beginLoad()): Promise<boolean> {
     const requestId = ++tagRequestId.value;
-    const params = new URLSearchParams({ page_size: "100", is_active: tagActive.value });
+    const params = new URLSearchParams({ page_size: "100", is_active: tagActive.value || "all" });
     if (tagSearch.value.trim()) params.set("search", tagSearch.value.trim());
     tagListLoading.value = true;
     tagListError.value = "";
@@ -352,6 +417,7 @@ export function useSettings(deps: SettingsDeps) {
   }
 
   async function loadOrganization(version = deps.beginLoad()): Promise<boolean> {
+    clearUserSelection();
     const requestId = ++organizationRequestId.value;
     const userRequestIdAtStart = ++userRequestId.value;
     organizationLoading.value = true;
@@ -414,6 +480,7 @@ export function useSettings(deps: SettingsDeps) {
   }
 
   async function loadUsers(version = deps.beginLoad(), allowPageClamp = true): Promise<boolean> {
+    clearUserSelection();
     const organizationRequest = ++organizationRequestId.value;
     const requestId = ++userRequestId.value;
     organizationLoading.value = true;
@@ -437,6 +504,7 @@ export function useSettings(deps: SettingsDeps) {
         return await loadUsers(version, false);
       }
       users.value = pageItems(result);
+      clearUserSelection();
       userCount.value = nextCount;
       return true;
     } catch (error) {
@@ -517,6 +585,14 @@ export function useSettings(deps: SettingsDeps) {
     if (user.is_superuser) return "超级管理员账号受保护，不能停用或删除";
     if (user.username === deps.currentUsername.value) return "不能停用或删除当前登录账号";
     return "";
+  }
+
+  function handleUserSelection(rows: ManagedUser[]) {
+    selectedUserIds.value = rows.map((user) => user.id);
+  }
+
+  function clearUserSelection() {
+    selectedUserIds.value = [];
   }
 
   function canChangeUserRole(user: ManagedUser): boolean {
@@ -627,6 +703,44 @@ export function useSettings(deps: SettingsDeps) {
     } finally {
       userPendingId.value = null;
     }
+  }
+
+  async function batchUpdateUserStatus(isActive: boolean) {
+    const ids = [...selectedUserIds.value];
+    if (!ids.length || userBatchSaving.value) return;
+    const actionLabel = isActive ? "启用" : "停用";
+    if (!(await deps.confirmAction(`确定${actionLabel}选中的 ${ids.length} 个用户吗？`))) return;
+    userBatchSaving.value = true;
+    userBatchResult.value = null;
+    showUserBatchResult.value = false;
+    clearUserSelection();
+    try {
+      const result = await deps.request<UserBatchStatusResponse>("/users/batch-status/", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ ids, is_active: isActive }),
+      });
+      userBatchResult.value = result;
+      const mutationMessage = result.failed
+        ? `批量${actionLabel}完成：${result.succeeded} 项成功，${result.failed} 项失败`
+        : `已成功${actionLabel} ${result.succeeded} 个用户`;
+      deps.actionMessage.value = mutationMessage;
+      const refreshed = await loadUsers();
+      if (!refreshed) {
+        deps.actionMessage.value = `${mutationMessage}；用户列表刷新失败，请重新加载`;
+      }
+      if (result.failed) showUserBatchResult.value = true;
+    } catch (error) {
+      deps.actionMessage.value = errorMessage(error, `批量${actionLabel}失败`);
+    } finally {
+      userBatchSaving.value = false;
+    }
+  }
+
+  function closeUserBatchResult() {
+    if (userBatchSaving.value) return;
+    showUserBatchResult.value = false;
+    userBatchResult.value = null;
   }
 
   async function deleteUser(user: ManagedUser) {
@@ -1124,18 +1238,21 @@ export function useSettings(deps: SettingsDeps) {
   }
 
   async function changeUserPage(page: number) {
+    clearUserSelection();
     userPage.value = Math.max(1, page);
     await loadUsers();
   }
 
   async function changeUserPageSize(size: number) {
     if (![20, 50, 100].includes(size)) return;
+    clearUserSelection();
     userPageSize.value = size;
     userPage.value = 1;
     await loadUsers();
   }
 
   async function searchUsers() {
+    clearUserSelection();
     userPage.value = 1;
     await loadUsers();
   }
@@ -1202,7 +1319,95 @@ export function useSettings(deps: SettingsDeps) {
     await loadAuditLogs();
   }
 
+  function resetSystemSettingsForm(): void {
+    if (systemSettings.value) syncSystemSettingsForm(systemSettings.value);
+    systemSettingsFormErrors.value = {};
+  }
+
+  async function saveSystemSettings(): Promise<void> {
+    if (systemSettingsSaving.value) return;
+    if (!deps.can("settings.manage")) {
+      deps.actionMessage.value = "当前账号没有管理系统设置的权限";
+      return;
+    }
+    systemSettingsSaving.value = true;
+    systemSettingsFormErrors.value = {};
+    try {
+      const result = await deps.request<SystemSettings>("/system/settings/", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          default_page_size: systemSettingsForm.value.default_page_size,
+          default_asset_status: systemSettingsForm.value.default_asset_status,
+        }),
+      });
+      systemSettings.value = result;
+      syncSystemSettingsForm(result);
+      applySystemSettingsSnapshot(result);
+      deps.actionMessage.value = "系统设置已保存";
+    } catch (error) {
+      systemSettingsFormErrors.value = extractFieldErrors(
+        error,
+        ["default_page_size", "default_asset_status"],
+      );
+      deps.actionMessage.value = errorMessage(error, "系统设置保存失败");
+    } finally {
+      systemSettingsSaving.value = false;
+    }
+  }
+
+  function retrySystemSettings(): Promise<boolean> {
+    return loadSystemSettings();
+  }
+
+  function openSystemResetDialog() {
+    if (!deps.can("system.reset")) return;
+    systemResetConfirmation.value = "";
+    systemResetError.value = "";
+    showSystemResetDialog.value = true;
+  }
+
+  function closeSystemResetDialog() {
+    if (systemResetSaving.value) return;
+    showSystemResetDialog.value = false;
+    systemResetConfirmation.value = "";
+    systemResetError.value = "";
+  }
+
+  async function resetSystem() {
+    if (systemResetSaving.value) return;
+    systemResetError.value = "";
+    if (systemResetConfirmation.value !== systemResetConfirmationToken.value) {
+      systemResetError.value = `请输入 ${systemResetConfirmationToken.value} 以确认恢复系统初始状态`;
+      return;
+    }
+    systemResetSaving.value = true;
+    try {
+      await deps.request("/system/reset/", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ confirmation: systemResetConfirmation.value }),
+      });
+      showSystemResetDialog.value = false;
+      systemResetConfirmation.value = "";
+      systemResetError.value = "";
+      deps.reload();
+    } catch (error) {
+      systemResetError.value = errorMessage(error, "系统恢复失败，请稍后重试");
+    } finally {
+      systemResetSaving.value = false;
+    }
+  }
+
   return {
+    systemSettings,
+    systemSettingsForm,
+    systemSettingsLoading,
+    systemSettingsSaving,
+    systemSettingsError,
+    systemSettingsFormErrors,
+    systemSettingsDefinitions,
+    systemSettingsDirty,
     manufacturers,
     deviceTypes,
     spareCategories,
@@ -1250,6 +1455,10 @@ export function useSettings(deps: SettingsDeps) {
     userPage,
     userPageSize,
     userCount,
+    selectedUserIds,
+    userBatchSaving,
+    userBatchResult,
+    showUserBatchResult,
     showUserModal,
     editingUser,
     userForm,
@@ -1291,6 +1500,8 @@ export function useSettings(deps: SettingsDeps) {
     auditListLoading,
     auditListError,
     loadDictionaries,
+    loadSystemSettings,
+    retrySystemSettings,
     loadCustomFields,
     retryCustomFieldList,
     refreshCustomFieldList,
@@ -1307,6 +1518,10 @@ export function useSettings(deps: SettingsDeps) {
     retryOrganization,
     loadUsers,
     retryUserList,
+    handleUserSelection,
+    clearUserSelection,
+    batchUpdateUserStatus,
+    closeUserBatchResult,
     searchUsers,
     changeUserPage,
     changeUserPageSize,
@@ -1347,5 +1562,15 @@ export function useSettings(deps: SettingsDeps) {
     changeAuditPage,
     changeAuditPageSize,
     searchAuditLogs,
+    resetSystemSettingsForm,
+    saveSystemSettings,
+    showSystemResetDialog,
+    systemResetConfirmation,
+    systemResetConfirmationToken,
+    systemResetSaving,
+    systemResetError,
+    openSystemResetDialog,
+    closeSystemResetDialog,
+    resetSystem,
   };
 }

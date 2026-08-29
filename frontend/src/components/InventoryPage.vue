@@ -2,9 +2,14 @@
 import { computed, nextTick, onMounted, ref, watch } from "vue";
 import {
   ArrowDown,
+  CircleCheck,
+  Delete,
   Download,
+  Edit,
   MoreFilled,
-  Refresh,
+  Tools,
+  VideoPlay,
+  View,
 } from "@element-plus/icons-vue";
 import PagedTable from "./PagedTable.vue";
 import SearchField from "./SearchField.vue";
@@ -20,8 +25,9 @@ import AssetSummary from "./AssetSummary.vue";
 import ActionDialogShell from "./ActionDialogShell.vue";
 import FieldHelp from "./FieldHelp.vue";
 import FormDialogShell from "./FormDialogShell.vue";
+import TableIconButton from "./TableIconButton.vue";
 import type { FormInstance, FormRules } from "element-plus";
-import type { InventoryItem, InventoryTask } from "../types";
+import type { InventoryItem } from "../types";
 import type { InventoryContext } from "../types/page-context";
 import { useInventory } from "../composables/useInventory";
 
@@ -71,7 +77,7 @@ const {
   taskScope, loadInitialData, loadTasks, loadItems, retryActiveTask, openTask, closeTask,
   openNewTask, changeTaskDataCenter, saveTask, deleteTask, completeTask, reopenTask, exportTask, exportingTaskId,
   changeTaskServerRoom, retryScopePreview, closeTaskDialog,
-  openItem, changeItemStatus, saveItem, saveItemAndNext, filterPendingItems, changeTaskPage, changeTaskPageSize,
+  openItem, changeItemStatus, saveItem, saveItemAndNext, changeTaskPage, changeTaskPageSize,
   changeItemPage, changeItemPageSize, resetTaskFilters, resetItemFilters,
   retryTaskAuxData, retryRackAuxData, openResolution, closeResolutionDialog, saveResolution,
   openBulkResolution, closeBulkResolutionDialog, saveBulkResolution, openBulkNormal, closeBulkNormalDialog, saveBulkNormal,
@@ -153,11 +159,6 @@ const scopePreviewWarnings = computed(() => {
   return Array.from(new Set(warnings));
 });
 
-function handleTaskAction(command: string, task: InventoryTask) {
-  if (command === "export") void exportTask(task);
-  if (command === "delete") void deleteTask(task);
-}
-
 function handleActiveTaskAction(command: string) {
   if (command === "reopen") void reopenTask();
 }
@@ -184,8 +185,35 @@ function itemCanEditException(item: InventoryItem) {
   );
 }
 
-function handleItemAction(command: string, item: InventoryItem) {
-  if (command === "edit") void openItem(item);
+function itemPrimaryActionLabel(item: InventoryItem) {
+  switch (itemPrimaryAction(item)) {
+    case "confirm": return "确认盘点";
+    case "resolve": return "处理";
+    case "view": return "查看处理结果";
+    case "edit": return "修改结果";
+    default: return "";
+  }
+}
+
+function itemPrimaryActionIcon(item: InventoryItem) {
+  switch (itemPrimaryAction(item)) {
+    case "confirm": return CircleCheck;
+    case "resolve": return Tools;
+    case "view": return View;
+    case "edit": return Edit;
+    default: return View;
+  }
+}
+
+function itemPrimaryActionType(item: InventoryItem) {
+  return itemPrimaryAction(item) === "resolve" ? "warning" : "primary";
+}
+
+function openPrimaryItemAction(item: InventoryItem) {
+  if (itemPrimaryAction(item) === "resolve" || itemPrimaryAction(item) === "view") {
+    return openResolution(item);
+  }
+  return openItem(item);
 }
 
 async function submitTask() {
@@ -330,42 +358,38 @@ onMounted(async () => {
             </el-table-column>
             <el-table-column label="操作" fixed="right" width="210">
               <template #default="{ row }">
-                <div class="inventory-task-actions">
-                  <el-button
+                <div class="ep-table-actions">
+                  <TableIconButton
                     v-if="row.status === 'in_progress' && can('inventory.manage')"
-                    link
+                    :icon="VideoPlay"
+                    label="继续盘点"
                     type="primary"
-                    @click.stop="openTask(row)"
-                  >
-                    继续盘点
-                  </el-button>
-                  <el-button
+                    @click="openTask(row)"
+                  />
+                  <TableIconButton
                     v-else-if="row.status === 'completed' && can('inventory.view')"
-                    link
+                    :icon="View"
+                    label="查看结果"
                     type="primary"
-                    @click.stop="openTask(row)"
-                  >
-                    查看结果
-                  </el-button>
-                  <el-dropdown
-                    v-if="can('inventory.export') || (can('inventory.manage') && row.can_delete)"
-                    trigger="click"
-                    @command="handleTaskAction($event, row)"
-                  >
-                    <el-button link class="inventory-more-action" @click.stop>
-                      更多<el-icon class="el-icon--right"><MoreFilled /></el-icon>
-                    </el-button>
-                    <template #dropdown>
-                      <el-dropdown-menu>
-                        <el-dropdown-item v-if="can('inventory.export')" command="export">
-                          导出结果
-                        </el-dropdown-item>
-                        <el-dropdown-item v-if="can('inventory.manage') && row.can_delete" command="delete" divided>
-                          删除任务
-                        </el-dropdown-item>
-                      </el-dropdown-menu>
-                    </template>
-                  </el-dropdown>
+                    @click="openTask(row)"
+                  />
+                  <TableIconButton
+                    v-if="can('inventory.export')"
+                    :icon="Download"
+                    label="导出结果"
+                    :loading="exportingTaskId === row.id"
+                    :disabled="exportingTaskId !== null && exportingTaskId !== row.id"
+                    @click="exportTask(row)"
+                  />
+                  <TableIconButton
+                    v-if="can('inventory.manage') && row.can_delete"
+                    :icon="Delete"
+                    label="删除任务"
+                    type="danger"
+                    :loading="taskDeletingId === row.id"
+                    :disabled="taskDeletingId !== null && taskDeletingId !== row.id"
+                    @click="deleteTask(row)"
+                  />
                 </div>
               </template>
             </el-table-column>
@@ -462,10 +486,6 @@ onMounted(async () => {
               <div class="page-toolbar__filter-group">
                 <el-select v-model="itemStatus" placeholder="全部盘点结果" clearable @change="() => { itemPage = 1; loadItems(); }"><el-option v-for="item in itemStatusOptions" :key="item.value" :label="item.label" :value="item.value" /></el-select>
                 <el-select v-model="itemResolutionStatus" placeholder="全部处理状态" clearable @change="() => { itemPage = 1; loadItems(); }"><el-option v-for="item in itemResolutionStatusOptions" :key="item.value" :label="item.label" :value="item.value" /></el-select>
-                <div class="inventory-item-toolbar-actions">
-                  <el-button class="toolbar-secondary-action" :type="itemStatus === 'pending' ? 'primary' : 'default'" :plain="itemStatus !== 'pending'" @click="filterPendingItems">仅看未盘点</el-button>
-                  <el-button class="toolbar-secondary-action" :icon="Refresh" @click="resetItemFilters">重置</el-button>
-                </div>
               </div>
             </template>
           </PageToolbar>
@@ -560,21 +580,21 @@ onMounted(async () => {
           </el-table-column>
           <el-table-column label="操作" fixed="right" width="190">
             <template #default="{ row }">
-              <div class="inventory-row-actions">
-                <el-button v-if="itemPrimaryAction(row) === 'confirm'" link type="primary" @click="openItem(row)">确认盘点</el-button>
-                <el-button v-else-if="itemPrimaryAction(row) === 'resolve'" link type="warning" @click="openResolution(row)">处理</el-button>
-                <el-button v-else-if="itemPrimaryAction(row) === 'view'" link type="primary" @click="openResolution(row)">查看处理结果</el-button>
-                <el-button v-else-if="itemPrimaryAction(row) === 'edit'" link type="primary" @click="openItem(row)">修改结果</el-button>
-                <el-dropdown v-if="itemCanEditException(row)" trigger="click" @command="handleItemAction($event, row)">
-                  <el-button link class="inventory-more-action" @click.stop>
-                    更多<el-icon class="el-icon--right"><MoreFilled /></el-icon>
-                  </el-button>
-                  <template #dropdown>
-                    <el-dropdown-menu>
-                      <el-dropdown-item command="edit">修改盘点结果</el-dropdown-item>
-                    </el-dropdown-menu>
-                  </template>
-                </el-dropdown>
+              <div class="ep-table-actions">
+                <TableIconButton
+                  v-if="itemPrimaryAction(row)"
+                  :icon="itemPrimaryActionIcon(row)"
+                  :label="itemPrimaryActionLabel(row)"
+                  :type="itemPrimaryActionType(row)"
+                  @click="openPrimaryItemAction(row)"
+                />
+                <TableIconButton
+                  v-if="itemCanEditException(row)"
+                  :icon="Edit"
+                  label="修改盘点结果"
+                  type="primary"
+                  @click="openItem(row)"
+                />
                 <span v-if="!itemPrimaryAction(row) && !itemCanEditException(row)">—</span>
               </div>
             </template>

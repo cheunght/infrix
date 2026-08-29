@@ -3,18 +3,21 @@ import { createWebHistory, createRouter, type RouteLocationRaw, type RouteRecord
 import type { Page } from "./types";
 
 export type SettingsSection =
+  | "system"
   | "dictionaries"
   | "organization"
   | "audit"
   | "custom-fields"
-  | "tags";
+  | "tags"
+  | "maintenance";
+export type AssetConfigSection = "custom-fields" | "tags";
 
 // The old data-center and room sections remain accepted as compatibility input
 // for callers and deep links, but both now resolve to the unified locations
 // view. Only the locations and rack-view sections are rendered by the app.
 export type RackSection = "locations" | "view" | "data-centers" | "rooms";
-export type LocationTypeFilter = "all" | "data-center" | "room";
-export type LocationStatusFilter = "all" | "active" | "inactive";
+export type LocationTypeFilter = "" | "data-center" | "room";
+export type LocationStatusFilter = "" | "active" | "inactive";
 
 // App.vue owns the shell and page data context; routed records select the page
 // component while their meta remains the source of truth for navigation state.
@@ -28,6 +31,7 @@ const RoutePlaceholder = defineComponent({
 const pageComponents: Partial<Record<Page, () => Promise<Component>>> = {
   dashboard: () => import("./components/DashboardPage.vue"),
   ledger: () => import("./components/AssetLedgerPage.vue"),
+  "asset-config": () => import("./components/AssetConfigurationPage.vue"),
   racks: () => import("./components/RackViewPage.vue"),
   repairs: () => import("./components/RepairPage.vue"),
   licenses: () => import("./components/LicensePage.vue"),
@@ -41,6 +45,7 @@ declare module "vue-router" {
     page?: Page;
     title?: string;
     settingsSection?: SettingsSection;
+    assetConfigSection?: AssetConfigSection;
     rackSection?: RackSection;
   }
 }
@@ -100,11 +105,27 @@ export const routes: RouteRecordRaw[] = [
   pageRoute("/inventory", "inventory", "inventory", "盘点中心"),
 pageRoute("/repairs", "repairs", "repairs", "故障维修"),
   pageRoute("/spares", "spares", "spares", "资产管理 / 备件管理"),
+  pageRoute(
+    "/assets/configuration",
+    "asset-configuration",
+    "asset-config",
+    "资产管理 / 资产配置",
+    { assetConfigSection: "custom-fields" },
+    ["/asset-configuration"],
+  ),
   {
     path: "/settings",
     name: "settings",
-    redirect: { name: "settings-dictionaries" },
+    redirect: { name: "settings-system" },
   },
+  pageRoute(
+    "/settings/system",
+    "settings-system",
+    "settings",
+    "系统设置 / 系统参数",
+    { settingsSection: "system" },
+    ["/settings-system"],
+  ),
   pageRoute(
     "/settings/dictionaries",
     "settings-dictionaries",
@@ -113,22 +134,24 @@ pageRoute("/repairs", "repairs", "repairs", "故障维修"),
     { settingsSection: "dictionaries" },
     ["/settings-dictionaries"],
   ),
-  pageRoute(
-    "/settings/custom-fields",
-    "settings-custom-fields",
-    "settings",
-    "系统设置 / 自定义字段",
-    { settingsSection: "custom-fields" },
-    ["/settings-custom-fields"],
-  ),
-  pageRoute(
-    "/settings/tags",
-    "settings-tags",
-    "settings",
-    "系统设置 / 标签管理",
-    { settingsSection: "tags" },
-    ["/settings-tags"],
-  ),
+  {
+    path: "/settings/custom-fields",
+    name: "settings-custom-fields",
+    redirect: (to) => ({
+      name: "asset-configuration",
+      query: { ...to.query, tab: "custom-fields" },
+    }),
+    alias: ["/settings-custom-fields"],
+  },
+  {
+    path: "/settings/tags",
+    name: "settings-tags",
+    redirect: (to) => ({
+      name: "asset-configuration",
+      query: { ...to.query, tab: "tags" },
+    }),
+    alias: ["/settings-tags"],
+  },
   pageRoute(
     "/settings/organization",
     "settings-organization",
@@ -145,6 +168,14 @@ pageRoute("/repairs", "repairs", "repairs", "故障维修"),
     { settingsSection: "audit" },
     ["/settings-audit"],
   ),
+  pageRoute(
+    "/settings/maintenance",
+    "settings-maintenance",
+    "settings",
+    "系统设置 / 系统维护",
+    { settingsSection: "maintenance" },
+    ["/settings-maintenance"],
+  ),
   {
     path: "/:pathMatch(.*)*",
     redirect: { name: "dashboard" },
@@ -159,9 +190,19 @@ export const router = createRouter({
 
 export function routeForPage(
   page: Page,
-  options: { settingsSection?: SettingsSection; rackSection?: RackSection } = {},
+  options: {
+    settingsSection?: SettingsSection;
+    assetConfigSection?: AssetConfigSection;
+    rackSection?: RackSection;
+  } = {},
 ): RouteLocationRaw {
   if (page === "ledger") return { name: "assets" };
+  if (page === "asset-config") {
+    return {
+      name: "asset-configuration",
+      query: { tab: options.assetConfigSection || "custom-fields" },
+    };
+  }
   if (page === "racks") {
     return {
       name: options.rackSection === "view"
@@ -170,7 +211,10 @@ export function routeForPage(
     };
   }
   if (page === "settings") {
-    const section = options.settingsSection || "dictionaries";
+    const section = options.settingsSection || "system";
+    if (section === "custom-fields" || section === "tags") {
+      return routeForPage("asset-config", { assetConfigSection: section });
+    }
     return { name: `settings-${section}` };
   }
   if (page === "placeholder") return { name: "dashboard" };

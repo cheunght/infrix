@@ -9,6 +9,8 @@ import type {
   Asset,
   AssetStatus,
   AssetCustomFilter,
+  AssetSortField,
+  AssetSortOrder,
   AssetDetail,
   CustomField,
   CustomFieldForm,
@@ -32,6 +34,9 @@ import type {
   SpareStock,
   SpareTransaction,
   StockOperationType,
+  SystemSettingDefinition,
+  SystemSettings,
+  SystemSettingsForm,
   Tag,
 } from "./types";
 
@@ -125,6 +130,9 @@ export interface AssetLedgerContext {
   exportingAssets: Ref<boolean>;
   assetSearch: Ref<string>;
   searchLedger: () => void | Promise<void>;
+  assetSortField: Ref<AssetSortField | null>;
+  assetSortOrder: Ref<AssetSortOrder>;
+  changeAssetSort: (sort: { prop: string | null; order: AssetSortOrder }) => void | Promise<void>;
   assetFilters: AssetFilters;
   resetAssetFilters: () => void | Promise<void>;
   assetTagFilter: Ref<string[]>;
@@ -154,13 +162,18 @@ export interface AssetLedgerContext {
   can: CapabilityFn;
   openNewAssetModal: () => void | Promise<void>;
   selectedAssetIds: Ref<number[]>;
+  assetBatchDeleteSaving: Ref<boolean>;
+  assetBatchDeleteResult: Ref<import("./types").AssetBatchDeleteResponse | null>;
+  showAssetBatchDeleteResult: Ref<boolean>;
   deleteSelectedAssets: () => void | Promise<void>;
+  closeAssetBatchDeleteResult: () => void;
   exportAssets: () => void | Promise<void>;
   registerFaultFromSelection: () => void | Promise<void>;
   downloadImportTemplate: () => void | Promise<void>;
   openImportDialog: () => void;
   assets: Ref<Asset[]>;
   handleElementAssetSelection: (rows: Asset[]) => void;
+  clearAssetSelection: () => void;
   openAssetDetail: (assetId: number) => void | Promise<void>;
   assetValue: (asset: Asset, key: string) => string;
   openAssetClone: (assetId: number) => void | Promise<void>;
@@ -451,6 +464,18 @@ export interface SettingsContext extends CustomFieldContext, TagContext {
   loading: Ref<boolean>;
   settingsSection: Ref<SettingsSection>;
   can: CapabilityFn;
+  systemSettings: Ref<SystemSettings | null>;
+  systemSettingsForm: Ref<SystemSettingsForm>;
+  systemSettingsDefinitions: ComputedRef<SystemSettingDefinition[]>;
+  systemSettingsLoading: Ref<boolean>;
+  systemSettingsSaving: Ref<boolean>;
+  systemSettingsError: Ref<string>;
+  systemSettingsFormErrors: Ref<Record<string, string>>;
+  systemSettingsDirty: ComputedRef<boolean>;
+  loadSystemSettings: () => void | Promise<boolean>;
+  retrySystemSettings: () => void | Promise<boolean>;
+  resetSystemSettingsForm: () => void;
+  saveSystemSettings: () => void | Promise<void>;
   dictionarySection: Ref<string>;
   dictionaryPage: Ref<number>;
   dictionaryPageSize: Ref<number>;
@@ -485,10 +510,18 @@ export interface SettingsContext extends CustomFieldContext, TagContext {
   userPage: Ref<number>;
   userPageSize: Ref<number>;
   userCount: Ref<number>;
+  selectedUserIds: Ref<number[]>;
+  userBatchSaving: Ref<boolean>;
+  userBatchResult: Ref<import("./types").UserBatchStatusResponse | null>;
+  showUserBatchResult: Ref<boolean>;
   searchUsers: () => void | Promise<void>;
   retryUserList: () => void | Promise<boolean>;
   changeUserPage: (page: number) => void | Promise<void>;
   changeUserPageSize: (size: number) => void | Promise<void>;
+  handleUserSelection: (rows: ManagedUser[]) => void;
+  clearUserSelection: () => void;
+  batchUpdateUserStatus: (isActive: boolean) => void | Promise<void>;
+  closeUserBatchResult: () => void;
   openUserModal: (user?: ManagedUser) => void;
   toggleUser: (user: ManagedUser) => void | Promise<void>;
   deleteUser: (user: ManagedUser) => void | Promise<void>;
@@ -520,6 +553,14 @@ export interface SettingsContext extends CustomFieldContext, TagContext {
   auditCount: Ref<number>;
   changeAuditPage: (page: number) => void | Promise<void>;
   changeAuditPageSize: (size: number) => void | Promise<void>;
+  showSystemResetDialog: Ref<boolean>;
+  systemResetConfirmation: Ref<string>;
+  systemResetConfirmationToken: Ref<string>;
+  systemResetSaving: Ref<boolean>;
+  systemResetError: Ref<string>;
+  openSystemResetDialog: () => void;
+  closeSystemResetDialog: () => void;
+  resetSystem: () => void | Promise<void>;
 }
 
 export interface CustomFieldContext {

@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, ref, watch } from "vue";
-import { MoreFilled } from "@element-plus/icons-vue";
+import { CircleCheck, CircleClose, Delete, Edit, Key, View } from "@element-plus/icons-vue";
 import PagedTable from "./PagedTable.vue";
 import SearchField from "./SearchField.vue";
 import CustomFieldSettingsPage from "./CustomFieldSettingsPage.vue";
@@ -10,6 +10,8 @@ import PageContent from "./page/PageContent.vue";
 import PageTabs, { type PageTabItem } from "./page/PageTabs.vue";
 import PageToolbar from "./page/PageToolbar.vue";
 import StatusTag from "./StatusTag.vue";
+import ActionDialogShell from "./ActionDialogShell.vue";
+import TableIconButton from "./TableIconButton.vue";
 import type { SettingsContext } from "../types/page-context";
 import type { AuditLog } from "../types";
 import {
@@ -28,6 +30,17 @@ const context = props.context;
 const {
   settingsSection,
   can,
+  systemSettings,
+  systemSettingsForm,
+  systemSettingsDefinitions,
+  systemSettingsLoading,
+  systemSettingsSaving,
+  systemSettingsError,
+  systemSettingsFormErrors,
+  systemSettingsDirty,
+  retrySystemSettings,
+  resetSystemSettingsForm,
+  saveSystemSettings,
   dictionarySection,
   dictionaryPage,
   dictionaryPageSize,
@@ -59,10 +72,18 @@ const {
   userPage,
   userPageSize,
   userCount,
+  selectedUserIds,
+  userBatchSaving,
+  userBatchResult,
+  showUserBatchResult,
   searchUsers,
   retryUserList,
   changeUserPage,
   changeUserPageSize,
+  handleUserSelection,
+  clearUserSelection,
+  batchUpdateUserStatus,
+  closeUserBatchResult,
   userSaving,
   userPendingId,
   openUserModal,
@@ -82,9 +103,18 @@ const {
   auditCount,
   changeAuditPage,
   changeAuditPageSize,
+  showSystemResetDialog,
+  systemResetConfirmation,
+  systemResetConfirmationToken,
+  systemResetSaving,
+  systemResetError,
+  openSystemResetDialog,
+  closeSystemResetDialog,
+  resetSystem,
 } = context;
 
 const organizationTab = ref<"users" | "roles">("users");
+const userTableRef = ref<{ clearSelection: () => void } | null>(null);
 const allDictionaryTabs: PageTabItem[] = [
   { label: "厂商", value: "manufacturers" },
   { label: "设备类型", value: "device-types" },
@@ -114,6 +144,13 @@ const dictionaryCountLabel = computed(() =>
 );
 const hasDictionaryFilters = computed(() => Boolean(dictionarySearch.value.trim()));
 const hasUserSearch = computed(() => Boolean(userSearch.value.trim()));
+const userBatchFailures = computed(() =>
+  (userBatchResult.value?.results || []).filter((result) => !result.success),
+);
+
+watch(selectedUserIds, (ids) => {
+  if (!ids.length) userTableRef.value?.clearSelection();
+});
 const hasAuditFilters = computed(() => Boolean(
   auditFilters.value.search?.trim() ||
   auditFilters.value.resource_type ||
@@ -168,10 +205,8 @@ function openAuditDetail(log: AuditLog) {
   auditDetailVisible.value = true;
 }
 
-function handleUserAction(command: string, user: (typeof users.value)[number]) {
-  if (command === "reset") return openUserResetModal(user);
-  if (command === "toggle") return void toggleUser(user);
-  if (command === "delete") return void deleteUser(user);
+function systemSettingDefinition(key: string) {
+  return systemSettingsDefinitions.value.find((definition) => definition.key === key);
 }
 </script>
 
@@ -179,6 +214,99 @@ function handleUserAction(command: string, user: (typeof users.value)[number]) {
   <div class="itam-page settings-page">
     <CustomFieldSettingsPage v-if="settingsSection === 'custom-fields'" :context="props.context" />
     <TagSettingsPage v-else-if="settingsSection === 'tags'" :context="props.context" />
+
+    <PageContainer v-else-if="settingsSection === 'system' && can('settings.view')" content-class="settings-system-container">
+      <PageContent surface>
+        <div v-loading="systemSettingsLoading" class="settings-system">
+          <el-alert
+            v-if="systemSettingsError"
+            title="系统参数加载失败"
+            type="error"
+            show-icon
+            :closable="false"
+          >
+            <template #default>
+              <span>{{ systemSettingsError }}</span>
+              <el-button link type="danger" :loading="systemSettingsLoading" @click="retrySystemSettings">重新加载</el-button>
+            </template>
+          </el-alert>
+
+          <template v-else-if="systemSettings">
+            <div class="settings-system__heading">
+              <div>
+                <h2>运行参数</h2>
+                <p>仅维护当前应用中已有的少量运行时默认值。</p>
+              </div>
+              <div class="settings-system__actions">
+                <el-button :disabled="!systemSettingsDirty || systemSettingsSaving" @click="resetSystemSettingsForm">恢复未保存</el-button>
+                <el-button
+                  v-if="can('settings.manage')"
+                  type="primary"
+                  :loading="systemSettingsSaving"
+                  :disabled="!systemSettingsDirty || systemSettingsSaving"
+                  @click="saveSystemSettings"
+                >
+                  保存设置
+                </el-button>
+              </div>
+            </div>
+
+            <el-alert
+              v-if="!can('settings.manage')"
+              title="当前账号为只读权限"
+              description="你可以查看当前系统参数，但不能修改设置。"
+              type="info"
+              show-icon
+              :closable="false"
+            />
+
+            <el-form class="settings-system__form" label-position="top" @submit.prevent="saveSystemSettings">
+              <el-form-item
+                :label="systemSettingDefinition('default_page_size')?.label || '默认每页条数'"
+                :error="systemSettingsFormErrors.default_page_size"
+              >
+                <el-select
+                  v-model="systemSettingsForm.default_page_size"
+                  :disabled="!can('settings.manage') || systemSettingsSaving"
+                  class="settings-system__control"
+                >
+                  <el-option
+                    v-for="option in (systemSettingDefinition('default_page_size')?.options || [])"
+                    :key="String(option.value)"
+                    :label="option.label"
+                    :value="option.value"
+                  />
+                </el-select>
+                <div v-if="systemSettingDefinition('default_page_size')?.help_text" class="settings-system__help">
+                  {{ systemSettingDefinition('default_page_size')?.help_text }}
+                </div>
+              </el-form-item>
+
+              <el-form-item
+                :label="systemSettingDefinition('default_asset_status')?.label || '新资产默认状态'"
+                :error="systemSettingsFormErrors.default_asset_status"
+              >
+                <el-select
+                  v-model="systemSettingsForm.default_asset_status"
+                  :disabled="!can('settings.manage') || systemSettingsSaving"
+                  class="settings-system__control"
+                >
+                  <el-option
+                    v-for="option in (systemSettingDefinition('default_asset_status')?.options || [])"
+                    :key="String(option.value)"
+                    :label="option.label"
+                    :value="option.value"
+                  />
+                </el-select>
+                <div v-if="systemSettingDefinition('default_asset_status')?.help_text" class="settings-system__help">
+                  {{ systemSettingDefinition('default_asset_status')?.help_text }}
+                </div>
+              </el-form-item>
+            </el-form>
+          </template>
+        </div>
+      </PageContent>
+    </PageContainer>
 
     <PageContainer v-else-if="settingsSection === 'dictionaries'">
       <template #subnav>
@@ -249,9 +377,26 @@ function handleUserAction(command: string, user: (typeof users.value)[number]) {
           <el-table-column label="操作" width="210" fixed="right">
             <template #default="{ row }">
               <div class="ep-table-actions">
-                <el-button link type="primary" :disabled="!canManageCurrentDictionary || dictionaryActionId === row.id" @click="openDictionaryModal(row)">编辑</el-button>
-                <el-button link :disabled="!canManageCurrentDictionary || dictionaryActionId === row.id" @click="toggleDictionary(row)">{{ row.is_active ? "停用" : "启用" }}</el-button>
-                <el-button link type="danger" :disabled="!canManageCurrentDictionary || dictionaryActionId === row.id || dictionaryItemUsed(row)" @click="deleteDictionary(row)">删除</el-button>
+                <TableIconButton
+                  :icon="Edit"
+                  label="编辑"
+                  type="primary"
+                  :disabled="!canManageCurrentDictionary || dictionaryActionId === row.id"
+                  @click="openDictionaryModal(row)"
+                />
+                <TableIconButton
+                  :icon="row.is_active ? CircleClose : CircleCheck"
+                  :label="row.is_active ? '停用' : '启用'"
+                  :disabled="!canManageCurrentDictionary || dictionaryActionId === row.id"
+                  @click="toggleDictionary(row)"
+                />
+                <TableIconButton
+                  :icon="Delete"
+                  label="删除"
+                  type="danger"
+                  :disabled="!canManageCurrentDictionary || dictionaryActionId === row.id || dictionaryItemUsed(row)"
+                  @click="deleteDictionary(row)"
+                />
               </div>
             </template>
           </el-table-column>
@@ -277,7 +422,29 @@ function handleUserAction(command: string, user: (typeof users.value)[number]) {
             />
           </template>
           <template v-if="organizationTab === 'users'" #primary>
-            <el-button class="page-primary-action" type="primary" :loading="userSaving" :disabled="userSaving" @click="openUserModal()">新增用户</el-button>
+            <div class="settings-user-primary-actions">
+              <div v-if="selectedUserIds.length" class="settings-user-batch-actions">
+                <el-tag type="info">已选择 {{ selectedUserIds.length }} 项</el-tag>
+                <el-button
+                  v-if="can('organization.manage')"
+                  :loading="userBatchSaving"
+                  :disabled="userBatchSaving"
+                  @click="batchUpdateUserStatus(true)"
+                >
+                  批量启用
+                </el-button>
+                <el-button
+                  v-if="can('organization.manage')"
+                  :loading="userBatchSaving"
+                  :disabled="userBatchSaving"
+                  @click="batchUpdateUserStatus(false)"
+                >
+                  批量停用
+                </el-button>
+                <el-button link :disabled="userBatchSaving" @click="clearUserSelection">取消选择</el-button>
+              </div>
+              <el-button class="page-primary-action" type="primary" :loading="userSaving" :disabled="userSaving || userBatchSaving" @click="openUserModal()">新增用户</el-button>
+            </div>
           </template>
         </PageToolbar>
       </template>
@@ -289,12 +456,13 @@ function handleUserAction(command: string, user: (typeof users.value)[number]) {
               <el-button link type="danger" :loading="organizationLoading" @click="retryUserList">重新加载</el-button>
             </template>
           </el-alert>
-          <el-table v-else v-loading="organizationLoading" :data="users" table-layout="fixed">
+          <el-table ref="userTableRef" v-else v-loading="organizationLoading" :data="users" table-layout="fixed" @selection-change="handleUserSelection">
             <template #empty>
               <el-empty :image-size="56" :description="hasUserSearch ? '没有符合当前筛选条件的用户账号' : '暂无用户账号'">
                 <el-button v-if="hasUserSearch" link type="primary" @click="userSearch = ''; triggerUserSearch()">清除筛选</el-button>
               </el-empty>
             </template>
+            <el-table-column type="selection" width="48" />
             <el-table-column prop="username" label="用户名" min-width="180" />
             <el-table-column prop="display_name" label="姓名" min-width="180" />
             <el-table-column prop="email" label="邮箱" min-width="220" />
@@ -305,21 +473,32 @@ function handleUserAction(command: string, user: (typeof users.value)[number]) {
             <el-table-column label="操作" width="164" fixed="right">
               <template #default="{ row }">
                 <div class="ep-table-actions">
-                  <el-button link type="primary" :disabled="userPendingId === row.id || userSaving" @click="openUserModal(row)">编辑</el-button>
-                  <el-dropdown trigger="click" :disabled="userPendingId === row.id || userSaving" @command="handleUserAction($event, row)">
-                    <el-button link class="user-more-action" :disabled="userPendingId === row.id || userSaving">
-                      更多<el-icon><MoreFilled /></el-icon>
-                    </el-button>
-                    <template #dropdown>
-                      <el-dropdown-menu>
-                        <el-dropdown-item command="reset">重置密码</el-dropdown-item>
-                        <el-dropdown-item v-if="!userProtectionReason(row)" command="toggle">{{ row.is_active ? "停用" : "启用" }}</el-dropdown-item>
-                        <el-dropdown-item v-else disabled>{{ userProtectionReason(row) }}</el-dropdown-item>
-                        <el-dropdown-item v-if="!userProtectionReason(row)" command="delete" divided>删除用户</el-dropdown-item>
-                        <el-dropdown-item v-else disabled divided>{{ userProtectionReason(row) }}</el-dropdown-item>
-                      </el-dropdown-menu>
-                    </template>
-                  </el-dropdown>
+                  <TableIconButton
+                    :icon="Edit"
+                    label="编辑"
+                    type="primary"
+                    :disabled="userPendingId === row.id || userSaving"
+                    @click="openUserModal(row)"
+                  />
+                  <TableIconButton
+                    :icon="Key"
+                    label="重置密码"
+                    :disabled="userPendingId === row.id || userSaving"
+                    @click="openUserResetModal(row)"
+                  />
+                  <TableIconButton
+                    :icon="row.is_active ? CircleClose : CircleCheck"
+                    :label="userProtectionReason(row) || (row.is_active ? '停用' : '启用')"
+                    :disabled="userPendingId === row.id || userSaving || Boolean(userProtectionReason(row))"
+                    @click="toggleUser(row)"
+                  />
+                  <TableIconButton
+                    :icon="Delete"
+                    :label="userProtectionReason(row) || '删除用户'"
+                    type="danger"
+                    :disabled="userPendingId === row.id || userSaving || Boolean(userProtectionReason(row))"
+                    @click="deleteUser(row)"
+                  />
                 </div>
               </template>
             </el-table-column>
@@ -389,11 +568,43 @@ function handleUserAction(command: string, user: (typeof users.value)[number]) {
               </template>
             </el-table-column>
             <el-table-column label="操作" width="96" fixed="right">
-              <template #default="{ row }"><el-button link type="primary" @click="openAuditDetail(row)">查看详情</el-button></template>
+              <template #default="{ row }">
+                <div class="ep-table-actions">
+                  <TableIconButton :icon="View" label="查看详情" type="primary" @click="openAuditDetail(row)" />
+                </div>
+              </template>
             </el-table-column>
           </el-table>
           <PagedTable v-model:current-page="auditPage" v-model:page-size="auditPageSize" :total="auditCount" :page-sizes="[20, 50, 100]" @update:current-page="changeAuditPage" @update:page-size="changeAuditPageSize" />
         </template>
+      </PageContent>
+    </PageContainer>
+
+    <PageContainer v-else-if="settingsSection === 'maintenance' && can('system.reset')" content-class="settings-maintenance-container">
+      <PageContent surface>
+        <div class="settings-maintenance">
+          <el-alert
+            title="高风险操作"
+            type="warning"
+            show-icon
+            :closable="false"
+            description="恢复操作会清除当前应用业务数据，且无法通过页面撤销。请先确认已经完成必要的数据留存。"
+          />
+          <section class="settings-maintenance__section">
+            <div class="settings-maintenance__intro">
+              <h2>恢复系统初始状态</h2>
+              <p>仅保留执行账号和已有超级管理员账号，业务数据恢复为空白初始状态。</p>
+            </div>
+            <el-descriptions :column="1" border size="small">
+              <el-descriptions-item label="将清除">资产、位置、机柜、盘点、维修、许可证、备件、字典、标签及业务操作日志</el-descriptions-item>
+              <el-descriptions-item label="将保留">当前执行账号、已有超级管理员账号、数据库结构和系统权限定义</el-descriptions-item>
+              <el-descriptions-item label="不会执行">数据库删表、迁移回滚、部署配置修改或文件系统清理</el-descriptions-item>
+            </el-descriptions>
+            <div class="settings-maintenance__action">
+              <el-button type="danger" :disabled="systemResetSaving" @click="openSystemResetDialog">恢复系统初始状态</el-button>
+            </div>
+          </section>
+        </div>
       </PageContent>
     </PageContainer>
 
@@ -447,5 +658,66 @@ function handleUserAction(command: string, user: (typeof users.value)[number]) {
         </el-collapse>
       </template>
     </el-drawer>
+
+    <ActionDialogShell
+      v-model="showUserBatchResult"
+      title="批量用户状态更新结果"
+      description="用户列表已按最新数据刷新，以下账号未能更新。"
+      size="medium"
+      :close-disabled="userBatchSaving"
+      @close="closeUserBatchResult"
+    >
+      <section v-if="userBatchResult" class="action-dialog__result">
+        <el-alert
+          type="warning"
+          :closable="false"
+          :title="`成功更新 ${userBatchResult.succeeded} 项，${userBatchResult.failed} 项失败`"
+        />
+        <el-table v-if="userBatchFailures.length" :data="userBatchFailures" table-layout="fixed" class="batch-result-table">
+          <el-table-column prop="username" label="用户名" min-width="180" />
+          <el-table-column prop="reason" label="失败原因" min-width="300" show-overflow-tooltip />
+        </el-table>
+      </section>
+      <template #footer>
+        <el-button :disabled="userBatchSaving" @click="closeUserBatchResult">关闭</el-button>
+      </template>
+    </ActionDialogShell>
+
+    <el-dialog
+      v-model="showSystemResetDialog"
+      title="恢复系统初始状态"
+      width="520px"
+      :close-on-click-modal="false"
+      :close-on-press-escape="false"
+      :show-close="!systemResetSaving"
+      @close="closeSystemResetDialog"
+    >
+      <el-alert v-if="systemResetError" :title="systemResetError" type="error" show-icon :closable="false" />
+      <div class="settings-maintenance__confirm">
+        <p>这是不可逆的应用级数据清理操作。请准确输入确认口令后继续：</p>
+        <el-form @submit.prevent="resetSystem">
+          <el-form-item label="确认口令">
+            <el-input
+              v-model="systemResetConfirmation"
+              autocomplete="off"
+              :placeholder="systemResetConfirmationToken"
+              :disabled="systemResetSaving"
+              @keyup.enter="resetSystem"
+            />
+          </el-form-item>
+        </el-form>
+      </div>
+      <template #footer>
+        <el-button :disabled="systemResetSaving" @click="closeSystemResetDialog">取消</el-button>
+        <el-button
+          type="danger"
+          :loading="systemResetSaving"
+          :disabled="systemResetConfirmation !== systemResetConfirmationToken"
+          @click="resetSystem"
+        >
+          确认恢复
+        </el-button>
+      </template>
+    </el-dialog>
   </div>
 </template>

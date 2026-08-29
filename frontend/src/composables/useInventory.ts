@@ -1395,11 +1395,6 @@ export function useInventory(context: InventoryContext) {
     itemPage.value = 1;
     void loadItems();
   }
-  function filterPendingItems() {
-    itemStatus.value = "pending";
-    itemPage.value = 1;
-    void loadItems();
-  }
   function retryTaskAuxData() {
     void Promise.allSettled([loadRooms(), loadInspectors()]);
   }
@@ -1547,7 +1542,6 @@ export function useInventory(context: InventoryContext) {
     changeItemPageSize,
     resetTaskFilters,
     resetItemFilters,
-    filterPendingItems,
     retryTaskAuxData,
     retryRackAuxData,
     loadInitialData,

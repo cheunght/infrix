@@ -80,6 +80,23 @@ class IsSystemAdministrator(BasePermission):
         return user_has_capability(request.user, "organization.manage")
 
 
+class CanResetSystem(BasePermission):
+    message = "当前账号没有执行系统恢复的权限"
+
+    def has_permission(self, request, view):
+        return user_has_capability(request.user, "system.reset")
+
+
+class CanManageSystemSettings(BasePermission):
+    """Use the existing settings view/manage capabilities by HTTP method."""
+
+    message = "当前角色没有系统设置权限"
+
+    def has_permission(self, request, view):
+        capability = "settings.view" if request.method in SAFE_METHODS else "settings.manage"
+        return user_has_capability(request.user, capability)
+
+
 class CanImportAssets(BasePermission):
     message = "当前角色没有资产管理权限"
 

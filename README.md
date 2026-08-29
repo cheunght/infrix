@@ -19,7 +19,7 @@ cd backend
 ./run.sh runserver
 ```
 
-`setup.sh` 会创建虚拟环境、安装依赖并执行迁移。不要使用系统 Python 直接运行 `manage.py`。
+`setup.sh` 会创建虚拟环境、安装依赖、执行迁移并初始化应用预设角色。不要使用系统 Python 直接运行 `manage.py`。
 
 ### 前端
 
@@ -52,7 +52,7 @@ API 文档：`http://127.0.0.1:8000/api/docs/`
 - 软件许可证管理
 - 数据中心设备盘点、历史盘点记录和结果导出
 - 备件定义、多地点库存和库存流水
-- 操作日志和管理员组织权限
+- 操作日志、管理员组织权限和系统维护（应用级恢复初始状态）
 - Rocky Linux 9 + MySQL/MariaDB + Gunicorn + Nginx 部署
 
 ## 数据与安全

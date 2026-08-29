@@ -42,6 +42,7 @@ import { hasCapability } from "./permissions";
 import { statusLabel } from "./status";
 import {
   routeForPage,
+  type AssetConfigSection,
   type RackSection,
   type SettingsSection,
 } from "./router";
@@ -129,7 +130,8 @@ const roleName = ref("");
 const userIsActive = ref(false);
 const lastLogin = ref<string | null>(null);
 const viewportHeight = ref(window.innerHeight);
-const settingsSection = ref<SettingsSection>("dictionaries");
+const settingsSection = ref<SettingsSection>("system");
+const assetConfigSection = ref<AssetConfigSection>("custom-fields");
 const rackSection = ref<RackSection>("locations");
 const facilities = useFacilities({
   request,
@@ -229,6 +231,7 @@ const settings = useSettings({
   beginLoad,
   isCurrentLoad,
   confirmAction,
+  reload: () => window.location.reload(),
   can,
   isAdmin,
   currentUsername: username,
@@ -236,6 +239,18 @@ const settings = useSettings({
   actionMessage,
 });
 const {
+  systemSettings,
+  systemSettingsForm,
+  systemSettingsDefinitions,
+  systemSettingsLoading,
+  systemSettingsSaving,
+  systemSettingsError,
+  systemSettingsFormErrors,
+  systemSettingsDirty,
+  loadSystemSettings,
+  retrySystemSettings,
+  resetSystemSettingsForm,
+  saveSystemSettings,
   manufacturers,
   deviceTypes,
   spareCategories,
@@ -290,6 +305,10 @@ const {
   userPage,
   userPageSize,
   userCount,
+  selectedUserIds,
+  userBatchSaving,
+  userBatchResult,
+  showUserBatchResult,
   showUserModal,
   editingUser,
   userForm,
@@ -340,6 +359,10 @@ const {
   retryOrganization,
   loadUsers,
   retryUserList,
+  handleUserSelection,
+  clearUserSelection,
+  batchUpdateUserStatus,
+  closeUserBatchResult,
   searchUsers,
   changeUserPage,
   changeUserPageSize,
@@ -379,6 +402,14 @@ const {
   changeAuditPage,
   changeAuditPageSize,
   searchAuditLogs,
+  showSystemResetDialog,
+  systemResetConfirmation,
+  systemResetConfirmationToken,
+  systemResetSaving,
+  systemResetError,
+  openSystemResetDialog,
+  closeSystemResetDialog,
+  resetSystem,
 } = settings;
 const auth = useAuth({
   request,
@@ -454,6 +485,7 @@ const assetsApi = useAssets({
   loadRackManagement: async () => { await loadRackManagement(); },
   goToLedger: () => navigateToRoute(routeForPage("ledger"), true),
   clearRouteQuery,
+  updateRouteQuery,
   showAssetDetail,
   detailAsset,
   detailLoading,
@@ -464,9 +496,15 @@ const assetsApi = useAssets({
 const {
   assets,
   selectedAssetIds,
+  assetBatchDeleteSaving,
+  assetBatchDeleteResult,
+  showAssetBatchDeleteResult,
   assetCount,
   assetPage,
   assetPageSize,
+  assetSortField,
+  assetSortOrder,
+  applySystemSettingsDefaults,
   assetSearch,
   assetFilters,
   assetListLoading,
@@ -522,13 +560,16 @@ const {
   saveAsset,
   deleteAsset,
   deleteSelectedAssets,
+  closeAssetBatchDeleteResult,
   handleElementAssetSelection,
+  clearAssetSelection,
   exportAssets,
   assetValue,
   downloadImportTemplate,
   showImportDialog,
   openImportDialog,
   searchLedger,
+  changeAssetSort,
   syncFiltersFromQuery: syncAssetFiltersFromQuery,
   resetAssetFilters,
   changeAssetPage,
@@ -724,9 +765,8 @@ const navItems = [
     iconIndex: 9,
     page: "settings" as Page,
     children: [
+      { label: "系统参数", section: "system" as const },
       { label: "数据字典", section: "dictionaries" as const },
-      { label: "自定义字段", section: "custom-fields" as const },
-      { label: "标签管理", section: "tags" as const },
       { label: "组织权限", section: "organization" as const, adminOnly: true },
       { label: "操作日志", section: "audit" as const },
     ],
@@ -770,7 +810,18 @@ function syncRouteState(): boolean {
     Object.prototype.hasOwnProperty.call(route.query, key);
   page.value = routePage;
   if (routePage === "settings")
-    settingsSection.value = route.meta.settingsSection || "dictionaries";
+    settingsSection.value = route.meta.settingsSection || "system";
+  if (routePage === "asset-config") {
+    const assetConfigQuery = routeQueryValue("tab");
+    assetConfigSection.value = assetConfigQuery === "tags"
+      ? "tags"
+      : assetConfigQuery === "custom-fields" || can("custom_fields.view")
+        ? "custom-fields"
+        : "tags";
+    if (hasQueryKey("tab") && assetConfigQuery !== "tags" && assetConfigQuery !== "custom-fields") {
+      queryKeysToClear.push("tab");
+    }
+  }
   if (routePage === "racks") {
     rackSection.value = route.meta.rackSection || "locations";
   }
@@ -802,15 +853,15 @@ function syncRouteState(): boolean {
     const locationTypeQuery = routeQueryValue("type");
     locationType.value = locationTypeQuery === "data-center" || locationTypeQuery === "room"
       ? locationTypeQuery
-      : "all";
-    if (hasQueryKey("type") && locationType.value === "all" && locationTypeQuery !== "all") {
+      : "";
+    if (hasQueryKey("type") && locationType.value === "" && locationTypeQuery !== "") {
       queryKeysToClear.push("type");
     }
     const locationStatusQuery = routeQueryValue("status");
     locationStatus.value = locationStatusQuery === "active" || locationStatusQuery === "inactive"
       ? locationStatusQuery
-      : "all";
-    if (hasQueryKey("status") && locationStatus.value === "all" && locationStatusQuery !== "all") {
+      : "";
+    if (hasQueryKey("status") && locationStatus.value === "" && locationStatusQuery !== "") {
       queryKeysToClear.push("status");
     }
     for (const key of rackFilterQueryKeys) {
@@ -838,7 +889,9 @@ function syncRouteState(): boolean {
   if (routePage === "ledger") syncAssetFiltersFromQuery(route.query);
   if (routePage === "repairs") syncRepairFiltersFromQuery(route.query);
   if (routePage === "licenses") syncLicenseFiltersFromQuery(route.query);
-  pageTitle.value = route.meta.title || "仪表盘";
+  pageTitle.value = routePage === "asset-config"
+    ? assetConfigSection.value === "tags" ? "资产管理 / 标签管理" : "资产管理 / 自定义字段"
+    : route.meta.title || "仪表盘";
   return clearRouteQuery(queryKeysToClear);
 }
 
@@ -851,12 +904,23 @@ function routeIsAllowed() {
   ) {
     return false;
   }
+  if (routePage === "asset-config") {
+    const requestedSection = routeQueryValue("tab");
+    const section = requestedSection === "tags"
+      ? "tags"
+      : requestedSection === "custom-fields" || can("custom_fields.view")
+        ? "custom-fields"
+        : "tags";
+    return can(section === "tags" ? "tags.view" : "custom_fields.view");
+  }
   if (routePage !== "settings") return true;
-  const section = route.meta.settingsSection || "dictionaries";
+  const section = route.meta.settingsSection || "system";
+  if (section === "system" && !can("settings.view")) return false;
   if (section === "organization" && !isAdmin.value) return false;
   if (section === "audit" && !can("audit.view")) return false;
   if (section === "custom-fields" && !can("custom_fields.view")) return false;
   if (section === "tags" && !can("tags.view")) return false;
+  if (section === "maintenance" && !can("system.reset")) return false;
   return true;
 }
 
@@ -979,15 +1043,19 @@ function toggleSidebar() {
   if (!sidebarCollapsed.value) openActiveSidebarSubmenu();
 }
 function openActiveSidebarSubmenu() {
-  const submenuIndex =
+  const submenuIndexes =
     page.value === "settings"
-      ? "settings"
-      : page.value === "ledger" || page.value === "spares"
-        ? "asset-menu"
-        : page.value === "racks"
-          ? "racks-menu"
-          : "";
-  if (submenuIndex) nextTick(() => sidebarMenu.value?.open(submenuIndex));
+      ? ["settings"]
+      : page.value === "asset-config"
+        ? ["asset-menu", "asset-config-menu"]
+        : page.value === "ledger" || page.value === "spares"
+          ? ["asset-menu"]
+          : page.value === "racks"
+            ? ["racks-menu"]
+            : [];
+  if (submenuIndexes.length) {
+    nextTick(() => submenuIndexes.forEach((index) => sidebarMenu.value?.open(index)));
+  }
 }
 
 function totalPages(total: number, size: number) {
@@ -1015,8 +1083,8 @@ function facilitySectionQuery(section: RackSection): Record<string, string> {
     return {
       ...(locationDataCenter.value ? { data_center: locationDataCenter.value } : {}),
       ...(locationSearch.value.trim() ? { search: locationSearch.value.trim() } : {}),
-      ...(locationType.value !== "all" ? { type: locationType.value } : {}),
-      ...(locationStatus.value !== "all" ? { status: locationStatus.value } : {}),
+      ...(locationType.value ? { type: locationType.value } : {}),
+      ...(locationStatus.value ? { status: locationStatus.value } : {}),
     };
   }
   return {
@@ -1036,8 +1104,8 @@ function openRackSection(section: RackSection | string, query: Record<string, st
   const hasExplicitQuery = Object.keys(query).length > 0;
   if (hasExplicitQuery && normalized === "locations") {
     if (!Object.prototype.hasOwnProperty.call(query, "search")) locationSearch.value = "";
-    if (!Object.prototype.hasOwnProperty.call(query, "type")) locationType.value = "all";
-    if (!Object.prototype.hasOwnProperty.call(query, "status")) locationStatus.value = "all";
+    if (!Object.prototype.hasOwnProperty.call(query, "type")) locationType.value = "";
+    if (!Object.prototype.hasOwnProperty.call(query, "status")) locationStatus.value = "";
     if (!Object.prototype.hasOwnProperty.call(query, "data_center")) locationDataCenter.value = "";
   }
   if (hasExplicitQuery && normalized === "view") rackPage.value = 1;
@@ -1051,6 +1119,8 @@ function openRackSection(section: RackSection | string, query: Record<string, st
   );
 }
 async function bootstrapApplication() {
+  await loadSystemSettings();
+  applySystemSettingsDefaults();
   await loadDataCenters();
   await loadDictionaries();
   await loadCustomFields();
@@ -1071,7 +1141,7 @@ async function load() {
   const version = beginLoad();
   // Spare parts and the rack view own their workspace loading masks so a
   // list/canvas request never blocks the entire routed application.
-  const usesLocalPageLoading = page.value === "dashboard" || page.value === "settings" || page.value === "spares" || page.value === "racks";
+  const usesLocalPageLoading = page.value === "dashboard" || page.value === "settings" || page.value === "asset-config" || page.value === "spares" || page.value === "racks";
   loading.value = !usesLocalPageLoading;
   pageError.value = "";
   try {
@@ -1087,8 +1157,13 @@ async function load() {
     if (page.value === "repairs") await loadRepairs(version);
     if (page.value === "licenses") await loadLicenses(version);
     if (page.value === "spares") await loadSpareData(version);
+    if (page.value === "asset-config") {
+      await Promise.all([loadCustomFields(version), loadTags(version)]);
+    }
     if (page.value === "settings") {
-      if (settingsSection.value === "organization" && isAdmin.value)
+      if (settingsSection.value === "system" && can("settings.view"))
+        await loadSystemSettings(version);
+      else if (settingsSection.value === "organization" && isAdmin.value)
         await loadOrganization(version);
       else if (settingsSection.value === "audit" && can("audit.view"))
         await loadAuditLogs(version);
@@ -1098,7 +1173,9 @@ async function load() {
         await loadCustomFields(version);
       else if (settingsSection.value === "tags")
         await loadTags(version);
-      else await loadDictionaries(version);
+      else if (settingsSection.value === "maintenance") {
+        // System maintenance has no list data to load.
+      } else await loadSystemSettings(version);
     }
   } catch (error) {
     console.error(error);
@@ -1124,7 +1201,7 @@ function navigate(item: (typeof navItems)[number]) {
     return;
   }
   if (item.page === "settings") {
-    settingsSection.value = "dictionaries";
+    settingsSection.value = "system";
     nextTick(() => sidebarMenu.value?.open("settings"));
   }
   navigateToRoute(
@@ -1138,15 +1215,29 @@ function navigate(item: (typeof navItems)[number]) {
 function openSettingsSection(
   section: SettingsSection,
 ) {
-  if (section === "organization" && !isAdmin.value) {
-    settingsSection.value = "dictionaries";
+  if (section === "custom-fields" || section === "tags") {
+    openAssetConfiguration(section);
     return;
   }
+  if (section === "organization" && !isAdmin.value) {
+    settingsSection.value = "system";
+    return;
+  }
+  if (section === "system" && !can("settings.view")) return;
   if (section === "audit" && !can("audit.view")) return;
+  if (section === "maintenance" && !can("system.reset")) return;
   closeTransientUi();
   settingsSection.value = section;
   nextTick(() => sidebarMenu.value?.open("settings"));
   navigateToRoute(routeForPage("settings", { settingsSection: section }), true);
+}
+function openAssetConfiguration(section: AssetConfigSection) {
+  if (section === "custom-fields" && !can("custom_fields.view")) return;
+  if (section === "tags" && !can("tags.view")) return;
+  closeTransientUi();
+  assetConfigSection.value = section;
+  nextTick(() => openActiveSidebarSubmenu());
+  navigateToRoute(routeForPage("asset-config", { assetConfigSection: section }), true);
 }
 function openProfileSettings() {
   showProfileModal.value = true;
@@ -1155,6 +1246,8 @@ function openProfileSettings() {
 const activeMenu = computed(() =>
   page.value === "settings"
     ? `settings-${settingsSection.value}`
+    : page.value === "asset-config"
+      ? `asset-config-${assetConfigSection.value}`
     : page.value === "racks"
       ? `racks-${rackSection.value === "view" ? "view" : "locations"}`
       : page.value === "ledger"
@@ -1162,6 +1255,14 @@ const activeMenu = computed(() =>
         : page.value,
 );
 function handleMenuSelect(index: string) {
+  if (index === "asset-config-menu") {
+    openAssetConfiguration("custom-fields");
+    return;
+  }
+  if (index.startsWith("asset-config-")) {
+    openAssetConfiguration(index.endsWith("-tags") ? "tags" : "custom-fields");
+    return;
+  }
   if (index.startsWith("asset-")) {
     const ledgerItem = navItems.find((entry) => entry.page === "ledger");
     if (ledgerItem) navigate(ledgerItem);
@@ -1188,7 +1289,7 @@ function handleMenuSelect(index: string) {
   }
   if (index.startsWith("settings-")) {
     openSettingsSection(
-      index.slice(9) as "dictionaries" | "organization" | "audit" | "custom-fields" | "tags",
+      index.slice(9) as SettingsSection,
     );
     return;
   }
@@ -1267,7 +1368,7 @@ const pageContext = {
   goToAssets, goToRepairs, goToLicenses,
   dashboardLoading, dashboardError, dashboardUpdatedAt, refreshDashboard,
   openAssetDetail, refreshOpenAssetDetail, openRackSection,
-  assetSearch, searchLedger, assetColumnOptions, assetDynamicColumnOptions, visibleAssetColumns,
+  assetSearch, searchLedger, assetSortField, assetSortOrder, changeAssetSort, assetColumnOptions, assetDynamicColumnOptions, visibleAssetColumns,
   assetFilters, assetListLoading, assetListError, exportingAssets, resetAssetFilters,
   draftCustomFilters, appliedCustomFilters, applyAssetCustomFilters,
   assetFilterCustomFieldSchema, assetFilterCustomSchemaLoading, assetFilterCustomSchemaError,
@@ -1275,9 +1376,10 @@ const pageContext = {
   assetTagFilter, tags, assetListCustomSchemaLoading, assetListCustomSchemaError,
   retryAssetListCustomSchema,
   toggleAssetColumn, resetAssetColumns, visibleAssetColumnOptions, can,
-  openNewAssetModal, selectedAssetIds, deleteSelectedAssets, exportAssets,
+  openNewAssetModal, selectedAssetIds, assetBatchDeleteSaving, assetBatchDeleteResult, showAssetBatchDeleteResult,
+  deleteSelectedAssets, closeAssetBatchDeleteResult, exportAssets,
   registerFaultFromSelection, downloadImportTemplate, openImportDialog,
-  handleElementAssetSelection, assetValue, openAssetClone, openAssetEditor,
+  handleElementAssetSelection, clearAssetSelection, assetValue, openAssetClone, openAssetEditor,
   deleteAsset, assetPage, assetPageSize, assetCount, changeAssetPage,
   changeAssetPageSize,
   repairListLoading, repairListError,
@@ -1322,15 +1424,22 @@ const pageContext = {
   rackAllocationStyle, rackGapUnavailable, openRackAssetDetail,
   rackDetailOpen, detailAsset, detailLoading, detailError, retryAssetDetail, closeAssetDetail,
   rackCount, rackPage, rackPageSize, changeRackPage,
-  settingsSection, dictionarySection, dictionaryPage, dictionaryPageSize, dictionaryCount,
+  settingsSection, systemSettings, systemSettingsForm, systemSettingsDefinitions, systemSettingsLoading,
+  systemSettingsSaving, systemSettingsError, systemSettingsFormErrors, systemSettingsDirty,
+  loadSystemSettings, retrySystemSettings, resetSystemSettingsForm, saveSystemSettings,
+  dictionarySection, dictionaryPage, dictionaryPageSize, dictionaryCount,
   dictionarySearch, dictionaryLoading, dictionaryError, dictionarySaving, dictionaryActionId,
   dictionaryFormErrors,
+  showSystemResetDialog, systemResetConfirmation, systemResetConfirmationToken,
+  systemResetSaving, systemResetError, openSystemResetDialog, closeSystemResetDialog, resetSystem,
   loadDictionaries, changeDictionarySection, searchDictionaries, changeDictionaryPage, changeDictionaryPageSize, retryDictionaries, currentDictionaryLabel,
   openDictionaryModal, currentDictionaryItems, toggleDictionary,
   dictionaryItemUsed, deleteDictionary, isAdmin, organizationLoading, organizationError,
   userListError, roleListError, retryOrganization, users, userSearch, userPage, userPageSize, userCount,
+  selectedUserIds, userBatchSaving, userBatchResult, showUserBatchResult,
   userFormErrors, userSaving, userPendingId, openUserModal,
-  toggleUser, deleteUser, roles, retryUserList, searchUsers, changeUserPage, changeUserPageSize,
+  toggleUser, deleteUser, roles, retryUserList, handleUserSelection, clearUserSelection, batchUpdateUserStatus, closeUserBatchResult,
+  searchUsers, changeUserPage, changeUserPageSize,
   showUserResetModal, resettingUser, userResetForm, userResetFormRef, userResetFormRules,
   userResetSaving, userResetFormErrors, openUserResetModal, resetUserPassword, userProtectionReason, canChangeUserRole,
   auditFilters, auditListLoading, auditListError,
@@ -1407,17 +1516,16 @@ const overlayAssetDetail = {
   >
     <el-aside
       class="sidebar ep-sidebar"
-      :width="sidebarCollapsed ? '64px' : '216px'"
     >
       <div class="sidebar-brand">
         <img
-          v-if="sidebarCollapsed"
+          v-show="sidebarCollapsed"
           class="sidebar-brand-icon"
           :src="infrixMark"
           alt="Infrix"
         />
         <img
-          v-else
+          v-show="!sidebarCollapsed"
           class="sidebar-wordmark"
           :src="infrixWordmark"
           alt="Infrix"
@@ -1441,7 +1549,19 @@ const overlayAssetDetail = {
           index="asset-menu"
           ><template #title><el-icon><Monitor /></el-icon><span>资产管理</span></template
           ><el-menu-item index="asset-list">资产列表</el-menu-item
-          ><el-menu-item v-if="can('spares.view')" index="spares">备件管理</el-menu-item
+          ><el-sub-menu
+            v-if="can('custom_fields.view') || can('tags.view')"
+            index="asset-config-menu"
+          >
+            <template #title>资产配置</template>
+            <el-menu-item v-if="can('custom_fields.view')" index="asset-config-custom-fields"
+              >自定义字段</el-menu-item
+            >
+            <el-menu-item v-if="can('tags.view')" index="asset-config-tags"
+              >标签管理</el-menu-item
+            >
+          </el-sub-menu>
+          <el-menu-item v-if="can('spares.view')" index="spares">备件管理</el-menu-item
         ></el-sub-menu
         >
         <el-sub-menu v-if="can('racks.view')" index="racks-menu">
@@ -1468,16 +1588,16 @@ const overlayAssetDetail = {
           index="settings"
           ><template #title
             ><el-icon><Setting /></el-icon><span>系统设置</span></template
+          ><el-menu-item v-if="can('settings.view')" index="settings-system"
+            >系统参数</el-menu-item
           ><el-menu-item index="settings-dictionaries"
             >数据字典</el-menu-item
-          ><el-menu-item v-if="can('custom_fields.view')" index="settings-custom-fields"
-            >自定义字段</el-menu-item
-          ><el-menu-item v-if="can('tags.view')" index="settings-tags"
-            >标签管理</el-menu-item
           ><el-menu-item v-if="isAdmin" index="settings-organization"
             >组织权限</el-menu-item
           ><el-menu-item v-if="can('audit.view')" index="settings-audit"
             >操作日志</el-menu-item
+          ><el-menu-item v-if="can('system.reset')" index="settings-maintenance"
+            >系统维护</el-menu-item
           ></el-sub-menu
         >
       </el-menu>

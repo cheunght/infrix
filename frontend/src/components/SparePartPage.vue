@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, nextTick, ref, watch } from "vue";
 import type { FormInstance, FormRules } from "element-plus";
-import { Delete, Download, Edit, MoreFilled, Operation, TopRight, Upload } from "@element-plus/icons-vue";
+import { Delete, Download, Edit, Operation, Switch, Tickets, TopRight, Upload } from "@element-plus/icons-vue";
 import PagedTable from "./PagedTable.vue";
 import SearchField from "./SearchField.vue";
 import PageContainer from "./page/PageContainer.vue";
@@ -12,6 +12,7 @@ import ActionDialogShell from "./ActionDialogShell.vue";
 import FieldHelp from "./FieldHelp.vue";
 import FormDialogShell from "./FormDialogShell.vue";
 import StatusTag from "./StatusTag.vue";
+import TableIconButton from "./TableIconButton.vue";
 import type { DataCenter, DictionaryItem, ServerRoom, SparePart, SparePartCategory, SpareStock, SpareTransaction } from "../types";
 import type { SpareContext } from "../types/page-context";
 import type { StockOperationType } from "../types";
@@ -51,8 +52,6 @@ const activeSpareCategories = computed(() => {
   const currentId = String(sparePartForm.value.category || "");
   return (spareCategories.value as SparePartCategory[]).filter((item) => item.is_active || String(item.id) === currentId);
 });
-const activeSpareCategoryFilters = computed(() => (spareCategories.value as SparePartCategory[]).filter((item) => item.is_active || can("spares.manage")));
-const manufacturerFilterOptions = computed(() => (manufacturers.value as DictionaryItem[]));
 const activeDataCenters = computed(() => (dataCenters.value as DataCenter[]).filter((item) => item.is_active));
 const hasSpareFilters = computed(() => Boolean(
   spareSearch.value.trim() || spareCategory.value || spareManufacturer.value || spareListDataCenter.value || spareListRoom.value,
@@ -205,10 +204,6 @@ async function handleExpandChange(row: SparePart, rows: SparePart[]) {
 function openLocationOperation(part: SparePart, operation: StockOperationType, stock: SpareStock) {
   openSpareOperation(part, operation, { data_center: stock.data_center, server_room: stock.server_room, quantity: stock.quantity, label: stockLocationLabel(stock) });
 }
-function handleLocationCommand(command: { part: SparePart; stock: SpareStock; operation: StockOperationType | "transactions" }) {
-  if (command.operation === "transactions") openTransactionDrawer(command.part);
-  else openLocationOperation(command.part, command.operation, command.stock);
-}
 function onInitialDataCenterChange() { sparePartForm.value.initial_server_room = ""; }
 function onOperationSourceCenterChange() { spareOperationForm.value.source_server_room = ""; }
 function onOperationTargetCenterChange() { spareOperationForm.value.target_server_room = ""; }
@@ -254,13 +249,7 @@ watch(showSpareOperationModal, (open, wasOpen) => { if (!open && wasOpen) refres
       <template #toolbar>
         <PageToolbar>
           <template #search>
-            <SearchField v-model="spareSearch" placeholder="搜索编码、名称、型号或规格" aria-label="搜索备件" :loading="spareListLoading" @search="searchSpareParts" />
-          </template>
-          <template #filters>
-            <div class="page-toolbar__filter-group">
-              <el-select v-model="spareCategory" placeholder="全部类型" clearable @change="searchSpareParts"><el-option v-for="item in activeSpareCategoryFilters" :key="item.id" :label="item.name" :value="String(item.id)" /></el-select>
-              <el-select v-model="spareManufacturer" placeholder="全部厂商" clearable filterable @change="searchSpareParts"><el-option v-for="item in manufacturerFilterOptions" :key="item.id" :label="`${item.name}${item.is_active ? '' : '（已停用）'}`" :value="String(item.id)" /></el-select>
-            </div>
+            <SearchField v-model="spareSearch" placeholder="搜索编码、名称、类型、厂商、型号或规格" aria-label="搜索备件" :loading="spareListLoading" @search="searchSpareParts" />
           </template>
           <template #actions>
             <el-button v-if="can('spares.export')" class="toolbar-secondary-action toolbar-export-action" :icon="Download" :loading="exportingSpares" :disabled="exportingSpares" @click="exportSpareParts">
@@ -295,18 +284,18 @@ watch(showSpareOperationModal, (open, wasOpen) => { if (!open && wasOpen) refres
                     <div v-for="stock in stocksFor(row)" :key="stock.id" class="spare-location-row">
                       <div class="spare-location-main"><strong>{{ stockLocationLabel(stock) }}</strong><span class="form-hint">更新时间：{{ stock.updated_at || "—" }}</span></div>
                       <el-tag :type="stock.quantity > 0 ? 'success' : 'info'" class="spare-location-quantity">{{ stock.quantity }} {{ spareUnitLabel(row.unit) }}</el-tag>
-                      <div class="spare-location-actions">
-                        <el-button v-if="can('spares.manage')" link type="primary" :icon="Upload" @click.stop="openLocationOperation(row, 'inbound', stock)">入库</el-button>
-                        <el-button v-if="can('spares.manage')" link :icon="TopRight" :disabled="stock.quantity <= 0" @click.stop="openLocationOperation(row, 'outbound', stock)">出库</el-button>
-                        <el-dropdown trigger="click" @command="handleLocationCommand">
-                          <el-button link :icon="MoreFilled" aria-label="更多库存操作" @click.stop />
-                          <template #dropdown><el-dropdown-menu><el-dropdown-item v-if="can('spares.manage')" :command="{ part: row, stock, operation: 'transfer' }">调拨</el-dropdown-item><el-dropdown-item v-if="can('spares.manage')" :command="{ part: row, stock, operation: 'adjustment' }">调整库存</el-dropdown-item><el-dropdown-item v-if="can('spares.manage')" :command="{ part: row, stock, operation: 'scrap' }" :disabled="stock.quantity <= 0">报废</el-dropdown-item><el-dropdown-item divided :command="{ part: row, stock, operation: 'transactions' }">查看流水</el-dropdown-item></el-dropdown-menu></template>
-                        </el-dropdown>
+                      <div class="ep-table-actions">
+                        <TableIconButton v-if="can('spares.manage')" :icon="Upload" label="入库" type="primary" @click="openLocationOperation(row, 'inbound', stock)" />
+                        <TableIconButton v-if="can('spares.manage')" :icon="TopRight" label="出库" :disabled="stock.quantity <= 0" @click="openLocationOperation(row, 'outbound', stock)" />
+                        <TableIconButton v-if="can('spares.manage')" :icon="Switch" label="调拨" @click="openLocationOperation(row, 'transfer', stock)" />
+                        <TableIconButton v-if="can('spares.manage')" :icon="Operation" label="调整库存" @click="openLocationOperation(row, 'adjustment', stock)" />
+                        <TableIconButton v-if="can('spares.manage')" :icon="Delete" label="报废" type="danger" :disabled="stock.quantity <= 0" @click="openLocationOperation(row, 'scrap', stock)" />
+                        <TableIconButton :icon="Tickets" label="查看流水" type="primary" @click="openTransactionDrawer(row)" />
                       </div>
                     </div>
                     <div v-if="(stockLocationTotalsByPart[row.id] || 0) > stocksFor(row).length" class="spare-location-total-hint">仅显示前 {{ stocksFor(row).length }} 个库存地点，共 {{ stockLocationTotalsByPart[row.id] }} 个</div>
                   </div>
-                  <el-empty v-else-if="stockLocationLoadedByPart[row.id]" :image-size="48" description="暂无库存地点"><el-button v-if="can('spares.manage')" type="primary" size="small" @click="openSpareOperation(row, 'inbound')">登记入库</el-button></el-empty>
+                  <el-empty v-else-if="stockLocationLoadedByPart[row.id]" :image-size="48" description="暂无库存地点"><TableIconButton v-if="can('spares.manage')" :icon="Upload" label="登记入库" type="primary" @click="openSpareOperation(row, 'inbound')" /></el-empty>
                 </div>
               </template>
             </el-table-column>
@@ -325,17 +314,17 @@ watch(showSpareOperationModal, (open, wasOpen) => { if (!open && wasOpen) refres
                 </div>
               </template>
             </el-table-column>
-            <el-table-column label="出库" width="88" align="center">
+            <el-table-column label="出库" width="88">
               <template #default="{ row }">
-                <el-button v-if="can('spares.manage')" class="spare-quick-action" link type="primary" size="small" :icon="TopRight" :disabled="deletingSparePartId === row.id" aria-label="出库" @click.stop="openSpareOperation(row, 'outbound')">出库</el-button>
+                <TableIconButton v-if="can('spares.manage')" :icon="TopRight" label="出库" type="primary" :disabled="deletingSparePartId === row.id" @click="openSpareOperation(row, 'outbound')" />
               </template>
             </el-table-column>
-            <el-table-column label="操作" fixed="right" width="244" align="center">
+            <el-table-column label="操作" fixed="right" width="244">
               <template #default="{ row }">
-                <div v-if="can('spares.manage')" class="ep-table-actions spare-row-actions">
-                  <el-button link type="primary" size="small" :icon="Edit" :disabled="deletingSparePartId === row.id" aria-label="编辑" @click.stop="openSparePartModal(row)">编辑</el-button>
-                  <el-button link type="primary" size="small" :icon="Operation" :disabled="deletingSparePartId === row.id" aria-label="调整库存" @click.stop="openSpareOperation(row, 'adjustment')">调整库存</el-button>
-                  <el-button link type="danger" size="small" :icon="Delete" :loading="deletingSparePartId === row.id" :disabled="deletingSparePartId === row.id" aria-label="删除" @click.stop="deleteSparePart(row)">删除</el-button>
+                <div v-if="can('spares.manage')" class="ep-table-actions">
+                  <TableIconButton :icon="Edit" label="编辑" type="primary" :disabled="deletingSparePartId === row.id" @click="openSparePartModal(row)" />
+                  <TableIconButton :icon="Operation" label="调整库存" type="primary" :disabled="deletingSparePartId === row.id" @click="openSpareOperation(row, 'adjustment')" />
+                  <TableIconButton :icon="Delete" label="删除" type="danger" :loading="deletingSparePartId === row.id" :disabled="deletingSparePartId === row.id" @click="deleteSparePart(row)" />
                 </div>
               </template>
             </el-table-column>
@@ -503,10 +492,7 @@ watch(showSpareOperationModal, (open, wasOpen) => { if (!open && wasOpen) refres
   color: var(--el-color-danger);
   font-size: 13px;
 }
-.spare-quick-action { white-space: nowrap; }
 .spare-stock-cell { display: inline-flex; align-items: center; justify-content: center; gap: 6px; white-space: nowrap; font-variant-numeric: tabular-nums; }
-.spare-row-actions { display: inline-flex; align-items: center; justify-content: center; gap: 4px; white-space: nowrap; }
-.spare-row-actions .el-button + .el-button { margin-left: 0; }
 .spare-location-total-hint { padding-top: 2px; color: var(--el-text-color-secondary); font-size: 12px; }
 .spare-inline-error { justify-content: flex-start; margin: 8px 0 0; padding: 8px 10px; }
 .spare-inline-error .el-button { margin-left: auto; }

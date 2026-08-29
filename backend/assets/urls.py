@@ -1,6 +1,6 @@
 from rest_framework.routers import DefaultRouter
 from django.urls import path
-from .views import AuditLogViewSet, AssetViewSet, CustomFieldOptionViewSet, CustomFieldViewSet, DataCenterViewSet, DeviceTypeViewSet, FaultEventViewSet, GroupViewSet, InventoryItemViewSet, InventoryTaskViewSet, ManufacturerViewSet, RackViewSet, RepairRecordViewSet, ServerRoomViewSet, SoftwareLicenseViewSet, SparePartCategoryViewSet, SparePartViewSet, SpareStockViewSet, SpareStockTransactionViewSet, TagViewSet, UserViewSet, asset_inventory_records, dashboard_overview, facilities_summary, inventory_inspectors, license_export, license_summary, repair_record_export, rack_layout_export, spare_part_export, spare_transaction_export, auth_login, auth_me, auth_logout, auth_csrf, auth_change_password, asset_import, asset_import_preview, asset_import_template, asset_export
+from .views import AuditLogViewSet, AssetViewSet, CustomFieldOptionViewSet, CustomFieldViewSet, DataCenterViewSet, DeviceTypeViewSet, FaultEventViewSet, GroupViewSet, InventoryItemViewSet, InventoryTaskViewSet, ManufacturerViewSet, RackViewSet, RepairRecordViewSet, ServerRoomViewSet, SoftwareLicenseViewSet, SparePartCategoryViewSet, SparePartViewSet, SpareStockViewSet, SpareStockTransactionViewSet, TagViewSet, UserViewSet, asset_inventory_records, dashboard_overview, facilities_summary, inventory_inspectors, license_export, license_summary, repair_record_export, rack_layout_export, spare_part_export, spare_transaction_export, auth_login, auth_me, auth_logout, auth_csrf, auth_change_password, system_reset, system_settings, asset_import, asset_import_preview, asset_import_template, asset_export
 
 router = DefaultRouter()
 router.register("assets", AssetViewSet)
@@ -31,6 +31,8 @@ urlpatterns = [
     path("auth/me/", auth_me),
     path("auth/logout/", auth_logout),
     path("auth/change-password/", auth_change_password),
+    path("system/reset/", system_reset),
+    path("system/settings/", system_settings),
     path("assets/import/template/", asset_import_template),
     path("assets/import/preview/", asset_import_preview),
     path("assets/import/", asset_import),

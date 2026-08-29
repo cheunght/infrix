@@ -25,6 +25,104 @@
   overflow-wrap: anywhere;
 }
 
+.settings-maintenance-container {
+  max-width: 840px;
+}
+
+.settings-system-container {
+  max-width: 900px;
+}
+
+.settings-system {
+  display: grid;
+  gap: var(--space-xl, 24px);
+}
+
+.settings-system__heading {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: var(--space-lg, 16px);
+}
+
+.settings-system__heading h2 {
+  margin: 0;
+  color: var(--el-text-color-primary);
+  font-size: 16px;
+  font-weight: 600;
+  line-height: 1.5;
+}
+
+.settings-system__heading p {
+  margin: var(--space-xs, 4px) 0 0;
+  color: var(--el-text-color-secondary);
+  line-height: 1.6;
+}
+
+.settings-system__actions {
+  display: flex;
+  flex: 0 0 auto;
+  gap: var(--space-sm, 8px);
+}
+
+.settings-system__form {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: var(--space-lg, 16px) var(--space-xl, 24px);
+  max-width: 760px;
+}
+
+.settings-system__control {
+  width: min(100%, 320px);
+}
+
+.settings-system__help {
+  margin-top: var(--space-xs, 4px);
+  color: var(--el-text-color-secondary);
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.settings-maintenance {
+  display: grid;
+  gap: var(--space-lg, 16px);
+}
+
+.settings-maintenance__section {
+  display: grid;
+  gap: var(--space-lg, 16px);
+}
+
+.settings-maintenance__intro {
+  display: grid;
+  gap: var(--space-xs, 4px);
+}
+
+.settings-maintenance__intro h2 {
+  margin: 0;
+  color: var(--el-text-color-primary);
+  font-size: 16px;
+  font-weight: 600;
+  line-height: 1.5;
+}
+
+.settings-maintenance__intro p,
+.settings-maintenance__confirm p {
+  margin: 0;
+  color: var(--el-text-color-secondary);
+  line-height: 1.6;
+}
+
+.settings-maintenance__action {
+  display: flex;
+  justify-content: flex-start;
+}
+
+.settings-maintenance__confirm {
+  display: grid;
+  gap: 12px;
+}
+
 .custom-field-visibility-row {
   display: flex;
   align-items: flex-start;
@@ -213,6 +311,14 @@
 }
 
 @media (max-width: 720px) {
+  .settings-system__heading {
+    flex-direction: column;
+  }
+
+  .settings-system__form {
+    grid-template-columns: 1fr;
+  }
+
   .audit-detail-drawer {
     width: 100% !important;
   }

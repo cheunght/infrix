@@ -1,12 +1,15 @@
-import { computed, reactive, ref, type ComputedRef, type Ref } from "vue";
+import { computed, reactive, ref, watch, type ComputedRef, type Ref } from "vue";
 import type { LocationQuery } from "vue-router";
 import { ElMessage } from "element-plus";
 import { ApiError, buildExportQuery, isAbortError, pageItems, pageTotal, type PageResult } from "../api";
 import type { Page } from "../types";
 import type {
   Asset,
+  AssetBatchDeleteResponse,
   AssetDetail,
   AssetCustomFilter,
+  AssetSortField,
+  AssetSortOrder,
   CustomField,
   CustomFieldFilterOperator,
   CustomFieldSchema,
@@ -25,6 +28,7 @@ import {
   percentageToRate,
   rateToPercentageText,
 } from "../depreciation";
+import { systemSettingsState } from "../system-settings";
 
 export type StaticAssetColumnKey =
   | "asset_no"
@@ -52,6 +56,13 @@ export type StaticAssetColumnKey =
   | "maintenance_provider"
   | "maintenance_expiry_date"
   | "notes";
+
+export const ASSET_SORT_FIELD_MAP: Record<AssetSortField, string> = {
+  asset_no: "asset_no",
+  name: "name",
+  manufacturer_model: "manufacturer_model",
+  serial_number: "serial_number",
+};
 
 export type DynamicAssetColumnKey = `custom:${string}`;
 export type AssetColumnKey = StaticAssetColumnKey | DynamicAssetColumnKey;
@@ -146,6 +157,7 @@ export interface AssetsDeps {
   loadRackManagement: () => void | Promise<void>;
   goToLedger: () => void;
   clearRouteQuery?: (keys: string[]) => boolean;
+  updateRouteQuery?: (updates: Record<string, string | undefined>) => boolean;
   showAssetDetail: Ref<boolean>;
   detailAsset: Ref<AssetDetail | null>;
   detailLoading: Ref<boolean>;
@@ -205,7 +217,7 @@ function normalizeVisibleColumns(keys: AssetColumnKey[], dynamicKeys?: Set<strin
   return [...normalizedStatic, ...Array.from(new Set(normalizedDynamic)).slice(0, MAX_DYNAMIC_ASSET_COLUMNS)];
 }
 
-function emptyAssetForm(): AssetFormState {
+function emptyAssetForm(defaultStatus = systemSettingsState.defaultAssetStatus): AssetFormState {
   return {
     asset_no: "",
     name: "",
@@ -215,7 +227,7 @@ function emptyAssetForm(): AssetFormState {
     manufacturer_model: "",
     serial_number: "",
     purpose: "",
-    status: "in_stock",
+    status: defaultStatus,
     owner_name: "",
     notes: "",
     rack_mounted: false,
@@ -364,9 +376,23 @@ function extractAssetFormErrors(error: unknown): {
 export function useAssets(deps: AssetsDeps) {
   const assets = ref<Asset[]>([]);
   const selectedAssetIds = ref<number[]>([]);
+  const assetBatchDeleteSaving = ref(false);
+  const assetBatchDeleteResult = ref<AssetBatchDeleteResponse | null>(null);
+  const showAssetBatchDeleteResult = ref(false);
   const assetCount = ref(0);
   const assetPage = ref(1);
-  const assetPageSize = ref(50);
+  const assetPageSize = ref(systemSettingsState.defaultPageSize);
+  const assetSortField = ref<AssetSortField | null>(null);
+  const assetSortOrder = ref<AssetSortOrder>(null);
+  let assetPageSizeUserSelected = false;
+  watch(
+    () => systemSettingsState.defaultPageSize,
+    (pageSize, previousPageSize) => {
+      if (assetPageSizeUserSelected || pageSize === previousPageSize) return;
+      assetPageSize.value = pageSize;
+      assetPage.value = 1;
+    },
+  );
   const assetSearch = ref("");
   const assetFilters = reactive<AssetFilters>({
     status: "",
@@ -619,6 +645,38 @@ export function useAssets(deps: AssetsDeps) {
     return message ? `筛选条件无效：${message}` : "";
   }
 
+  function assetOrderingValue(): string | undefined {
+    if (!assetSortField.value || !assetSortOrder.value) return undefined;
+    const field = ASSET_SORT_FIELD_MAP[assetSortField.value];
+    return assetSortOrder.value === "descending" ? `-${field}` : field;
+  }
+
+  function assetRouteQueryUpdates(): Record<string, string | undefined> {
+    return {
+      search: assetSearch.value.trim() || undefined,
+      status: assetFilters.status || undefined,
+      device_type: assetFilters.deviceType || undefined,
+      tags: assetFilters.tag.length ? assetFilters.tag.join(",") : undefined,
+      manufacturer: assetFilters.manufacturer || undefined,
+      model: assetFilters.model.trim() || undefined,
+      data_center: assetFilters.dataCenter || undefined,
+      warranty: assetFilters.warranty || undefined,
+      ordering: assetOrderingValue(),
+    };
+  }
+
+  function assetSortFromOrdering(value: string): { field: AssetSortField | null; order: AssetSortOrder } {
+    const descending = value.startsWith("-");
+    const apiField = descending ? value.slice(1) : value;
+    const field = (Object.keys(ASSET_SORT_FIELD_MAP) as AssetSortField[]).find(
+      (candidate) => ASSET_SORT_FIELD_MAP[candidate] === apiField,
+    ) || null;
+    return {
+      field,
+      order: field ? (descending ? "descending" : "ascending") : null,
+    };
+  }
+
   function assetQueryParams(includePagination = true) {
     const params = new URLSearchParams();
     if (includePagination) {
@@ -634,6 +692,8 @@ export function useAssets(deps: AssetsDeps) {
     if (assetFilters.model.trim()) params.set("model", assetFilters.model.trim());
     if (assetFilters.dataCenter) params.set("data_center", assetFilters.dataCenter);
     if (assetFilters.warranty) params.set("warranty", assetFilters.warranty);
+    const ordering = assetOrderingValue();
+    if (ordering) params.set("ordering", ordering);
     for (const filter of appliedCustomFilters.value) {
       if (filter.fieldKey && filter.value.trim()) {
         params.append(`custom__${filter.fieldKey}__${filter.operator}`, filter.value.trim());
@@ -669,9 +729,7 @@ export function useAssets(deps: AssetsDeps) {
 
       assets.value = nextAssets;
       assetCount.value = nextCount;
-      selectedAssetIds.value = selectedAssetIds.value.filter((id) =>
-        assets.value.some((asset) => asset.id === id),
-      );
+      selectedAssetIds.value = [];
       return true;
     } catch (error) {
       if (deps.isCurrentLoad(version) && !isAbortError(error)) {
@@ -1147,6 +1205,10 @@ export function useAssets(deps: AssetsDeps) {
     selectedAssetIds.value = rows.map((asset) => asset.id);
   }
 
+  function clearAssetSelection() {
+    selectedAssetIds.value = [];
+  }
+
   async function deleteAsset(asset: Asset) {
     if (!(await deps.confirmAction(`确定删除资产“${asset.asset_no}”吗？`))) return;
     try {
@@ -1163,26 +1225,39 @@ export function useAssets(deps: AssetsDeps) {
 
   async function deleteSelectedAssets() {
     const ids = [...selectedAssetIds.value];
-    if (!ids.length || !(await deps.confirmAction(`确定删除选中的 ${ids.length} 项资产吗？`))) return;
-    let success = 0;
-    const failures: string[] = [];
-    for (const id of ids) {
-      const asset = assets.value.find((item) => item.id === id);
-      try {
-        await deps.request(`/assets/${id}/`, { method: "DELETE" });
-        success += 1;
-      } catch {
-        failures.push(asset?.asset_no || String(id));
+    if (!ids.length || assetBatchDeleteSaving.value) return;
+    if (!(await deps.confirmAction(`确定删除选中的 ${ids.length} 项资产吗？删除后无法恢复。`))) return;
+    assetBatchDeleteSaving.value = true;
+    assetBatchDeleteResult.value = null;
+    showAssetBatchDeleteResult.value = false;
+    clearAssetSelection();
+    try {
+      const result = await deps.request<AssetBatchDeleteResponse>("/assets/batch-delete/", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ ids }),
+      });
+      assetBatchDeleteResult.value = result;
+      const mutationMessage = result.failed
+        ? `批量删除完成：${result.succeeded} 项成功，${result.failed} 项失败`
+        : `已成功删除 ${result.succeeded} 项资产`;
+      deps.actionMessage.value = mutationMessage;
+      const refreshed = await loadAssets();
+      if (!refreshed) {
+        deps.actionMessage.value = `${mutationMessage}；列表刷新失败，请重新加载`;
       }
+      if (result.failed) showAssetBatchDeleteResult.value = true;
+    } catch (error) {
+      deps.actionMessage.value = error instanceof Error ? error.message : "批量删除资产失败";
+    } finally {
+      assetBatchDeleteSaving.value = false;
     }
-    selectedAssetIds.value = [];
-    const mutationMessage = failures.length
-      ? `已删除 ${success} 项，${failures.length} 项删除失败：${failures.join("、")}`
-      : `已删除 ${success} 项资产`;
-    deps.actionMessage.value = mutationMessage;
-    if (!(await loadAssets())) {
-      deps.actionMessage.value = `${mutationMessage}，但列表刷新失败：请稍后重试`;
-    }
+  }
+
+  function closeAssetBatchDeleteResult() {
+    if (assetBatchDeleteSaving.value) return;
+    showAssetBatchDeleteResult.value = false;
+    assetBatchDeleteResult.value = null;
   }
 
   async function exportAssets() {
@@ -1434,7 +1509,24 @@ export function useAssets(deps: AssetsDeps) {
       assetForm.value.rack_end_u = "";
     }
   }
+
+  async function changeAssetSort(sort: { prop: string | null; order: AssetSortOrder }): Promise<void> {
+    const field = sort.prop && Object.prototype.hasOwnProperty.call(ASSET_SORT_FIELD_MAP, sort.prop)
+      ? sort.prop as AssetSortField
+      : null;
+    const order = field && (sort.order === "ascending" || sort.order === "descending")
+      ? sort.order
+      : null;
+    assetSortField.value = field;
+    assetSortOrder.value = order;
+    clearAssetSelection();
+    assetPage.value = 1;
+    if (!appliedCustomFilters.value.length && deps.updateRouteQuery?.(assetRouteQueryUpdates())) return;
+    await loadAssets();
+  }
+
   async function searchLedger(): Promise<void> {
+    clearAssetSelection();
     assetPage.value = 1;
     if (deps.page.value !== "ledger") {
       deps.goToLedger();
@@ -1443,6 +1535,7 @@ export function useAssets(deps: AssetsDeps) {
     await loadAssets();
   }
   async function applyAssetCustomFilters(filters: AssetCustomFilter[]): Promise<void> {
+    clearAssetSelection();
     appliedCustomFilters.value = filters.map((filter) => ({ ...filter }));
     assetPage.value = 1;
     await loadAssets();
@@ -1464,6 +1557,7 @@ export function useAssets(deps: AssetsDeps) {
   }
 
   function syncFiltersFromQuery(query: LocationQuery) {
+    clearAssetSelection();
     assetSearch.value = queryValue(query, "search");
     const status = queryValue(query, "status");
     const deviceType = queryValue(query, "device_type");
@@ -1481,12 +1575,16 @@ export function useAssets(deps: AssetsDeps) {
     assetFilters.dataCenter = /^\d+$/.test(dataCenter) && Number(dataCenter) > 0 ? dataCenter : "";
     assetFilters.warranty = validWarranties.has(warranty) ? warranty : "";
     assetFilters.tag = tagIds;
+    const parsedOrdering = assetSortFromOrdering(queryValue(query, "ordering"));
+    assetSortField.value = parsedOrdering.field;
+    assetSortOrder.value = parsedOrdering.order;
     draftCustomFilters.value = [];
     appliedCustomFilters.value = [];
     assetPage.value = 1;
   }
 
   async function resetAssetFilters(): Promise<void> {
+    clearAssetSelection();
     assetSearch.value = "";
     assetFilters.status = "";
     assetFilters.deviceType = "";
@@ -1511,20 +1609,37 @@ export function useAssets(deps: AssetsDeps) {
     await loadAssets();
   }
   async function changeAssetPage(pageNumber: number): Promise<void> {
+    clearAssetSelection();
     assetPage.value = Math.min(Math.max(pageNumber, 1), Math.max(1, Math.ceil(assetCount.value / assetPageSize.value)));
     await loadAssets();
   }
   async function changeAssetPageSize(size?: number): Promise<void> {
-    if (size) assetPageSize.value = size;
+    clearAssetSelection();
+    if (size) {
+      assetPageSizeUserSelected = true;
+      assetPageSize.value = size;
+    }
     assetPage.value = 1;
     await loadAssets();
   }
+
+  function applySystemSettingsDefaults(): void {
+    assetPageSizeUserSelected = false;
+    assetPageSize.value = systemSettingsState.defaultPageSize;
+  }
+
   return {
     assets,
     selectedAssetIds,
+    assetBatchDeleteSaving,
+    assetBatchDeleteResult,
+    showAssetBatchDeleteResult,
     assetCount,
     assetPage,
     assetPageSize,
+    assetSortField,
+    assetSortOrder,
+    applySystemSettingsDefaults,
     assetSearch,
     assetFilters,
     assetListLoading,
@@ -1583,8 +1698,10 @@ export function useAssets(deps: AssetsDeps) {
     toggleAssetSelection,
     toggleAllAssetSelection,
     handleElementAssetSelection,
+    clearAssetSelection,
     deleteAsset,
     deleteSelectedAssets,
+    closeAssetBatchDeleteResult,
     exportAssets,
     assetValue,
     downloadImportTemplate,
@@ -1607,6 +1724,7 @@ export function useAssets(deps: AssetsDeps) {
     confirmImportPreview,
     importErrorText,
     searchLedger,
+    changeAssetSort,
     syncFiltersFromQuery,
     resetAssetFilters,
     changeAssetPage,

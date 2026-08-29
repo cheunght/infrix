@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed } from "vue";
-import { Download } from "@element-plus/icons-vue";
+import { Delete, Download, Edit } from "@element-plus/icons-vue";
 import PagedTable from "./PagedTable.vue";
 import SearchField from "./SearchField.vue";
 import type { LicenseContext } from "../types/page-context";
@@ -11,6 +11,7 @@ import StatusTag from "./StatusTag.vue";
 import { statusTone } from "../status";
 import { LICENSE_STATUS_OPTIONS } from "../business-enums";
 import ResourceState from "./ResourceState.vue";
+import TableIconButton from "./TableIconButton.vue";
 
 const props = defineProps<{ context: LicenseContext }>();
 const context = props.context;
@@ -22,7 +23,6 @@ const {
   searchLicenses,
   licenseStatus,
   licenseManufacturer,
-  licenseManufacturerFilterOptions,
   resetLicenseFilters,
   retryLicenseList,
   exportLicenses,
@@ -66,16 +66,6 @@ const licenseHasFilters = computed(
             >
               <el-option v-for="option in LICENSE_STATUS_OPTIONS" :key="option.value" :label="option.label" :value="option.value" />
             </el-select>
-            <el-select
-              v-model="licenseManufacturer"
-              placeholder="全部厂商"
-              clearable
-              filterable
-              @change="searchLicenses"
-            >
-              <el-option v-for="manufacturer in licenseManufacturerFilterOptions" :key="manufacturer.id" :label="manufacturer.name" :value="String(manufacturer.id)" />
-            </el-select>
-            <el-button class="toolbar-secondary-action" :disabled="licenseListLoading" @click="resetLicenseFilters">重置</el-button>
           </div>
         </template>
         <template #actions>
@@ -163,14 +153,15 @@ const licenseHasFilters = computed(
           >
             <template #default="{ row }">
               <div class="ep-table-actions">
-                <el-button link type="primary" @click="openLicenseModal(row)">编辑</el-button>
-                <el-button
-                  link
+                <TableIconButton :icon="Edit" label="编辑" type="primary" @click="openLicenseModal(row)" />
+                <TableIconButton
+                  :icon="Delete"
+                  label="删除"
                   type="danger"
                   :loading="deletingLicenseId === row.id"
                   :disabled="deletingLicenseId !== null && deletingLicenseId !== row.id"
                   @click="deleteLicense(row)"
-                >删除</el-button>
+                />
               </div>
             </template>
           </el-table-column>

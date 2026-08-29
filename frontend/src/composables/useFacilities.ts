@@ -48,8 +48,8 @@ export function useFacilities(deps: FacilitiesDeps) {
   const locationManagementError = ref("");
   const locationManagementRequestId = ref(0);
   const locationSearch = ref("");
-  const locationType = ref<LocationTypeFilter>("all");
-  const locationStatus = ref<LocationStatusFilter>("all");
+  const locationType = ref<LocationTypeFilter>("");
+  const locationStatus = ref<LocationStatusFilter>("");
   const locationDataCenter = ref("");
   const dataCenterActionId = ref<number | null>(null);
   const rackListLoading = ref(false);
@@ -735,16 +735,16 @@ export function useFacilities(deps: FacilitiesDeps) {
   }
 
   function changeLocationType(value: string) {
-    if (!(value === "all" || value === "data-center" || value === "room")) return;
+    if (!(value === "" || value === "data-center" || value === "room")) return;
     locationType.value = value;
-    if (deps.updateRouteQuery?.({ type: value === "all" ? undefined : value })) return;
+    if (deps.updateRouteQuery?.({ type: value || undefined })) return;
     void deps.reload();
   }
 
   function changeLocationStatus(value: string) {
-    if (!(value === "all" || value === "active" || value === "inactive")) return;
+    if (!(value === "" || value === "active" || value === "inactive")) return;
     locationStatus.value = value;
-    if (deps.updateRouteQuery?.({ status: value === "all" ? undefined : value })) return;
+    if (deps.updateRouteQuery?.({ status: value || undefined })) return;
     void deps.reload();
   }
 
@@ -755,8 +755,8 @@ export function useFacilities(deps: FacilitiesDeps) {
 
   function resetLocationFilters() {
     locationSearch.value = "";
-    locationType.value = "all";
-    locationStatus.value = "all";
+    locationType.value = "";
+    locationStatus.value = "";
     locationDataCenter.value = "";
     if (deps.clearRouteQuery?.(["search", "type", "status", "data_center"])) return;
     void deps.reload();

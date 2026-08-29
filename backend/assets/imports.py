@@ -26,6 +26,7 @@ from .audit import asset_audit_snapshot, write_audit_log
 from .enum_contracts import ASSET_IMPORT_STATUS_VALUES
 from .models import Asset, CustomField, DataCenter, DeviceType, Manufacturer, Rack, ServerRoom, Tag
 from .serializers import AssetWriteSerializer
+from .system_settings import get_system_settings
 
 
 IMPORT_MAX_FILE_SIZE = 10 * 1024 * 1024
@@ -371,7 +372,7 @@ def _prepare_payload(row, headers):
     asset_data_center_name = row.get("asset_data_center", "").strip()
     asset_data_center = _named_active(DataCenter.objects, asset_data_center_name, "asset_data_center", "数据中心") if asset_data_center_name else None
 
-    status = row.get("status", "").strip() or "in_stock"
+    status = row.get("status", "").strip() or get_system_settings().default_asset_status
     if status not in IMPORT_STATUS_VALUES:
         raise DjangoValidationError({"status": "状态只能是 in_stock、in_use、idle 或 retired"})
 

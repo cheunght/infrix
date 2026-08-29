@@ -39,7 +39,6 @@
   --page-padding-inline: 24px;
   --page-padding-block: 20px;
   --page-section-gap: 16px;
-  --page-toolbar-gap: 12px;
   --page-content-min-height: 0px;
   --space-1: 4px;
   --space-2: 8px;
@@ -78,10 +77,13 @@ body {
   background: var(--itam-sidebar-bg);
   min-width: 0;
   flex: 0 0 var(--sidebar-width);
+  transition:
+    width var(--el-transition-duration) ease-in-out,
+    flex-basis var(--el-transition-duration) ease-in-out;
 }
-/* The legacy .sidebar rules set flex-basis: 216px. Scope the final layout
-   rules to the Element Plus shell so the actual flex item shrinks with the
-   bound el-aside width instead of only hiding its labels. */
+/* Keep the shell width and the Element Plus menu collapse in the same layout
+   transition. The shell owns the aside geometry; el-menu owns its labels and
+   submenu collapse state. */
 .shell:not(.sidebar-collapsed) > .ep-sidebar {
   width: var(--sidebar-width) !important;
   flex: 0 0 var(--sidebar-width);
@@ -773,14 +775,6 @@ body {
   white-space: nowrap;
 }
 
-.repair-row-actions {
-  display: inline-flex;
-  align-items: center;
-  justify-content: flex-start;
-  min-width: 0;
-  white-space: nowrap;
-}
-
 .repair-action-context {
   display: grid;
   gap: 6px;
@@ -945,31 +939,6 @@ body {
   white-space: nowrap;
 }
 .inventory-item-form { margin-top: 16px; }
-.inventory-row-actions {
-  display: inline-flex;
-  align-items: center;
-  flex-wrap: nowrap;
-  max-width: 100%;
-  gap: 4px;
-  white-space: nowrap;
-}
-.inventory-task-actions {
-  display: inline-flex;
-  align-items: center;
-  flex-wrap: nowrap;
-  max-width: 100%;
-  gap: 4px;
-  white-space: nowrap;
-}
-.inventory-task-actions .el-button { margin-left: 0; }
-.inventory-row-actions .el-button { margin-left: 0; }
-.inventory-item-toolbar-actions {
-  display: inline-flex;
-  flex: 0 0 auto;
-  align-items: center;
-  gap: var(--itam-button-gap, 8px);
-  white-space: nowrap;
-}
 .inventory-more-action {
   display: inline-flex;
   align-items: center;
@@ -1161,9 +1130,8 @@ body {
   .inventory-resolution-summary__header { align-items: flex-start; flex-direction: column; gap: 8px; }
 }
 
-/* Final button baseline: business text buttons share one semantic palette
-   and one layout rhythm. Icon-only controls and the rack canvas controls are
-   intentionally excluded so their compact dimensions remain unchanged. */
+/* Table operation controls share one compact alignment baseline. Element Plus
+   owns the button geometry; this wrapper only arranges the action controls. */
 :root {
   --itam-button-gap: 8px;
 }
@@ -1178,9 +1146,12 @@ body {
 .ep-main .ep-table-actions {
   justify-content: flex-start;
   flex-wrap: nowrap;
+  max-width: 100%;
+  min-width: 0;
+  white-space: nowrap;
+  vertical-align: middle;
 }
 
-.ep-main .ep-table-actions .el-button + .el-button,
 .ep-main .el-dialog__footer .el-button + .el-button {
   margin-left: 0;
 }
@@ -1248,13 +1219,6 @@ body {
   justify-content: center;
 }
 
-.spare-location-actions {
-  display: inline-flex;
-  align-items: center;
-  gap: 4px;
-  white-space: nowrap;
-}
-
 .spare-operation-context {
   margin-bottom: 14px;
 }
@@ -1277,9 +1241,6 @@ body {
     gap: 7px;
   }
 
-  .spare-location-actions {
-    justify-content: flex-start;
-  }
 }
 
 /* -------------------------------------------------------------------------
@@ -1484,12 +1445,6 @@ body {
 .user-account-form .el-input__prefix,
 .user-account-form .el-select__prefix {
   color: #7183a0;
-}
-
-.user-more-action {
-  display: inline-flex;
-  align-items: center;
-  gap: 4px;
 }
 
 .user-reset-alert {
@@ -1793,26 +1748,33 @@ body,
   margin-left: 0;
 }
 
-.asset-toolbar-table-actions {
-  display: flex;
-  min-width: 0;
+.asset-batch-actions,
+.settings-user-batch-actions,
+.settings-user-primary-actions {
+  display: inline-flex;
   align-items: center;
-  gap: var(--space-sm, 8px);
+  gap: var(--itam-button-gap, 8px);
+  min-width: 0;
+  white-space: nowrap;
 }
 
-.asset-toolbar-table-actions {
-  flex-wrap: nowrap;
+.settings-user-primary-actions {
+  justify-content: flex-end;
+}
+
+.asset-batch-actions .el-button,
+.settings-user-batch-actions .el-button {
+  margin-left: 0;
+}
+
+.batch-result-table {
+  margin-top: 16px;
 }
 
 @media (max-width: 640px) {
-  .asset-toolbar-table-actions {
-    width: 100%;
+  .settings-user-primary-actions {
     flex-wrap: wrap;
-  }
-
-  .asset-toolbar-table-actions .el-button,
-  .asset-toolbar-table-actions .el-upload {
-    flex: 1 1 auto;
+    justify-content: flex-end;
   }
 
 }
@@ -1848,19 +1810,26 @@ body,
   display: flex;
   width: max-content;
   max-width: 100%;
+  /* Element Plus sets the dropdown root to regular text and line-height: 1;
+     restore the table-cell header context before the reference inherits it. */
+  font: inherit;
+  color: inherit;
   line-height: inherit;
 }
 
-.asset-table-header-dropdown-trigger.el-button {
+.asset-table-header-dropdown-trigger {
   display: inline-flex;
   max-width: 100%;
   min-width: 0;
   align-items: center;
   gap: 4px;
-  border-width: 0;
-  padding: 0;
+  /* Use the dropdown's native reference element instead of an el-button so
+     filter-only headers inherit the exact typography of the table .cell. */
+  font: inherit;
+  color: inherit;
   line-height: inherit;
   text-align: left;
+  cursor: pointer;
 }
 
 .asset-table-header-dropdown-trigger__label {
@@ -1917,34 +1886,6 @@ body,
 
 .asset-number-cell {
   font-variant-numeric: tabular-nums;
-}
-
-.asset-row-actions {
-  display: flex;
-  align-items: center;
-  justify-content: flex-end;
-  gap: 4px;
-  min-width: 0;
-  white-space: nowrap;
-}
-
-.asset-row-actions .el-button {
-  flex: 0 0 auto;
-}
-
-.asset-row-actions .el-dropdown {
-  display: inline-flex;
-  flex: 0 0 auto;
-}
-
-.el-dropdown-menu__item.asset-row-danger {
-  color: var(--el-color-danger);
-}
-
-@media (max-width: 900px) {
-  .asset-row-actions {
-    justify-content: flex-start;
-  }
 }
 
 .asset-form-tag-state {

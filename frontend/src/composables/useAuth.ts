@@ -91,7 +91,7 @@ export function useAuth(deps: AuthDeps) {
       deps.ensureRouteAccess();
       if (deps.passwordChangeRequired.value) openPasswordModal();
       if (!deps.isAdmin.value && deps.settingsSection.value === "organization") {
-        deps.settingsSection.value = "dictionaries";
+        deps.settingsSection.value = "system";
       }
     } catch (error) {
       if (isAbortError(error)) return;
@@ -118,7 +118,7 @@ export function useAuth(deps: AuthDeps) {
       deps.syncRouteState();
       deps.ensureRouteAccess();
       if (!deps.isAdmin.value && deps.settingsSection.value === "organization") {
-        deps.settingsSection.value = "dictionaries";
+        deps.settingsSection.value = "system";
       }
       deps.password.value = "";
       await deps.loadCsrf();

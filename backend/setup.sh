@@ -14,4 +14,5 @@ fi
 .venv/bin/python -m pip install -r requirements.txt
 .venv/bin/python -c 'import django; print("Django", django.get_version())'
 .venv/bin/python manage.py migrate
+.venv/bin/python manage.py initialize_system_data
 echo "Backend ready: .venv/bin/python manage.py runserver"

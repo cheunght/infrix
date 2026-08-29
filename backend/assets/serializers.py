@@ -13,7 +13,7 @@ from decimal import Decimal, InvalidOperation
 from typing import Any
 import json
 import re
-from .models import AuditLog, Asset, AssetCustomValue, AssetNetworkAddress, AssetTag, CustomField, CustomFieldOption, DataCenter, DeviceType, FaultEvent, InventoryItem, InventoryTask, MaintenanceContract, Manufacturer, ProcurementRecord, Rack, RackUnitAllocation, RepairRecord, ServerRoom, SoftwareLicense, SparePart, SparePartCategory, SpareStock, SpareStockTransaction, Tag, UserSecurityProfile
+from .models import AuditLog, Asset, AssetCustomValue, AssetNetworkAddress, AssetTag, CustomField, CustomFieldOption, DataCenter, DeviceType, FaultEvent, InventoryItem, InventoryTask, MaintenanceContract, Manufacturer, ProcurementRecord, Rack, RackUnitAllocation, RepairRecord, ServerRoom, SoftwareLicense, SparePart, SparePartCategory, SpareStock, SpareStockTransaction, SystemSetting, Tag, UserSecurityProfile
 from .depreciation import DepreciationValidationError, calculate_asset_depreciation, validate_depreciation_configuration
 from .enum_contracts import (
     INVENTORY_ITEM_STATUS_LABELS,
@@ -29,6 +29,8 @@ from .enum_contracts import (
 from .license_status import LICENSE_STATUS_LABELS, license_status_value
 from .services import apply_asset_custom_values, apply_asset_tags, apply_spare_stock_transaction, configure_asset, inventory_snapshot_location, inventory_task_can_delete, validate_inventory_resolution_request
 from .roles import ROLE_AUDITOR, ROLE_DEFINITIONS, ROLE_NAME_TO_CODE, preset_group_for_code, user_role_code
+from .system_reset import SYSTEM_RESET_CONFIRMATION
+from .system_settings import get_system_settings, system_setting_definitions
 
 
 class GroupSerializer(serializers.ModelSerializer):
@@ -157,6 +159,101 @@ class AdminPasswordResetSerializer(serializers.Serializer):
         except DjangoValidationError as exc:
             raise serializers.ValidationError({"new_password": list(exc.messages)})
         return attrs
+
+
+class SystemResetSerializer(serializers.Serializer):
+    confirmation = serializers.CharField(
+        required=True,
+        allow_blank=False,
+        trim_whitespace=False,
+        write_only=True,
+    )
+
+    def validate_confirmation(self, value):
+        if value != SYSTEM_RESET_CONFIRMATION:
+            raise serializers.ValidationError(
+                f"请输入 {SYSTEM_RESET_CONFIRMATION} 以确认恢复系统初始状态"
+            )
+        return value
+
+
+class SystemSettingsSerializer(serializers.ModelSerializer):
+    """Serialize the fixed, editable system-settings contract."""
+
+    definitions = serializers.SerializerMethodField()
+    EDITABLE_FIELDS = frozenset({"default_page_size", "default_asset_status"})
+
+    class Meta:
+        model = SystemSetting
+        fields = ["default_page_size", "default_asset_status", "definitions"]
+
+    def get_definitions(self, _obj):
+        return system_setting_definitions()
+
+    def validate(self, attrs):
+        unknown = sorted(set(self.initial_data.keys()) - self.EDITABLE_FIELDS)
+        if unknown:
+            raise serializers.ValidationError(
+                {key: "该系统设置不支持通过当前接口修改" for key in unknown}
+            )
+        return attrs
+
+
+class AssetBatchDeleteSerializer(serializers.Serializer):
+    ids = serializers.ListField(
+        child=serializers.IntegerField(min_value=1),
+        allow_empty=False,
+    )
+
+    def validate_ids(self, value):
+        unique_ids = list(dict.fromkeys(value))
+        if len(unique_ids) > 100:
+            raise serializers.ValidationError("一次最多删除 100 项资产")
+        return unique_ids
+
+
+class AssetBatchDeleteResultSerializer(serializers.Serializer):
+    id = serializers.IntegerField()
+    asset_no = serializers.CharField(allow_blank=True)
+    success = serializers.BooleanField()
+    code = serializers.CharField(allow_blank=True)
+    reason = serializers.CharField(allow_blank=True)
+
+
+class AssetBatchDeleteResponseSerializer(serializers.Serializer):
+    requested = serializers.IntegerField()
+    succeeded = serializers.IntegerField()
+    failed = serializers.IntegerField()
+    results = AssetBatchDeleteResultSerializer(many=True)
+
+
+class UserBatchStatusSerializer(serializers.Serializer):
+    ids = serializers.ListField(
+        child=serializers.IntegerField(min_value=1),
+        allow_empty=False,
+    )
+    is_active = serializers.BooleanField(required=True)
+
+    def validate_ids(self, value):
+        unique_ids = list(dict.fromkeys(value))
+        if len(unique_ids) > 100:
+            raise serializers.ValidationError("一次最多更新 100 个用户")
+        return unique_ids
+
+
+class UserBatchStatusResultSerializer(serializers.Serializer):
+    id = serializers.IntegerField()
+    username = serializers.CharField(allow_blank=True)
+    success = serializers.BooleanField()
+    code = serializers.CharField(allow_blank=True)
+    reason = serializers.CharField(allow_blank=True)
+
+
+class UserBatchStatusResponseSerializer(serializers.Serializer):
+    requested = serializers.IntegerField()
+    succeeded = serializers.IntegerField()
+    failed = serializers.IntegerField()
+    results = UserBatchStatusResultSerializer(many=True)
 
 
 class InventoryInspectorSerializer(serializers.Serializer):
@@ -1397,6 +1494,8 @@ class AssetWriteSerializer(serializers.ModelSerializer):
         configuration = validated_data.pop("configuration", {})
         tags = validated_data.pop("tags", None)
         custom_values = validated_data.pop("custom_values", {})
+        if "status" not in validated_data:
+            validated_data["status"] = get_system_settings().default_asset_status
         try:
             with transaction.atomic():
                 asset = Asset.objects.create(**validated_data)

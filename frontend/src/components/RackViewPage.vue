@@ -142,11 +142,11 @@ function handleCurrentRackCommand(command: string) {
             <div class="page-toolbar__filter-group">
               <el-select
                 v-model="locationType"
-                placeholder="类型"
+                placeholder="全部类型"
                 aria-label="按类型筛选位置"
+                clearable
                 @change="context.changeLocationType"
               >
-                <el-option label="全部类型" value="all" />
                 <el-option label="数据中心" value="data-center" />
                 <el-option label="机房" value="room" />
               </el-select>
@@ -167,15 +167,14 @@ function handleCurrentRackCommand(command: string) {
               </el-select>
               <el-select
                 v-model="locationStatus"
-                placeholder="状态"
+                placeholder="全部状态"
                 aria-label="按状态筛选位置"
+                clearable
                 @change="context.changeLocationStatus"
               >
-                <el-option label="全部状态" value="all" />
                 <el-option label="启用" value="active" />
                 <el-option label="停用" value="inactive" />
               </el-select>
-              <el-button v-if="locationSearch.trim() || locationType !== 'all' || locationStatus !== 'all' || locationDataCenter" link @click="context.resetLocationFilters">清除筛选</el-button>
             </div>
           </template>
           <template v-else-if="rackSection === 'view'" #filters>
@@ -199,6 +198,7 @@ function handleCurrentRackCommand(command: string) {
               v-model="selectedRoom"
               placeholder="机房"
               aria-label="选择机房"
+              clearable
               :disabled="!roomOptions.length"
               @change="changeViewRoom"
             >

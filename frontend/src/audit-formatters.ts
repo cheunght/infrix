@@ -68,6 +68,8 @@ const RESOURCE_LABELS: Record<string, string> = {
   inventory_item: "盘点项目",
   user: "用户",
   auth_login: "登录",
+  system: "系统",
+  system_settings: "系统设置",
 };
 
 const ACTION_LABELS: Record<string, string> = {
@@ -81,6 +83,7 @@ const ACTION_LABELS: Record<string, string> = {
   login_success: "登录成功",
   login_failure: "登录失败",
   login_locked: "账号锁定",
+  system_reset: "恢复系统初始状态",
 };
 
 export const auditResourceOptions = Object.entries(RESOURCE_LABELS).map(([value, label]) => ({ label, value }));
@@ -167,6 +170,8 @@ const FIELD_LABELS: Record<string, string> = {
   depreciation_years: "折旧年限",
   residual_rate: "残值率",
   depreciation_method: "折旧方法",
+  default_page_size: "默认每页条数",
+  default_asset_status: "新资产默认状态",
   created_at: "创建时间",
   updated_at: "更新时间",
   tags: "标签",
@@ -501,6 +506,7 @@ export function actionLabel(value: string): string {
 
 export function auditLogActionLabel(log: AuditLog): string {
   const extra = getExtra(log);
+  if (log.resource_type === "system" && log.action === "system_reset") return "恢复系统初始状态";
   if (log.resource_type === "user" && extra.password_reset) return "管理员重置密码";
   if (log.resource_type === "user" && extra.password_change) return "修改密码";
   if (log.resource_type === "user" && extra.profile_update) return "修改资料";
@@ -529,6 +535,7 @@ function objectLabelFromSnapshot(snapshot: AuditRecord, resourceType: string): s
 }
 
 export function auditObjectLabel(log: AuditLog): string {
+  if (log.resource_type === "system_settings") return "系统设置";
   const extra = getExtra(log);
   const before = getSnapshot(log.payload, "before");
   const after = getSnapshot(log.payload, "after");
@@ -710,6 +717,7 @@ function summaryForLogin(log: AuditLog): string {
 
 export function auditChangeSummary(log: AuditLog): string {
   if (log.resource_type === "auth_login") return summaryForLogin(log);
+  if (log.resource_type === "system" && log.action === "system_reset") return "恢复系统初始状态";
   const object = auditObjectLabel(log);
   const extra = getExtra(log);
   if (log.resource_type === "user" && extra.password_reset) return `管理员重置密码 ${object}`;

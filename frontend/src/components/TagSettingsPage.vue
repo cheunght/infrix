@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { proxyRefs, ref } from "vue";
+import { CircleCheck, CircleClose, Delete, Edit } from "@element-plus/icons-vue";
 import type { FormInstance, FormRules } from "element-plus";
 import SearchField from "./SearchField.vue";
 import PageContainer from "./page/PageContainer.vue";
@@ -8,6 +9,7 @@ import PageToolbar from "./page/PageToolbar.vue";
 import StatusTag from "./StatusTag.vue";
 import PagedTable from "./PagedTable.vue";
 import FormDialogShell from "./FormDialogShell.vue";
+import TableIconButton from "./TableIconButton.vue";
 import type { TagContext } from "../types/page-context";
 
 const props = defineProps<{ context: TagContext }>();
@@ -36,8 +38,7 @@ async function submitTag() {
         </template>
         <template #filters>
           <div class="page-toolbar__filter-group">
-            <el-select v-model="c.tagActive" :disabled="c.tagListLoading" @change="c.refreshTagList()">
-              <el-option label="全部状态" value="all" />
+            <el-select v-model="c.tagActive" placeholder="全部状态" clearable :disabled="c.tagListLoading" @change="c.refreshTagList()">
               <el-option label="启用" value="true" />
               <el-option label="停用" value="false" />
             </el-select>
@@ -65,8 +66,8 @@ async function submitTag() {
       >
         <el-table v-loading="c.tagListLoading" :data="c.tagTableItems">
         <template #empty>
-          <el-empty :image-size="56" :description="c.tagSearch.trim() || (c.tagActive && c.tagActive !== 'all') ? '没有符合筛选条件的标签' : '暂无标签'">
-            <el-button v-if="c.tagSearch.trim() || (c.tagActive && c.tagActive !== 'all')" link type="primary" @click="c.tagSearch = ''; c.tagActive = 'all'; c.refreshTagList()">清除筛选</el-button>
+          <el-empty :image-size="56" :description="c.tagSearch.trim() || c.tagActive ? '没有符合筛选条件的标签' : '暂无标签'">
+            <el-button v-if="c.tagSearch.trim() || c.tagActive" link type="primary" @click="c.tagSearch = ''; c.tagActive = ''; c.refreshTagList()">清除筛选</el-button>
           </el-empty>
         </template>
         <el-table-column prop="name" label="标签名称" min-width="220" />
@@ -77,9 +78,26 @@ async function submitTag() {
         <el-table-column label="操作" width="220" fixed="right">
           <template #default="{ row }">
             <div class="ep-table-actions">
-              <el-button link type="primary" :disabled="!c.can('tags.manage') || c.tagActionId === row.id || c.tagSaving" @click="c.openTagModal(row)">编辑</el-button>
-              <el-button link :disabled="!c.can('tags.manage') || c.tagActionId === row.id" @click="c.toggleTag(row)">{{ row.is_active ? "停用" : "启用" }}</el-button>
-              <el-button link type="danger" :disabled="!c.can('tags.manage') || c.tagActionId === row.id || (row.assets_count || 0) > 0" @click="c.deleteTag(row)">删除</el-button>
+              <TableIconButton
+                :icon="Edit"
+                label="编辑"
+                type="primary"
+                :disabled="!c.can('tags.manage') || c.tagActionId === row.id || c.tagSaving"
+                @click="c.openTagModal(row)"
+              />
+              <TableIconButton
+                :icon="row.is_active ? CircleClose : CircleCheck"
+                :label="row.is_active ? '停用' : '启用'"
+                :disabled="!c.can('tags.manage') || c.tagActionId === row.id"
+                @click="c.toggleTag(row)"
+              />
+              <TableIconButton
+                :icon="Delete"
+                label="删除"
+                type="danger"
+                :disabled="!c.can('tags.manage') || c.tagActionId === row.id || (row.assets_count || 0) > 0"
+                @click="c.deleteTag(row)"
+              />
             </div>
           </template>
         </el-table-column>
