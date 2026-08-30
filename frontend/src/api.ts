@@ -1,3 +1,5 @@
+import { i18n } from "./i18n";
+
 export const apiBase = import.meta.env.VITE_API_BASE || "/api/v1";
 
 export type PageResult<T> = {
@@ -17,36 +19,38 @@ export function pageTotal<T>(payload: PageResult<T> | T[] | null | undefined): n
   return Array.isArray(payload) ? payload.length : payload.count;
 }
 
-const FIELD_LABELS: Record<string, string> = {
-  asset_no: "资产编号",
-  name: "名称",
-  manufacturer: "厂商",
-  device_type: "设备类型",
-  serial_number: "序列号",
-  configuration: "关联信息",
-  room: "机房",
-  rack: "机柜",
-  occurred_at: "故障发生时间",
-  finished_at: "维修完成时间",
-  used_count: "已用数",
-  authorized_count: "授权数",
-  data_center: "数据中心",
-  server_room: "机房",
-  start_at: "开始时间",
-  end_at: "结束时间",
-  actual_rack: "实际机柜",
-  actual_start_u: "实际起始 U",
-  actual_end_u: "实际结束 U",
-  status: "状态",
-  notes: "备注",
+const FIELD_LABEL_KEYS: Record<string, string> = {
+  asset_no: "asset.code",
+  name: "common.name",
+  manufacturer: "asset.manufacturer",
+  device_type: "common.deviceType",
+  serial_number: "asset.serialNumber",
+  configuration: "common.details",
+  room: "common.room",
+  rack: "rack.rackCode",
+  occurred_at: "repair.occurredAt",
+  finished_at: "overlay.repairFinishedAt",
+  used_count: "license.usedCount",
+  authorized_count: "license.authorizedCount",
+  data_center: "common.dataCenter",
+  server_room: "common.room",
+  start_at: "inventory.startTime",
+  end_at: "inventory.endTime",
+  actual_rack: "inventory.actualRack",
+  actual_start_u: "inventory.actualStartU",
+  actual_end_u: "inventory.actualEndU",
+  status: "common.status",
+  notes: "common.notes",
 };
+
+const tr = (key: string): string => String(i18n.global.t(key));
 
 export function flattenError(value: unknown): string {
   if (Array.isArray(value))
     return value.map(flattenError).filter(Boolean).join("；");
   if (value && typeof value === "object")
     return Object.entries(value)
-      .map(([key, item]) => `${FIELD_LABELS[key] || key}：${flattenError(item)}`)
+      .map(([key, item]) => `${FIELD_LABEL_KEYS[key] ? tr(FIELD_LABEL_KEYS[key]) : key}：${flattenError(item)}`)
       .join("；");
   return String(value ?? "");
 }
@@ -153,12 +157,12 @@ export function createRequestCoordinator() {
 }
 
 function statusMessage(status: number): string {
-  if (status === 400) return "请求数据不完整或格式不正确";
-  if (status === 401) return "登录已失效，请重新登录";
-  if (status === 403) return "当前账号没有执行此操作的权限";
-  if (status === 404) return "请求的资源不存在或已被删除";
-  if (status >= 500) return `服务端内部错误（${status}），请联系管理员查看日志`;
-  return `请求失败（${status}）`;
+  if (status === 400) return tr("api.invalidRequest");
+  if (status === 401) return tr("api.sessionExpired");
+  if (status === 403) return tr("api.forbidden");
+  if (status === 404) return tr("api.resourceNotFound");
+  if (status >= 500) return tr("api.serverError").replace("{status}", String(status));
+  return tr("api.requestFailed").replace("{status}", String(status));
 }
 
 export async function apiRequest<T>(

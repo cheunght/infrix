@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed } from "vue";
+import { useI18n } from "vue-i18n";
 import { CircleCheck, CircleClose, Delete, Edit, FolderAdd, Grid } from "@element-plus/icons-vue";
 import ResourceState from "./ResourceState.vue";
 import StatusTag from "./StatusTag.vue";
@@ -8,6 +9,7 @@ import type { DataCenter, ServerRoom } from "../types";
 import type { RackSharedContext } from "../types/page-context";
 
 const props = defineProps<{ context: RackSharedContext }>();
+const { t } = useI18n();
 const context = props.context;
 const dataCenters = context.dataCenters;
 const serverRooms = context.serverRooms;
@@ -118,7 +120,7 @@ const locationRows = computed<LocationTreeRow[]>(() => {
     locationDataCenter.value,
   ));
 const emptyDescription = computed(() =>
-  hasLocationFilters.value ? "没有匹配条件的位置" : "暂无数据中心或机房",
+  hasLocationFilters.value ? t("location.noMatchingLocations") : t("location.noLocations"),
 );
 
 function locationAssetCount(row: LocationTreeRow) {
@@ -126,7 +128,7 @@ function locationAssetCount(row: LocationTreeRow) {
 }
 
 function locationCapacity(row: LocationTreeRow) {
-  if (row.nodeType === "data-center") return `${row.rooms_count ?? 0} 个机房`;
+  if (row.nodeType === "data-center") return t("location.roomsCount", { count: row.rooms_count ?? 0 });
   if (!row.is_active || row.total_u == null || row.used_u == null) return "—";
   return `${row.used_u} / ${row.total_u} U`;
 }
@@ -178,7 +180,7 @@ function handleRoomCommand(row: LocationTreeRow, command: string) {
 </script>
 
 <template>
-  <section class="location-management-workspace" aria-label="位置管理">
+    <section class="location-management-workspace" :aria-label="t('location.title')">
     <ResourceState
       :error="locationManagementError"
       @retry="context.retryLocationManagement"
@@ -193,60 +195,71 @@ function handleRoomCommand(row: LocationTreeRow, command: string) {
       >
         <template #empty>
           <el-empty :image-size="56" :description="emptyDescription">
-            <el-button v-if="hasLocationFilters" link type="primary" @click="context.resetLocationFilters">清除筛选</el-button>
+            <el-button v-if="hasLocationFilters" link type="primary" @click="context.resetLocationFilters">{{ t('common.clearFilters') }}</el-button>
           </el-empty>
         </template>
-        <el-table-column label="名称" min-width="220">
+        <el-table-column :label="t('common.name')" min-width="210">
           <template #default="{ row }">
             <span :class="row.nodeType === 'data-center' ? 'location-name location-name--parent' : 'location-name'">
               {{ row.name }}
             </span>
           </template>
         </el-table-column>
-        <el-table-column label="类型" width="100">
-          <template #default="{ row }">{{ row.nodeType === "data-center" ? "数据中心" : "机房" }}</template>
-        </el-table-column>
-        <el-table-column label="位置 / 地址" min-width="220">
-          <template #default="{ row }">{{ row.nodeType === "data-center" ? (row.address || "—") : (row.data_center_name || "—") }}</template>
-        </el-table-column>
-        <el-table-column label="容量概览" width="150">
-          <template #default="{ row }">{{ locationCapacity(row) }}</template>
-        </el-table-column>
-        <el-table-column label="资产数" width="90" align="right">
-          <template #default="{ row }">{{ locationAssetCount(row) }}</template>
-        </el-table-column>
-        <el-table-column label="状态" width="100" align="center">
+        <el-table-column :label="t('common.type')" width="112">
           <template #default="{ row }">
-            <StatusTag size="small" :tone="row.is_active ? 'success' : 'info'" :label="row.is_active ? '启用' : '停用'" />
+            <span class="location-management-type">
+              {{ row.nodeType === "data-center" ? t('location.dataCenter') : t('location.room') }}
+            </span>
           </template>
         </el-table-column>
-        <el-table-column label="操作" width="230" fixed="right">
+        <el-table-column :label="`${t('common.location')} / ${t('common.address')}`" min-width="200">
+          <template #default="{ row }">
+            <span
+              class="location-management-location"
+              :title="row.nodeType === 'data-center' ? (row.address || '—') : (row.data_center_name || '—')"
+            >
+              {{ row.nodeType === "data-center" ? (row.address || "—") : (row.data_center_name || "—") }}
+            </span>
+          </template>
+        </el-table-column>
+        <el-table-column :label="t('location.capacityOverview')" width="150">
+          <template #default="{ row }">{{ locationCapacity(row) }}</template>
+        </el-table-column>
+        <el-table-column :label="t('location.assetCount')" width="84" align="right">
+          <template #default="{ row }">{{ locationAssetCount(row) }}</template>
+        </el-table-column>
+        <el-table-column :label="t('common.status')" width="96" align="center">
+          <template #default="{ row }">
+            <StatusTag size="small" :tone="row.is_active ? 'success' : 'info'" :label="row.is_active ? t('status.active') : t('status.inactive')" />
+          </template>
+        </el-table-column>
+        <el-table-column :label="t('common.operation')" width="132" fixed="right">
           <template #default="{ row }">
             <div class="ep-table-actions" @click.stop>
               <template v-if="row.nodeType === 'data-center'">
                 <template v-if="can('racks.manage')">
                   <TableIconButton
                     :icon="Edit"
-                    label="编辑"
+                    :label="t('common.edit')"
                     type="primary"
                     :disabled="dataCenterActionId === row.id"
                     @click="context.openDataCenterModal(findDataCenter(row) || undefined)"
                   />
                   <TableIconButton
                     :icon="FolderAdd"
-                    label="新建机房"
+                    :label="t('location.createRoom')"
                     :disabled="dataCenterActionId === row.id"
                     @click="handleDataCenterCommand(row, 'new-room')"
                   />
                   <TableIconButton
                     :icon="row.is_active ? CircleClose : CircleCheck"
-                    :label="row.is_active ? '停用' : '启用'"
+                    :label="row.is_active ? t('status.inactive') : t('status.active')"
                     :disabled="dataCenterActionId === row.id"
                     @click="handleDataCenterCommand(row, row.is_active ? 'disable' : 'enable')"
                   />
                   <TableIconButton
                     :icon="Delete"
-                    label="删除"
+                    :label="t('common.delete')"
                     type="danger"
                     :disabled="dataCenterActionId === row.id || dataCenterHasAssociations(row)"
                     @click="handleDataCenterCommand(row, 'delete')"
@@ -255,24 +268,24 @@ function handleRoomCommand(row: LocationTreeRow, command: string) {
                 <span v-else>—</span>
               </template>
               <template v-else>
-                <TableIconButton :icon="Grid" label="查看机柜" type="primary" @click="handleRoomCommand(row, 'view-racks')" />
+                <TableIconButton :icon="Grid" :label="t('location.viewRacks')" type="primary" @click="handleRoomCommand(row, 'view-racks')" />
                 <template v-if="can('racks.manage')">
                   <TableIconButton
                     :icon="Edit"
-                    label="编辑"
+                    :label="t('common.edit')"
                     type="primary"
                     :disabled="updatingRoomId === row.id"
                     @click="handleRoomCommand(row, 'edit')"
                   />
                   <TableIconButton
                     :icon="row.is_active ? CircleClose : CircleCheck"
-                    :label="row.is_active ? '停用' : '启用'"
+                    :label="row.is_active ? t('status.inactive') : t('status.active')"
                     :disabled="updatingRoomId === row.id"
                     @click="handleRoomCommand(row, row.is_active ? 'disable' : 'enable')"
                   />
                   <TableIconButton
                     :icon="Delete"
-                    label="删除"
+                    :label="t('common.delete')"
                     type="danger"
                     :disabled="updatingRoomId === row.id || roomHasAssociations(row)"
                     @click="handleRoomCommand(row, 'delete')"

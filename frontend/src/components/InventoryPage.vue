@@ -1,11 +1,13 @@
 <script setup lang="ts">
 import { computed, nextTick, onMounted, ref, watch } from "vue";
+import { useI18n } from "vue-i18n";
 import {
   ArrowDown,
   CircleCheck,
   Delete,
   Download,
   Edit,
+  Grid,
   MoreFilled,
   Tools,
   VideoPlay,
@@ -26,12 +28,16 @@ import ActionDialogShell from "./ActionDialogShell.vue";
 import FieldHelp from "./FieldHelp.vue";
 import FormDialogShell from "./FormDialogShell.vue";
 import TableIconButton from "./TableIconButton.vue";
+import AssetQrScanner from "./AssetQrScanner.vue";
+import { ElMessageBox } from "element-plus";
 import type { FormInstance, FormRules } from "element-plus";
 import type { InventoryItem } from "../types";
 import type { InventoryContext } from "../types/page-context";
 import { useInventory } from "../composables/useInventory";
+import { businessOptionLabel, INVENTORY_ITEM_STATUS_OPTIONS } from "../business-enums";
 
 const props = defineProps<{ context: InventoryContext }>();
+const { t } = useI18n();
 const context = props.context;
 const can = context.can;
 const openAssetDetail = context.openAssetDetail;
@@ -43,26 +49,32 @@ const itemTableRef = ref<{
   clearSelection: () => void;
   toggleRowSelection: (row: unknown, selected?: boolean) => void;
 } | null>(null);
+const inventoryItemsTable = ref<HTMLElement | null>(null);
+const scannerRef = ref<{ focus: () => void; clearInput: () => void } | null>(null);
+const scanPopoverVisible = ref(false);
+const scanReadyForNext = ref(false);
 const selectionSyncing = ref(false);
-const taskRules: FormRules = {
-  name: [{ required: true, message: "请输入盘点名称", trigger: "blur" }],
-  data_center: [{ required: true, message: "请选择数据中心", trigger: "change" }],
-  start_at: [{ required: true, message: "请选择开始时间", trigger: "change" }],
-  end_at: [{ required: true, message: "请选择结束时间", trigger: "change" }],
-};
-const itemRules: FormRules = {
-  status: [{ required: true, message: "请选择盘点结果", trigger: "change" }],
-};
-const taskRoomHelp = "不选择表示整个数据中心。";
+const taskRules = computed<FormRules>(() => ({
+  name: [{ required: true, message: t("validation.required", { field: t("inventory.taskName") }), trigger: "blur" }],
+  data_center: [{ required: true, message: t("validation.selectRequired", { field: t("common.dataCenter") }), trigger: "change" }],
+  start_at: [{ required: true, message: t("validation.selectRequired", { field: t("inventory.startTime") }), trigger: "change" }],
+  end_at: [{ required: true, message: t("validation.selectRequired", { field: t("inventory.endTime") }), trigger: "change" }],
+}));
+const itemRules = computed<FormRules>(() => ({
+  status: [{ required: true, message: t("validation.selectRequired", { field: t("inventory.result") }), trigger: "change" }],
+}));
+const taskRoomHelp = computed(() => t("inventory.wholeDataCenterHelp"));
 
 const {
   taskListLoading, taskListError, itemListLoading, itemListError, taskDetailLoading, taskDetailError,
   auxLoading, taskAuxError, itemAuxError, taskCreating, taskDeletingId, taskCompleting, taskReopening, itemSaving, resolutionSaving,
+  scannedNormalSaving,
   bulkResolutionSaving, bulkNormalSaving,
   taskDialogError, itemDialogError, resolutionDialogError, bulkResolutionDialogError, bulkNormalDialogError,
   tasks, taskCount, taskPage, taskPageSize, taskSearch, taskStatus,
   activeTask, items, itemCount, itemPage, itemPageSize,
   itemSearch, itemStatus, itemResolutionStatus, inspectors, racks, showTaskDialog, showItemDialog,
+  scannedItemId, scanError,
   showResolutionDialog, showBulkResolutionDialog, showBulkNormalDialog, editingItem, resolutionItem,
   scopePreview, scopePreviewLoading, scopePreviewError,
   taskForm, itemForm, resolutionForm, bulkResolutionAction, bulkResolutionCount, bulkResolutionForm, bulkResolutionResult,
@@ -79,9 +91,26 @@ const {
   changeTaskServerRoom, retryScopePreview, closeTaskDialog,
   openItem, changeItemStatus, saveItem, saveItemAndNext, changeTaskPage, changeTaskPageSize,
   changeItemPage, changeItemPageSize, resetTaskFilters, resetItemFilters,
+  locateScannedAsset, clearScannedAsset: clearScannedAssetState, confirmItemNormal,
   retryTaskAuxData, retryRackAuxData, openResolution, closeResolutionDialog, saveResolution,
   openBulkResolution, closeBulkResolutionDialog, saveBulkResolution, openBulkNormal, closeBulkNormalDialog, saveBulkNormal,
 } = useInventory(context);
+
+const scannedAssetLabel = computed(() => {
+  const item = items.value.find((candidate) => candidate.id === scannedItemId.value);
+  if (item && scanReadyForNext.value) {
+    return t("inventory.scannedNormalReadyForNext", { asset: item.asset_no });
+  }
+  return item ? t("inventory.scannedAssetLocated", { asset: item.asset_no }) : "";
+});
+const scannedItem = computed(() => items.value.find((item) => item.id === scannedItemId.value) || null);
+const scannedItemHint = computed(() => {
+  const item = scannedItem.value;
+  if (!item) return "";
+  return item.status === "pending"
+    ? t("inventory.scanPendingHint")
+    : t("inventory.scanAlreadyCheckedHint");
+});
 
 const actualStartUValue = computed<number | null>({
   get: () => {
@@ -126,9 +155,9 @@ const resolutionCanSave = computed(() => Boolean(
     !resolutionSaving.value,
 ));
 const resolutionRules = computed<FormRules>(() => ({
-  action: [{ required: true, message: "请选择处理方式", trigger: "change" }],
+  action: [{ required: true, message: t("validation.selectRequired", { field: t("inventory.processMethod") }), trigger: "change" }],
   note: resolutionForm.value.action === "ignore"
-    ? [{ required: true, message: "忽略异常时必须填写处理备注", trigger: "blur" }]
+    ? [{ required: true, message: t("inventory.ignoreNoteRequired"), trigger: "blur" }]
     : [],
 }));
 const batchResolutionOptions = computed(() => batchResolutionActionOptions());
@@ -136,13 +165,13 @@ const bulkResolutionFailures = computed(() =>
   (bulkResolutionResult.value?.results || []).filter((result) => !result.success),
 );
 const bulkResolutionNotice = computed(() => ({
-  keep_asset: "该操作不会修改资产主数据，仅记录本次处理结论。",
-  ignore: "请确认这些异常属于忽略 / 误报；处理备注将作为统一处理说明保存。",
-  confirm_missing: "该操作不会删除或报废资产，只确认盘点时未找到这些已知资产。",
+  keep_asset: t("inventory.keepAssetNotice"),
+  ignore: t("inventory.ignoreNotice"),
+  confirm_missing: t("inventory.confirmMissingNotice"),
 } as Record<string, string>)[bulkResolutionAction.value] || "");
 const bulkResolutionRules = computed<FormRules>(() => ({
   note: bulkResolutionAction.value === "ignore"
-    ? [{ required: true, message: "忽略异常时必须填写处理备注", trigger: "blur" }]
+    ? [{ required: true, message: t("inventory.ignoreNoteRequired"), trigger: "blur" }]
     : [],
 }));
 const bulkNormalFailures = computed(() =>
@@ -154,7 +183,7 @@ const scopePreviewWarnings = computed(() => {
   if (!preview) return [];
   const warnings = [...(preview.warnings || [])];
   if (preview.retired > 0) {
-    warnings.push(`当前范围包含 ${preview.retired} 台已报废资产`);
+    warnings.push(t("inventory.retiredWarning", { count: preview.retired }));
   }
   return Array.from(new Set(warnings));
 });
@@ -187,10 +216,10 @@ function itemCanEditException(item: InventoryItem) {
 
 function itemPrimaryActionLabel(item: InventoryItem) {
   switch (itemPrimaryAction(item)) {
-    case "confirm": return "确认盘点";
-    case "resolve": return "处理";
-    case "view": return "查看处理结果";
-    case "edit": return "修改结果";
+    case "confirm": return t("inventory.confirmInventory");
+    case "resolve": return t("inventory.process");
+    case "view": return t("inventory.viewResolution");
+    case "edit": return t("inventory.editResult");
     default: return "";
   }
 }
@@ -214,6 +243,68 @@ function openPrimaryItemAction(item: InventoryItem) {
     return openResolution(item);
   }
   return openItem(item);
+}
+
+async function handleAssetScan(value: string) {
+  scanReadyForNext.value = false;
+  const found = await locateScannedAsset(value);
+  if (!found) return;
+  scannerRef.value?.clearInput();
+  await nextTick();
+  inventoryItemsTable.value
+    ?.querySelector<HTMLElement>("tr.inventory-item-row--scanned")
+    ?.scrollIntoView({ block: "nearest" });
+}
+
+async function confirmScannedItemNormal() {
+  const item = scannedItem.value;
+  if (!item || item.status !== "pending") return;
+  const confirmed = await ElMessageBox.confirm(
+    t("inventory.scanConfirmNormalMessage", { asset: item.asset_no }),
+    t("inventory.scanConfirmNormalTitle"),
+    {
+      type: "success",
+      confirmButtonText: t("inventory.confirmScannedNormal"),
+      cancelButtonText: t("common.cancel"),
+    },
+  ).catch(() => false);
+  if (!confirmed) return;
+  const saved = await confirmItemNormal(item);
+  if (!saved) return;
+
+  scanReadyForNext.value = true;
+  scannerRef.value?.clearInput();
+  await nextTick();
+  scannerRef.value?.focus();
+}
+
+function openScannedItemResult() {
+  const item = scannedItem.value;
+  if (!item) return;
+  scanReadyForNext.value = false;
+  scanPopoverVisible.value = false;
+  void openItem(item);
+}
+
+function openScannedItemAction() {
+  const item = scannedItem.value;
+  if (!item) return;
+  scanReadyForNext.value = false;
+  scanPopoverVisible.value = false;
+  void openPrimaryItemAction(item);
+}
+
+function focusAssetScanner() {
+  void nextTick(() => scannerRef.value?.focus());
+}
+
+function clearScannedAsset() {
+  scanReadyForNext.value = false;
+  clearScannedAssetState();
+}
+
+function inventoryRowClassName({ row }: { row: InventoryItem }) {
+  return row.id === scannedItemId.value ? "inventory-item-row--scanned" : "";
 }
 
 async function submitTask() {
@@ -282,18 +373,18 @@ onMounted(async () => {
       <template #toolbar>
         <PageToolbar>
           <template #search>
-            <SearchField v-model="taskSearch" placeholder="搜索任务名称、数据中心或盘点人" aria-label="搜索盘点任务" @search="() => { taskPage = 1; loadTasks(); }" />
+            <SearchField v-model="taskSearch" :placeholder="t('inventory.searchTasks')" :aria-label="t('inventory.title')" @search="() => { taskPage = 1; loadTasks(); }" />
           </template>
           <template #filters>
             <div class="page-toolbar__filter-group">
-              <el-select v-model="taskStatus" placeholder="全部状态" clearable @change="() => { taskPage = 1; loadTasks(); }">
+              <el-select v-model="taskStatus" :placeholder="t('inventory.allTaskStatuses')" clearable @change="() => { taskPage = 1; loadTasks(); }">
                 <el-option v-for="item in taskStatusOptions" :key="item.value" :label="item.label" :value="item.value" />
               </el-select>
             </div>
           </template>
           <template #primary>
             <el-button v-if="can('inventory.manage')" class="page-primary-action" type="primary" :loading="taskCreating" :disabled="taskCreating" @click="openNewTask">
-              新增盘点
+              {{ t('inventory.addTask') }}
             </el-button>
           </template>
         </PageToolbar>
@@ -303,80 +394,80 @@ onMounted(async () => {
           :loading="taskListLoading && !tasks.length"
           :error="taskListError && !tasks.length ? taskListError : ''"
           :empty="!taskListLoading && !taskListError && !tasks.length"
-          :empty-text="taskHasFilters ? '没有符合当前筛选条件的盘点任务' : '暂无盘点任务'"
+          :empty-text="taskHasFilters ? t('inventory.noMatchingTasks') : t('inventory.noTasks')"
           @retry="() => loadTasks()"
         >
           <template #empty>
-            <el-empty :image-size="56" :description="taskHasFilters ? '没有符合当前筛选条件的盘点任务' : '暂无盘点任务'">
-              <el-button v-if="taskHasFilters" link type="primary" @click="resetTaskFilters">清除筛选</el-button>
+            <el-empty :image-size="56" :description="taskHasFilters ? t('inventory.noMatchingTasks') : t('inventory.noTasks')">
+              <el-button v-if="taskHasFilters" link type="primary" @click="resetTaskFilters">{{ t('common.clearFilters') }}</el-button>
             </el-empty>
           </template>
           <template #error="{ error }">
-            <el-alert title="盘点任务加载失败" :description="error" type="error" show-icon :closable="false" />
-            <el-button link type="primary" @click="loadTasks">重新加载</el-button>
+            <el-alert :title="t('inventory.taskLoadFailed')" :description="error" type="error" show-icon :closable="false" />
+            <el-button link type="primary" @click="loadTasks">{{ t('inventory.retryTasks') }}</el-button>
           </template>
           <el-alert v-if="taskListError" :title="taskListError" type="error" show-icon :closable="false" class="inventory-alert" />
           <div v-if="taskListError" class="inventory-retry-row">
-            <el-button link type="primary" @click="() => loadTasks()">重新加载</el-button>
+            <el-button link type="primary" @click="() => loadTasks()">{{ t('inventory.retryTasks') }}</el-button>
           </div>
           <el-table v-loading="taskListLoading" :data="tasks" table-layout="fixed">
             <template #empty>
-              <el-empty :image-size="56" :description="taskHasFilters ? '没有符合当前筛选条件的盘点任务' : '暂无盘点任务'">
-                <el-button v-if="taskHasFilters" link type="primary" @click="resetTaskFilters">清除筛选</el-button>
+              <el-empty :image-size="56" :description="taskHasFilters ? t('inventory.noMatchingTasks') : t('inventory.noTasks')">
+                <el-button v-if="taskHasFilters" link type="primary" @click="resetTaskFilters">{{ t('common.clearFilters') }}</el-button>
               </el-empty>
             </template>
-            <el-table-column prop="name" label="任务名称" min-width="240">
+            <el-table-column prop="name" :label="t('inventory.taskName')" min-width="240">
               <template #default="{ row }">
                 <el-button link type="primary" class="inventory-task-name" @click.stop="openTask(row)">
                   {{ row.name }}
                 </el-button>
               </template>
             </el-table-column>
-            <el-table-column label="盘点范围" min-width="220">
+            <el-table-column :label="t('inventory.scope')" min-width="220">
               <template #default="{ row }">{{ taskScope(row) }}</template>
             </el-table-column>
-            <el-table-column label="状态" width="100">
+            <el-table-column :label="t('common.status')" width="100">
               <template #default="{ row }">
                 <StatusTag :tone="statusTone(row.status)" :label="taskStatusLabel(row.status)" />
               </template>
             </el-table-column>
-            <el-table-column label="进度" width="150">
+            <el-table-column :label="t('inventory.progress')" width="150">
               <template #default="{ row }">
-                <div class="inventory-progress-cell" :aria-label="`已盘 ${row.summary.checked} / ${row.summary.total}`">
+                <div class="inventory-progress-cell" :aria-label="`${t('inventory.checked')} ${row.summary.checked} / ${row.summary.total}`">
                   <span>{{ row.summary.checked }} / {{ row.summary.total }}</span>
                   <el-progress :percentage="row.summary.completion_rate" :stroke-width="6" :show-text="false" />
                 </div>
               </template>
             </el-table-column>
-            <el-table-column label="异常" width="80">
+            <el-table-column :label="t('inventory.exception')" width="80">
               <template #default="{ row }">
                 <StatusTag :tone="row.summary.exceptions > 0 ? 'warning' : 'info'" :label="String(row.summary.exceptions)" />
               </template>
             </el-table-column>
-            <el-table-column label="创建时间" width="170">
+            <el-table-column :label="t('inventory.createdAt')" width="170">
               <template #default="{ row }">{{ formatDateTime(row.created_at) }}</template>
             </el-table-column>
-            <el-table-column label="操作" fixed="right" width="210">
+            <el-table-column :label="t('common.operation')" fixed="right" width="132">
               <template #default="{ row }">
                 <div class="ep-table-actions">
                   <TableIconButton
                     v-if="row.status === 'in_progress' && can('inventory.manage')"
                     :icon="VideoPlay"
-                    label="继续盘点"
+                    :label="t('inventory.continue')"
                     type="primary"
                     @click="openTask(row)"
                   />
                   <TableIconButton
                     v-else-if="row.status === 'completed' && can('inventory.view')"
                     :icon="View"
-                    label="查看结果"
+                    :label="t('inventory.resultView')"
                     type="primary"
                     @click="openTask(row)"
                   />
                   <TableIconButton
                     v-if="can('inventory.export')"
                     :icon="Download"
-                    label="导出结果"
+                    :label="t('common.export')"
                     :loading="exportingTaskId === row.id"
                     :disabled="exportingTaskId !== null && exportingTaskId !== row.id"
                     @click="exportTask(row)"
@@ -384,7 +475,7 @@ onMounted(async () => {
                   <TableIconButton
                     v-if="can('inventory.manage') && row.can_delete"
                     :icon="Delete"
-                    label="删除任务"
+                    :label="t('common.delete')"
                     type="danger"
                     :loading="taskDeletingId === row.id"
                     :disabled="taskDeletingId !== null && taskDeletingId !== row.id"
@@ -403,25 +494,25 @@ onMounted(async () => {
       <template #header>
         <PageHeader
           :title="activeTask.name"
-          :description="taskScope(activeTask) + ' · 盘点人：' + activeTask.inspector_name + (activeTask.completed_at ? ' · 完成于 ' + formatDateTime(activeTask.completed_at) : '')"
+            :description="taskScope(activeTask) + ' · ' + t('inventory.inspector') + ': ' + activeTask.inspector_name + (activeTask.completed_at ? ' · ' + t('inventory.completedAt') + ' ' + formatDateTime(activeTask.completed_at) : '')"
         >
           <template #leading>
-            <el-button link @click="closeTask">返回任务列表</el-button>
+            <el-button link @click="closeTask">{{ t('common.back') }}</el-button>
           </template>
           <template #actions>
             <StatusTag :tone="statusTone(activeTask.status)" :label="taskStatusLabel(activeTask.status)" />
             <el-button v-if="can('inventory.export')" :icon="Download" :loading="exportingTaskId === activeTask.id" :disabled="exportingTaskId !== null" @click="exportTask()">
-              导出结果
+              {{ t('common.export') }}
             </el-button>
             <el-button
               v-if="can('inventory.manage') && activeTask.status === 'in_progress'"
               type="primary"
               :loading="taskCompleting"
               :disabled="taskCompleting || activeTask.summary.pending > 0"
-              :title="activeTask.summary.pending > 0 ? `仍有 ${activeTask.summary.pending} 项未盘点，无法完成盘点` : undefined"
+              :title="activeTask.summary.pending > 0 ? t('inventory.pendingCannotComplete', { count: activeTask.summary.pending }) : undefined"
               @click="completeTask"
             >
-              完成盘点
+              {{ t('inventory.completeTask') }}
             </el-button>
             <el-dropdown
               v-if="can('inventory.manage') && activeTask.status === 'completed'"
@@ -429,11 +520,11 @@ onMounted(async () => {
               @command="handleActiveTaskAction"
             >
               <el-button class="inventory-more-action">
-                更多<el-icon class="el-icon--right"><MoreFilled /></el-icon>
+                {{ t('common.more') }}<el-icon class="el-icon--right"><MoreFilled /></el-icon>
               </el-button>
               <template #dropdown>
                 <el-dropdown-menu>
-                  <el-dropdown-item command="reopen" :disabled="taskReopening">重新打开任务</el-dropdown-item>
+                  <el-dropdown-item command="reopen" :disabled="taskReopening">{{ t('inventory.reopenTask') }}</el-dropdown-item>
                 </el-dropdown-menu>
               </template>
             </el-dropdown>
@@ -443,54 +534,105 @@ onMounted(async () => {
       <PageContent v-loading="taskDetailLoading">
         <el-alert v-if="taskDetailError" :title="taskDetailError" type="error" show-icon :closable="false" class="inventory-alert" />
         <div v-if="taskDetailError" class="inventory-retry-row">
-          <el-button link type="primary" @click="retryActiveTask">重新加载任务</el-button>
+          <el-button link type="primary" @click="retryActiveTask">{{ t('inventory.retryTask') }}</el-button>
         </div>
-        <PageSection title="任务摘要">
-          <section class="inventory-summary-strip" aria-label="盘点摘要">
+        <PageSection :title="t('inventory.taskSummary')">
+          <section class="inventory-summary-strip" :aria-label="t('inventory.taskSummary')">
             <div class="inventory-summary-metric">
-              <span>总资产</span>
+              <span>{{ t('inventory.totalAssets') }}</span>
               <strong>{{ activeTask.summary.total }}</strong>
             </div>
             <div class="inventory-summary-metric">
-              <span>已盘</span>
+              <span>{{ t('inventory.checked') }}</span>
               <strong>{{ activeTask.summary.checked }}</strong>
             </div>
             <div class="inventory-summary-metric">
-              <span>正常</span>
+              <span>{{ t('status.normal') }}</span>
               <strong>{{ activeTask.summary.normal }}</strong>
             </div>
             <div class="inventory-summary-metric inventory-summary-metric--warning">
-              <span>异常</span>
+              <span>{{ t('inventory.exception') }}</span>
               <strong>{{ activeTask.summary.exceptions }}</strong>
             </div>
             <div class="inventory-summary-metric">
-              <span>未盘</span>
+              <span>{{ t('inventory.notCheckedShort') }}</span>
               <strong>{{ activeTask.summary.pending }}</strong>
             </div>
             <div class="inventory-summary-progress">
               <div class="inventory-summary-progress__header">
-                <span>完成进度</span>
+                <span>{{ t('inventory.completion') }}</span>
                 <strong>{{ activeTask.summary.checked }} / {{ activeTask.summary.total }}</strong>
               </div>
-              <small>未处理异常 {{ activeTask.summary.resolution_pending }}</small>
+              <small>{{ t('inventory.unresolvedExceptions', { count: activeTask.summary.resolution_pending }) }}</small>
               <el-progress :percentage="activeTask.summary.completion_rate" :stroke-width="6" :show-text="false" />
             </div>
           </section>
         </PageSection>
-        <PageSection title="盘点设备">
+        <PageSection :title="t('inventory.inventoryDevices')">
           <PageToolbar>
             <template #search>
-              <SearchField v-model="itemSearch" placeholder="搜索资产编号、名称、序列号或 IP" aria-label="搜索盘点设备" @search="() => { itemPage = 1; loadItems(); }" />
+              <SearchField v-model="itemSearch" :placeholder="t('inventory.searchItems')" :aria-label="t('inventory.inventoryDevices')" @search="() => { itemPage = 1; loadItems(); }" />
             </template>
             <template #filters>
               <div class="page-toolbar__filter-group">
-                <el-select v-model="itemStatus" placeholder="全部盘点结果" clearable @change="() => { itemPage = 1; loadItems(); }"><el-option v-for="item in itemStatusOptions" :key="item.value" :label="item.label" :value="item.value" /></el-select>
-                <el-select v-model="itemResolutionStatus" placeholder="全部处理状态" clearable @change="() => { itemPage = 1; loadItems(); }"><el-option v-for="item in itemResolutionStatusOptions" :key="item.value" :label="item.label" :value="item.value" /></el-select>
+                <el-select v-model="itemStatus" :placeholder="t('inventory.allInventoryResults')" clearable @change="() => { itemPage = 1; loadItems(); }"><el-option v-for="item in itemStatusOptions" :key="item.value" :label="item.label" :value="item.value" /></el-select>
+                <el-select v-model="itemResolutionStatus" :placeholder="t('inventory.allResolutionStatuses')" clearable @change="() => { itemPage = 1; loadItems(); }"><el-option v-for="item in itemResolutionStatusOptions" :key="item.value" :label="item.label" :value="item.value" /></el-select>
               </div>
+            </template>
+            <template #actions>
+              <el-popover v-model:visible="scanPopoverVisible" placement="bottom-end" :width="380" trigger="click" @show="focusAssetScanner">
+                <template #reference>
+                  <el-button :icon="Grid">{{ t('inventory.scanAsset') }}</el-button>
+                </template>
+                <AssetQrScanner
+                  ref="scannerRef"
+                  compact
+                  :loading="itemListLoading"
+                  :result="scannedAssetLabel"
+                  :error="scanError"
+                  @scan="handleAssetScan"
+                  @clear="clearScannedAsset"
+                >
+                  <template #actions>
+                    <div v-if="scannedItem" class="inventory-scan-actions">
+                      <div class="inventory-scan-actions__summary">
+                        <StatusTag :tone="statusTagType(scannedItem.status)" :label="businessOptionLabel(INVENTORY_ITEM_STATUS_OPTIONS, scannedItem.status)" />
+                        <span class="inventory-scan-actions__asset">{{ scannedItem.asset_no }}</span>
+                        <span class="inventory-scan-actions__hint">{{ scannedItemHint }}</span>
+                      </div>
+                      <div class="inventory-scan-actions__buttons">
+                        <el-button
+                          v-if="activeTask?.status === 'in_progress' && can('inventory.manage') && scannedItem.status === 'pending'"
+                          type="primary"
+                          :loading="scannedNormalSaving"
+                          :disabled="scannedNormalSaving"
+                          @click="confirmScannedItemNormal"
+                        >
+                          {{ t('inventory.confirmScannedNormal') }}
+                        </el-button>
+                        <el-button
+                          v-if="activeTask?.status === 'in_progress' && can('inventory.manage') && scannedItem.status === 'pending'"
+                          :disabled="scannedNormalSaving"
+                          @click="openScannedItemResult"
+                        >
+                          {{ t('inventory.recordResult') }}
+                        </el-button>
+                        <el-button
+                          v-else-if="itemPrimaryAction(scannedItem)"
+                          :type="itemPrimaryActionType(scannedItem)"
+                          @click="openScannedItemAction"
+                        >
+                          {{ itemPrimaryActionLabel(scannedItem) }}
+                        </el-button>
+                      </div>
+                    </div>
+                  </template>
+                </AssetQrScanner>
+              </el-popover>
             </template>
           </PageToolbar>
           <div v-if="selectedBatchItems.length" class="inventory-batch-bar" role="status" aria-live="polite">
-            <span>已选择 {{ selectedBatchItems.length }} 项</span>
+            <span>{{ t('common.selectedItems', { count: selectedBatchItems.length }) }}</span>
             <el-button
               v-if="batchSelectionMode === 'inventory'"
               type="primary"
@@ -499,11 +641,11 @@ onMounted(async () => {
               :disabled="bulkNormalSaving"
               @click="openBulkNormal"
             >
-              标记为正常
+              {{ t('inventory.markNormal') }}
             </el-button>
             <el-dropdown v-else trigger="click" @command="openBulkResolution">
               <el-button type="primary" plain :loading="bulkResolutionSaving" :disabled="bulkResolutionSaving">
-                批量处理<el-icon class="el-icon--right"><ArrowDown /></el-icon>
+                {{ t('inventory.bulkProcess') }}<el-icon class="el-icon--right"><ArrowDown /></el-icon>
               </el-button>
               <template #dropdown>
                 <el-dropdown-menu>
@@ -518,22 +660,23 @@ onMounted(async () => {
             :loading="itemListLoading && !items.length"
             :error="itemListError && !items.length ? itemListError : ''"
             :empty="!itemListLoading && !itemListError && !items.length"
-            :empty-text="itemHasFilters ? '没有符合当前筛选条件的盘点设备' : '当前任务没有盘点设备'"
+            :empty-text="itemHasFilters ? t('inventory.noMatchingItems') : t('inventory.noItems')"
             @retry="() => loadItems()"
           >
             <template #empty>
-              <el-empty :image-size="56" :description="itemHasFilters ? '没有符合当前筛选条件的盘点设备' : '当前任务没有盘点设备'">
-                <el-button v-if="itemHasFilters" link type="primary" @click="resetItemFilters">清除筛选</el-button>
+              <el-empty :image-size="56" :description="itemHasFilters ? t('inventory.noMatchingItems') : t('inventory.noItems')">
+                <el-button v-if="itemHasFilters" link type="primary" @click="resetItemFilters">{{ t('common.clearFilters') }}</el-button>
             </el-empty>
             </template>
             <template #error="{ error }">
-              <el-alert title="盘点设备加载失败" :description="error" type="error" show-icon :closable="false" />
-              <el-button link type="primary" @click="loadItems">重新加载设备</el-button>
+              <el-alert :title="t('inventory.itemLoadFailed')" :description="error" type="error" show-icon :closable="false" />
+              <el-button link type="primary" @click="loadItems">{{ t('inventory.retryItems') }}</el-button>
             </template>
             <el-alert v-if="itemListError" :title="itemListError" type="error" show-icon :closable="false" class="inventory-alert" />
             <div v-if="itemListError" class="inventory-retry-row">
-              <el-button link type="primary" @click="() => loadItems()">重新加载设备</el-button>
+              <el-button link type="primary" @click="() => loadItems()">{{ t('inventory.retryItems') }}</el-button>
             </div>
+            <div ref="inventoryItemsTable" class="inventory-items-table">
             <PagedTable v-model:current-page="itemPage" v-model:page-size="itemPageSize" :total="itemCount" :page-sizes="[20, 50, 100]" @update:current-page="changeItemPage" @update:page-size="changeItemPageSize">
             <el-table
               ref="itemTableRef"
@@ -541,29 +684,30 @@ onMounted(async () => {
               :data="items"
               row-key="id"
               table-layout="fixed"
+              :row-class-name="inventoryRowClassName"
               @selection-change="handleBatchSelectionChange"
               @select-all="handleBatchSelectAll"
             >
             <template #empty>
-              <el-empty :image-size="56" :description="itemHasFilters ? '没有符合当前筛选条件的盘点设备' : '当前任务没有盘点设备'">
-                <el-button v-if="itemHasFilters" link type="primary" @click="resetItemFilters">清除筛选</el-button>
+              <el-empty :image-size="56" :description="itemHasFilters ? t('inventory.noMatchingItems') : t('inventory.noItems')">
+                <el-button v-if="itemHasFilters" link type="primary" @click="resetItemFilters">{{ t('common.clearFilters') }}</el-button>
             </el-empty>
             </template>
           <el-table-column v-if="can('inventory.manage') && activeTask.status === 'in_progress'" type="selection" width="48" :selectable="isBatchSelectable" />
-          <el-table-column label="资产" min-width="240">
+          <el-table-column :label="t('asset.title')" min-width="240">
             <template #default="{ row }">
               <el-button link type="primary" class="inventory-asset-cell" @click.stop="openAssetDetail(row.asset)">
                 {{ row.asset_no }} · {{ row.asset_name }}
               </el-button>
             </template>
           </el-table-column>
-          <el-table-column label="账面位置" min-width="250">
+          <el-table-column :label="t('inventory.accountLocation')" min-width="250">
             <template #default="{ row }">{{ locationText(row) }}</template>
           </el-table-column>
-          <el-table-column label="盘点结果" width="130">
-            <template #default="{ row }"><StatusTag :tone="statusTagType(row.status)" :label="row.status_label" /></template>
+          <el-table-column :label="t('inventory.result')" width="130">
+            <template #default="{ row }"><StatusTag :tone="statusTagType(row.status)" :label="businessOptionLabel(INVENTORY_ITEM_STATUS_OPTIONS, row.status)" /></template>
           </el-table-column>
-          <el-table-column label="异常状态" width="105">
+          <el-table-column :label="t('inventory.exception')" width="105">
             <template #default="{ row }">
               <StatusTag
                 v-if="isExceptionStatus(row.status)"
@@ -573,12 +717,12 @@ onMounted(async () => {
               <span v-else>—</span>
             </template>
           </el-table-column>
-          <el-table-column label="处理结果" width="140">
+          <el-table-column :label="t('inventory.processResult')" width="140">
             <template #default="{ row }">
               {{ row.resolution_status === 'resolved' ? resolutionActionLabel(row.resolution_action) : '—' }}
             </template>
           </el-table-column>
-          <el-table-column label="操作" fixed="right" width="190">
+          <el-table-column :label="t('common.operation')" fixed="right" width="132">
             <template #default="{ row }">
               <div class="ep-table-actions">
                 <TableIconButton
@@ -591,7 +735,7 @@ onMounted(async () => {
                 <TableIconButton
                   v-if="itemCanEditException(row)"
                   :icon="Edit"
-                  label="修改盘点结果"
+                  :label="t('inventory.editResult')"
                   type="primary"
                   @click="openItem(row)"
                 />
@@ -601,6 +745,7 @@ onMounted(async () => {
           </el-table-column>
             </el-table>
             </PagedTable>
+            </div>
           </ResourceState>
         </PageSection>
       </PageContent>
@@ -608,8 +753,8 @@ onMounted(async () => {
 
     <FormDialogShell
       v-model="showTaskDialog"
-      title="新增盘点任务"
-      description="设置盘点范围、时间和盘点备注"
+      :title="t('inventory.addTask')"
+      :description="t('inventory.taskDialogDescription')"
       size="medium"
       :loading="auxLoading || scopePreviewLoading"
       :saving="taskCreating"
@@ -622,63 +767,63 @@ onMounted(async () => {
     >
       <el-alert v-if="taskAuxError" :title="taskAuxError" type="error" show-icon :closable="false" class="inventory-alert">
         <template #default>
-          <el-button link type="primary" @click="retryTaskAuxData">重新加载辅助数据</el-button>
+          <el-button link type="primary" @click="retryTaskAuxData">{{ t('common.retry') }}</el-button>
         </template>
       </el-alert>
       <el-form ref="taskFormRef" class="horizontal-form inventory-task-form" :model="taskForm" :rules="taskRules" :validate-on-rule-change="false" label-position="right" @submit.prevent="submitTask">
         <div class="horizontal-form__rows">
-          <el-form-item label="任务名称" prop="name"><el-input v-model="taskForm.name" placeholder="例如：2026年沈阳数据中心年度盘点" /></el-form-item>
-          <el-form-item label="数据中心" prop="data_center"><el-select v-model="taskForm.data_center" :loading="auxLoading" @change="changeTaskDataCenter"><el-option v-for="center in activeDataCenters" :key="center.id" :label="center.name" :value="String(center.id)" /></el-select></el-form-item>
-          <el-form-item label="机房">
-            <el-select v-model="taskForm.server_room" clearable :disabled="Boolean(taskAuxError)" placeholder="整个数据中心" @change="changeTaskServerRoom"><el-option v-for="room in activeRooms" :key="room.id" :label="room.name" :value="String(room.id)" /></el-select>
+          <el-form-item :label="t('inventory.taskName')" prop="name"><el-input v-model="taskForm.name" :placeholder="t('inventory.taskNamePlaceholder')" /></el-form-item>
+          <el-form-item :label="t('common.dataCenter')" prop="data_center"><el-select v-model="taskForm.data_center" :loading="auxLoading" @change="changeTaskDataCenter"><el-option v-for="center in activeDataCenters" :key="center.id" :label="center.name" :value="String(center.id)" /></el-select></el-form-item>
+          <el-form-item :label="t('common.room')">
+            <el-select v-model="taskForm.server_room" clearable :disabled="Boolean(taskAuxError)" :placeholder="t('inventory.wholeDataCenter')" @change="changeTaskServerRoom"><el-option v-for="room in activeRooms" :key="room.id" :label="room.name" :value="String(room.id)" /></el-select>
             <FieldHelp :text="taskRoomHelp" />
           </el-form-item>
         </div>
         <section class="inventory-scope-preview" aria-live="polite">
           <div class="inventory-scope-preview__header">
-            <strong>盘点范围</strong>
-            <el-button v-if="scopePreviewError" link type="primary" @click="retryScopePreview">重新加载</el-button>
+            <strong>{{ t('inventory.taskRange') }}</strong>
+            <el-button v-if="scopePreviewError" link type="primary" @click="retryScopePreview">{{ t('common.retry') }}</el-button>
           </div>
           <template v-if="scopePreviewLoading">
-            <div class="inventory-scope-preview__state">正在计算盘点范围...</div>
+            <div class="inventory-scope-preview__state">{{ t('inventory.rangeLoading') }}</div>
           </template>
           <template v-else-if="scopePreviewError">
-            <div class="inventory-scope-preview__state inventory-scope-preview__state--error">盘点范围加载失败</div>
+            <div class="inventory-scope-preview__state inventory-scope-preview__state--error">{{ t('inventory.rangeLoadFailed') }}</div>
           </template>
           <template v-else-if="scopePreview">
             <div class="inventory-scope-preview__scope">{{ scopePreview.scope_label }}</div>
-            <div class="inventory-scope-preview__total"><strong>{{ scopePreview.total }}</strong><span>台资产</span></div>
+            <div class="inventory-scope-preview__total"><strong>{{ scopePreview.total }}</strong><span>{{ t('inventory.rangeAssets') }}</span></div>
             <div class="inventory-scope-preview__stats">
-              <span>已上架<strong>{{ scopePreview.racked }}</strong></span>
-              <span>未上架<strong>{{ scopePreview.unracked }}</strong></span>
-              <span>已报废<strong>{{ scopePreview.retired }}</strong></span>
+              <span>{{ t('inventory.mounted') }}<strong>{{ scopePreview.racked }}</strong></span>
+              <span>{{ t('inventory.unmounted') }}<strong>{{ scopePreview.unracked }}</strong></span>
+              <span>{{ t('status.retired') }}<strong>{{ scopePreview.retired }}</strong></span>
             </div>
-            <div v-if="scopePreview.total === 0" class="inventory-scope-preview__state inventory-scope-preview__state--warning">当前范围内没有可盘点资产</div>
+            <div v-if="scopePreview.total === 0" class="inventory-scope-preview__state inventory-scope-preview__state--warning">{{ t('inventory.noInventoryAssets') }}</div>
             <ul v-if="scopePreviewWarnings.length" class="inventory-scope-preview__warnings">
               <li v-for="warning in scopePreviewWarnings" :key="warning">{{ warning }}</li>
             </ul>
             <p class="inventory-scope-preview__help">
-              {{ scopePreview.includes_unracked ? "选择整个数据中心时，会包含属于该数据中心的未上架资产。" : "选择具体机房时，仅包含该机房内已上架资产。" }}
+              {{ scopePreview.includes_unracked ? t('inventory.wholeCenterIncludesUnmounted') : t('inventory.roomIncludesMounted') }}
             </p>
-            <p class="inventory-scope-preview__help">停用机房和停用机柜不纳入盘点范围。</p>
-            <p class="inventory-scope-preview__help">任务创建后会固定当前资产清单，后续资产变化不会自动加入本次盘点。</p>
+            <p class="inventory-scope-preview__help">{{ t('inventory.inactiveExcluded') }}</p>
+            <p class="inventory-scope-preview__help">{{ t('inventory.snapshotNotice') }}</p>
           </template>
-          <div v-else class="inventory-scope-preview__state">请选择数据中心以计算盘点范围</div>
+          <div v-else class="inventory-scope-preview__state">{{ t('inventory.selectDataCenterHint') }}</div>
         </section>
         <div class="horizontal-form__rows">
-          <el-form-item label="盘点人"><el-select v-model="taskForm.inspector" clearable :loading="auxLoading" :disabled="Boolean(taskAuxError)" placeholder="默认当前用户"><el-option v-for="person in inspectors" :key="person.id" :label="person.display_name" :value="String(person.id)" /></el-select></el-form-item>
-          <el-form-item label="开始时间" prop="start_at"><el-date-picker v-model="taskForm.start_at" type="datetime" value-format="YYYY-MM-DDTHH:mm:ss" /></el-form-item>
-          <el-form-item label="结束时间" prop="end_at"><el-date-picker v-model="taskForm.end_at" type="datetime" value-format="YYYY-MM-DDTHH:mm:ss" /></el-form-item>
-          <el-form-item label="备注"><el-input v-model="taskForm.notes" type="textarea" :rows="3" /></el-form-item>
+          <el-form-item :label="t('inventory.inspector')"><el-select v-model="taskForm.inspector" clearable :loading="auxLoading" :disabled="Boolean(taskAuxError)" :placeholder="t('inventory.defaultCurrentUser')"><el-option v-for="person in inspectors" :key="person.id" :label="person.display_name" :value="String(person.id)" /></el-select></el-form-item>
+          <el-form-item :label="t('inventory.startTime')" prop="start_at"><el-date-picker v-model="taskForm.start_at" type="datetime" value-format="YYYY-MM-DDTHH:mm:ss" /></el-form-item>
+          <el-form-item :label="t('inventory.endTime')" prop="end_at"><el-date-picker v-model="taskForm.end_at" type="datetime" value-format="YYYY-MM-DDTHH:mm:ss" /></el-form-item>
+          <el-form-item :label="t('common.notes')"><el-input v-model="taskForm.notes" type="textarea" :rows="3" /></el-form-item>
         </div>
       </el-form>
-      <template #footer><el-button :disabled="taskCreating" @click="closeTaskDialog">取消</el-button><el-button type="primary" :loading="taskCreating" :disabled="taskCreating || scopePreviewLoading || Boolean(scopePreviewError) || !scopePreview || scopePreview.total <= 0" @click="submitTask">保存任务</el-button></template>
+      <template #footer><el-button :disabled="taskCreating" @click="closeTaskDialog">{{ t('common.cancel') }}</el-button><el-button type="primary" :loading="taskCreating" :disabled="taskCreating || scopePreviewLoading || Boolean(scopePreviewError) || !scopePreview || scopePreview.total <= 0" @click="submitTask">{{ t('inventory.saveTask') }}</el-button></template>
     </FormDialogShell>
 
     <ActionDialogShell
       v-model="showItemDialog"
-      title="确认盘点"
-      description="记录当前设备的盘点结果与实际位置"
+      :title="t('inventory.confirmInventory')"
+      :description="t('inventory.confirmInventoryDescription')"
       size="medium"
       :pending="itemSaving"
       :error="itemDialogError"
@@ -686,27 +831,27 @@ onMounted(async () => {
     >
       <el-alert v-if="itemAuxError" :title="itemAuxError" type="error" show-icon :closable="false" class="inventory-alert">
         <template #default>
-          <el-button link type="primary" @click="retryRackAuxData">重新加载机柜</el-button>
+          <el-button link type="primary" @click="retryRackAuxData">{{ t('inventory.retryRacks') }}</el-button>
         </template>
       </el-alert>
       <AssetSummary v-if="editingItem" :asset="editingItem" compact :show-status="false" />
       <el-form :key="editingItem?.id ?? 'inventory-item-form'" ref="itemFormRef" :model="itemForm" :rules="itemRules" :validate-on-rule-change="false" label-position="top" class="inventory-item-form">
-          <el-form-item label="盘点结果" prop="status"><el-select v-model="itemForm.status" placeholder="请选择盘点结果" @change="changeItemStatus"><el-option v-for="item in itemResultOptions" :key="item.value" :label="item.label" :value="item.value" /></el-select></el-form-item>
-          <el-alert v-if="itemForm.status === 'normal'" title="正常表示与任务创建时的系统位置一致，位置已自动带入且不可修改。" type="success" :closable="false" show-icon />
+          <el-form-item :label="t('inventory.result')" prop="status"><el-select v-model="itemForm.status" :placeholder="t('inventory.selectInventoryResult')" @change="changeItemStatus"><el-option v-for="item in itemResultOptions" :key="item.value" :label="item.label" :value="item.value" /></el-select></el-form-item>
+          <el-alert v-if="itemForm.status === 'normal'" :title="t('inventory.resultNormalHint')" type="success" :closable="false" show-icon />
           <div v-if="itemForm.status && itemForm.status !== 'not_found'" class="form-grid">
-          <el-form-item label="实际机柜"><el-select v-model="itemForm.actual_rack" clearable :disabled="Boolean(itemAuxError) || itemForm.status === 'normal'" placeholder="未上架"><el-option v-for="rack in activeRacks" :key="rack.id" :label="`${rack.data_center_name} / ${rack.server_room_name} / ${rack.code}`" :value="String(rack.id)" /></el-select></el-form-item>
-          <el-form-item label="实际起始 U"><el-input-number v-model="actualStartUValue" :min="1" :step="1" :precision="0" :value-on-clear="null" aria-label="实际起始 U" :disabled="itemForm.status === 'normal'"><template #suffix>U</template></el-input-number></el-form-item>
-          <el-form-item label="实际结束 U"><el-input-number v-model="actualEndUValue" :min="1" :step="1" :precision="0" :value-on-clear="null" aria-label="实际结束 U" :disabled="itemForm.status === 'normal'"><template #suffix>U</template></el-input-number></el-form-item>
+          <el-form-item :label="t('inventory.actualRack')"><el-select v-model="itemForm.actual_rack" clearable :disabled="Boolean(itemAuxError) || itemForm.status === 'normal'" :placeholder="t('inventory.notMountedPlaceholder')"><el-option v-for="rack in activeRacks" :key="rack.id" :label="`${rack.data_center_name} / ${rack.server_room_name} / ${rack.code}`" :value="String(rack.id)" /></el-select></el-form-item>
+          <el-form-item :label="t('inventory.actualStartU')"><el-input-number v-model="actualStartUValue" :min="1" :step="1" :precision="0" :value-on-clear="null" :aria-label="t('inventory.actualStartU')" :disabled="itemForm.status === 'normal'"><template #suffix>U</template></el-input-number></el-form-item>
+          <el-form-item :label="t('inventory.actualEndU')"><el-input-number v-model="actualEndUValue" :min="1" :step="1" :precision="0" :value-on-clear="null" :aria-label="t('inventory.actualEndU')" :disabled="itemForm.status === 'normal'"><template #suffix>U</template></el-input-number></el-form-item>
           </div>
-        <el-form-item label="备注"><el-input v-model="itemForm.notes" type="textarea" :rows="3" placeholder="设备信息不符时请记录具体差异" /></el-form-item>
+        <el-form-item :label="t('common.notes')"><el-input v-model="itemForm.notes" type="textarea" :rows="3" :placeholder="t('inventory.mismatchNotePlaceholder')" /></el-form-item>
       </el-form>
-      <template #footer><el-button :disabled="itemSaving" @click="showItemDialog = false">取消</el-button><el-button :disabled="!itemCanSave" @click="submitItem">保存</el-button><el-button type="primary" :loading="itemSaving" :disabled="!itemCanSave" @click="submitItemAndNext">保存并下一项</el-button></template>
+      <template #footer><el-button :disabled="itemSaving" @click="showItemDialog = false">{{ t('common.cancel') }}</el-button><el-button :disabled="!itemCanSave" @click="submitItem">{{ t('common.save') }}</el-button><el-button type="primary" :loading="itemSaving" :disabled="!itemCanSave" @click="submitItemAndNext">{{ t('inventory.saveAndNext') }}</el-button></template>
     </ActionDialogShell>
 
     <ActionDialogShell
       v-model="showResolutionDialog"
-      title="处理盘点异常"
-      description="选择处理方式并保留本次盘点的处理记录"
+      :title="t('inventory.processException')"
+      :description="t('inventory.processExceptionDescription')"
       class="inventory-resolution-dialog"
       size="medium"
       :pending="resolutionSaving"
@@ -718,39 +863,39 @@ onMounted(async () => {
         <section class="action-dialog__summary inventory-resolution-summary">
           <div class="inventory-resolution-summary__header">
             <AssetSummary class="inventory-resolution-asset__main" :asset="resolutionItem" compact :show-status="false" />
-            <el-button link type="primary" @click="openAssetDetail(resolutionItem.asset)">查看资产详情</el-button>
+            <el-button link type="primary" @click="openAssetDetail(resolutionItem.asset)">{{ t('inventory.viewAssetDetails') }}</el-button>
           </div>
           <div class="inventory-resolution-summary__facts">
             <div>
-              <span>盘点结果</span>
-              <StatusTag :tone="statusTagType(resolutionItem.status)" :label="resolutionItem.status_label" />
+              <span>{{ t('inventory.result') }}</span>
+              <StatusTag :tone="statusTagType(resolutionItem.status)" :label="businessOptionLabel(INVENTORY_ITEM_STATUS_OPTIONS, resolutionItem.status)" />
             </div>
             <div>
-              <span>账面位置</span>
+              <span>{{ t('inventory.accountLocation') }}</span>
               <strong>{{ locationText(resolutionItem) }}</strong>
             </div>
             <div v-if="resolutionItem.status !== 'not_found'">
-              <span>实际位置</span>
+              <span>{{ t('inventory.actualLocation') }}</span>
               <strong>{{ locationText(resolutionItem, true) }}</strong>
             </div>
             <div class="inventory-resolution-summary__note">
-              <span>盘点备注</span>
-              <strong>{{ resolutionItem.notes || '未填写盘点备注' }}</strong>
+              <span>{{ t('inventory.inventoryNote') }}</span>
+              <strong>{{ resolutionItem.notes || t('inventory.noInventoryNote') }}</strong>
             </div>
           </div>
         </section>
 
         <template v-if="resolutionReadOnly">
           <section class="inventory-resolution-section inventory-resolution-readonly">
-            <div class="inventory-resolution-section__title">处理结果</div>
+            <div class="inventory-resolution-section__title">{{ t('inventory.processResult') }}</div>
             <div class="inventory-resolution-readonly__grid">
-              <div><span>处理状态</span><StatusTag :tone="resolutionStatusTagType(resolutionItem.resolution_status)" :label="resolutionStatusLabel(resolutionItem.resolution_status)" /></div>
-              <div><span>处理方式</span><strong>{{ resolutionActionLabel(resolutionItem.resolution_action) }}</strong></div>
-              <div><span>处理人</span><strong>{{ resolutionItem.resolved_by_name || '—' }}</strong></div>
-              <div><span>处理时间</span><strong>{{ formatDateTime(resolutionItem.resolved_at) }}</strong></div>
+              <div><span>{{ t('inventory.processStatus') }}</span><StatusTag :tone="resolutionStatusTagType(resolutionItem.resolution_status)" :label="resolutionStatusLabel(resolutionItem.resolution_status)" /></div>
+              <div><span>{{ t('inventory.processMethod') }}</span><strong>{{ resolutionActionLabel(resolutionItem.resolution_action) }}</strong></div>
+              <div><span>{{ t('inventory.processor') }}</span><strong>{{ resolutionItem.resolved_by_name || '—' }}</strong></div>
+              <div><span>{{ t('inventory.processTime') }}</span><strong>{{ formatDateTime(resolutionItem.resolved_at) }}</strong></div>
             </div>
-            <div class="inventory-resolution-readonly__note"><span>处理备注</span><p>{{ resolutionItem.resolution_note || '—' }}</p></div>
-            <el-alert v-if="resolutionItem.resolution_action === 'update_asset'" type="success" :closable="false" title="已执行资产台账位置更新" />
+            <div class="inventory-resolution-readonly__note"><span>{{ t('inventory.processNote') }}</span><p>{{ resolutionItem.resolution_note || '—' }}</p></div>
+            <el-alert v-if="resolutionItem.resolution_action === 'update_asset'" type="success" :closable="false" :title="t('inventory.assetLocationUpdated')" />
           </section>
         </template>
 
@@ -763,33 +908,33 @@ onMounted(async () => {
           label-position="top"
           class="inventory-resolution-form"
         >
-          <el-form-item label="处理方式" prop="action">
-            <el-select v-model="resolutionForm.action" placeholder="请选择处理方式" :disabled="resolutionSaving">
+          <el-form-item :label="t('inventory.processMethod')" prop="action">
+            <el-select v-model="resolutionForm.action" :placeholder="t('validation.selectRequired', { field: t('inventory.processMethod') })" :disabled="resolutionSaving">
               <el-option v-for="option in resolutionOptions" :key="option.value" :label="option.label" :value="option.value" />
             </el-select>
           </el-form-item>
-          <el-alert v-if="resolutionLocationIncomplete" type="info" :closable="false" title="当前盘点结果缺少完整机柜/U位信息，无法更新资产位置。" />
-          <el-alert v-if="resolutionUpdateSelected" type="warning" :closable="false" title="确认后将修改资产台账中的位置，请核对更新前后信息。">
+          <el-alert v-if="resolutionLocationIncomplete" type="info" :closable="false" :title="t('inventory.resolutionMissingLocation')" />
+          <el-alert v-if="resolutionUpdateSelected" type="warning" :closable="false" :title="t('inventory.resolutionUpdateWarning')">
             <div class="inventory-resolution-change">
-              <div><span>更新前</span><strong>{{ locationText(resolutionItem) }}</strong></div>
-              <div><span>更新后</span><strong>{{ locationText(resolutionItem, true) }}</strong></div>
+              <div><span>{{ t('inventory.updateBefore') }}</span><strong>{{ locationText(resolutionItem) }}</strong></div>
+              <div><span>{{ t('inventory.updateAfter') }}</span><strong>{{ locationText(resolutionItem, true) }}</strong></div>
             </div>
           </el-alert>
-          <el-form-item label="处理备注" prop="note">
-            <el-input v-model="resolutionForm.note" type="textarea" :rows="3" :disabled="resolutionSaving" placeholder="记录本次异常处理说明" />
+          <el-form-item :label="t('inventory.processNote')" prop="note">
+            <el-input v-model="resolutionForm.note" type="textarea" :rows="3" :disabled="resolutionSaving" :placeholder="t('inventory.processNotePlaceholder')" />
           </el-form-item>
         </el-form>
       </template>
       <template #footer>
-        <el-button :disabled="resolutionSaving" @click="closeResolutionDialog">{{ resolutionReadOnly ? '关闭' : '取消' }}</el-button>
-        <el-button v-if="!resolutionReadOnly" type="primary" :loading="resolutionSaving" :disabled="!resolutionCanSave" @click="submitResolution">确认处理</el-button>
+        <el-button :disabled="resolutionSaving" @click="closeResolutionDialog">{{ resolutionReadOnly ? t('common.close') : t('common.cancel') }}</el-button>
+        <el-button v-if="!resolutionReadOnly" type="primary" :loading="resolutionSaving" :disabled="!resolutionCanSave" @click="submitResolution">{{ t('inventory.confirmProcess') }}</el-button>
       </template>
     </ActionDialogShell>
 
     <ActionDialogShell
       v-model="showBulkResolutionDialog"
-      title="批量处理盘点异常"
-      description="对选中的异常项统一记录处理结论"
+      :title="t('inventory.bulkProcess')"
+      :description="t('inventory.bulkProcessDescription')"
       class="inventory-bulk-resolution-dialog"
       size="medium"
       :pending="bulkResolutionSaving"
@@ -802,10 +947,10 @@ onMounted(async () => {
           <el-alert
             :type="bulkResolutionResult.failed ? 'warning' : 'success'"
             :closable="false"
-            :title="`成功处理 ${bulkResolutionResult.succeeded} 条，${bulkResolutionResult.failed} 条失败`"
+            :title="t('inventory.bulkProcessSummary', { succeeded: bulkResolutionResult.succeeded, failed: bulkResolutionResult.failed })"
           />
           <section v-if="bulkResolutionFailures.length" class="inventory-bulk-resolution-failures">
-            <div class="inventory-resolution-section__title">失败明细</div>
+            <div class="inventory-resolution-section__title">{{ t('common.failedDetails') }}</div>
             <div v-for="failure in bulkResolutionFailures" :key="failure.item_id" class="inventory-bulk-resolution-failure">
               <strong>{{ failure.asset_no }}</strong>
               <span>{{ failure.reason }}</span>
@@ -823,36 +968,36 @@ onMounted(async () => {
         class="inventory-bulk-resolution-form"
       >
         <div class="action-dialog__summary inventory-bulk-resolution-meta">
-          <span>处理条数</span>
-          <strong>{{ bulkResolutionCount }} 条</strong>
-          <span>处理方式</span>
+          <span>{{ t('inventory.processedCount') }}</span>
+          <strong>{{ bulkResolutionCount }}</strong>
+          <span>{{ t('inventory.processMethod') }}</span>
           <strong>{{ resolutionActionLabel(bulkResolutionAction) }}</strong>
         </div>
         <el-alert v-if="bulkResolutionNotice" type="info" :closable="false" :title="bulkResolutionNotice" />
-        <el-form-item label="处理备注" prop="note">
+        <el-form-item :label="t('inventory.processNote')" prop="note">
           <el-input
             v-model="bulkResolutionForm.note"
             type="textarea"
             :rows="3"
             :disabled="bulkResolutionSaving"
-            :placeholder="bulkResolutionAction === 'ignore' ? '请填写统一的忽略原因' : '可填写本次批量处理说明'"
+            :placeholder="bulkResolutionAction === 'ignore' ? t('inventory.bulkIgnorePlaceholder') : t('inventory.bulkProcessPlaceholder')"
           />
         </el-form-item>
       </el-form>
       <template #footer>
         <el-button :disabled="bulkResolutionSaving" @click="closeBulkResolutionDialog">
-          {{ bulkResolutionResult ? '关闭' : '取消' }}
+          {{ bulkResolutionResult ? t('common.close') : t('common.cancel') }}
         </el-button>
         <el-button v-if="!bulkResolutionResult" type="primary" :loading="bulkResolutionSaving" :disabled="bulkResolutionSaving" @click="submitBulkResolution">
-          确认处理
+          {{ t('inventory.confirmProcess') }}
         </el-button>
       </template>
     </ActionDialogShell>
 
     <ActionDialogShell
       v-model="showBulkNormalDialog"
-      title="批量标记为正常"
-      description="确认选中的设备与任务创建时的账面信息一致"
+      :title="t('inventory.markNormal')"
+      :description="t('inventory.markNormalDescription')"
       class="inventory-bulk-normal-dialog"
       size="medium"
       :pending="bulkNormalSaving"
@@ -865,10 +1010,10 @@ onMounted(async () => {
           <el-alert
             :type="bulkNormalResult.failed ? 'warning' : 'success'"
             :closable="false"
-            :title="`已将 ${bulkNormalResult.succeeded} 条资产标记为盘点正常，${bulkNormalResult.failed} 条失败`"
+            :title="t('inventory.markNormalSummary', { succeeded: bulkNormalResult.succeeded, failed: bulkNormalResult.failed })"
           />
           <section v-if="bulkNormalFailures.length" class="inventory-bulk-resolution-failures">
-            <div class="inventory-resolution-section__title">失败明细</div>
+            <div class="inventory-resolution-section__title">{{ t('common.failedDetails') }}</div>
             <div v-for="failure in bulkNormalFailures" :key="failure.item_id" class="inventory-bulk-resolution-failure">
               <strong>{{ failure.asset_no }}</strong>
               <span>{{ failure.reason }}</span>
@@ -878,26 +1023,82 @@ onMounted(async () => {
       </template>
       <template v-else>
         <div class="action-dialog__summary inventory-bulk-normal-summary">
-          <span>选中设备</span>
-          <strong>{{ bulkNormalCount }} 台</strong>
-          <span>处理方式</span>
-          <strong>标记为盘点正常</strong>
+          <span>{{ t('inventory.selectedDevices') }}</span>
+          <strong>{{ t('units.device', bulkNormalCount) }}</strong>
+          <span>{{ t('inventory.processMethod') }}</span>
+          <strong>{{ t('inventory.markNormalAction') }}</strong>
         </div>
         <el-alert
           type="info"
           :closable="false"
-          title="系统将确认这些资产与任务创建时的账面信息一致，并自动记录盘点时间和盘点人。"
+          :title="t('inventory.markNormalConfirm')"
         />
-        <p class="inventory-bulk-normal-help">如果设备实际存在位置或信息差异，请取消并逐项盘点。</p>
+        <p class="inventory-bulk-normal-help">{{ t('inventory.markNormalHelp') }}</p>
       </template>
       <template #footer>
         <el-button :disabled="bulkNormalSaving" @click="closeBulkNormalDialog">
-          {{ bulkNormalResult ? '关闭' : '取消' }}
+          {{ bulkNormalResult ? t('common.close') : t('common.cancel') }}
         </el-button>
         <el-button v-if="!bulkNormalResult" type="primary" :loading="bulkNormalSaving" :disabled="bulkNormalSaving" @click="saveBulkNormal">
-          确认标记
+          {{ t('inventory.confirmMarkNormal') }}
         </el-button>
       </template>
     </ActionDialogShell>
   </div>
 </template>
+
+<style scoped>
+:deep(.inventory-item-row--scanned > td) {
+  background: var(--el-color-primary-light-9) !important;
+}
+
+:deep(.inventory-item-row--scanned > td:first-child) {
+  box-shadow: inset 3px 0 0 var(--el-color-primary);
+}
+
+.inventory-items-table {
+  margin-top: var(--space-md);
+}
+
+:deep(.inventory-scan-actions) {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-sm);
+  padding-top: var(--space-sm);
+  border-top: 1px solid var(--el-border-color-lighter);
+}
+
+:deep(.inventory-scan-actions__summary),
+:deep(.inventory-scan-actions__buttons) {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: var(--space-sm);
+}
+
+:deep(.inventory-scan-actions__summary) {
+  flex: 1 1 auto;
+}
+
+:deep(.inventory-scan-actions__asset) {
+  overflow: hidden;
+  color: var(--el-text-color-secondary);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+:deep(.inventory-scan-actions__hint) {
+  overflow: hidden;
+  color: var(--el-text-color-secondary);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+:deep(.inventory-scan-actions__buttons) {
+  flex: 0 0 auto;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
+</style>

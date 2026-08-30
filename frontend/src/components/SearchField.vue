@@ -1,7 +1,8 @@
 <script setup lang="ts">
 import { Loading, Search } from "@element-plus/icons-vue";
+import { useI18n } from "vue-i18n";
 
-withDefaults(
+const props = withDefaults(
   defineProps<{
     modelValue: string;
     placeholder?: string;
@@ -10,12 +11,13 @@ withDefaults(
     ariaLabel?: string;
   }>(),
   {
-    placeholder: "请输入关键词",
+    placeholder: "",
     disabled: false,
     loading: false,
-    ariaLabel: "搜索",
+    ariaLabel: "",
   },
 );
+const { t } = useI18n();
 
 const emit = defineEmits<{
   "update:modelValue": [value: string];
@@ -28,9 +30,9 @@ const emit = defineEmits<{
   <el-input
     class="itam-search-field"
     :model-value="modelValue"
-    :placeholder="placeholder"
+    :placeholder="props.placeholder || t('common.search')"
     :disabled="disabled"
-    :aria-label="ariaLabel"
+    :aria-label="props.ariaLabel || t('common.search')"
     :prefix-icon="Search"
     :suffix-icon="loading ? Loading : undefined"
     clearable

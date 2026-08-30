@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed } from "vue";
+import { useI18n } from "vue-i18n";
 import { Download, Tools, View } from "@element-plus/icons-vue";
 import PagedTable from "./PagedTable.vue";
 import SearchField from "./SearchField.vue";
@@ -14,6 +15,7 @@ import type { FaultEvent } from "../types";
 import type { RepairContext } from "../types/page-context";
 
 const props = defineProps<{ context: RepairContext }>();
+const { t, locale } = useI18n();
 const context = props.context;
 const {
   repairListLoading,
@@ -46,31 +48,33 @@ const hasRepairFilters = computed(() => Boolean(
 ));
 
 function faultSummary(fault: FaultEvent): string {
-  return fault.reason?.trim() || fault.description?.trim() || "未填写故障信息";
+  return fault.reason?.trim() || fault.description?.trim() || t("repair.noDescription");
 }
 
 function formatRepairDateTime(value: string | null | undefined): string {
-  if (!value) return "—";
+  if (!value) return t("common.notAvailable");
   const date = new Date(value);
-  return Number.isNaN(date.getTime()) ? "—" : date.toLocaleString("zh-CN");
+  return Number.isNaN(date.getTime()) ? t("common.notAvailable") : date.toLocaleString(locale.value);
 }
 
 function repairStage(fault: FaultEvent) {
   if (fault.repair?.finished_at) {
-    return { label: "已完成", tone: statusTone("completed") };
+    return { label: t("status.completed"), tone: statusTone("completed") };
   }
   if (fault.repair) {
-    return { label: "维修中", tone: statusTone("repair") };
+    return { label: t("status.repair"), tone: statusTone("repair") };
   }
-  return { label: "待维修", tone: statusTone("pending") };
+  return { label: t("repair.start"), tone: statusTone("pending") };
 }
 
 function repairActionLabel(fault: FaultEvent): string {
-  if (fault.is_closed) return "查看结果";
-  return fault.repair ? "处理维修" : "开始维修";
+  if (!can("faults.manage")) return t("common.details");
+  if (fault.is_closed) return t("repair.viewResult");
+  return fault.repair ? t("repair.process") : t("repair.start");
 }
 
 function repairActionIcon(fault: FaultEvent) {
+  if (!can("faults.manage")) return View;
   return fault.is_closed ? View : Tools;
 }
 </script>
@@ -80,23 +84,23 @@ function repairActionIcon(fault: FaultEvent) {
       <template #toolbar>
         <PageToolbar>
           <template #search>
-            <SearchField v-model="repairKeyword" placeholder="搜索资产编号、名称、故障原因或描述" aria-label="搜索故障" @search="searchRepairs" />
+            <SearchField v-model="repairKeyword" :placeholder="t('repair.searchPlaceholder')" :aria-label="t('repair.title')" @search="searchRepairs" />
           </template>
           <template #filters>
             <div class="page-toolbar__filter-group">
-              <el-select v-model="repairStatus" placeholder="全部状态" clearable @change="onRepairStatusChange">
-                <el-option label="未关闭" value="false" />
-                <el-option label="已关闭" value="true" />
+              <el-select v-model="repairStatus" :placeholder="t('common.all') + t('common.status')" clearable @change="onRepairStatusChange">
+                <el-option :label="t('status.open')" value="false" />
+                <el-option :label="t('status.closed')" value="true" />
               </el-select>
             </div>
           </template>
           <template #actions>
             <el-button v-if="can('faults.export')" class="toolbar-secondary-action toolbar-export-action" :icon="Download" :loading="exportingRepairs" :disabled="exportingRepairs" @click="exportRepairs">
-              导出数据
+              {{ t('asset.exportData') }}
             </el-button>
           </template>
           <template #primary>
-            <el-button v-if="can('faults.manage')" class="page-primary-action" type="primary" @click="openFaultModal()">新增故障</el-button>
+          <el-button v-if="can('faults.manage')" class="page-primary-action" type="primary" @click="openFaultModal()">{{ t('repair.addFault') }}</el-button>
           </template>
         </PageToolbar>
       </template>
@@ -105,16 +109,16 @@ function repairActionIcon(fault: FaultEvent) {
           :loading="repairListLoading && !repairRows.length"
           :error="repairListError && !repairRows.length ? repairListError : ''"
           :empty="!repairListLoading && !repairListError && !repairRows.length"
-          :empty-text="hasRepairFilters ? '没有匹配当前条件的故障记录' : '暂无故障记录'"
+          :empty-text="hasRepairFilters ? t('repair.noMatching') : t('repair.noFaults')"
           @retry="retryRepairList"
         >
           <template #error="{ error }">
-            <el-alert title="故障数据加载失败" :description="error" type="error" show-icon :closable="false" />
-            <el-button link type="primary" @click="retryRepairList">重新加载</el-button>
+            <el-alert :title="t('repair.faultLoadFailed')" :description="error" type="error" show-icon :closable="false" />
+            <el-button link type="primary" @click="retryRepairList">{{ t('common.retry') }}</el-button>
           </template>
           <template #empty>
-            <el-empty :image-size="56" :description="hasRepairFilters ? '没有匹配当前条件的故障记录' : '暂无故障记录'">
-              <el-button v-if="hasRepairFilters" link type="primary" @click="resetRepairFilters">清除筛选</el-button>
+            <el-empty :image-size="56" :description="hasRepairFilters ? t('repair.noMatching') : t('repair.noFaults')">
+              <el-button v-if="hasRepairFilters" link type="primary" @click="resetRepairFilters">{{ t('common.clearFilters') }}</el-button>
             </el-empty>
           </template>
           <PagedTable
@@ -129,42 +133,42 @@ function repairActionIcon(fault: FaultEvent) {
             class="repair-list-alert"
             type="error"
             :closable="false"
-            title="故障数据加载失败"
+            :title="t('repair.faultLoadFailed')"
           >
             <template #default>
               <span>{{ repairListError }}</span>
-              <el-button link type="danger" @click="retryRepairList">重新加载</el-button>
+              <el-button link type="danger" @click="retryRepairList">{{ t('common.retry') }}</el-button>
             </template>
           </el-alert>
-          <el-table v-loading="repairListLoading" :data="repairRows" table-layout="fixed">
-            <el-table-column label="故障" min-width="240">
+          <el-table class="repair-table" v-loading="repairListLoading" :data="repairRows" table-layout="fixed">
+            <el-table-column :label="t('repair.fault')" min-width="240">
               <template #default="{ row }">
-                <el-button link type="primary" class="repair-fault-link" :aria-label="`查看故障：${faultSummary(row)}`" @click="openRepairModal(row)">
+                <el-button link type="primary" class="repair-fault-link" :aria-label="t('repair.viewFaultAria', { summary: faultSummary(row) })" @click="openRepairModal(row)">
                   <span>{{ faultSummary(row) }}</span>
                 </el-button>
               </template>
             </el-table-column>
-            <el-table-column label="关联资产" min-width="190">
+            <el-table-column :label="t('repair.asset')" min-width="190">
               <template #default="{ row }">
                 <el-button link class="repair-asset-link" @click="openAssetDetail(row.asset)">
                   <span>{{ row.asset_no }} · {{ row.asset_name }}</span>
                 </el-button>
               </template>
             </el-table-column>
-            <el-table-column label="状态" width="100">
+            <el-table-column :label="t('common.status')" width="100">
               <template #default="{ row }">
-                <StatusTag :tone="statusTone(row.is_closed ? 'completed' : 'repair')" :label="row.is_closed ? '已关闭' : '未关闭'" />
+                <StatusTag :tone="statusTone(row.is_closed ? 'completed' : 'repair')" :label="row.is_closed ? t('status.closed') : t('status.open')" />
               </template>
             </el-table-column>
-            <el-table-column label="发生时间" width="172">
+            <el-table-column :label="t('repair.occurredAt')" width="172">
               <template #default="{ row }">{{ formatRepairDateTime(row.occurred_at) }}</template>
             </el-table-column>
-            <el-table-column label="维修状态" width="120">
+            <el-table-column :label="t('repair.repairStatus')" width="160">
               <template #default="{ row }">
                 <StatusTag :tone="repairStage(row).tone" :label="repairStage(row).label" />
               </template>
             </el-table-column>
-            <el-table-column v-if="can('faults.manage')" label="操作" fixed="right" width="132">
+            <el-table-column v-if="can('faults.view')" :label="t('common.operation')" fixed="right" width="132">
               <template #default="{ row }">
                 <div class="ep-table-actions">
                   <TableIconButton

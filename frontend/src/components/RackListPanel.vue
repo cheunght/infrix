@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed } from "vue";
+import { useI18n } from "vue-i18n";
 import type { Rack } from "../types";
 import type { RackListContext } from "../types/page-context";
 import StatusTag from "./StatusTag.vue";
@@ -10,6 +11,7 @@ const props = defineProps<{ context: RackListContext & {
   selectedRack?: { value: string };
   selectedRoom?: { value: string };
 } }>();
+const { t } = useI18n();
 const context = props.context;
 const {
   visibleRacks,
@@ -29,9 +31,9 @@ const {
 } = context;
 
 const emptyDescription = computed(() => {
-  if (selectedRack?.value.trim()) return "没有符合条件的机柜";
-  if (selectedRoom?.value) return "当前机房暂无机柜";
-  return "暂无机房";
+  if (selectedRack?.value.trim()) return t("rack.noMatchingRacks");
+  if (selectedRoom?.value) return t("rack.noRacksInRoom");
+  return t("rack.noRooms");
 });
 
 function rackStatus(rack: Rack) {
@@ -44,8 +46,8 @@ function rackStatus(rack: Rack) {
     <template #header>
       <div class="resource-panel-header">
         <div class="resource-panel-heading">
-          <strong>机柜</strong>
-          <span>共 {{ rackCount }} 个</span>
+          <strong>{{ t("rack.list") }}</strong>
+          <span>{{ t("common.itemCount", rackCount) }}</span>
         </div>
       </div>
     </template>
@@ -65,15 +67,15 @@ function rackStatus(rack: Rack) {
           table-layout="fixed"
           highlight-current-row
           :current-row-key="focusedRack?.id ?? undefined"
-          aria-label="机柜列表"
+          :aria-label="t('rack.list')"
           @row-click="selectRack"
         >
-          <el-table-column label="机柜编号" width="90">
+          <el-table-column :label="t('rack.rackCode')" width="96">
             <template #default="{ row }">
               <strong class="rack-list-code">{{ row.code }}</strong>
             </template>
           </el-table-column>
-          <el-table-column label="状态" width="90" align="center">
+          <el-table-column :label="t('common.status')" width="90" align="center">
             <template #default="{ row }">
               <StatusTag
                 :tone="rackStatusTone(rackStatus(row), row.is_active)"
@@ -81,19 +83,19 @@ function rackStatus(rack: Rack) {
               />
             </template>
           </el-table-column>
-          <el-table-column label="位置" min-width="150">
+          <el-table-column :label="t('common.location')" min-width="150">
             <template #default="{ row }">
-              {{ row.data_center_name || "—" }} · {{ row.server_room_name || "—" }}
+              {{ row.data_center_name || t('common.notAvailable') }} · {{ row.server_room_name || t('common.notAvailable') }}
             </template>
           </el-table-column>
-          <el-table-column label="U 使用量" width="110" align="right">
+          <el-table-column :label="`${t('rack.usedU')} / ${t('rack.totalU')}`" width="110" align="right">
             <template #default="{ row }">{{ rackUsedU(row) }} / {{ row.total_u }} U</template>
           </el-table-column>
-          <el-table-column label="使用率" width="90" align="right">
+          <el-table-column :label="t('rack.utilization')" width="90" align="right">
             <template #default="{ row }">{{ rackUtilization(row) }}%</template>
           </el-table-column>
-          <el-table-column label="设备数" width="90" align="right">
-            <template #default="{ row }">{{ row.allocations.length }} 台</template>
+          <el-table-column :label="t('rack.assetCount')" width="90" align="right">
+            <template #default="{ row }">{{ t('common.deviceCount', row.allocations.length) }}</template>
           </el-table-column>
         </el-table>
       </ResourceState>

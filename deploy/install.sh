@@ -131,6 +131,13 @@ node_major="$(node --version | sed 's/^v//' | cut -d. -f1)"
 [[ "$node_major" -ge 18 ]] || fail "Node.js 版本必须 >= 18，当前为 $(node --version)。"
 command -v npm >/dev/null 2>&1 || fail "未找到 npm。"
 
+# 受限内存的 Rocky VM 可能让 Node.js 自动将 V8 堆上限压到约 512 MB，
+# 前端的 vue-tsc/vite 构建会因此触发 JavaScript heap out of memory。
+# 默认使用 1 GB；部署方可以通过环境文件或调用环境中的 NODE_OPTIONS 覆盖。
+NODE_OPTIONS="${NODE_OPTIONS:---max-old-space-size=1024}"
+export NODE_OPTIONS
+log "Node.js $(node --version)，前端构建使用 NODE_OPTIONS=$NODE_OPTIONS"
+
 if [[ "$SOURCE_DIR" != "$APP_DIR" ]]; then
   log "复制项目到 $APP_DIR"
   getent group "$APP_GROUP" >/dev/null 2>&1 || groupadd --system "$APP_GROUP"

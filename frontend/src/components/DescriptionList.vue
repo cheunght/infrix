@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref } from "vue";
+import { useI18n } from "vue-i18n";
 
 type DescriptionListItem = {
   key: string;
@@ -18,9 +19,9 @@ const props = withDefaults(
   }>(),
   {
     columns: 2,
-    emptyValue: "—",
   },
 );
+const { t } = useI18n();
 
 const compact = ref(false);
 const descriptionColumns = computed(() => (compact.value ? 1 : props.columns));
@@ -51,9 +52,9 @@ function hasContent(value: unknown): boolean {
 }
 
 function displayValue(value: unknown): string {
-  if (!hasContent(value)) return props.emptyValue;
+  if (!hasContent(value)) return props.emptyValue || t("common.notAvailable");
   if (Array.isArray(value)) return value.map(displayValue).join("、");
-  if (typeof value === "boolean") return value ? "是" : "否";
+  if (typeof value === "boolean") return value ? t("common.yes") : t("common.no");
   return String(value);
 }
 </script>

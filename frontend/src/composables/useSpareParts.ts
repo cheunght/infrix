@@ -9,6 +9,10 @@ import {
   STOCK_TARGET_OPERATION_VALUES,
   type StockOperationType,
 } from "../business-enums";
+import { i18n } from "../i18n";
+
+const tr = (key: string, params?: Record<string, unknown>): string =>
+  String(params ? i18n.global.t(key, params) : i18n.global.t(key));
 
 export type SpareOperationLocation = {
   data_center: number;
@@ -129,6 +133,7 @@ export function useSpareParts(deps: SparePartsDeps) {
   }
 
   async function loadSpareData(version = deps.beginLoad()): Promise<boolean> {
+    if (!deps.can("spares.view")) return false;
     const requestId = ++spareListRequestId.value;
     spareListController?.abort();
     const controller = new AbortController();
@@ -167,7 +172,7 @@ export function useSpareParts(deps: SparePartsDeps) {
       return true;
     } catch (error) {
       if (requestId === spareListRequestId.value && deps.isCurrentLoad(version) && !isAbortError(error)) {
-        spareListError.value = errorMessage(error, "备件数据加载失败");
+        spareListError.value = errorMessage(error, tr("spare.dataLoadFailed"));
       }
       return false;
     } finally {
@@ -179,6 +184,7 @@ export function useSpareParts(deps: SparePartsDeps) {
   }
 
   async function refreshSparePart(partId: number) {
+    if (!deps.can("spares.view")) return null;
     const detail = await deps.request<SparePart>(`/spare-parts/${partId}/`);
     const index = spareParts.value.findIndex((part) => part.id === partId);
     if (index >= 0) spareParts.value.splice(index, 1, detail);
@@ -206,19 +212,21 @@ export function useSpareParts(deps: SparePartsDeps) {
   function changeSparePageSize(size: number) { sparePageSize.value = size; sparePage.value = 1; void loadSpareData(); }
 
   async function exportSpareParts() {
+    if (!deps.can("spares.export")) return;
     if (exportingSpares.value) return;
     exportingSpares.value = true;
     const query = buildExportQuery(listParams(false));
     try {
-      await deps.download(`/reports/spare-parts/export/${query ? `?${query}` : ""}`, "备件管理.xlsx");
+      await deps.download(`/reports/spare-parts/export/${query ? `?${query}` : ""}`, "spare-parts.xlsx");
     } catch (error) {
-      deps.actionMessage.value = errorMessage(error, "导出失败，请稍后重试");
+      deps.actionMessage.value = errorMessage(error, tr("spare.exportFailed"));
     } finally {
       exportingSpares.value = false;
     }
   }
 
   async function exportSpareTransactions(partId: number) {
+    if (!deps.can("spares.export")) return;
     if (exportingSpares.value) return;
     exportingSpares.value = true;
     const params = new URLSearchParams({ part: String(partId) });
@@ -229,9 +237,9 @@ export function useSpareParts(deps: SparePartsDeps) {
     if (spareTransactionFilters.value.end) params.set("end", spareTransactionFilters.value.end);
     const query = buildExportQuery(params);
     try {
-      await deps.download(`/reports/spare-transactions/export/${query ? `?${query}` : ""}`, "备件流水.xlsx");
+      await deps.download(`/reports/spare-transactions/export/${query ? `?${query}` : ""}`, "spare-transactions.xlsx");
     } catch (error) {
-      deps.actionMessage.value = errorMessage(error, "导出失败，请稍后重试");
+      deps.actionMessage.value = errorMessage(error, tr("spare.exportFailed"));
     } finally {
       exportingSpares.value = false;
     }
@@ -252,6 +260,7 @@ export function useSpareParts(deps: SparePartsDeps) {
   }
 
   async function loadSelectedPartData(partId: number) {
+    if (!deps.can("spares.view")) return;
     const requestId = ++selectedDataRequestId.value;
     selectedDataController?.abort();
     const controller = new AbortController();
@@ -282,6 +291,7 @@ export function useSpareParts(deps: SparePartsDeps) {
   }
 
   async function loadStockLocations(partId: number) {
+    if (!deps.can("spares.view")) return;
     const serial = (stockLocationRequestIds.get(partId) || 0) + 1;
     stockLocationRequestIds.set(partId, serial);
     stockLocationControllers.get(partId)?.abort();
@@ -301,7 +311,7 @@ export function useSpareParts(deps: SparePartsDeps) {
       stockLocationLoadedByPart.value = { ...stockLocationLoadedByPart.value, [partId]: true };
     } catch (error) {
       if (stockLocationRequestIds.get(partId) === serial && !isAbortError(error)) {
-        stockLocationErrorByPart.value = { ...stockLocationErrorByPart.value, [partId]: errorMessage(error, "库存地点加载失败") };
+        stockLocationErrorByPart.value = { ...stockLocationErrorByPart.value, [partId]: errorMessage(error, tr("spare.stockLocationLoadFailed")) };
       }
     } finally {
       if (stockLocationRequestIds.get(partId) === serial) {
@@ -312,6 +322,7 @@ export function useSpareParts(deps: SparePartsDeps) {
   }
 
   async function loadTransactions(partId: number) {
+    if (!deps.can("spares.view")) return;
     const requestId = ++transactionRequestId.value;
     transactionController?.abort();
     const controller = new AbortController();
@@ -347,7 +358,7 @@ export function useSpareParts(deps: SparePartsDeps) {
       transactionCount.value = nextCount;
     } catch (error) {
       if (requestId === transactionRequestId.value && !isAbortError(error)) {
-        transactionError.value = errorMessage(error, "库存流水加载失败");
+        transactionError.value = errorMessage(error, tr("spare.transactionLoadFailed"));
       }
     } finally {
       if (requestId === transactionRequestId.value) {
@@ -372,6 +383,7 @@ export function useSpareParts(deps: SparePartsDeps) {
   function changeSpareTransactionPageSize(size: number) { spareTransactionPageSize.value = size; spareTransactionPage.value = 1; if (spareSelectedPart.value) void loadSelectedPartData(spareSelectedPart.value.id); }
 
   function openSparePartModal(part?: SparePart) {
+    if (!deps.can("spares.manage")) return;
     editingSparePart.value = part || null;
     const defaultCategory = deps.spareCategories.value.find((item) => item.is_active)?.id;
     sparePartForm.value = part
@@ -411,6 +423,7 @@ export function useSpareParts(deps: SparePartsDeps) {
   }
 
   async function saveSparePart(): Promise<boolean> {
+    if (!deps.can("spares.manage")) return false;
     if (spareSaving.value) return false;
     spareSaving.value = true;
     try {
@@ -434,35 +447,37 @@ export function useSpareParts(deps: SparePartsDeps) {
       }
       await deps.request(path, { method: editingSparePart.value ? "PATCH" : "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload) });
     } catch (error) {
-      deps.actionMessage.value = errorMessage(error, "备件保存失败");
+      deps.actionMessage.value = errorMessage(error, tr("spare.saveFailed"));
       return false;
     } finally {
       spareSaving.value = false;
     }
     showSparePartModal.value = false;
     editingSparePart.value = null;
-    deps.actionMessage.value = "备件已保存";
-    if (!(await loadSpareData()) && spareListError.value) deps.actionMessage.value = "备件已保存，但列表刷新失败";
+    deps.actionMessage.value = tr("spare.saved");
+    if (!(await loadSpareData()) && spareListError.value) deps.actionMessage.value = tr("spare.savedRefreshFailed");
     return true;
   }
 
   async function deleteSparePart(part: SparePart) {
+    if (!deps.can("spares.manage")) return;
     if (deletingSparePartId.value !== null) return;
     deletingSparePartId.value = part.id;
     try {
-      if (!(await deps.confirmAction(`确定删除备件“${part.name}”吗？`))) return;
+      if (!(await deps.confirmAction(tr("spare.deleteConfirm", { name: part.name })))) return;
       await deps.request(`/spare-parts/${part.id}/`, { method: "DELETE" });
-      deps.actionMessage.value = "备件已删除";
+      deps.actionMessage.value = tr("spare.deleted");
       if (spareSelectedPart.value?.id === part.id) spareSelectedPart.value = null;
-      if (!(await loadSpareData()) && spareListError.value) deps.actionMessage.value = "备件已删除，但列表刷新失败";
+      if (!(await loadSpareData()) && spareListError.value) deps.actionMessage.value = tr("spare.deletedRefreshFailed");
     } catch (error) {
-      deps.actionMessage.value = errorMessage(error, "备件删除失败");
+      deps.actionMessage.value = errorMessage(error, tr("spare.deleteFailed"));
     } finally {
       deletingSparePartId.value = null;
     }
   }
 
   function openSpareOperation(part: SparePart, operationType: StockOperationType = "inbound", location?: SpareOperationLocation) {
+    if (!deps.can("spares.manage")) return;
     spareOperationError.value = "";
     spareOperationType.value = operationType;
     let remembered: Partial<SpareOperationLocation> | null = null;
@@ -471,7 +486,7 @@ export function useSpareParts(deps: SparePartsDeps) {
     }
     const rememberedCenter = remembered?.data_center ? deps.dataCenters.value.find((center) => center.is_active && center.id === Number(remembered?.data_center)) : null;
     const rememberedRoom = rememberedCenter && remembered?.server_room ? spareRooms.value.find((room) => room.is_active && room.id === Number(remembered?.server_room) && room.data_center === rememberedCenter.id) : null;
-    const preset = location || (rememberedCenter && (!remembered?.server_room || rememberedRoom) ? { data_center: rememberedCenter.id, server_room: rememberedRoom?.id || null, quantity: 0, label: "最近使用地点" } : undefined);
+    const preset = location || (rememberedCenter && (!remembered?.server_room || rememberedRoom) ? { data_center: rememberedCenter.id, server_room: rememberedRoom?.id || null, quantity: 0, label: tr("spare.recentLocation") } : undefined);
     spareOperationForm.value = {
       part: String(part.id), quantity: "1", adjustment_quantity: "",
       source_data_center: preset && STOCK_SOURCE_OPERATION_VALUES.includes(operationType) ? String(preset.data_center) : "",
@@ -487,6 +502,7 @@ export function useSpareParts(deps: SparePartsDeps) {
   }
 
   async function saveSpareOperation(): Promise<boolean> {
+    if (!deps.can("spares.manage")) return false;
     if (spareOperationSaving.value) return false;
     spareOperationError.value = "";
     spareOperationSaving.value = true;
@@ -503,12 +519,12 @@ export function useSpareParts(deps: SparePartsDeps) {
       const locationServerRoom = STOCK_SOURCE_OPERATION_VALUES.includes(operation) ? form.source_server_room : form.target_server_room;
       if (locationDataCenter) localStorage.setItem("itam.spare.last_location", JSON.stringify({ data_center: Number(locationDataCenter), server_room: locationServerRoom ? Number(locationServerRoom) : null }));
       showSpareOperationModal.value = false;
-      deps.actionMessage.value = "库存流水已登记";
+      deps.actionMessage.value = tr("spare.transactionSaved");
       const refreshed = await loadSpareData();
-      if (!refreshed && spareListError.value) deps.actionMessage.value = "库存流水已登记，但备件列表刷新失败，请稍后重试";
+      if (!refreshed && spareListError.value) deps.actionMessage.value = tr("spare.transactionSavedRefreshFailed");
       return true;
     } catch (error) {
-      spareOperationError.value = errorMessage(error, "库存操作失败");
+      spareOperationError.value = errorMessage(error, tr("spare.operationFailed"));
       deps.actionMessage.value = spareOperationError.value;
       return false;
     } finally {

@@ -2,6 +2,9 @@ import { computed, onBeforeUnmount, ref, watch } from "vue";
 import { isAbortError, pageItems, pageTotal, type PageResult } from "../api";
 import type { Asset, FaultEvent, Rack } from "../types";
 import type { RequestFn } from "../types/page-context";
+import { i18n } from "../i18n";
+
+const tr = (key: string): string => String(i18n.global.t(key));
 
 export type GlobalSearchModule = "assets" | "racks" | "faults";
 
@@ -178,10 +181,10 @@ export function useGlobalSearch(deps: GlobalSearchDeps) {
 
       if (isAbortError(result.reason)) return;
       const fallback = module === "assets"
-        ? "资产结果加载失败"
+        ? tr("globalSearch.assetLoadFailed")
         : module === "racks"
-          ? "机柜结果加载失败"
-          : "故障结果加载失败";
+          ? tr("globalSearch.rackLoadFailed")
+          : tr("globalSearch.faultLoadFailed");
       if (module === "assets") assetError.value = errorMessage(result.reason, fallback);
       if (module === "racks") rackError.value = errorMessage(result.reason, fallback);
       if (module === "faults") faultError.value = errorMessage(result.reason, fallback);

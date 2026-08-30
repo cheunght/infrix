@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed } from "vue";
+import { useI18n } from "vue-i18n";
 import type { CustomFieldOption, CustomFieldSchema } from "../../types";
 
 const props = defineProps<{
@@ -7,6 +8,7 @@ const props = defineProps<{
   value: unknown;
   options?: CustomFieldOption[];
 }>();
+const { t } = useI18n();
 
 const fieldOptions = computed(() => props.options || props.field.options || []);
 
@@ -25,8 +27,8 @@ function normalizeNumber(value: unknown): string {
 function optionLabel(value: unknown): string {
   const raw = String(value);
   const option = fieldOptions.value.find((item) => item.value === raw);
-  if (!option) return `${raw}（选项不存在）`;
-  return `${option.label || raw}${option.is_active ? "" : "（已停用）"}`;
+  if (!option) return `${raw} (${t('customField.optionMissing')})`;
+  return `${option.label || raw}${option.is_active ? "" : ` (${t('status.inactive')})`}`;
 }
 
 function multiselectValues(value: unknown): unknown[] {
@@ -42,12 +44,12 @@ function multiselectValues(value: unknown): unknown[] {
 
 const displayText = computed(() => {
   const value = props.value;
-  if (isEmpty(value)) return "—";
+  if (isEmpty(value)) return t("common.notAvailable");
 
   if (props.field.field_type === "boolean") {
-    if (value === true) return "是";
-    if (value === false) return "否";
-    return "—";
+    if (value === true) return t("common.yes");
+    if (value === false) return t("common.no");
+    return t("common.notAvailable");
   }
   if (props.field.field_type === "number") return normalizeNumber(value);
   if (props.field.field_type === "date") {
@@ -65,7 +67,7 @@ const displayText = computed(() => {
 const displayClass = computed(() => [
   "dynamic-field-display",
   `dynamic-field-display--${props.field.field_type}`,
-  displayText.value === "—" ? "dynamic-field-display--empty" : "",
+  displayText.value === t("common.notAvailable") ? "dynamic-field-display--empty" : "",
 ]);
 </script>
 

@@ -5,7 +5,7 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
-    "check:ui-regressions": "node scripts/check-ui-regressions.mjs",
+    "check:ui-regressions": "node scripts/check-ui-regressions.mjs && node scripts/check-i18n.mjs",
     "typecheck": "vue-tsc --noEmit",
     "build": "npm run check:ui-regressions && npm run typecheck && vite build",
     "preview": "vite preview"
@@ -13,10 +13,13 @@
   "dependencies": {
     "@element-plus/icons-vue": "^2.3.2",
     "element-plus": "^2.14.4",
+    "qrcode": "^1.5.4",
     "vue": "^3.5.0",
+    "vue-i18n": "^10.0.8",
     "vue-router": "^4.6.4"
   },
   "devDependencies": {
+    "@types/qrcode": "^1.5.6",
     "@vitejs/plugin-vue": "^5.2.0",
     "prettier": "^3.9.6",
     "typescript": "^5.7.0",

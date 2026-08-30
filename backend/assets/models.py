@@ -625,6 +625,11 @@ class AuditLog(Timestamped):
 
 
 class UserSecurityProfile(Timestamped):
+    LOCALE_CHOICES = [
+        ("zh-CN", "简体中文"),
+        ("en-US", "English"),
+    ]
+
     user = models.OneToOneField(
         settings.AUTH_USER_MODEL,
         on_delete=models.CASCADE,
@@ -632,6 +637,7 @@ class UserSecurityProfile(Timestamped):
     )
     must_change_password = models.BooleanField(default=False)
     password_changed_at = models.DateTimeField(null=True, blank=True)
+    locale = models.CharField(max_length=10, choices=LOCALE_CHOICES, default="zh-CN")
 
     def __str__(self):
         return f"{self.user} security profile"

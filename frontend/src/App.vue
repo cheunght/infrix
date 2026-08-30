@@ -36,10 +36,13 @@ import { useRoute, useRouter, type RouteLocationRaw } from "vue-router";
 import GlobalOverlayHost from "./components/overlays/GlobalOverlayHost.vue";
 import ApiErrorAlert from "./components/ApiErrorAlert.vue";
 import GlobalSearch from "./components/GlobalSearch.vue";
+import LanguageSwitcher from "./components/LanguageSwitcher.vue";
 import infrixMark from "./assets/infrix-mark.png";
 import infrixWordmark from "./assets/infrix-wordmark.png";
 import { hasCapability } from "./permissions";
 import { statusLabel } from "./status";
+import { currentLocale, elementPlusLocale, setLocale, type Locale } from "./i18n";
+import { useI18n } from "vue-i18n";
 import {
   routeForPage,
   type AssetConfigSection,
@@ -56,8 +59,16 @@ import type {
 import type { PageContext } from "./types/page-context";
 const route = useRoute();
 const router = useRouter();
+const { t } = useI18n();
 const page = ref<Page>(route.meta.page || "dashboard");
-const pageTitle = ref(route.meta.title || "仪表盘");
+const pageTitle = computed(() => {
+  if (route.meta.page === "asset-config") {
+    return assetConfigSection.value === "tags" ? t("nav.tags") : t("nav.customFields");
+  }
+  const titleKey = route.meta.titleKey;
+  if (titleKey) return t(titleKey);
+  return route.meta.title || t("nav.dashboard");
+});
 const loading = ref(false);
 const authChecked = ref(false);
 const authenticated = ref(false);
@@ -106,7 +117,7 @@ const {
   dashboardDate,
   dashboardDateTime,
   dashboardAlertLevel,
-} = useDashboard({ request, beginLoad, isCurrentLoad });
+} = useDashboard({ request, beginLoad, isCurrentLoad, can });
 const showPasswordModal = ref(false);
 const showProfileModal = ref(false);
 const showAssetDetail = ref(false);
@@ -117,11 +128,17 @@ let openAssetDetail: (assetId: number) => Promise<void> = async () => {};
 let invalidateAssetDetail: () => void = () => {};
 const actionMessage = ref("");
 const pageError = ref("");
+const accessDenied = ref(false);
 const passwordForm = ref({ old_password: "", new_password: "", confirm_password: "" });
 const passwordSaving = ref(false);
 const passwordError = ref("");
 const passwordFormErrors = ref<Record<string, string>>({});
-const profileForm = ref({ first_name: "", last_name: "", email: "" });
+const profileForm = ref<{ first_name: string; last_name: string; email: string; locale: Locale }>({
+  first_name: "",
+  last_name: "",
+  email: "",
+  locale: currentLocale.value,
+});
 const profileLoading = ref(false);
 const profileSaving = ref(false);
 const profileError = ref("");
@@ -135,6 +152,7 @@ const assetConfigSection = ref<AssetConfigSection>("custom-fields");
 const rackSection = ref<RackSection>("locations");
 const facilities = useFacilities({
   request,
+  can,
   beginLoad,
   isCurrentLoad,
   download,
@@ -233,7 +251,6 @@ const settings = useSettings({
   confirmAction,
   reload: () => window.location.reload(),
   can,
-  isAdmin,
   currentUsername: username,
   settingsSection,
   actionMessage,
@@ -444,6 +461,8 @@ const auth = useAuth({
   lastLogin,
   actionMessage,
   settingsSection,
+  locale: currentLocale,
+  setLocale,
 });
 const { checkAuth, login, logout, loadProfile, saveProfile, changePassword, openPasswordModal } = auth;
 const overlayAuth = {
@@ -461,6 +480,7 @@ const overlayAuth = {
   profileSaving,
   profileError,
   profileFormErrors,
+  roleCode,
   roleName,
   userIsActive,
   lastLogin,
@@ -468,6 +488,7 @@ const overlayAuth = {
   changePassword,
 };
 const assetsApi = useAssets({
+  can,
   request,
   download,
   beginLoad,
@@ -583,6 +604,7 @@ const {
 openAssetDetail = assetsApi.openAssetDetail;
 invalidateAssetDetail = assetsApi.invalidateDetail;
 const licensesApi = useLicenses({
+  can,
   request,
   download,
   beginLoad,
@@ -622,6 +644,7 @@ const {
   deleteLicense,
 } = licensesApi;
 const repairs = useRepairs({
+  can,
   request,
   download,
   beginLoad,
@@ -753,25 +776,25 @@ const {
   changeTransactionPageSize,
 } = spares;
 const navItems = [
-  { label: "仪表盘", icon: "⌂", iconIndex: 0, page: "dashboard" as Page },
-  { label: "资产管理", icon: "▤", iconIndex: 1, page: "ledger" as Page },
-  { label: "机房资源", icon: "▦", iconIndex: 2, page: "racks" as Page },
-  { label: "软件许可", icon: "▣", iconIndex: 6, page: "licenses" as Page },
-  { label: "盘点中心", icon: "✓", iconIndex: 5, page: "inventory" as Page },
-  { label: "故障维修", icon: "⚒", iconIndex: 4, page: "repairs" as Page },
+  { labelKey: "nav.dashboard", icon: "⌂", iconIndex: 0, page: "dashboard" as Page },
+  { labelKey: "nav.assets", icon: "▤", iconIndex: 1, page: "ledger" as Page },
+  { labelKey: "nav.racks", icon: "▦", iconIndex: 2, page: "racks" as Page },
+  { labelKey: "nav.licenses", icon: "▣", iconIndex: 6, page: "licenses" as Page },
+  { labelKey: "nav.inventory", icon: "✓", iconIndex: 5, page: "inventory" as Page },
+  { labelKey: "nav.repairs", icon: "⚒", iconIndex: 4, page: "repairs" as Page },
   {
-    label: "系统设置",
+    labelKey: "nav.settings",
     icon: "⚙",
     iconIndex: 9,
     page: "settings" as Page,
     children: [
-      { label: "系统参数", section: "system" as const },
-      { label: "数据字典", section: "dictionaries" as const },
-      { label: "组织权限", section: "organization" as const, adminOnly: true },
-      { label: "操作日志", section: "audit" as const },
+      { labelKey: "nav.system", section: "system" as const },
+      { labelKey: "nav.dictionaries", section: "dictionaries" as const },
+      { labelKey: "nav.organization", section: "organization" as const },
+      { labelKey: "nav.audit", section: "audit" as const },
     ],
   },
-  { label: "备件管理", icon: "", iconIndex: 0, page: "spares" as Page },
+  { labelKey: "nav.spareParts", icon: "", iconIndex: 0, page: "spares" as Page },
 ];
 
 function closeTransientUi() {
@@ -889,14 +912,16 @@ function syncRouteState(): boolean {
   if (routePage === "ledger") syncAssetFiltersFromQuery(route.query);
   if (routePage === "repairs") syncRepairFiltersFromQuery(route.query);
   if (routePage === "licenses") syncLicenseFiltersFromQuery(route.query);
-  pageTitle.value = routePage === "asset-config"
-    ? assetConfigSection.value === "tags" ? "资产管理 / 标签管理" : "资产管理 / 自定义字段"
-    : route.meta.title || "仪表盘";
   return clearRouteQuery(queryKeysToClear);
 }
 
 function routeIsAllowed() {
   const routePage = route.meta.page || "dashboard";
+  if (routePage === "dashboard") return can("dashboard.view");
+  if (routePage === "ledger") return can("assets.view");
+  if (routePage === "licenses") return can("licenses.view");
+  if (routePage === "inventory") return can("inventory.view");
+  if (routePage === "repairs") return can("faults.view");
   if (routePage === "spares" && !can("spares.view")) return false;
   if (
     routePage === "racks" &&
@@ -916,7 +941,8 @@ function routeIsAllowed() {
   if (routePage !== "settings") return true;
   const section = route.meta.settingsSection || "system";
   if (section === "system" && !can("settings.view")) return false;
-  if (section === "organization" && !isAdmin.value) return false;
+  if (section === "dictionaries" && !can("settings.view")) return false;
+  if (section === "organization" && !can("organization.manage")) return false;
   if (section === "audit" && !can("audit.view")) return false;
   if (section === "custom-fields" && !can("custom_fields.view")) return false;
   if (section === "tags" && !can("tags.view")) return false;
@@ -924,11 +950,36 @@ function routeIsAllowed() {
   return true;
 }
 
+function firstAllowedRoute(): RouteLocationRaw | null {
+  if (can("dashboard.view")) return routeForPage("dashboard");
+  if (can("assets.view")) return routeForPage("ledger");
+  if (can("custom_fields.view")) return routeForPage("asset-config", { assetConfigSection: "custom-fields" });
+  if (can("tags.view")) return routeForPage("asset-config", { assetConfigSection: "tags" });
+  if (can("spares.view")) return routeForPage("spares");
+  if (can("racks.view")) return routeForPage("racks", { rackSection: "locations" });
+  if (can("licenses.view")) return routeForPage("licenses");
+  if (can("inventory.view")) return routeForPage("inventory");
+  if (can("faults.view")) return routeForPage("repairs");
+  if (can("settings.view")) return routeForPage("settings", { settingsSection: "system" });
+  if (can("organization.manage")) return routeForPage("settings", { settingsSection: "organization" });
+  if (can("audit.view")) return routeForPage("settings", { settingsSection: "audit" });
+  if (can("system.reset")) return routeForPage("settings", { settingsSection: "maintenance" });
+  return null;
+}
+
 function ensureRouteAccess() {
-  if (!authenticated.value || routeIsAllowed()) return true;
-  page.value = "dashboard";
-  pageTitle.value = "仪表盘";
-  void router.replace(routeForPage("dashboard"));
+  if (!authenticated.value) return true;
+  if (routeIsAllowed()) {
+    accessDenied.value = false;
+    return true;
+  }
+  accessDenied.value = true;
+  pageError.value = "";
+  const fallback = firstAllowedRoute();
+  if (fallback) {
+    void router.replace(fallback);
+    return false;
+  }
   return false;
 }
 
@@ -978,19 +1029,23 @@ function updateRouteQuery(updates: Record<string, string | undefined>): boolean 
 }
 
 function goToAssets(query: Record<string, string> = {}) {
+  if (!can("assets.view")) return;
   navigateToRoute({ name: "assets", query });
 }
 
 function goToRepairs(query: Record<string, string> = {}) {
+  if (!can("faults.view")) return;
   navigateToRoute({ name: "repairs", query });
 }
 
 async function handleGlobalSearchAsset(asset: Asset) {
+  if (!can("assets.view")) return;
   closeGlobalSearch();
   await openAssetDetail(asset.id);
 }
 
 function handleGlobalSearchRack(rack: Rack) {
+  if (!can("racks.view")) return;
   closeGlobalSearch();
   openRackSection("view", {
     room: String(rack.room),
@@ -1000,6 +1055,7 @@ function handleGlobalSearchRack(rack: Rack) {
 }
 
 function handleGlobalSearchFault(fault: FaultEvent) {
+  if (!can("faults.view")) return;
   closeGlobalSearch();
   goToRepairs({ fault: String(fault.id) });
 }
@@ -1009,17 +1065,21 @@ function handleGlobalSearchViewAll(module: GlobalSearchModule) {
   if (!search) return;
   closeGlobalSearch();
   if (module === "assets") {
+    if (!can("assets.view")) return;
     goToAssets({ search });
     return;
   }
   if (module === "racks") {
+    if (!can("racks.view")) return;
     openRackSection("view", { rack_code: search });
     return;
   }
+  if (!can("faults.view")) return;
   goToRepairs({ search, is_closed: "false" });
 }
 
 function goToLicenses(query: Record<string, string> = {}) {
+  if (!can("licenses.view")) return;
   navigateToRoute({ name: "licenses", query });
 }
 
@@ -1062,15 +1122,16 @@ function totalPages(total: number, size: number) {
   return Math.max(1, Math.ceil(total / size));
 }
 async function confirmAction(message: string) {
-  const isDelete = message.trim().startsWith("确定删除");
+  const normalizedMessage = message.trim();
+  const isDelete = /^(确定删除|Delete)\b/.test(normalizedMessage);
   const dialogMessage = isDelete
-    ? `${message.trim().replace(/^确定/, "").replace(/吗？(?=\s*(?:\n|$))/, "？")}\n删除后无法恢复，是否继续？`
+    ? `${normalizedMessage.replace(/^(确定删除|Delete)\s*/, "").replace(/(?:吗？|\?)\s*$/, "")}\n${t("common.deleteWarning")}`
     : message;
   try {
-    await ElMessageBox.confirm(dialogMessage, isDelete ? "删除确认" : "确认操作", {
+    await ElMessageBox.confirm(dialogMessage, isDelete ? t("common.deleteConfirmTitle") : t("common.confirmAction"), {
       type: isDelete ? "error" : "warning",
-      confirmButtonText: isDelete ? "删除" : "确定",
-      cancelButtonText: "取消",
+      confirmButtonText: isDelete ? t("common.delete") : t("common.confirm"),
+      cancelButtonText: t("common.cancel"),
       confirmButtonClass: isDelete ? "el-button--danger" : undefined,
     });
     return true;
@@ -1097,6 +1158,7 @@ function facilitySectionQuery(section: RackSection): Record<string, string> {
 }
 
 function openRackSection(section: RackSection | string, query: Record<string, string> = {}) {
+  if (!can("racks.view")) return;
   const normalized: RackSection = section === "view"
     ? "view"
     : "locations";
@@ -1128,6 +1190,7 @@ async function bootstrapApplication() {
   await load();
 }
 function openRackAssetDetail(assetId: number, rackId: number) {
+  if (!can("assets.view")) return;
   focusedRackId.value = rackId;
   return openAssetDetail(assetId);
 }
@@ -1163,7 +1226,7 @@ async function load() {
     if (page.value === "settings") {
       if (settingsSection.value === "system" && can("settings.view"))
         await loadSystemSettings(version);
-      else if (settingsSection.value === "organization" && isAdmin.value)
+      else if (settingsSection.value === "organization" && can("organization.manage"))
         await loadOrganization(version);
       else if (settingsSection.value === "audit" && can("audit.view"))
         await loadAuditLogs(version);
@@ -1180,7 +1243,7 @@ async function load() {
   } catch (error) {
     console.error(error);
     if (isCurrentLoad(version)) {
-      pageError.value = error instanceof Error ? error.message : "加载失败";
+      pageError.value = error instanceof Error ? error.message : t("common.dataLoadFailed");
       actionMessage.value = pageError.value;
     }
   } finally {
@@ -1189,7 +1252,7 @@ async function load() {
 }
 function navigate(item: (typeof navItems)[number]) {
   closeTransientUi();
-  if (item.page === "placeholder") placeholderTitle.value = item.label;
+  if (item.page === "placeholder") placeholderTitle.value = t(item.labelKey);
   if (item.page === "ledger") assetPage.value = 1;
   if (item.page === "repairs") repairPage.value = 1;
   if (item.page === "licenses") licensePage.value = 1;
@@ -1219,7 +1282,7 @@ function openSettingsSection(
     openAssetConfiguration(section);
     return;
   }
-  if (section === "organization" && !isAdmin.value) {
+  if (section === "organization" && !can("organization.manage")) {
     settingsSection.value = "system";
     return;
   }
@@ -1301,7 +1364,7 @@ function updateViewportHeight() {
 }
 watch(actionMessage, (message) => {
   if (!message) return;
-  const isError = /(^\d{3}:|失败|错误|不能|请先|未找到|请求|权限|无权|失效)/.test(message);
+  const isError = /(^\d{3}:|失败|错误|不能|请先|未找到|请求|权限|无权|失效|failed|error|cannot|permission|invalid|unable|expired)/i.test(message);
   ElMessage({
     message,
     type: isError ? "error" : "success",
@@ -1310,6 +1373,35 @@ watch(actionMessage, (message) => {
   });
   actionMessage.value = "";
 });
+let assetQrRouteRequest = 0;
+watch(
+  () => ({
+    authChecked: authChecked.value,
+    authenticated: authenticated.value,
+    passwordChangeRequired: passwordChangeRequired.value,
+    routeName: String(route.name || ""),
+    assetId: routeQueryValue("asset_id"),
+  }),
+  async (state) => {
+    const assetId = positiveRouteQueryId(state.assetId);
+    if (
+      !state.authChecked ||
+      !state.authenticated ||
+      state.passwordChangeRequired ||
+      state.routeName !== "assets" ||
+      !assetId
+    ) return;
+    const requestId = ++assetQrRouteRequest;
+    const nextQuery = { ...route.query };
+    delete nextQuery.asset_id;
+    delete nextQuery.asset_no;
+    await router.replace({ name: "assets", query: nextQuery });
+    await nextTick();
+    if (requestId !== assetQrRouteRequest || route.name !== "assets") return;
+    await openAssetDetail(assetId);
+  },
+  { immediate: true },
+);
 watch(
   () => route.fullPath,
   () => {
@@ -1434,13 +1526,13 @@ const pageContext = {
   systemResetSaving, systemResetError, openSystemResetDialog, closeSystemResetDialog, resetSystem,
   loadDictionaries, changeDictionarySection, searchDictionaries, changeDictionaryPage, changeDictionaryPageSize, retryDictionaries, currentDictionaryLabel,
   openDictionaryModal, currentDictionaryItems, toggleDictionary,
-  dictionaryItemUsed, deleteDictionary, isAdmin, organizationLoading, organizationError,
+  dictionaryItemUsed, deleteDictionary, organizationLoading, organizationError,
   userListError, roleListError, retryOrganization, users, userSearch, userPage, userPageSize, userCount,
   selectedUserIds, userBatchSaving, userBatchResult, showUserBatchResult,
   userFormErrors, userSaving, userPendingId, openUserModal,
   toggleUser, deleteUser, roles, retryUserList, handleUserSelection, clearUserSelection, batchUpdateUserStatus, closeUserBatchResult,
   searchUsers, changeUserPage, changeUserPageSize,
-  showUserResetModal, resettingUser, userResetForm, userResetFormRef, userResetFormRules,
+  showUserResetModal, resettingUser, userResetForm, userResetFormRef, userResetFormRules: userResetFormRules.value,
   userResetSaving, userResetFormErrors, openUserResetModal, resetUserPassword, userProtectionReason, canChangeUserRole,
   auditFilters, auditListLoading, auditListError,
   loadAuditLogs, retryAuditLogs, searchAuditLogs, auditLogs, auditPage, auditPageSize, auditCount,
@@ -1475,21 +1567,23 @@ const overlayAssetDetail = {
 </script>
 
 <template>
-  <div v-if="!authChecked" class="loading-screen">正在检查登录状态…</div>
+  <el-config-provider :locale="elementPlusLocale">
+  <div v-if="!authChecked" class="loading-screen">{{ t("common.checkingLogin") }}</div>
   <div v-else-if="!authenticated" class="login-screen">
     <div class="login-card">
+      <div class="login-language-switcher"><LanguageSwitcher /></div>
       <div class="login-brand">
         <img class="login-brand-wordmark" :src="infrixWordmark" alt="Infrix" />
-        <div class="login-brand-subtitle">IT Asset Management</div>
+        <div class="login-brand-subtitle">{{ t('auth.productSubtitle') }}</div>
       </div>
       <el-form label-position="top" @submit.prevent="login">
-        <el-form-item label="用户名" required
+        <el-form-item :label="t('auth.username')" required
           ><el-input
             v-model="username"
             :prefix-icon="User"
             autocomplete="username"
         /></el-form-item>
-        <el-form-item label="密码" required
+        <el-form-item :label="t('auth.password')" required
           ><el-input
             v-model="password"
             :prefix-icon="Lock"
@@ -1503,10 +1597,10 @@ const overlayAssetDetail = {
           type="primary"
           native-type="submit"
           block
-          >登录</el-button
+          >{{ t('auth.login') }}</el-button
         >
       </el-form>
-      <small>请使用管理员或本地账号登录</small>
+      <small>{{ t('auth.loginHint') }}</small>
     </div>
   </div>
   <el-container
@@ -1541,63 +1635,65 @@ const overlayAssetDetail = {
         popper-effect="light"
         @select="handleMenuSelect"
       >
-        <el-menu-item index="dashboard"
+        <el-menu-item v-if="can('dashboard.view')" index="dashboard"
           ><el-icon><House /></el-icon
-          ><template #title>仪表盘</template></el-menu-item
+          ><template #title>{{ t('nav.dashboard') }}</template></el-menu-item
         >
         <el-sub-menu
+          v-if="can('assets.view') || can('custom_fields.view') || can('tags.view') || can('spares.view')"
           index="asset-menu"
-          ><template #title><el-icon><Monitor /></el-icon><span>资产管理</span></template
-          ><el-menu-item index="asset-list">资产列表</el-menu-item
+          ><template #title><el-icon><Monitor /></el-icon><span>{{ t('nav.assets') }}</span></template
+          ><el-menu-item v-if="can('assets.view')" index="asset-list">{{ t('nav.assetList') }}</el-menu-item
           ><el-sub-menu
             v-if="can('custom_fields.view') || can('tags.view')"
             index="asset-config-menu"
           >
-            <template #title>资产配置</template>
+            <template #title>{{ t('nav.assetConfiguration') }}</template>
             <el-menu-item v-if="can('custom_fields.view')" index="asset-config-custom-fields"
-              >自定义字段</el-menu-item
+              >{{ t('nav.customFields') }}</el-menu-item
             >
             <el-menu-item v-if="can('tags.view')" index="asset-config-tags"
-              >标签管理</el-menu-item
+              >{{ t('nav.tags') }}</el-menu-item
             >
           </el-sub-menu>
-          <el-menu-item v-if="can('spares.view')" index="spares">备件管理</el-menu-item
+          <el-menu-item v-if="can('spares.view')" index="spares">{{ t('nav.spareParts') }}</el-menu-item
         ></el-sub-menu
         >
         <el-sub-menu v-if="can('racks.view')" index="racks-menu">
           <template #title>
             <el-icon><OfficeBuilding /></el-icon>
-            <span>机房资源</span>
+            <span>{{ t('nav.racks') }}</span>
           </template>
-          <el-menu-item index="racks-locations">位置管理</el-menu-item>
-          <el-menu-item index="racks-view">机柜视图</el-menu-item>
+          <el-menu-item index="racks-locations">{{ t('nav.locations') }}</el-menu-item>
+          <el-menu-item index="racks-view">{{ t('nav.rackView') }}</el-menu-item>
         </el-sub-menu>
-        <el-menu-item index="licenses"
+        <el-menu-item v-if="can('licenses.view')" index="licenses"
           ><el-icon><Key /></el-icon
-          ><template #title>软件许可</template></el-menu-item
+          ><template #title>{{ t('nav.licenses') }}</template></el-menu-item
         >
-        <el-menu-item index="inventory"
+        <el-menu-item v-if="can('inventory.view')" index="inventory"
           ><el-icon><Checked /></el-icon
-          ><template #title>盘点中心</template></el-menu-item
+          ><template #title>{{ t('nav.inventory') }}</template></el-menu-item
         >
-        <el-menu-item index="repairs"
+        <el-menu-item v-if="can('faults.view')" index="repairs"
           ><el-icon><Warning /></el-icon
-          ><template #title>故障维修</template></el-menu-item
+          ><template #title>{{ t('nav.repairs') }}</template></el-menu-item
         >
         <el-sub-menu
+          v-if="can('settings.view') || can('organization.manage') || can('audit.view') || can('system.reset')"
           index="settings"
           ><template #title
-            ><el-icon><Setting /></el-icon><span>系统设置</span></template
+            ><el-icon><Setting /></el-icon><span>{{ t('nav.settings') }}</span></template
           ><el-menu-item v-if="can('settings.view')" index="settings-system"
-            >系统参数</el-menu-item
-          ><el-menu-item index="settings-dictionaries"
-            >数据字典</el-menu-item
-          ><el-menu-item v-if="isAdmin" index="settings-organization"
-            >组织权限</el-menu-item
+            >{{ t('nav.system') }}</el-menu-item
+          ><el-menu-item v-if="can('settings.view')" index="settings-dictionaries"
+            >{{ t('nav.dictionaries') }}</el-menu-item
+          ><el-menu-item v-if="can('organization.manage')" index="settings-organization"
+            >{{ t('nav.organization') }}</el-menu-item
           ><el-menu-item v-if="can('audit.view')" index="settings-audit"
-            >操作日志</el-menu-item
+            >{{ t('nav.audit') }}</el-menu-item
           ><el-menu-item v-if="can('system.reset')" index="settings-maintenance"
-            >系统维护</el-menu-item
+            >{{ t('nav.maintenance') }}</el-menu-item
           ></el-sub-menu
         >
       </el-menu>
@@ -1608,8 +1704,8 @@ const overlayAssetDetail = {
           <el-button
             class="ep-main-collapse-button"
             text
-            :title="sidebarCollapsed ? '展开导航' : '收缩导航'"
-            :aria-label="sidebarCollapsed ? '展开导航' : '收缩导航'"
+            :title="sidebarCollapsed ? t('common.expandNavigation') : t('common.collapseNavigation')"
+            :aria-label="sidebarCollapsed ? t('common.expandNavigation') : t('common.collapseNavigation')"
             @click="toggleSidebar"
             ><el-icon
               ><Expand v-if="sidebarCollapsed" /><Fold v-else /></el-icon
@@ -1627,20 +1723,21 @@ const overlayAssetDetail = {
             @select-fault="handleGlobalSearchFault"
             @view-all="handleGlobalSearchViewAll"
           />
+          <LanguageSwitcher />
           <el-dropdown trigger="click"
             ><el-button text
               ><el-avatar :size="30" :icon="User" /><span
                 class="ep-user-name"
-                >{{ userName || "当前用户" }}</span
+                >{{ userName || t('common.currentUser') }}</span
               ></el-button
             ><template #dropdown
               ><el-dropdown-menu
                 ><el-dropdown-item @click="openProfileSettings"
-                  >个人设置</el-dropdown-item
+                  >{{ t('auth.profile') }}</el-dropdown-item
                 ><el-dropdown-item @click="openPasswordModal"
-                  >修改密码</el-dropdown-item
+                  >{{ t('auth.changePassword') }}</el-dropdown-item
                 ><el-dropdown-item divided @click="logout"
-                  >退出登录</el-dropdown-item
+                  >{{ t('auth.logout') }}</el-dropdown-item
                 ></el-dropdown-menu
               ></template
             ></el-dropdown
@@ -1651,7 +1748,8 @@ const overlayAssetDetail = {
         <div class="app-route-shell" v-loading="loading" :aria-busy="loading ? 'true' : 'false'">
           <ApiErrorAlert :message="pageError" />
           <div class="app-route-view">
-            <router-view v-slot="{ Component }">
+            <el-result v-if="accessDenied" icon="403" :title="t('api.forbidden')" />
+            <router-view v-else v-slot="{ Component }">
               <component :is="Component" :context="pageContext" />
             </router-view>
           </div>
@@ -1670,4 +1768,5 @@ const overlayAssetDetail = {
       </el-main>
     </el-container>
   </el-container>
+  </el-config-provider>
 </template>

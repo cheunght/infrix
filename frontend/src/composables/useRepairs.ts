@@ -2,9 +2,14 @@ import { ref, type Ref } from "vue";
 import type { LocationQuery } from "vue-router";
 import { buildExportQuery, isAbortError, pageItems, pageTotal, type PageResult } from "../api";
 import type { Asset, FaultEvent } from "../types";
-import type { RequestFn } from "../types/page-context";
+import type { CapabilityFn, RequestFn } from "../types/page-context";
+import { i18n } from "../i18n";
+
+const tr = (key: string, params?: Record<string, unknown>): string =>
+  String(params ? i18n.global.t(key, params) : i18n.global.t(key));
 
 export interface RepairsDeps {
+  can: CapabilityFn;
   request: RequestFn;
   download: (path: string, filename: string) => Promise<void>;
   beginLoad: () => number;
@@ -63,6 +68,7 @@ export function useRepairs(deps: RepairsDeps) {
     return Math.max(1, Math.ceil(total / size));
   }
   function openFaultModal(assetId?: number | Event) {
+    if (!deps.can("faults.manage")) return;
     if (assetId instanceof Event) assetId = undefined;
     faultError.value = "";
     const selected = typeof assetId === "number" ? deps.assets.value.find((item) => item.id === assetId) : undefined;
@@ -75,13 +81,15 @@ export function useRepairs(deps: RepairsDeps) {
     showFaultModal.value = true;
   }
   function registerFaultFromSelection() {
+    if (!deps.can("faults.manage")) return;
     if (deps.selectedAssetIds.value.length !== 1) {
-      deps.actionMessage.value = "请先选择一项资产再登记故障";
+      deps.actionMessage.value = tr("repair.selectAssetFirst");
       return;
     }
     openFaultModal(deps.selectedAssetIds.value[0]);
   }
   function openRepairModal(fault: FaultEvent) {
+    if (!deps.can("faults.view")) return;
     repairError.value = "";
     selectedFault.value = fault;
     repairForm.value = {
@@ -97,7 +105,7 @@ export function useRepairs(deps: RepairsDeps) {
     const startedAt = repairForm.value.started_at.trim();
     const finishedAt = repairForm.value.finished_at.trim();
     return startedAt && finishedAt && startedAt > finishedAt
-      ? "维修开始时间不能晚于维修完成时间"
+      ? tr("repair.invalidTimeRange")
       : "";
   }
   function currentRepairFilters() {
@@ -127,6 +135,7 @@ export function useRepairs(deps: RepairsDeps) {
   }
 
   async function loadRepairs(version = deps.beginLoad()): Promise<boolean> {
+    if (!deps.can("faults.view")) return false;
     const requestId = ++repairRequestId.value;
     const filters = currentRepairFilters();
     const requestedPage = repairPage.value;
@@ -164,7 +173,7 @@ export function useRepairs(deps: RepairsDeps) {
       return true;
     } catch (error) {
       if (requestId === repairRequestId.value && deps.isCurrentLoad(version) && !isAbortError(error)) {
-        repairListError.value = errorMessage(error, "故障数据加载失败");
+        repairListError.value = errorMessage(error, tr("repair.dataLoadFailed"));
       }
       return false;
     } finally {
@@ -202,7 +211,7 @@ export function useRepairs(deps: RepairsDeps) {
     focusedFaultId.value = null;
     repairPage.value = 1;
     if (repairStart.value && repairEnd.value && repairStart.value > repairEnd.value) {
-      repairListError.value = "开始日期不能晚于结束日期";
+      repairListError.value = tr("repair.invalidDateRange");
       return;
     }
     // Wait for the other half of a date range; SearchField/Reset can still
@@ -227,6 +236,7 @@ export function useRepairs(deps: RepairsDeps) {
     void loadRepairs();
   }
   async function createFault(): Promise<boolean> {
+    if (!deps.can("faults.manage")) return false;
     if (faultSaving.value) return false;
     faultError.value = "";
     faultSaving.value = true;
@@ -237,21 +247,22 @@ export function useRepairs(deps: RepairsDeps) {
         body: JSON.stringify({ ...faultForm.value, asset: Number(faultForm.value.asset) }),
       });
     } catch (error) {
-      faultError.value = error instanceof Error ? error.message : "故障登记失败";
+      faultError.value = error instanceof Error ? error.message : tr("repair.faultSaveFailed");
       deps.actionMessage.value = faultError.value;
       return false;
     } finally {
       faultSaving.value = false;
     }
     showFaultModal.value = false;
-    deps.actionMessage.value = "故障已登记";
-    if (!(await loadRepairs())) deps.actionMessage.value = "故障已登记，但列表刷新失败";
+    deps.actionMessage.value = tr("repair.faultRegistered");
+    if (!(await loadRepairs())) deps.actionMessage.value = tr("repair.faultRegisteredRefreshFailed");
     return true;
   }
   async function saveRepair(): Promise<boolean> {
+    if (!deps.can("faults.manage")) return false;
     if (!selectedFault.value || repairSaving.value) return false;
     if (selectedFault.value.is_closed) {
-      deps.actionMessage.value = "已完成的故障只能查看维修结果";
+      deps.actionMessage.value = tr("repair.completedViewOnly");
       return false;
     }
     repairError.value = "";
@@ -276,27 +287,28 @@ export function useRepairs(deps: RepairsDeps) {
         await deps.request("/repair-records/", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload) });
       }
     } catch (error) {
-      repairError.value = error instanceof Error ? error.message : "维修记录保存失败";
+      repairError.value = error instanceof Error ? error.message : tr("repair.recordSaveFailed");
       deps.actionMessage.value = repairError.value;
       return false;
     } finally {
       repairSaving.value = false;
     }
     showRepairModal.value = false;
-    const successMessage = repairForm.value.finished_at ? "维修已完成，故障已关闭" : "维修记录已保存";
+    const successMessage = repairForm.value.finished_at ? tr("repair.completed") : tr("repair.recordSaved");
     const listRefreshed = await loadRepairs();
     const detailRefresh = deps.refreshOpenAssetDetail
       ? await deps.refreshOpenAssetDetail(repairedAssetId)
       : null;
     const followUpMessages: string[] = [];
-    if (!listRefreshed) followUpMessages.push("列表刷新失败");
-    if (detailRefresh === false) followUpMessages.push("资产详情刷新失败，请稍后重试");
+    if (!listRefreshed) followUpMessages.push(tr("common.refreshFailed"));
+    if (detailRefresh === false) followUpMessages.push(tr("asset.assetDetailLoadFailed"));
     deps.actionMessage.value = followUpMessages.length
       ? `${successMessage}，${followUpMessages.join("；")}`
       : successMessage;
     return true;
   }
   async function exportRepairs() {
+    if (!deps.can("faults.export")) return;
     if (exportingRepairs.value) return;
     exportingRepairs.value = true;
     const params = new URLSearchParams();
@@ -306,9 +318,9 @@ export function useRepairs(deps: RepairsDeps) {
     if (appliedRepairFilters.value.end) params.set("end", appliedRepairFilters.value.end);
     try {
       const query = buildExportQuery(params);
-      await deps.download(`/reports/repairs/export/${query ? `?${query}` : ""}`, "故障维修.xlsx");
+      await deps.download(`/reports/repairs/export/${query ? `?${query}` : ""}`, "maintenance-records.xlsx");
     } catch (error) {
-      deps.actionMessage.value = error instanceof Error ? error.message : "导出失败，请稍后重试";
+      deps.actionMessage.value = error instanceof Error ? error.message : tr("repair.exportFailed");
     } finally {
       exportingRepairs.value = false;
     }

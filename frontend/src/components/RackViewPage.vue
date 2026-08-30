@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed, ref, watch } from "vue";
+import { useI18n } from "vue-i18n";
 import { MoreFilled } from "@element-plus/icons-vue";
 import RackAssetInspector from "./RackAssetInspector.vue";
 import RackDetailPanel from "./RackDetailPanel.vue";
@@ -16,6 +17,7 @@ import type { RackSharedContext } from "../types/page-context";
 import { rackStatusValue } from "../business-enums";
 
 const props = defineProps<{ context: RackSharedContext }>();
+const { t, locale } = useI18n();
 const context = props.context;
 const rackSection = context.rackSection;
 const serverRooms = context.serverRooms;
@@ -54,14 +56,14 @@ const currentRackHasAssets = computed(() => Boolean(
   currentRack.value?.assets_count || currentRack.value?.allocations?.length,
 ));
 
-const rackDeleteHint = "该机柜仍有资产占用，请先迁移或解除资产位置后再删除";
+const rackDeleteHint = computed(() => t("rack.rackOccupiedDeleteHint"));
 
 function rackStatusCode(rack: Rack): RackStatus {
   return rackStatusValue(rack.status, rack.is_active);
 }
 
 function rackStatusActionLabel(rack: Rack) {
-  return rackStatusCode(rack) === "disabled" ? "启用" : "停用";
+  return rackStatusCode(rack) === "disabled" ? t("status.active") : t("status.inactive");
 }
 
 function rackStatusAction(rack: Rack): RackStatus {
@@ -69,13 +71,13 @@ function rackStatusAction(rack: Rack): RackStatus {
 }
 
 function rackLocationLabel(rack: Rack | null) {
-  return [rack?.data_center_name, rack?.server_room_name].filter(Boolean).join(" / ") || "未关联位置";
+  return [rack?.data_center_name, rack?.server_room_name].filter(Boolean).join(" / ") || t("rack.unlinkedLocation");
 }
 
 function formatRackDate(value?: string) {
   if (!value) return "—";
   const date = new Date(value);
-  return Number.isNaN(date.getTime()) ? "—" : date.toLocaleDateString("zh-CN");
+  return Number.isNaN(date.getTime()) ? t("common.notAvailable") : date.toLocaleDateString(locale.value);
 }
 
 watch(currentRack, () => {
@@ -99,18 +101,22 @@ function handleCurrentRackCommand(command: string) {
   const rack = currentRack.value;
   if (!rack) return;
   if (command === "info") {
+    if (!can("racks.view")) return;
     showRackInfo.value = true;
     return;
   }
   if (command === "export") {
+    if (!can("racks.export")) return;
     void context.exportRackLayout();
     return;
   }
   if (command === "delete") {
+    if (!can("racks.manage")) return;
     if (!currentRackHasAssets.value) void context.deleteRack(rack);
     return;
   }
   if (command === "in_use" || command === "reserved" || command === "disabled") {
+    if (!can("racks.manage")) return;
     void context.updateRackStatus(rack, command);
   }
 }
@@ -125,16 +131,16 @@ function handleCurrentRackCommand(command: string) {
             <SearchField
               v-model="locationSearch"
               :loading="locationManagementLoading"
-              placeholder="搜索名称或地址"
-              aria-label="搜索数据中心或机房名称、地址"
+              :placeholder="t('location.searchPlaceholder')"
+              :aria-label="t('rack.searchLocationNameOrAddress')"
               @search="context.changeLocationSearch"
             />
           </template>
           <template v-else #search>
             <SearchField
               v-model="selectedRack"
-              placeholder="搜索机柜"
-              aria-label="搜索机柜名称或编号"
+              :placeholder="t('rack.search')"
+              :aria-label="t('rack.searchRackNameOrCode')"
               @search="context.changeRackFilter"
             />
           </template>
@@ -142,22 +148,22 @@ function handleCurrentRackCommand(command: string) {
             <div class="page-toolbar__filter-group">
               <el-select
                 v-model="locationType"
-                placeholder="全部类型"
-                aria-label="按类型筛选位置"
+                :placeholder="t('location.allTypes')"
+                :aria-label="t('common.type')"
                 clearable
                 @change="context.changeLocationType"
               >
-                <el-option label="数据中心" value="data-center" />
-                <el-option label="机房" value="room" />
+                <el-option :label="t('location.dataCenter')" value="data-center" />
+                <el-option :label="t('location.room')" value="room" />
               </el-select>
               <el-select
                 v-model="locationDataCenter"
-                placeholder="数据中心"
-                aria-label="按数据中心筛选位置"
+                :placeholder="t('location.dataCenter')"
+                :aria-label="t('location.dataCenter')"
                 clearable
                 @change="context.changeLocationDataCenter"
               >
-                <el-option label="全部数据中心" value="" />
+                <el-option :label="t('location.allDataCenters')" value="" />
                 <el-option
                   v-for="center in dataCenters"
                   :key="center.id"
@@ -167,13 +173,13 @@ function handleCurrentRackCommand(command: string) {
               </el-select>
               <el-select
                 v-model="locationStatus"
-                placeholder="全部状态"
-                aria-label="按状态筛选位置"
+                :placeholder="t('location.allStatuses')"
+                :aria-label="t('common.status')"
                 clearable
                 @change="context.changeLocationStatus"
               >
-                <el-option label="启用" value="active" />
-                <el-option label="停用" value="inactive" />
+                <el-option :label="t('status.active')" value="active" />
+                <el-option :label="t('status.inactive')" value="inactive" />
               </el-select>
             </div>
           </template>
@@ -181,12 +187,12 @@ function handleCurrentRackCommand(command: string) {
             <div class="page-toolbar__filter-group">
               <el-select
               v-model="selectedDataCenter"
-              placeholder="数据中心"
-              aria-label="按数据中心筛选机柜"
+              :placeholder="t('location.dataCenter')"
+              :aria-label="t('location.dataCenter')"
               clearable
               @change="context.changeDataCenter"
             >
-              <el-option label="全部数据中心" value="" />
+              <el-option :label="t('location.allDataCenters')" value="" />
               <el-option
                 v-for="center in dataCenters"
                 :key="center.id"
@@ -196,13 +202,13 @@ function handleCurrentRackCommand(command: string) {
               </el-select>
               <el-select
               v-model="selectedRoom"
-              placeholder="机房"
-              aria-label="选择机房"
+              :placeholder="t('location.room')"
+              :aria-label="t('location.room')"
               clearable
               :disabled="!roomOptions.length"
               @change="changeViewRoom"
             >
-              <el-option label="全部机房" value="" />
+              <el-option :label="t('location.allRooms')" value="" />
               <el-option
                 v-for="room in roomOptions"
                 :key="room.id"
@@ -214,10 +220,10 @@ function handleCurrentRackCommand(command: string) {
           </template>
           <template #primary>
             <el-button v-if="can('racks.manage') && rackSection === 'locations'" class="page-primary-action" type="primary" @click="context.openDataCenterModal()">
-              新增数据中心
+              {{ t('location.createDataCenter') }}
             </el-button>
             <el-button v-else-if="can('racks.manage') && rackSection === 'view'" class="page-primary-action" type="primary" @click="context.openRackModal()">
-              新增机柜
+              {{ t('rack.addRack') }}
             </el-button>
           </template>
         </PageToolbar>
@@ -230,7 +236,7 @@ function handleCurrentRackCommand(command: string) {
       <PageContent v-else min-height="0">
         <section
           class="resource-workspace resource-workspace--rack"
-          aria-label="机柜视图工作台"
+          :aria-label="t('rack.locationWorkspace')"
         >
           <RackListPanel :context="context" />
 
@@ -238,44 +244,44 @@ function handleCurrentRackCommand(command: string) {
             <template #header>
               <div class="resource-detail-header">
                 <div class="resource-detail-title">
-                  <strong>{{ currentRack?.code || "机柜视图" }}</strong>
+                  <strong>{{ currentRack?.code || t('rack.title') }}</strong>
                   <span v-if="currentRack">{{ rackLocationLabel(currentRack) }}</span>
-                  <span v-else>请选择左侧机柜查看 U 位</span>
+                  <span v-else>{{ t('rack.selectRackHint') }}</span>
                 </div>
-                <div v-if="currentRack && (can('racks.manage') || can('racks.export'))" class="resource-detail-actions">
+                <div v-if="currentRack && can('racks.view')" class="resource-detail-actions">
                   <el-button
                     v-if="can('racks.manage')"
                     link
                     type="primary"
                     :disabled="deletingRackId === currentRack.id || updatingRackId === currentRack.id"
                     @click="context.openRackModal(currentRack, viewRoom || undefined)"
-                  >编辑</el-button>
+                  >{{ t('common.edit') }}</el-button>
                   <el-dropdown
                     trigger="click"
                     :disabled="deletingRackId === currentRack.id || updatingRackId === currentRack.id"
                     @command="handleCurrentRackCommand"
                   >
                     <el-button link :disabled="deletingRackId === currentRack.id || updatingRackId === currentRack.id">
-                      更多<el-icon><MoreFilled /></el-icon>
+                      {{ t('common.more') }}<el-icon><MoreFilled /></el-icon>
                     </el-button>
                     <template #dropdown>
                       <el-dropdown-menu>
-                        <el-dropdown-item command="info">查看机柜信息</el-dropdown-item>
+                        <el-dropdown-item command="info">{{ t('rack.viewRackInfo') }}</el-dropdown-item>
                         <template v-if="can('racks.manage')">
                           <el-dropdown-item :command="rackStatusAction(currentRack)">
                             {{ rackStatusActionLabel(currentRack) }}
                           </el-dropdown-item>
-                          <el-dropdown-item v-if="rackStatusCode(currentRack) !== 'reserved'" command="reserved">设为预留</el-dropdown-item>
-                          <el-dropdown-item v-else command="in_use">设为在用</el-dropdown-item>
+                          <el-dropdown-item v-if="rackStatusCode(currentRack) !== 'reserved'" command="reserved">{{ t('rack.setReserved') }}</el-dropdown-item>
+                          <el-dropdown-item v-else command="in_use">{{ t('rack.setInUse') }}</el-dropdown-item>
                         </template>
-                        <el-dropdown-item v-if="can('racks.export')" divided command="export">导出布局</el-dropdown-item>
+                        <el-dropdown-item v-if="can('racks.export')" divided command="export">{{ t('rack.exportLayout') }}</el-dropdown-item>
                         <el-dropdown-item
                           v-if="can('racks.manage')"
                           divided
                           command="delete"
                           :disabled="currentRackHasAssets"
                           :title="currentRackHasAssets ? rackDeleteHint : undefined"
-                        >删除</el-dropdown-item>
+                        >{{ t('common.delete') }}</el-dropdown-item>
                       </el-dropdown-menu>
                     </template>
                   </el-dropdown>
@@ -288,12 +294,12 @@ function handleCurrentRackCommand(command: string) {
                 <el-skeleton :rows="8" animated />
               </template>
               <div v-else-if="rackListError && !currentRack" class="resource-panel-state resource-panel-error" role="alert">
-                <strong>机柜加载失败</strong>
+                <strong>{{ t('rack.rackLoadFailed') }}</strong>
                 <span>{{ rackListError }}</span>
-                <el-button type="primary" plain @click="context.retryRackView">重新加载</el-button>
+                <el-button type="primary" plain @click="context.retryRackView">{{ t('common.retry') }}</el-button>
               </div>
               <div v-else-if="!currentRack" class="resource-panel-empty">
-                <el-empty :image-size="56" :description="selectedRoom ? '当前机房暂无机柜' : '请选择机房查看机柜'" />
+                <el-empty :image-size="56" :description="selectedRoom ? t('rack.noRacksInRoom') : t('rack.selectRoomHint')" />
               </div>
               <template v-else>
                 <div class="rack-detail-grid">
@@ -320,14 +326,14 @@ function handleCurrentRackCommand(command: string) {
       </PageContent>
     </PageContainer>
 
-    <el-drawer v-model="showRackInfo" title="机柜信息" size="360px">
+    <el-drawer v-model="showRackInfo" :title="t('rack.rackInfo')" size="360px">
       <dl v-if="currentRack" class="rack-info-list">
-        <div><dt>机柜编号</dt><dd>{{ currentRack.code }}</dd></div>
-        <div><dt>所属位置</dt><dd>{{ rackLocationLabel(currentRack) }}</dd></div>
-        <div><dt>机柜类型</dt><dd>{{ currentRack.rack_type || "—" }}</dd></div>
-        <div><dt>负责人</dt><dd>{{ currentRack.owner_name || "—" }}</dd></div>
-        <div><dt>创建时间</dt><dd>{{ formatRackDate(currentRack.created_at) }}</dd></div>
-        <div class="rack-info-list-wide"><dt>备注</dt><dd>{{ currentRack.notes || "—" }}</dd></div>
+        <div><dt>{{ t('rack.rackCode') }}</dt><dd>{{ currentRack.code }}</dd></div>
+        <div><dt>{{ t('rack.belongsToLocation') }}</dt><dd>{{ rackLocationLabel(currentRack) }}</dd></div>
+        <div><dt>{{ t('rack.deviceType') }}</dt><dd>{{ currentRack.rack_type || t('common.notAvailable') }}</dd></div>
+        <div><dt>{{ t('rack.owner') }}</dt><dd>{{ currentRack.owner_name || t('common.notAvailable') }}</dd></div>
+        <div><dt>{{ t('rack.createdAt') }}</dt><dd>{{ formatRackDate(currentRack.created_at) }}</dd></div>
+        <div class="rack-info-list-wide"><dt>{{ t('common.notes') }}</dt><dd>{{ currentRack.notes || t('common.notAvailable') }}</dd></div>
       </dl>
     </el-drawer>
 

@@ -15,7 +15,11 @@ import type {
   LocationTypeFilter,
   RackSection,
 } from "../router";
-import type { RequestFn } from "../types/page-context";
+import type { CapabilityFn, RequestFn } from "../types/page-context";
+import { i18n } from "../i18n";
+
+const tr = (key: string, params?: Record<string, unknown>): string =>
+  String(params ? i18n.global.t(key, params) : i18n.global.t(key));
 
 export interface FacilitiesApi {
   request: RequestFn;
@@ -25,6 +29,7 @@ export interface FacilitiesApi {
 }
 
 export interface FacilitiesDeps extends FacilitiesApi {
+  can: CapabilityFn;
   page: Ref<Page>;
   rackSection: Ref<RackSection>;
   showAssetDetail: Ref<boolean>;
@@ -116,6 +121,7 @@ export function useFacilities(deps: FacilitiesDeps) {
   }
 
   async function loadDataCenters(version = deps.beginLoad()): Promise<boolean> {
+    if (!deps.can("racks.view")) return false;
     try {
       const result = await deps.request<{ results?: DataCenter[]; count?: number } | DataCenter[]>(
         "/data-centers/?page_size=100",
@@ -162,6 +168,7 @@ export function useFacilities(deps: FacilitiesDeps) {
   }
 
   async function loadLocationManagement(version = deps.beginLoad()): Promise<boolean> {
+    if (!deps.can("racks.view")) return false;
     const requestId = ++locationManagementRequestId.value;
     if (deps.isCurrentLoad(version)) {
       locationManagementLoading.value = true;
@@ -175,10 +182,10 @@ export function useFacilities(deps: FacilitiesDeps) {
     if (!deps.isCurrentLoad(version) || requestId !== locationManagementRequestId.value) return true;
 
     const dataCenterError = dataCentersResult.status === "rejected"
-      ? requestErrorMessage(dataCentersResult.reason, "数据中心加载失败，请稍后重试")
+      ? requestErrorMessage(dataCentersResult.reason, tr("facility.dataCenterLoadFailed"))
       : "";
     const roomError = roomsResult.status === "rejected"
-      ? requestErrorMessage(roomsResult.reason, "机房加载失败，请稍后重试")
+      ? requestErrorMessage(roomsResult.reason, tr("facility.roomLoadFailed"))
       : "";
     if (dataCentersResult.status === "fulfilled") dataCenters.value = dataCentersResult.value;
     if (roomsResult.status === "fulfilled") serverRooms.value = roomsResult.value;
@@ -196,6 +203,7 @@ export function useFacilities(deps: FacilitiesDeps) {
   }
 
   async function loadServerRooms(version = deps.beginLoad()) {
+    if (!deps.can("racks.view")) return false;
     try {
       const params = new URLSearchParams({ page_size: "100", is_active: "true" });
       if (selectedDataCenter.value) params.set("data_center", selectedDataCenter.value);
@@ -214,6 +222,7 @@ export function useFacilities(deps: FacilitiesDeps) {
   // auxiliary loader separate from the locations page so opening an asset form
   // does not couple it to the locations tree's presentation filters.
   async function loadRackManagement(version = deps.beginLoad()): Promise<boolean> {
+    if (!deps.can("racks.view")) return false;
     const [roomsResult, racksResult] = await Promise.allSettled([
       loadServerRooms(version),
       deps.request<{ results?: Rack[] } | Rack[]>("/racks/?page_size=100&is_active=true"),
@@ -255,6 +264,7 @@ export function useFacilities(deps: FacilitiesDeps) {
   }
 
   async function loadRackView(version = deps.beginLoad()) {
+    if (!deps.can("racks.view")) return false;
     const requestId = ++rackViewRequestId.value;
     const requestedFocusedRackId = focusedRackId.value;
     if (deps.isCurrentLoad(version)) {
@@ -287,7 +297,7 @@ export function useFacilities(deps: FacilitiesDeps) {
       if (!deps.isCurrentLoad(version) || requestId !== rackViewRequestId.value || isAbortError(error)) return;
       const message = error instanceof Error && error.message
         ? error.message
-        : "机柜数据加载失败，请稍后重试";
+        : tr("facility.rackLoadFailed");
       rackListError.value = message;
       rackCanvasError.value = message;
     } finally {
@@ -299,6 +309,7 @@ export function useFacilities(deps: FacilitiesDeps) {
   }
 
   async function loadRackPage(pageNumber: number) {
+    if (!deps.can("racks.view")) return;
     const nextPage = Math.min(
       Math.max(pageNumber, 1),
       Math.max(1, Math.ceil(rackCount.value / rackPageSize.value)),
@@ -331,7 +342,7 @@ export function useFacilities(deps: FacilitiesDeps) {
       if (!deps.isCurrentLoad(version) || requestId !== rackViewRequestId.value || isAbortError(error)) return;
       rackListError.value = error instanceof Error && error.message
         ? error.message
-        : "机柜数据加载失败，请稍后重试";
+        : tr("facility.rackLoadFailed");
     } finally {
       if (deps.isCurrentLoad(version) && requestId === rackViewRequestId.value) {
         rackListLoading.value = false;
@@ -344,6 +355,7 @@ export function useFacilities(deps: FacilitiesDeps) {
   }
 
   function openDataCenterModal(dataCenter?: DataCenter) {
+    if (!deps.can("racks.manage")) return;
     editingDataCenter.value = dataCenter || null;
     dataCenterFormErrors.value = {};
     dataCenterForm.value = dataCenter
@@ -362,6 +374,7 @@ export function useFacilities(deps: FacilitiesDeps) {
   }
 
   async function saveDataCenter() {
+    if (!deps.can("racks.manage")) return;
     if (dataCenterSaving.value) return;
     dataCenterSaving.value = true;
     dataCenterFormErrors.value = {};
@@ -377,15 +390,15 @@ export function useFacilities(deps: FacilitiesDeps) {
         body: JSON.stringify(dataCenterForm.value),
       });
       showDataCenterModal.value = false;
-      deps.actionMessage.value = "数据中心已保存";
+      deps.actionMessage.value = tr("facility.dataCenterSaved");
       try {
-        if (!(await refreshLocationManagement())) throw new Error("请稍后重试");
+        if (!(await refreshLocationManagement())) throw new Error(tr("common.retryLater"));
       } catch (refreshError) {
-        deps.actionMessage.value = "数据中心已保存，但页面刷新失败：" + (refreshError instanceof Error ? refreshError.message : "请稍后重试");
+        deps.actionMessage.value = `${tr("facility.dataCenterSavedRefreshFailed")}: ${refreshError instanceof Error ? refreshError.message : tr("common.retryLater")}`;
       }
     } catch (error) {
       dataCenterFormErrors.value = extractFormErrors(error, ["name", "address", "is_active"]);
-      deps.actionMessage.value = error instanceof Error ? error.message : "数据中心保存失败";
+      deps.actionMessage.value = error instanceof Error ? error.message : tr("facility.dataCenterSaveFailed");
     } finally {
       dataCenterSaving.value = false;
     }
@@ -396,6 +409,7 @@ export function useFacilities(deps: FacilitiesDeps) {
   }
 
   async function updateDataCenterStatus(dataCenter: DataCenter, isActive: boolean) {
+    if (!deps.can("racks.manage")) return;
     if (dataCenterActionId.value === dataCenter.id || dataCenter.is_active === isActive) return;
     dataCenterActionId.value = dataCenter.id;
     try {
@@ -406,15 +420,15 @@ export function useFacilities(deps: FacilitiesDeps) {
           body: JSON.stringify({ is_active: isActive }),
         });
       } catch (error) {
-        deps.actionMessage.value = error instanceof Error ? error.message : "数据中心状态更新失败";
+        deps.actionMessage.value = error instanceof Error ? error.message : tr("facility.dataCenterStatusFailed");
         return;
       }
-      const successMessage = isActive ? "数据中心已启用" : "数据中心已停用";
+      const successMessage = isActive ? tr("facility.dataCenterEnabled") : tr("facility.dataCenterDisabled");
       deps.actionMessage.value = successMessage;
       try {
-        if (!(await refreshLocationManagement())) throw new Error("请稍后重试");
+        if (!(await refreshLocationManagement())) throw new Error(tr("common.retryLater"));
       } catch (refreshError) {
-        deps.actionMessage.value = `${successMessage}，但页面刷新失败：${refreshError instanceof Error ? refreshError.message : "请稍后重试"}`;
+        deps.actionMessage.value = `${successMessage}: ${refreshError instanceof Error ? refreshError.message : tr("common.retryLater")}`;
       }
     } finally {
       dataCenterActionId.value = null;
@@ -422,26 +436,27 @@ export function useFacilities(deps: FacilitiesDeps) {
   }
 
   async function deleteDataCenter(dataCenter: DataCenter) {
+    if (!deps.can("racks.manage")) return;
     if (dataCenterHasAssociations(dataCenter)) {
-      deps.actionMessage.value = "数据中心仍包含机房或资产，不能删除，请先停用";
+      deps.actionMessage.value = tr("facility.dataCenterHasAssociations");
       return;
     }
     if (dataCenterActionId.value === dataCenter.id) return;
-    if (!(await deps.confirmAction(`确定删除数据中心“${dataCenter.name}”吗？`))) return;
+    if (!(await deps.confirmAction(tr("facility.dataCenterDeleteConfirm", { name: dataCenter.name })))) return;
     dataCenterActionId.value = dataCenter.id;
     try {
       try {
         await deps.request(`/data-centers/${dataCenter.id}/`, { method: "DELETE" });
       } catch (error) {
-        deps.actionMessage.value = error instanceof Error ? error.message : "数据中心删除失败";
+        deps.actionMessage.value = error instanceof Error ? error.message : tr("facility.dataCenterDeleteFailed");
         return;
       }
-      const successMessage = "数据中心已删除";
+      const successMessage = tr("facility.dataCenterDeleted");
       deps.actionMessage.value = successMessage;
       try {
-        if (!(await refreshLocationManagement())) throw new Error("请稍后重试");
+        if (!(await refreshLocationManagement())) throw new Error(tr("common.retryLater"));
       } catch (refreshError) {
-        deps.actionMessage.value = `${successMessage}，但页面刷新失败：${refreshError instanceof Error ? refreshError.message : "请稍后重试"}`;
+        deps.actionMessage.value = `${successMessage}: ${refreshError instanceof Error ? refreshError.message : tr("common.retryLater")}`;
       }
     } finally {
       dataCenterActionId.value = null;
@@ -449,6 +464,7 @@ export function useFacilities(deps: FacilitiesDeps) {
   }
 
   function openRoomModal(room?: ServerRoom, dataCenterId?: number) {
+    if (!deps.can("racks.manage")) return;
     editingRoom.value = room || null;
     roomFormErrors.value = {};
     roomForm.value = room
@@ -472,6 +488,7 @@ export function useFacilities(deps: FacilitiesDeps) {
   }
 
   async function saveRoom() {
+    if (!deps.can("racks.manage")) return;
     if (roomSaving.value) return;
     roomSaving.value = true;
     roomFormErrors.value = {};
@@ -490,11 +507,11 @@ export function useFacilities(deps: FacilitiesDeps) {
         body: JSON.stringify(roomForm.value),
       });
       showRoomModal.value = false;
-      deps.actionMessage.value = "机房已保存";
+      deps.actionMessage.value = tr("facility.roomSaved");
       try {
-        if (!(await refreshLocationManagement())) throw new Error("资源数据刷新失败");
+        if (!(await refreshLocationManagement())) throw new Error(tr("facility.resourceRefreshFailed"));
       } catch (refreshError) {
-        deps.actionMessage.value = "机房已保存，但页面刷新失败：" + (refreshError instanceof Error ? refreshError.message : "请稍后重试");
+        deps.actionMessage.value = `${tr("facility.roomSavedRefreshFailed")}: ${refreshError instanceof Error ? refreshError.message : tr("common.retryLater")}`;
       }
     } catch (error) {
       roomFormErrors.value = extractFormErrors(error, [
@@ -505,13 +522,14 @@ export function useFacilities(deps: FacilitiesDeps) {
         "notes",
         "is_active",
       ]);
-      deps.actionMessage.value = error instanceof Error ? error.message : "机房保存失败";
+      deps.actionMessage.value = error instanceof Error ? error.message : tr("facility.roomSaveFailed");
     } finally {
       roomSaving.value = false;
     }
   }
 
   async function updateRoomStatus(room: ServerRoom, isActive: boolean) {
+    if (!deps.can("racks.manage")) return;
     if (updatingRoomId.value === room.id || room.is_active === isActive) return;
     updatingRoomId.value = room.id;
     try {
@@ -520,37 +538,38 @@ export function useFacilities(deps: FacilitiesDeps) {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ is_active: isActive }),
       });
-      deps.actionMessage.value = isActive ? "机房已启用" : "机房已停用";
+      deps.actionMessage.value = isActive ? tr("facility.roomEnabled") : tr("facility.roomDisabled");
       try {
-        if (!(await refreshLocationManagement())) throw new Error("资源数据刷新失败");
+        if (!(await refreshLocationManagement())) throw new Error(tr("facility.resourceRefreshFailed"));
       } catch (refreshError) {
-        deps.actionMessage.value = `${isActive ? "机房已启用" : "机房已停用"}，但页面刷新失败：${refreshError instanceof Error ? refreshError.message : "请稍后重试"}`;
+        deps.actionMessage.value = `${isActive ? tr("facility.roomEnabled") : tr("facility.roomDisabled")}: ${refreshError instanceof Error ? refreshError.message : tr("common.retryLater")}`;
       }
     } catch (error) {
-      deps.actionMessage.value = error instanceof Error ? error.message : "机房状态更新失败";
+      deps.actionMessage.value = error instanceof Error ? error.message : tr("facility.roomStatusFailed");
     } finally {
       updatingRoomId.value = null;
     }
   }
 
   async function deleteRoom(room: ServerRoom) {
+    if (!deps.can("racks.manage")) return;
     if (room.racks_count || room.assets_count) {
-      deps.actionMessage.value = "请先迁移/移除关联资源后再删除";
+      deps.actionMessage.value = tr("facility.roomHasAssociations");
       return;
     }
-    if (!(await deps.confirmAction(`确定删除机房“${room.name}”吗？`))) return;
+    if (!(await deps.confirmAction(tr("facility.roomDeleteConfirm", { name: room.name })))) return;
     try {
       await deps.request(`/server-rooms/${room.id}/`, { method: "DELETE" });
     } catch (error) {
-      deps.actionMessage.value = error instanceof Error ? error.message : "机房删除失败";
+      deps.actionMessage.value = error instanceof Error ? error.message : tr("facility.roomDeleteFailed");
       return;
     }
-    const successMessage = "机房已删除";
+    const successMessage = tr("facility.roomDeleted");
     deps.actionMessage.value = successMessage;
     try {
-      if (!(await refreshLocationManagement())) throw new Error("请稍后重试");
+      if (!(await refreshLocationManagement())) throw new Error(tr("common.retryLater"));
     } catch (refreshError) {
-      deps.actionMessage.value = `${successMessage}，但页面刷新失败：${refreshError instanceof Error ? refreshError.message : "请稍后重试"}`;
+      deps.actionMessage.value = `${successMessage}: ${refreshError instanceof Error ? refreshError.message : tr("common.retryLater")}`;
     }
   }
 
@@ -572,6 +591,7 @@ export function useFacilities(deps: FacilitiesDeps) {
   }
 
   function openRackModal(rack?: Rack, room?: ServerRoom) {
+    if (!deps.can("racks.manage")) return;
     editingRack.value = rack || null;
     clearRackFormErrors();
     if (rack) {
@@ -616,10 +636,10 @@ export function useFacilities(deps: FacilitiesDeps) {
       } else if (field === "detail" || field === "non_field_errors") {
         general.push(message);
       } else {
-        general.push(`${field}：${message}`);
+        general.push(`${field}: ${message}`);
       }
     }
-    return { fields, message: general.join("；") || candidate.message || "机柜保存失败" };
+    return { fields, message: general.join("；") || candidate.message || tr("facility.rackSaveFailed") };
   }
 
   async function refreshRackDataAfterMutation() {
@@ -631,10 +651,11 @@ export function useFacilities(deps: FacilitiesDeps) {
       }
       return;
     }
-    if (!(await refreshLocationManagement())) throw new Error("资源数据刷新失败");
+    if (!(await refreshLocationManagement())) throw new Error(tr("facility.resourceRefreshFailed"));
   }
 
   async function saveRack() {
+    if (!deps.can("racks.manage")) return;
     if (rackSaving.value) return;
     rackSaving.value = true;
     clearRackFormErrors();
@@ -658,11 +679,11 @@ export function useFacilities(deps: FacilitiesDeps) {
       });
       showRackModal.value = false;
       editingRack.value = null;
-      deps.actionMessage.value = "机柜已保存";
+      deps.actionMessage.value = tr("facility.rackSaved");
       try {
         await refreshRackDataAfterMutation();
       } catch (refreshError) {
-        deps.actionMessage.value = `机柜已保存，但页面刷新失败：${refreshError instanceof Error ? refreshError.message : "请稍后重试"}`;
+        deps.actionMessage.value = `${tr("facility.rackSavedRefreshFailed")}: ${refreshError instanceof Error ? refreshError.message : tr("common.retryLater")}`;
       }
     } catch (error) {
       const parsed = extractRackFormErrors(error);
@@ -674,10 +695,11 @@ export function useFacilities(deps: FacilitiesDeps) {
   }
 
   async function updateRackStatus(rack: Rack, status: RackStatus) {
+    if (!deps.can("racks.manage")) return;
     if (updatingRackId.value === rack.id || rack.status === status) return;
     if (status !== "in_use" && rack.allocations.length) {
-      const statusLabel = status === "reserved" ? "预留" : "停用";
-      if (!(await deps.confirmAction(`机柜“${rack.code}”已有 ${rack.allocations.length} 台设备，确定设为${statusLabel}吗？`))) return;
+      const statusLabel = status === "reserved" ? tr("status.reserved") : tr("status.disabled");
+      if (!(await deps.confirmAction(tr("facility.rackStatusConfirm", { code: rack.code, count: rack.allocations.length, status: statusLabel })))) return;
     }
     updatingRackId.value = rack.id;
     try {
@@ -686,46 +708,48 @@ export function useFacilities(deps: FacilitiesDeps) {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ status }),
       });
-      deps.actionMessage.value = "机柜状态已更新";
+      deps.actionMessage.value = tr("facility.rackStatusUpdated");
       try {
         await refreshRackDataAfterMutation();
       } catch (refreshError) {
-        deps.actionMessage.value = `机柜状态已更新，但页面刷新失败：${refreshError instanceof Error ? refreshError.message : "请稍后重试"}`;
+        deps.actionMessage.value = `${tr("facility.rackStatusRefreshFailed")}: ${refreshError instanceof Error ? refreshError.message : tr("common.retryLater")}`;
       }
     } catch (error) {
-      deps.actionMessage.value = error instanceof Error ? error.message : "机柜状态更新失败";
+      deps.actionMessage.value = error instanceof Error ? error.message : tr("facility.rackStatusFailed");
     } finally {
       updatingRackId.value = null;
     }
   }
 
   async function deleteRack(rack: Rack) {
+    if (!deps.can("racks.manage")) return;
     if (deletingRackId.value === rack.id) return;
-    const roomLabel = `${rack.data_center_name || "未知数据中心"} / ${rack.server_room_name || "未知机房"}`;
-    if (!(await deps.confirmAction(`确定删除机柜“${rack.code}”吗？\n位置：${roomLabel}`))) return;
+    const roomLabel = `${rack.data_center_name || tr("common.unknownDataCenter")} / ${rack.server_room_name || tr("common.unknownRoom")}`;
+    if (!(await deps.confirmAction(tr("facility.rackDeleteConfirm", { code: rack.code, location: roomLabel })))) return;
     deletingRackId.value = rack.id;
     try {
       await deps.request(`/racks/${rack.id}/`, { method: "DELETE" });
       if (focusedRackId.value === rack.id) clearRackSelection();
       if (selectedRack.value === rack.code) selectedRack.value = "";
-      deps.actionMessage.value = "机柜已删除";
+      deps.actionMessage.value = tr("facility.rackDeleted");
       try {
         await refreshRackDataAfterMutation();
       } catch (refreshError) {
-        deps.actionMessage.value = `机柜已删除，但页面刷新失败：${refreshError instanceof Error ? refreshError.message : "请稍后重试"}`;
+        deps.actionMessage.value = `${tr("facility.rackDeletedRefreshFailed")}: ${refreshError instanceof Error ? refreshError.message : tr("common.retryLater")}`;
       }
     } catch (error) {
-      deps.actionMessage.value = error instanceof Error ? error.message : "机柜删除失败";
+      deps.actionMessage.value = error instanceof Error ? error.message : tr("facility.rackDeleteFailed");
     } finally {
       deletingRackId.value = null;
     }
   }
 
   async function exportRackLayout() {
+    if (!deps.can("racks.export")) return;
     try {
       await deps.download("/reports/racks/export/", "rack-layout.xlsx");
     } catch (error) {
-      deps.actionMessage.value = error instanceof Error ? error.message : "机柜放置图导出失败";
+      deps.actionMessage.value = error instanceof Error ? error.message : tr("facility.rackLayoutExportFailed");
     }
   }
 
@@ -796,14 +820,12 @@ export function useFacilities(deps: FacilitiesDeps) {
   function rackUnitHeight(_rack: Rack) {
     return deps.viewportHeight.value < 720 ? 18 : 20;
   }
-  function rackBodyHeight(rack: Rack) {
-    return rack.total_u * rackUnitHeight(rack) + 14;
-  }
   function rackBodyStyle(rack: Rack) {
+    const unitHeight = rackUnitHeight(rack);
     return {
-      height: `${rackBodyHeight(rack)}px`,
+      height: `${rack.total_u * unitHeight}px`,
       "--rack-total-u": String(rack.total_u),
-      "--rack-u-height": `${rackUnitHeight(rack)}px`,
+      "--rack-u-height": `${unitHeight}px`,
     };
   }
   function rackAllocationStyle(rack: Rack, allocation: Rack["allocations"][number]) {

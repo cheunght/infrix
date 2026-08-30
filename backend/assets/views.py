@@ -2315,6 +2315,7 @@ def _clear_login_throttle(username, ip):
 
 def _auth_response(user):
     role_code = user_role_code(user)
+    security_profile = _security_profile(user)
     return {
         "username": user.username,
         "display_name": user.get_full_name() or user.username,
@@ -2327,7 +2328,8 @@ def _auth_response(user):
         "role_code": role_code,
         "role_name": ROLE_DEFINITIONS.get(role_code, {}).get("name", "只读审计员"),
         "permissions": user_capabilities(user),
-        "password_change_required": _security_profile(user).must_change_password,
+        "password_change_required": security_profile.must_change_password,
+        "locale": security_profile.locale,
         "last_login": user.last_login,
     }
 
@@ -2392,14 +2394,23 @@ def auth_csrf(request):
 def auth_me(request):
     if request.method == "PATCH":
         serializer = CurrentUserProfileSerializer(
-            request.user,
             data=request.data,
             partial=True,
         )
         serializer.is_valid(raise_exception=True)
         before = _user_audit_snapshot(request.user)
         with transaction.atomic():
-            user = serializer.save()
+            validated = serializer.validated_data
+            user = request.user
+            user_fields = [field for field in ("first_name", "last_name", "email") if field in validated]
+            for field in user_fields:
+                setattr(user, field, validated[field])
+            if user_fields:
+                user.save(update_fields=user_fields)
+            if "locale" in validated:
+                profile = _security_profile(user)
+                profile.locale = validated["locale"]
+                profile.save(update_fields=["locale", "updated_at"])
             write_audit_log(
                 request,
                 action="update",

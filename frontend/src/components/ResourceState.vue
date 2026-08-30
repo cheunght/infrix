@@ -1,5 +1,8 @@
 <script setup lang="ts">
-withDefaults(
+import { computed } from "vue";
+import { useI18n } from "vue-i18n";
+
+const props = withDefaults(
   defineProps<{
     loading?: boolean;
     error?: string | null;
@@ -12,11 +15,15 @@ withDefaults(
     loading: false,
     error: "",
     empty: false,
-    emptyText: "暂无数据",
-    loadingText: "正在加载...",
+    emptyText: "",
+    loadingText: "",
     retryable: true,
   },
 );
+
+const { t } = useI18n();
+const resolvedEmptyText = computed(() => props.emptyText || t("common.noData"));
+const resolvedLoadingText = computed(() => props.loadingText || t("common.loadingData"));
 
 const emit = defineEmits<{
   retry: [];
@@ -27,18 +34,18 @@ const emit = defineEmits<{
   <div v-if="loading" class="resource-state resource-state--loading" role="status" aria-live="polite">
     <slot name="loading">
       <el-skeleton :rows="4" animated />
-      <span class="resource-state__loading-text">{{ loadingText }}</span>
+      <span class="resource-state__loading-text">{{ resolvedLoadingText }}</span>
     </slot>
   </div>
   <div v-else-if="error" class="resource-state resource-state--error" role="alert">
     <slot name="error" :error="error">
-      <el-alert title="数据加载失败" :description="error" type="error" :closable="false" show-icon />
-      <el-button v-if="retryable" type="primary" @click="emit('retry')">重新加载</el-button>
+      <el-alert :title="t('common.dataLoadFailed')" :description="error" type="error" :closable="false" show-icon />
+      <el-button v-if="retryable" type="primary" @click="emit('retry')">{{ t('common.retry') }}</el-button>
     </slot>
   </div>
   <div v-else-if="empty" class="resource-state resource-state--empty" role="status">
     <slot name="empty">
-      <el-empty :image-size="56" :description="emptyText" />
+      <el-empty :image-size="56" :description="resolvedEmptyText" />
     </slot>
   </div>
   <slot v-else />

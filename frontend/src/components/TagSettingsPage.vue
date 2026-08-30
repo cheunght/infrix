@@ -1,5 +1,7 @@
 <script setup lang="ts">
 import { proxyRefs, ref } from "vue";
+import { computed } from "vue";
+import { useI18n } from "vue-i18n";
 import { CircleCheck, CircleClose, Delete, Edit } from "@element-plus/icons-vue";
 import type { FormInstance, FormRules } from "element-plus";
 import SearchField from "./SearchField.vue";
@@ -13,14 +15,15 @@ import TableIconButton from "./TableIconButton.vue";
 import type { TagContext } from "../types/page-context";
 
 const props = defineProps<{ context: TagContext }>();
+const { t } = useI18n();
 const c = proxyRefs(props.context);
 const tagFormRef = ref<FormInstance>();
-const tagFormRules: FormRules = {
+const tagFormRules = computed<FormRules>(() => ({
   name: [
-    { required: true, whitespace: true, message: "请输入标签名称", trigger: "blur" },
-    { max: 80, message: "标签名称不能超过 80 个字符", trigger: "blur" },
+    { required: true, whitespace: true, message: t("tag.nameRequired"), trigger: "blur" },
+    { max: 80, message: t("tag.nameMax"), trigger: "blur" },
   ],
-};
+}));
 
 async function submitTag() {
   const valid = await tagFormRef.value?.validate().catch(() => false);
@@ -34,26 +37,26 @@ async function submitTag() {
     <template #toolbar>
       <PageToolbar>
         <template #search>
-            <SearchField v-model="c.tagSearch" :loading="c.tagListLoading" placeholder="搜索标签" aria-label="搜索标签" @search="c.refreshTagList()" />
+            <SearchField v-model="c.tagSearch" :loading="c.tagListLoading" :placeholder="t('tag.searchPlaceholder')" :aria-label="t('tag.searchPlaceholder')" @search="c.refreshTagList()" />
         </template>
         <template #filters>
           <div class="page-toolbar__filter-group">
-            <el-select v-model="c.tagActive" placeholder="全部状态" clearable :disabled="c.tagListLoading" @change="c.refreshTagList()">
-              <el-option label="启用" value="true" />
-              <el-option label="停用" value="false" />
+            <el-select v-model="c.tagActive" :placeholder="t('tag.allStatuses')" clearable :disabled="c.tagListLoading" @change="c.refreshTagList()">
+              <el-option :label="t('status.active')" value="true" />
+              <el-option :label="t('status.inactive')" value="false" />
             </el-select>
           </div>
         </template>
         <template #primary>
-          <el-button v-if="c.can('tags.manage')" class="page-primary-action" type="primary" :disabled="c.tagSaving" @click="c.openTagModal()">新增标签</el-button>
+          <el-button v-if="c.can('tags.manage')" class="page-primary-action" type="primary" :disabled="c.tagSaving" @click="c.openTagModal()">{{ t('tag.add') }}</el-button>
         </template>
       </PageToolbar>
     </template>
     <PageContent surface>
-      <el-alert v-if="c.tagListError" title="标签数据加载失败" type="error" show-icon :closable="false">
+      <el-alert v-if="c.tagListError" :title="t('tag.loadFailed')" type="error" show-icon :closable="false">
         <template #default>
           <span>{{ c.tagListError }}</span>
-          <el-button link type="danger" :loading="c.tagListLoading" @click="c.retryTagList">重新加载</el-button>
+          <el-button link type="danger" :loading="c.tagListLoading" @click="c.retryTagList">{{ t('common.retry') }}</el-button>
         </template>
       </el-alert>
       <PagedTable
@@ -64,38 +67,38 @@ async function submitTag() {
         @update:current-page="c.changeTagPage"
         @update:page-size="c.changeTagPageSize"
       >
-        <el-table v-loading="c.tagListLoading" :data="c.tagTableItems">
+        <el-table class="settings-tag-table" v-loading="c.tagListLoading" :data="c.tagTableItems" table-layout="fixed">
         <template #empty>
-          <el-empty :image-size="56" :description="c.tagSearch.trim() || c.tagActive ? '没有符合筛选条件的标签' : '暂无标签'">
-            <el-button v-if="c.tagSearch.trim() || c.tagActive" link type="primary" @click="c.tagSearch = ''; c.tagActive = ''; c.refreshTagList()">清除筛选</el-button>
+          <el-empty :image-size="56" :description="c.tagSearch.trim() || c.tagActive ? t('tag.noMatching') : t('tag.noTags')">
+            <el-button v-if="c.tagSearch.trim() || c.tagActive" link type="primary" @click="c.tagSearch = ''; c.tagActive = ''; c.refreshTagList()">{{ t('common.clearFilters') }}</el-button>
           </el-empty>
         </template>
-        <el-table-column prop="name" label="标签名称" min-width="220" />
-        <el-table-column prop="assets_count" label="引用资产" width="110" />
-        <el-table-column label="状态" width="90">
-          <template #default="{ row }"><StatusTag :tone="row.is_active ? 'success' : 'info'" :label="row.is_active ? '启用' : '停用'" /></template>
+        <el-table-column prop="name" :label="t('tag.name')" width="360" show-overflow-tooltip />
+        <el-table-column prop="assets_count" :label="t('tag.referencedAssets')" min-width="150" />
+        <el-table-column :label="t('common.status')" width="90">
+          <template #default="{ row }"><StatusTag :tone="row.is_active ? 'success' : 'info'" :label="row.is_active ? t('status.active') : t('status.inactive')" /></template>
         </el-table-column>
-        <el-table-column label="操作" width="220" fixed="right">
+        <el-table-column v-if="c.can('tags.manage')" :label="t('common.operation')" width="132" fixed="right">
           <template #default="{ row }">
             <div class="ep-table-actions">
               <TableIconButton
                 :icon="Edit"
-                label="编辑"
+                :label="t('common.edit')"
                 type="primary"
-                :disabled="!c.can('tags.manage') || c.tagActionId === row.id || c.tagSaving"
+                :disabled="c.tagActionId === row.id || c.tagSaving"
                 @click="c.openTagModal(row)"
               />
               <TableIconButton
                 :icon="row.is_active ? CircleClose : CircleCheck"
-                :label="row.is_active ? '停用' : '启用'"
-                :disabled="!c.can('tags.manage') || c.tagActionId === row.id"
+                :label="row.is_active ? t('status.inactive') : t('status.active')"
+                :disabled="c.tagActionId === row.id"
                 @click="c.toggleTag(row)"
               />
               <TableIconButton
                 :icon="Delete"
-                label="删除"
+                :label="t('common.delete')"
                 type="danger"
-                :disabled="!c.can('tags.manage') || c.tagActionId === row.id || (row.assets_count || 0) > 0"
+                :disabled="c.tagActionId === row.id || (row.assets_count || 0) > 0"
                 @click="c.deleteTag(row)"
               />
             </div>
@@ -106,21 +109,21 @@ async function submitTag() {
     </PageContent>
   </PageContainer>
 
-  <FormDialogShell v-model="c.showTagModal" :title="c.editingTag ? '编辑标签' : '新增标签'" description="维护标签名称和启用状态" size="small" :saving="c.tagSaving" :show-close="!c.tagSaving" :close-disabled="c.tagSaving" :close-on-click-modal="!c.tagSaving" :close-on-press-escape="!c.tagSaving">
+  <FormDialogShell v-model="c.showTagModal" :title="c.editingTag ? t('tag.editTitle') : t('tag.createTitle')" :description="t('tag.description')" size="small" :saving="c.tagSaving" :show-close="!c.tagSaving" :close-disabled="c.tagSaving" :close-on-click-modal="!c.tagSaving" :close-on-press-escape="!c.tagSaving">
     <el-form ref="tagFormRef" class="horizontal-form" :model="c.tagForm" :rules="tagFormRules" label-position="right" :validate-on-rule-change="false" @submit.prevent="submitTag">
       <section class="form-dialog__section">
-        <h3 class="form-dialog__section-title">基本信息</h3>
+        <h3 class="form-dialog__section-title">{{ t('tag.basicInfo') }}</h3>
         <div class="horizontal-form__rows">
-          <el-form-item label="标签名称" prop="name" required :error="c.tagFormErrors.name"><el-input v-model="c.tagForm.name" maxlength="80" /></el-form-item>
-          <el-form-item label="状态">
-            <el-select v-model="c.tagForm.is_active" aria-label="状态">
-              <el-option label="启用" :value="true" />
-              <el-option label="停用" :value="false" />
+          <el-form-item :label="t('tag.name')" prop="name" required :error="c.tagFormErrors.name"><el-input v-model="c.tagForm.name" maxlength="80" /></el-form-item>
+          <el-form-item :label="t('common.status')">
+            <el-select v-model="c.tagForm.is_active" :aria-label="t('common.status')">
+              <el-option :label="t('status.active')" :value="true" />
+              <el-option :label="t('status.inactive')" :value="false" />
             </el-select>
           </el-form-item>
         </div>
       </section>
     </el-form>
-    <template #footer><el-button :disabled="c.tagSaving" @click="c.showTagModal = false">取消</el-button><el-button type="primary" :loading="c.tagSaving" :disabled="c.tagSaving" @click="submitTag">保存标签</el-button></template>
+    <template #footer><el-button :disabled="c.tagSaving" @click="c.showTagModal = false">{{ t('common.cancel') }}</el-button><el-button type="primary" :loading="c.tagSaving" :disabled="c.tagSaving" @click="submitTag">{{ t('tag.save') }}</el-button></template>
   </FormDialogShell>
 </template>

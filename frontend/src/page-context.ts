@@ -498,7 +498,6 @@ export interface SettingsContext extends CustomFieldContext, TagContext {
   toggleDictionary: (item: DictionaryItem) => void | Promise<void>;
   deleteDictionary: (item: DictionaryItem) => void | Promise<void>;
   dictionaryItemUsed: (item: DictionaryItem) => boolean;
-  isAdmin: Ref<boolean>;
   currentUsername: Ref<string>;
   organizationLoading: Ref<boolean>;
   organizationError: ComputedRef<string>;

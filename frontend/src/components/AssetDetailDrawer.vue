@@ -1,8 +1,10 @@
 <!-- UX Reference: standard detail drawer. Reuse interaction patterns, not asset-specific fields. -->
 <script setup lang="ts">
-import { computed } from "vue";
-import { Edit } from "@element-plus/icons-vue";
+import { computed, ref } from "vue";
+import { useI18n } from "vue-i18n";
+import { Edit, Grid } from "@element-plus/icons-vue";
 import AssetDetailContent from "./AssetDetailContent.vue";
+import AssetQrDialog from "./AssetQrDialog.vue";
 import type { AssetDetail } from "../types";
 import { statusLabel, statusTone } from "../status";
 import StatusTag from "./StatusTag.vue";
@@ -15,6 +17,8 @@ const props = defineProps<{
   canEdit?: boolean;
   retry?: () => void | Promise<void>;
 }>();
+const { t } = useI18n();
+const showQrDialog = ref(false);
 
 const emit = defineEmits<{
   "update:modelValue": [value: boolean];
@@ -26,8 +30,8 @@ const assetIdentityMeta = computed(() => {
   const asset = props.asset;
   if (!asset) return "";
   const parts = [
-    asset.asset_no ? `资产编号 ${asset.asset_no}` : "",
-    asset.device_type_name ? `设备类型 ${asset.device_type_name}` : "",
+    asset.asset_no ? `${t('asset.code')} ${asset.asset_no}` : "",
+    asset.device_type_name ? `${t('asset.deviceType')} ${asset.device_type_name}` : "",
   ];
   return parts.filter(Boolean).join(" · ");
 });
@@ -46,24 +50,35 @@ const assetIdentityMeta = computed(() => {
     <template #header>
       <div class="asset-drawer-heading">
         <div class="asset-drawer-identity">
-          <span class="asset-drawer-kicker">资产详情</span>
           <div class="asset-drawer-title-row">
-            <h2 class="el-drawer__title">{{ asset?.name || "资产详情" }}</h2>
+            <h2
+              class="el-drawer__title asset-drawer-title"
+              :title="asset?.name || t('asset.assetDetail')"
+            >
+              {{ asset?.name || t('asset.assetDetail') }}
+            </h2>
             <StatusTag
               v-if="asset"
               :tone="statusTone(asset.status)"
               :label="statusLabel(asset.status)"
             />
           </div>
-          <p v-if="assetIdentityMeta" class="asset-drawer-meta">{{ assetIdentityMeta }}</p>
+          <p v-if="assetIdentityMeta" class="asset-drawer-meta" :title="assetIdentityMeta">{{ assetIdentityMeta }}</p>
         </div>
-        <div v-if="canEdit && asset" class="asset-drawer-actions">
+        <div v-if="asset" class="asset-drawer-actions">
           <el-button
+            text
+            type="primary"
+            :icon="Grid"
+            @click="showQrDialog = true"
+          >{{ t('asset.generateQr') }}</el-button>
+          <el-button
+            v-if="canEdit"
             text
             type="primary"
             :icon="Edit"
             @click="emit('edit')"
-          >编辑</el-button>
+          >{{ t('common.edit') }}</el-button>
         </div>
       </div>
     </template>
@@ -75,4 +90,5 @@ const assetIdentityMeta = computed(() => {
       :show-summary="false"
     />
   </el-drawer>
+  <AssetQrDialog v-if="asset" v-model="showQrDialog" :assets="[asset]" />
 </template>

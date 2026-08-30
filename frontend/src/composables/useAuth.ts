@@ -1,6 +1,9 @@
 import type { Ref } from "vue";
 import { ApiError, flattenError, isAbortError } from "../api";
 import type { RequestFn } from "../types/page-context";
+import { i18n, normalizeLocale, type Locale } from "../i18n";
+import { roleLabel } from "../business-enums";
+import { hasCapability } from "../permissions";
 
 export interface AuthDeps {
   request: RequestFn;
@@ -25,7 +28,7 @@ export interface AuthDeps {
   passwordError: Ref<string>;
   passwordFormErrors: Ref<Record<string, string>>;
   showProfileModal: Ref<boolean>;
-  profileForm: Ref<{ first_name: string; last_name: string; email: string }>;
+  profileForm: Ref<{ first_name: string; last_name: string; email: string; locale: Locale }>;
   profileLoading: Ref<boolean>;
   profileSaving: Ref<boolean>;
   profileError: Ref<string>;
@@ -35,6 +38,8 @@ export interface AuthDeps {
   lastLogin: Ref<string | null>;
   actionMessage: Ref<string>;
   settingsSection: Ref<string>;
+  locale: Ref<Locale>;
+  setLocale: (value: unknown, persist?: boolean) => Locale;
 }
 
 type AuthPayload = {
@@ -51,6 +56,7 @@ type AuthPayload = {
   permissions: string[];
   password_change_required: boolean;
   last_login?: string | null;
+  locale?: string;
 };
 
 export function useAuth(deps: AuthDeps) {
@@ -73,13 +79,15 @@ export function useAuth(deps: AuthDeps) {
       first_name: user.first_name || "",
       last_name: user.last_name || "",
       email: user.email || "",
+      locale: normalizeLocale(user.locale || deps.locale.value),
     };
-    deps.roleName.value = user.role_name || user.role_code;
+    deps.setLocale(user.locale || deps.locale.value);
+    deps.roleName.value = roleLabel(user.role_code, user.role_name || user.role_code);
     deps.userIsActive.value = user.is_active !== false;
     deps.lastLogin.value = user.last_login || null;
-    deps.isAdmin.value = Boolean(user.is_admin ?? user.is_staff);
     deps.roleCode.value = user.role_code;
     deps.permissions.value = user.permissions;
+    deps.isAdmin.value = hasCapability(deps.permissions.value, "organization.manage");
     deps.passwordChangeRequired.value = Boolean(user.password_change_required);
   }
 
@@ -90,7 +98,7 @@ export function useAuth(deps: AuthDeps) {
       deps.syncRouteState();
       deps.ensureRouteAccess();
       if (deps.passwordChangeRequired.value) openPasswordModal();
-      if (!deps.isAdmin.value && deps.settingsSection.value === "organization") {
+      if (!hasCapability(deps.permissions.value, "organization.manage") && deps.settingsSection.value === "organization") {
         deps.settingsSection.value = "system";
       }
     } catch (error) {
@@ -117,7 +125,7 @@ export function useAuth(deps: AuthDeps) {
       applyAuthPayload(user);
       deps.syncRouteState();
       deps.ensureRouteAccess();
-      if (!deps.isAdmin.value && deps.settingsSection.value === "organization") {
+      if (!hasCapability(deps.permissions.value, "organization.manage") && deps.settingsSection.value === "organization") {
         deps.settingsSection.value = "system";
       }
       deps.password.value = "";
@@ -133,10 +141,10 @@ export function useAuth(deps: AuthDeps) {
         const retryAfter = Number(details?.retry_after || 0);
         const minutes = retryAfter ? Math.ceil(retryAfter / 60) : 0;
         deps.loginError.value = minutes
-          ? `${error.message}（约 ${minutes} 分钟后重试）`
+          ? `${error.message} ${i18n.global.t("auth.loginRetryAfter", { minutes })}`
           : error.message;
       } else {
-        deps.loginError.value = error instanceof Error ? error.message : "登录失败";
+        deps.loginError.value = error instanceof Error ? error.message : i18n.global.t("auth.loginFailed");
       }
     }
   }
@@ -155,7 +163,7 @@ export function useAuth(deps: AuthDeps) {
       deps.showPasswordModal.value = false;
       resetPasswordState();
       deps.showProfileModal.value = false;
-      deps.profileForm.value = { first_name: "", last_name: "", email: "" };
+      deps.profileForm.value = { first_name: "", last_name: "", email: "", locale: deps.locale.value };
       deps.roleName.value = "";
       deps.userIsActive.value = false;
       deps.lastLogin.value = null;
@@ -173,7 +181,7 @@ export function useAuth(deps: AuthDeps) {
       return true;
     } catch (error) {
       if (isAbortError(error)) return false;
-      deps.profileError.value = error instanceof Error ? error.message : "个人资料加载失败";
+      deps.profileError.value = error instanceof Error ? error.message : i18n.global.t("auth.profileLoadFailed");
       return false;
     } finally {
       deps.profileLoading.value = false;
@@ -188,6 +196,7 @@ export function useAuth(deps: AuthDeps) {
     form.first_name = form.first_name.trim();
     form.last_name = form.last_name.trim();
     form.email = form.email.trim();
+    form.locale = normalizeLocale(form.locale);
     try {
       const user = await deps.request<AuthPayload>("/auth/me/", {
         method: "PATCH",
@@ -196,11 +205,12 @@ export function useAuth(deps: AuthDeps) {
           first_name: form.first_name,
           last_name: form.last_name,
           email: form.email,
+          locale: form.locale,
         }),
       });
       applyAuthPayload(user);
       deps.showProfileModal.value = false;
-      deps.actionMessage.value = "个人资料已保存";
+      deps.actionMessage.value = i18n.global.t("auth.profileSaved");
       return true;
     } catch (error) {
       const details = error && typeof error === "object" && "details" in error
@@ -214,7 +224,7 @@ export function useAuth(deps: AuthDeps) {
           .map((field) => [field, flattenError(source[field])] as const)
           .filter(([, message]) => Boolean(message)),
       );
-      deps.actionMessage.value = error instanceof Error ? error.message : "个人资料保存失败";
+      deps.actionMessage.value = error instanceof Error ? error.message : i18n.global.t("auth.profileSaveFailed");
       return false;
     } finally {
       deps.profileSaving.value = false;
@@ -241,7 +251,7 @@ export function useAuth(deps: AuthDeps) {
       deps.passwordChangeRequired.value = false;
       deps.passwordError.value = "";
       deps.passwordForm.value = { old_password: "", new_password: "", confirm_password: "" };
-      deps.actionMessage.value = "密码已修改，请妥善保存";
+      deps.actionMessage.value = i18n.global.t("auth.passwordChanged");
       if (wasRequired) await deps.bootstrapApplication();
     } catch (error) {
       const details = error && typeof error === "object" && "details" in error
@@ -258,7 +268,7 @@ export function useAuth(deps: AuthDeps) {
         fieldErrors.old_password = flattenError(source.detail);
       }
       deps.passwordFormErrors.value = fieldErrors;
-      deps.passwordError.value = error instanceof Error ? error.message : "修改失败";
+      deps.passwordError.value = error instanceof Error ? error.message : i18n.global.t("auth.passwordChangeFailed");
       deps.actionMessage.value = deps.passwordError.value;
     } finally {
       deps.passwordSaving.value = false;

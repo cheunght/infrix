@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed } from "vue";
+import { useI18n } from "vue-i18n";
 import type { CustomFieldSchema } from "../../types";
 
 const props = withDefaults(
@@ -10,6 +11,7 @@ const props = withDefaults(
   }>(),
   { disabled: false },
 );
+const { t } = useI18n();
 
 const emit = defineEmits<{
   "update:modelValue": [value: unknown];
@@ -43,8 +45,8 @@ const multiselectValue = computed(() =>
     : [],
 );
 
-const inputPlaceholder = computed(() => props.field.placeholder || `请输入${props.field.name}`);
-const selectPlaceholder = computed(() => props.field.placeholder || `请选择${props.field.name}`);
+const inputPlaceholder = computed(() => props.field.placeholder || `${t('common.enter')}${props.field.name}`);
+const selectPlaceholder = computed(() => props.field.placeholder || `${t('common.select')}${props.field.name}`);
 const activeOptions = computed(() => (props.field.options || []).filter((option) => option.is_active));
 
 function update(value: unknown) {

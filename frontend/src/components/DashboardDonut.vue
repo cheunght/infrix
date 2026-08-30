@@ -1,5 +1,7 @@
 <script setup lang="ts">
 import { computed } from "vue";
+import { useI18n } from "vue-i18n";
+import { statusLabel } from "../status";
 
 type DonutItem = {
   label: string;
@@ -17,9 +19,16 @@ const props = withDefaults(
     centerLabel?: string;
     selectable?: boolean;
   }>(),
-  { centerLabel: "总数", selectable: false },
+  { selectable: false },
 );
+const { t } = useI18n();
 defineEmits<{ select: [item: DonutItem] }>();
+
+const centerLabel = computed(() => props.centerLabel || t("common.totalCount"));
+
+function displayLabel(item: DonutItem): string {
+  return item.status ? statusLabel(item.status) : item.label;
+}
 
 const radius = 43;
 const circumference = 2 * Math.PI * radius;
@@ -59,11 +68,11 @@ const segments = computed(() => {
       </div>
     </div>
     <div class="dashboard-donut-legend">
-      <div class="dashboard-legend-header" aria-hidden="true">
+      <div class="dashboard-legend-header dashboard-list-header" aria-hidden="true">
         <span></span>
-        <span>状态</span>
-        <span>数量</span>
-        <span>占比</span>
+        <span>{{ t('common.status') }}</span>
+        <span>{{ t('common.quantity') }}</span>
+        <span>{{ t('common.percentage') }}</span>
       </div>
       <component
         v-for="item in items"
@@ -75,11 +84,11 @@ const segments = computed(() => {
         @click="selectable && $emit('select', item)"
       >
         <i :style="{ backgroundColor: item.color }" aria-hidden="true"></i>
-        <span>{{ item.label }}</span>
+        <span>{{ displayLabel(item) }}</span>
         <strong>{{ item.count }}</strong>
         <small>{{ total ? ((item.count / total) * 100).toFixed(1) : "0.0" }}%</small>
       </component>
-      <el-empty v-if="!items.length || !total" description="暂无数据" :image-size="42" />
+      <el-empty v-if="!items.length || !total" :description="t('common.noData')" :image-size="42" />
     </div>
   </div>
 </template>

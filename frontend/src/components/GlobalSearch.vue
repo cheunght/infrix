@@ -4,11 +4,13 @@ import { computed, ref, watch } from "vue";
 import type { Asset, FaultEvent, Rack } from "../types";
 import type { GlobalSearchModule, GlobalSearchState } from "../composables/useGlobalSearch";
 import { rackStatusLabel } from "../business-enums";
+import { useI18n } from "vue-i18n";
 
 const props = defineProps<{
   modelValue: string;
   state: GlobalSearchState;
 }>();
+const { t, locale } = useI18n();
 
 const emit = defineEmits<{
   "update:modelValue": [value: string];
@@ -98,11 +100,11 @@ function assetLocation(asset: Asset) {
     asset.data_center || allocation?.data_center,
     asset.server_room || allocation?.server_room,
     asset.rack_code || allocation?.rack_code,
-  ].filter(Boolean).join(" / ") || "未上架";
+  ].filter(Boolean).join(" / ") || t("globalSearch.notMounted");
 }
 
 function rackLocation(rack: Rack) {
-  return [rack.data_center_name, rack.server_room_name].filter(Boolean).join(" / ") || "未关联位置";
+  return [rack.data_center_name, rack.server_room_name].filter(Boolean).join(" / ") || t("globalSearch.noLocation");
 }
 
 function rackStatus(rack: Rack) {
@@ -110,7 +112,7 @@ function rackStatus(rack: Rack) {
 }
 
 function faultSummary(fault: FaultEvent) {
-  return fault.reason?.trim() || fault.description?.trim() || "故障记录";
+  return fault.reason?.trim() || fault.description?.trim() || t("globalSearch.faultRecord");
 }
 
 function faultDetail(fault: FaultEvent) {
@@ -120,12 +122,12 @@ function faultDetail(fault: FaultEvent) {
 }
 
 function faultStatus(fault: FaultEvent) {
-  return fault.is_closed ? "已关闭" : "未关闭";
+  return fault.is_closed ? t("globalSearch.closed") : t("globalSearch.open");
 }
 
 function formatDateTime(value: string) {
   const date = new Date(value);
-  return Number.isNaN(date.getTime()) ? "—" : date.toLocaleString("zh-CN");
+  return Number.isNaN(date.getTime()) ? t("common.notAvailable") : date.toLocaleString(locale.value);
 }
 
 function hasMore(module: GlobalSearchModule) {
@@ -150,8 +152,8 @@ function hasMore(module: GlobalSearchModule) {
       <el-input
         class="global-search-input itam-search-field"
         :model-value="modelValue"
-        placeholder="搜索资产 / 机柜 / 故障"
-        aria-label="全局搜索资产、机柜或故障"
+        :placeholder="t('globalSearch.placeholder')"
+        :aria-label="t('globalSearch.ariaLabel')"
         role="combobox"
         aria-autocomplete="list"
         :aria-expanded="state.open ? 'true' : 'false'"
@@ -176,16 +178,16 @@ function hasMore(module: GlobalSearchModule) {
       id="global-search-results"
       class="global-search-panel"
       role="region"
-      aria-label="搜索结果"
+      :aria-label="t('globalSearch.results')"
     >
       <div class="global-search-panel__header">
-        <span>搜索结果</span>
-        <span v-if="state.loading" class="global-search-panel__status">正在搜索…</span>
+        <span>{{ t('globalSearch.results') }}</span>
+        <span v-if="state.loading" class="global-search-panel__status">{{ t('globalSearch.searching') }}</span>
       </div>
 
       <div v-if="state.loading" class="global-search-panel__loading" role="status">
         <el-icon class="is-loading"><Loading /></el-icon>
-        <span>正在搜索资产、机柜和故障</span>
+        <span>{{ t('globalSearch.searchAssetsRacksFaults') }}</span>
       </div>
 
       <section
@@ -193,8 +195,8 @@ function hasMore(module: GlobalSearchModule) {
         class="global-search-section"
       >
         <div class="global-search-section__header">
-          <span>资产</span>
-          <el-button v-if="hasMore('assets')" link class="global-search-section__view-all" @click="emit('view-all', 'assets')">查看全部资产结果</el-button>
+          <span>{{ t('globalSearch.asset') }}</span>
+          <el-button v-if="hasMore('assets')" link class="global-search-section__view-all" @click="emit('view-all', 'assets')">{{ t('globalSearch.viewAllAssets') }}</el-button>
         </div>
         <el-button
           v-for="(asset, index) in state.assets"
@@ -209,15 +211,15 @@ function hasMore(module: GlobalSearchModule) {
           @mouseenter="activeIndex = entryIndex('assets', index)"
           @click="emit('select-asset', asset)"
         >
-          <span class="global-search-result__marker global-search-result__marker--asset">资产</span>
+          <span class="global-search-result__marker global-search-result__marker--asset">{{ t('globalSearch.asset') }}</span>
           <span class="global-search-result__body">
             <strong>{{ asset.asset_no }} · {{ asset.name }}</strong>
-            <small>{{ asset.device_type_name || "未分类" }} · {{ assetLocation(asset) }}</small>
+            <small>{{ asset.device_type_name || t('common.unknown') }} · {{ assetLocation(asset) }}</small>
           </span>
           <el-icon class="global-search-result__arrow"><ArrowRight /></el-icon>
         </el-button>
         <div v-if="state.assetError" class="global-search-section__error" role="alert">
-          资产结果加载失败：{{ state.assetError }}
+          {{ t('globalSearch.asset') }}: {{ state.assetError }}
         </div>
       </section>
 
@@ -226,8 +228,8 @@ function hasMore(module: GlobalSearchModule) {
         class="global-search-section"
       >
         <div class="global-search-section__header">
-          <span>机柜</span>
-          <el-button v-if="hasMore('racks')" link class="global-search-section__view-all" @click="emit('view-all', 'racks')">查看全部机柜结果</el-button>
+          <span>{{ t('globalSearch.rack') }}</span>
+          <el-button v-if="hasMore('racks')" link class="global-search-section__view-all" @click="emit('view-all', 'racks')">{{ t('globalSearch.viewAllRacks') }}</el-button>
         </div>
         <el-button
           v-for="(rack, index) in state.racks"
@@ -242,7 +244,7 @@ function hasMore(module: GlobalSearchModule) {
           @mouseenter="activeIndex = entryIndex('racks', index)"
           @click="emit('select-rack', rack)"
         >
-          <span class="global-search-result__marker global-search-result__marker--rack">机柜</span>
+          <span class="global-search-result__marker global-search-result__marker--rack">{{ t('globalSearch.rack') }}</span>
           <span class="global-search-result__body">
             <strong>{{ rack.code }}<template v-if="rack.name"> · {{ rack.name }}</template></strong>
             <small>{{ rackLocation(rack) }} · {{ rackStatus(rack) }}</small>
@@ -250,7 +252,7 @@ function hasMore(module: GlobalSearchModule) {
           <el-icon class="global-search-result__arrow"><ArrowRight /></el-icon>
         </el-button>
         <div v-if="state.rackError" class="global-search-section__error" role="alert">
-          机柜结果加载失败：{{ state.rackError }}
+          {{ t('globalSearch.rack') }}: {{ state.rackError }}
         </div>
       </section>
 
@@ -259,8 +261,8 @@ function hasMore(module: GlobalSearchModule) {
         class="global-search-section"
       >
         <div class="global-search-section__header">
-          <span>故障</span>
-          <el-button v-if="hasMore('faults')" link class="global-search-section__view-all" @click="emit('view-all', 'faults')">查看全部故障结果</el-button>
+          <span>{{ t('globalSearch.fault') }}</span>
+          <el-button v-if="hasMore('faults')" link class="global-search-section__view-all" @click="emit('view-all', 'faults')">{{ t('globalSearch.viewAllFaults') }}</el-button>
         </div>
         <el-button
           v-for="(fault, index) in state.faults"
@@ -275,7 +277,7 @@ function hasMore(module: GlobalSearchModule) {
           @mouseenter="activeIndex = entryIndex('faults', index)"
           @click="emit('select-fault', fault)"
         >
-          <span class="global-search-result__marker global-search-result__marker--fault">故障</span>
+          <span class="global-search-result__marker global-search-result__marker--fault">{{ t('globalSearch.fault') }}</span>
           <span class="global-search-result__body">
             <strong>{{ faultSummary(fault) }}</strong>
             <small>{{ fault.asset_no }} · {{ fault.asset_name }}<template v-if="faultDetail(fault)"> · {{ faultDetail(fault) }}</template></small>
@@ -284,7 +286,7 @@ function hasMore(module: GlobalSearchModule) {
           <el-icon class="global-search-result__arrow"><ArrowRight /></el-icon>
         </el-button>
         <div v-if="state.faultError" class="global-search-section__error" role="alert">
-          故障结果加载失败：{{ state.faultError }}
+          {{ t('globalSearch.fault') }}: {{ state.faultError }}
         </div>
       </section>
 
@@ -292,7 +294,7 @@ function hasMore(module: GlobalSearchModule) {
         v-if="!state.loading && state.hasSearched && !hasResults && !hasErrors"
         class="global-search-panel__empty"
       >
-        未找到与“{{ state.query }}”相关的资产、机柜或故障
+        {{ t('globalSearch.noResults', { query: state.query }) }}
       </div>
     </div>
   </el-popover>

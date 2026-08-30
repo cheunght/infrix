@@ -19,6 +19,10 @@ import type {
 import type { SettingsSection } from "../router";
 import type { CapabilityFn, RequestFn } from "../types/page-context";
 import { applySystemSettings as applySystemSettingsSnapshot } from "../system-settings";
+import { currentLocale, i18n } from "../i18n";
+
+const tr = (key: string, params?: Record<string, unknown>): string =>
+  String(params ? i18n.global.t(key, params) : i18n.global.t(key));
 
 export interface SettingsDeps {
   request: RequestFn;
@@ -27,7 +31,6 @@ export interface SettingsDeps {
   confirmAction: (message: string) => Promise<boolean>;
   reload: () => void;
   can: CapabilityFn;
-  isAdmin: Ref<boolean>;
   currentUsername: Ref<string>;
   settingsSection: Ref<SettingsSection>;
   actionMessage: Ref<string>;
@@ -161,18 +164,18 @@ export function useSettings(deps: SettingsDeps) {
   const userSaving = ref(false);
   const userPendingId = ref<number | null>(null);
   const userFormErrors = ref<FormErrors>({});
-  const userFormRules: FormRules = {
-    username: [{ required: true, message: "请输入用户名", trigger: "blur" }],
-    last_name: [{ required: true, message: "请输入姓", trigger: "blur" }],
-    first_name: [{ required: true, message: "请输入名", trigger: "blur" }],
-    email: [{ type: "email", message: "请输入有效邮箱", trigger: ["blur", "change"] }],
-    role_code: [{ required: true, message: "请选择角色", trigger: "change" }],
+  const userFormRules = computed<FormRules>(() => ({
+    username: [{ required: true, message: tr("settings.usernameRequired"), trigger: "blur" }],
+    last_name: [{ required: true, message: tr("settings.lastNameRequired"), trigger: "blur" }],
+    first_name: [{ required: true, message: tr("settings.firstNameRequired"), trigger: "blur" }],
+    email: [{ type: "email", message: tr("validation.invalidEmail"), trigger: ["blur", "change"] }],
+    role_code: [{ required: true, message: tr("settings.roleRequired"), trigger: "change" }],
     password: [
       {
         validator: (_rule, value, callback) => {
           const password = String(value || "");
-          if (!editingUser.value && !password) callback(new Error("请输入密码"));
-          else if (password && password.length < 8) callback(new Error("密码至少需要 8 位"));
+          if (!editingUser.value && !password) callback(new Error(tr("settings.passwordRequired")));
+          else if (password && password.length < 8) callback(new Error(tr("validation.passwordMin")));
           else callback();
         },
         trigger: ["blur", "change"],
@@ -184,25 +187,25 @@ export function useSettings(deps: SettingsDeps) {
           const password = String(userForm.value.password || "");
           const confirmation = String(value || "");
           if (editingUser.value && !password && !confirmation) callback();
-          else if (!confirmation) callback(new Error("请确认密码"));
-          else if (confirmation !== password) callback(new Error("两次输入的密码不一致"));
+          else if (!confirmation) callback(new Error(tr("settings.confirmPasswordRequired")));
+          else if (confirmation !== password) callback(new Error(tr("validation.passwordMismatch")));
           else callback();
         },
         trigger: ["blur", "change"],
       },
     ],
-  };
-  const userResetFormRules: FormRules = {
+  }));
+  const userResetFormRules = computed<FormRules>(() => ({
     new_password: [
-      { required: true, message: "请输入新密码", trigger: "blur" },
-      { min: 8, message: "密码至少需要 8 位", trigger: ["blur", "change"] },
+      { required: true, message: tr("settings.newPasswordRequired"), trigger: "blur" },
+      { min: 8, message: tr("validation.passwordMin"), trigger: ["blur", "change"] },
     ],
     confirm_password: [
-      { required: true, message: "请确认新密码", trigger: "blur" },
+      { required: true, message: tr("settings.confirmNewPasswordRequired"), trigger: "blur" },
       {
         validator: (_rule, value, callback) => {
           if (String(value || "") !== String(userResetForm.value.new_password || "")) {
-            callback(new Error("两次输入的密码不一致"));
+            callback(new Error(tr("validation.passwordMismatch")));
           } else {
             callback();
           }
@@ -210,7 +213,7 @@ export function useSettings(deps: SettingsDeps) {
         trigger: ["blur", "change"],
       },
     ],
-  };
+  }));
   const dictionarySection = ref<"manufacturers" | "device-types" | "spare-categories">("manufacturers");
   const dictionaryPage = ref(1);
   const dictionaryPageSize = ref(50);
@@ -298,6 +301,7 @@ export function useSettings(deps: SettingsDeps) {
   }
 
   async function loadSystemSettings(version = deps.beginLoad()): Promise<boolean> {
+    if (!deps.can("settings.view")) return false;
     const requestId = ++systemSettingsRequestId.value;
     systemSettingsLoading.value = true;
     systemSettingsError.value = "";
@@ -310,7 +314,7 @@ export function useSettings(deps: SettingsDeps) {
       return true;
     } catch (error) {
       if (requestId === systemSettingsRequestId.value && deps.isCurrentLoad(version) && !isAbortError(error)) {
-        systemSettingsError.value = errorMessage(error, "系统参数加载失败");
+        systemSettingsError.value = errorMessage(error, tr("settings.systemSettingsLoadFailed"));
       }
       return false;
     } finally {
@@ -319,6 +323,12 @@ export function useSettings(deps: SettingsDeps) {
   }
 
   async function loadDictionaries(version = deps.beginLoad()): Promise<boolean> {
+    if (!(
+      deps.can("settings.view") ||
+      deps.can("assets.view") ||
+      deps.can("licenses.view") ||
+      deps.can("spares.view")
+    )) return false;
     const requestId = ++dictionaryRequestId.value;
     const params = new URLSearchParams({ page_size: "100", is_active: "all" });
     if (dictionarySearch.value.trim()) params.set("search", dictionarySearch.value.trim());
@@ -328,9 +338,17 @@ export function useSettings(deps: SettingsDeps) {
       const spareCategoryRequest = deps.can("spares.view") || deps.can("spares.manage") || deps.can("settings.manage")
         ? deps.request<PageResult<SparePartCategory> | SparePartCategory[]>(`/spare-part-categories/?${params.toString()}`)
         : Promise.resolve<SparePartCategory[]>([]);
+      const manufacturerRequest = (
+        deps.can("settings.view") || deps.can("assets.view") || deps.can("licenses.view") || deps.can("spares.view")
+      )
+        ? deps.request<PageResult<DictionaryItem> | DictionaryItem[]>(`/manufacturers/?${params.toString()}`)
+        : Promise.resolve<DictionaryItem[]>([]);
+      const deviceTypeRequest = deps.can("settings.view")
+        ? deps.request<PageResult<DictionaryItem> | DictionaryItem[]>(`/device-types/?${params.toString()}`)
+        : Promise.resolve<DictionaryItem[]>([]);
       const [manufacturerResult, deviceTypeResult, spareCategoryResult] = await Promise.all([
-        deps.request<PageResult<DictionaryItem> | DictionaryItem[]>(`/manufacturers/?${params.toString()}`),
-        deps.request<PageResult<DictionaryItem> | DictionaryItem[]>(`/device-types/?${params.toString()}`),
+        manufacturerRequest,
+        deviceTypeRequest,
         spareCategoryRequest,
       ]);
       if (manufacturerResult == null || deviceTypeResult == null || spareCategoryResult == null) return false;
@@ -342,7 +360,7 @@ export function useSettings(deps: SettingsDeps) {
       return true;
     } catch (error) {
       if (requestId === dictionaryRequestId.value && deps.isCurrentLoad(version) && !isAbortError(error)) {
-        dictionaryError.value = errorMessage(error, "字典数据加载失败");
+        dictionaryError.value = errorMessage(error, tr("settings.dictionaryDataLoadFailed"));
       }
       return false;
     } finally {
@@ -351,6 +369,7 @@ export function useSettings(deps: SettingsDeps) {
   }
 
   async function loadCustomFields(version = deps.beginLoad()): Promise<boolean> {
+    if (!deps.can("custom_fields.view")) return false;
     const requestId = ++customFieldRequestId.value;
     const params = new URLSearchParams({ page_size: "100", is_active: customFieldActive.value || "all" });
     if (customFieldDeviceType.value) params.set("device_type", customFieldDeviceType.value);
@@ -364,7 +383,7 @@ export function useSettings(deps: SettingsDeps) {
       return true;
     } catch (error) {
       if (requestId === customFieldRequestId.value && deps.isCurrentLoad(version) && !isAbortError(error)) {
-        customFieldListError.value = errorMessage(error, "自定义字段数据加载失败");
+        customFieldListError.value = errorMessage(error, tr("settings.customFieldDataLoadFailed"));
       }
       return false;
     } finally {
@@ -373,7 +392,7 @@ export function useSettings(deps: SettingsDeps) {
   }
 
   async function loadCustomFieldOptions(field = editingCustomField.value, version = deps.beginLoad()): Promise<boolean> {
-    if (!field) return false;
+    if (!field || !deps.can("custom_fields.view")) return false;
     const requestId = ++customFieldOptionRequestId.value;
     customFieldOptionLoading.value = true;
     customFieldOptionError.value = "";
@@ -386,7 +405,7 @@ export function useSettings(deps: SettingsDeps) {
       return true;
     } catch (error) {
       if (requestId === customFieldOptionRequestId.value && deps.isCurrentLoad(version) && !isAbortError(error)) {
-        customFieldOptionError.value = errorMessage(error, "字段选项加载失败");
+        customFieldOptionError.value = errorMessage(error, tr("settings.fieldOptionDataLoadFailed"));
       }
       return false;
     } finally {
@@ -395,6 +414,7 @@ export function useSettings(deps: SettingsDeps) {
   }
 
   async function loadTags(version = deps.beginLoad()): Promise<boolean> {
+    if (!deps.can("tags.view")) return false;
     const requestId = ++tagRequestId.value;
     const params = new URLSearchParams({ page_size: "100", is_active: tagActive.value || "all" });
     if (tagSearch.value.trim()) params.set("search", tagSearch.value.trim());
@@ -408,7 +428,7 @@ export function useSettings(deps: SettingsDeps) {
       return true;
     } catch (error) {
       if (requestId === tagRequestId.value && deps.isCurrentLoad(version) && !isAbortError(error)) {
-        tagListError.value = errorMessage(error, "标签数据加载失败");
+        tagListError.value = errorMessage(error, tr("settings.tagDataLoadFailed"));
       }
       return false;
     } finally {
@@ -417,6 +437,7 @@ export function useSettings(deps: SettingsDeps) {
   }
 
   async function loadOrganization(version = deps.beginLoad()): Promise<boolean> {
+    if (!deps.can("organization.manage")) return false;
     clearUserSelection();
     const requestId = ++organizationRequestId.value;
     const userRequestIdAtStart = ++userRequestId.value;
@@ -452,8 +473,8 @@ export function useSettings(deps: SettingsDeps) {
         const userError = userResult.status === "rejected" ? userResult.reason : undefined;
         if (!isAbortError(userError) && userRequestIdAtStart === userRequestId.value) {
           userListError.value = userResult.status === "rejected"
-            ? errorMessage(userResult.reason, "用户数据加载失败")
-            : "用户数据加载失败";
+            ? errorMessage(userResult.reason, tr("settings.userDataLoadFailed"))
+            : tr("settings.userDataLoadFailed");
         }
       }
       if (roleResult.status === "fulfilled" && roleResult.value != null) {
@@ -463,15 +484,15 @@ export function useSettings(deps: SettingsDeps) {
         const roleError = roleResult.status === "rejected" ? roleResult.reason : undefined;
         if (!isAbortError(roleError)) {
           roleListError.value = roleResult.status === "rejected"
-            ? errorMessage(roleResult.reason, "角色数据加载失败")
-            : "角色数据加载失败";
+            ? errorMessage(roleResult.reason, tr("settings.roleDataLoadFailed"))
+            : tr("settings.roleDataLoadFailed");
         }
       }
       return refreshed;
     } catch (error) {
       if (requestId === organizationRequestId.value && deps.isCurrentLoad(version) && !isAbortError(error)) {
-        userListError.value = errorMessage(error, "用户数据加载失败");
-        roleListError.value = errorMessage(error, "角色数据加载失败");
+        userListError.value = errorMessage(error, tr("settings.userDataLoadFailed"));
+        roleListError.value = errorMessage(error, tr("settings.roleDataLoadFailed"));
       }
       return false;
     } finally {
@@ -480,6 +501,7 @@ export function useSettings(deps: SettingsDeps) {
   }
 
   async function loadUsers(version = deps.beginLoad(), allowPageClamp = true): Promise<boolean> {
+    if (!deps.can("organization.manage")) return false;
     clearUserSelection();
     const organizationRequest = ++organizationRequestId.value;
     const requestId = ++userRequestId.value;
@@ -509,7 +531,7 @@ export function useSettings(deps: SettingsDeps) {
       return true;
     } catch (error) {
       if (requestId === userRequestId.value && organizationRequest === organizationRequestId.value && deps.isCurrentLoad(version) && !isAbortError(error)) {
-        userListError.value = errorMessage(error, "用户数据加载失败");
+        userListError.value = errorMessage(error, tr("settings.userDataLoadFailed"));
       }
       return false;
     } finally {
@@ -518,6 +540,7 @@ export function useSettings(deps: SettingsDeps) {
   }
 
   async function loadAuditLogs(version = deps.beginLoad(), allowPageClamp = true): Promise<boolean> {
+    if (!deps.can("audit.view")) return false;
     const requestId = ++auditRequestId.value;
     const params = new URLSearchParams({ page: String(auditPage.value), page_size: String(auditPageSize.value) });
     Object.entries(auditFilters.value).forEach(([key, value]) => {
@@ -527,7 +550,7 @@ export function useSettings(deps: SettingsDeps) {
     auditListLoading.value = true;
     auditListError.value = "";
     if (auditFilters.value.start && auditFilters.value.end && auditFilters.value.start > auditFilters.value.end) {
-      auditListError.value = "开始日期不能晚于结束日期";
+      auditListError.value = tr("settings.auditInvalidDateRange");
       auditListLoading.value = false;
       return false;
     }
@@ -545,7 +568,7 @@ export function useSettings(deps: SettingsDeps) {
       return true;
     } catch (error) {
       if (requestId === auditRequestId.value && deps.isCurrentLoad(version) && !isAbortError(error)) {
-        auditListError.value = errorMessage(error, "操作日志数据加载失败");
+        auditListError.value = errorMessage(error, tr("settings.auditDataLoadFailed"));
       }
       return false;
     } finally {
@@ -554,6 +577,7 @@ export function useSettings(deps: SettingsDeps) {
   }
 
   function openUserModal(user?: ManagedUser) {
+    if (!deps.can("organization.manage")) return;
     editingUser.value = user || null;
     userFormErrors.value = {};
     userForm.value = user
@@ -582,8 +606,8 @@ export function useSettings(deps: SettingsDeps) {
   }
 
   function userProtectionReason(user: ManagedUser): string {
-    if (user.is_superuser) return "超级管理员账号受保护，不能停用或删除";
-    if (user.username === deps.currentUsername.value) return "不能停用或删除当前登录账号";
+    if (user.is_superuser) return tr("settings.superuserProtected");
+    if (user.username === deps.currentUsername.value) return tr("settings.currentUserProtected");
     return "";
   }
 
@@ -600,6 +624,7 @@ export function useSettings(deps: SettingsDeps) {
   }
 
   function openUserResetModal(user: ManagedUser) {
+    if (!deps.can("organization.manage")) return;
     resettingUser.value = user;
     userResetError.value = "";
     userResetForm.value = { new_password: "", confirm_password: "" };
@@ -609,6 +634,7 @@ export function useSettings(deps: SettingsDeps) {
   }
 
   async function saveUser() {
+    if (!deps.can("organization.manage")) return;
     if (userSaving.value) return;
     userSaving.value = true;
     let saved = false;
@@ -640,18 +666,19 @@ export function useSettings(deps: SettingsDeps) {
         "role_code",
         "password",
       ]);
-      deps.actionMessage.value = errorMessage(error, "用户保存失败");
+      deps.actionMessage.value = errorMessage(error, tr("settings.userSaveFailed"));
     } finally {
       userSaving.value = false;
     }
     if (!saved) return;
     showUserModal.value = false;
-    deps.actionMessage.value = "用户账号已保存";
+    deps.actionMessage.value = tr("settings.userSaved");
     const refreshed = await loadUsers();
-    if (!refreshed && userListError.value) deps.actionMessage.value = "用户账号已保存，但用户列表刷新失败，请重试";
+    if (!refreshed && userListError.value) deps.actionMessage.value = tr("settings.userSavedRefreshFailed");
   }
 
   async function resetUserPassword() {
+    if (!deps.can("organization.manage")) return;
     const user = resettingUser.value;
     if (!user || userPendingId.value === user.id || userResetSaving.value) return;
     userPendingId.value = user.id;
@@ -668,7 +695,7 @@ export function useSettings(deps: SettingsDeps) {
       saved = true;
     } catch (error) {
       userResetFormErrors.value = extractFieldErrors(error, ["new_password", "confirm_password"]);
-      userResetError.value = errorMessage(error, "密码重置失败");
+      userResetError.value = errorMessage(error, tr("settings.passwordResetFailed"));
       deps.actionMessage.value = userResetError.value;
     } finally {
       userResetSaving.value = false;
@@ -679,10 +706,11 @@ export function useSettings(deps: SettingsDeps) {
     resettingUser.value = null;
     userResetError.value = "";
     userResetForm.value = { new_password: "", confirm_password: "" };
-    deps.actionMessage.value = "用户密码已重置";
+    deps.actionMessage.value = tr("settings.passwordReset");
   }
 
   async function toggleUser(user: ManagedUser) {
+    if (!deps.can("organization.manage")) return;
     if (userProtectionReason(user)) {
       deps.actionMessage.value = userProtectionReason(user);
       return;
@@ -695,21 +723,22 @@ export function useSettings(deps: SettingsDeps) {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ is_active: !user.is_active }),
       });
-      deps.actionMessage.value = user.is_active ? "用户已停用" : "用户已启用";
+      deps.actionMessage.value = user.is_active ? tr("settings.userDisabled") : tr("settings.userEnabled");
       const refreshed = await loadUsers();
-      if (!refreshed && userListError.value) deps.actionMessage.value = "用户状态已更新，但用户列表刷新失败，请重试";
+      if (!refreshed && userListError.value) deps.actionMessage.value = tr("settings.userStatusRefreshFailed");
     } catch (error) {
-      deps.actionMessage.value = errorMessage(error, "用户状态更新失败");
+      deps.actionMessage.value = errorMessage(error, tr("settings.userStatusFailed"));
     } finally {
       userPendingId.value = null;
     }
   }
 
   async function batchUpdateUserStatus(isActive: boolean) {
+    if (!deps.can("organization.manage")) return;
     const ids = [...selectedUserIds.value];
     if (!ids.length || userBatchSaving.value) return;
-    const actionLabel = isActive ? "启用" : "停用";
-    if (!(await deps.confirmAction(`确定${actionLabel}选中的 ${ids.length} 个用户吗？`))) return;
+    const actionLabel = isActive ? tr("status.enabled") : tr("status.disabled");
+    if (!(await deps.confirmAction(tr("settings.batchUserStatusConfirm", { action: actionLabel, count: ids.length })))) return;
     userBatchSaving.value = true;
     userBatchResult.value = null;
     showUserBatchResult.value = false;
@@ -722,16 +751,16 @@ export function useSettings(deps: SettingsDeps) {
       });
       userBatchResult.value = result;
       const mutationMessage = result.failed
-        ? `批量${actionLabel}完成：${result.succeeded} 项成功，${result.failed} 项失败`
-        : `已成功${actionLabel} ${result.succeeded} 个用户`;
+        ? tr("settings.batchUserStatusSummary", { action: actionLabel, succeeded: result.succeeded, failed: result.failed })
+        : tr("settings.batchUserStatusSuccess", { action: actionLabel, count: result.succeeded });
       deps.actionMessage.value = mutationMessage;
       const refreshed = await loadUsers();
       if (!refreshed) {
-        deps.actionMessage.value = `${mutationMessage}；用户列表刷新失败，请重新加载`;
+        deps.actionMessage.value = `${mutationMessage}; ${tr("common.refreshFailed")}. ${tr("common.retry")}.`;
       }
       if (result.failed) showUserBatchResult.value = true;
     } catch (error) {
-      deps.actionMessage.value = errorMessage(error, `批量${actionLabel}失败`);
+      deps.actionMessage.value = errorMessage(error, tr("settings.batchUserStatusFailed", { action: actionLabel }));
     } finally {
       userBatchSaving.value = false;
     }
@@ -744,6 +773,7 @@ export function useSettings(deps: SettingsDeps) {
   }
 
   async function deleteUser(user: ManagedUser) {
+    if (!deps.can("organization.manage")) return;
     if (userProtectionReason(user)) {
       deps.actionMessage.value = userProtectionReason(user);
       return;
@@ -751,13 +781,13 @@ export function useSettings(deps: SettingsDeps) {
     if (userPendingId.value === user.id) return;
     userPendingId.value = user.id;
     try {
-      if (!(await deps.confirmAction(`确定删除用户“${user.username}”吗？`))) return;
+      if (!(await deps.confirmAction(tr("settings.userDeleteConfirm", { username: user.username })))) return;
       await deps.request(`/users/${user.id}/`, { method: "DELETE" });
-      deps.actionMessage.value = "用户已删除";
+      deps.actionMessage.value = tr("settings.userDeleted");
       const refreshed = await loadUsers();
-      if (!refreshed && userListError.value) deps.actionMessage.value = "用户已删除，但用户列表刷新失败，请重试";
+      if (!refreshed && userListError.value) deps.actionMessage.value = tr("settings.userDeletedRefreshFailed");
     } catch (error) {
-      deps.actionMessage.value = errorMessage(error, "用户删除失败");
+      deps.actionMessage.value = errorMessage(error, tr("settings.userDeleteFailed"));
     } finally {
       userPendingId.value = null;
     }
@@ -765,6 +795,7 @@ export function useSettings(deps: SettingsDeps) {
 
 
   function openCustomFieldModal(field?: CustomField) {
+    if (!deps.can("custom_fields.manage")) return;
     editingCustomField.value = field || null;
     customFieldFormErrors.value = {};
     customFieldForm.value = field
@@ -827,6 +858,7 @@ export function useSettings(deps: SettingsDeps) {
   }
 
   async function saveCustomField() {
+    if (!deps.can("custom_fields.manage")) return;
     if (customFieldSaving.value) return;
     customFieldSaving.value = true;
     customFieldFormErrors.value = {};
@@ -867,17 +899,18 @@ export function useSettings(deps: SettingsDeps) {
         "filterable",
         "validation_config",
       ]);
-      deps.actionMessage.value = errorMessage(error, "自定义字段保存失败");
+      deps.actionMessage.value = errorMessage(error, tr("customField.saveFailed"));
     } finally {
       customFieldSaving.value = false;
     }
     if (!saved) return;
     showCustomFieldModal.value = false;
-    deps.actionMessage.value = "自定义字段已保存";
+    deps.actionMessage.value = tr("customField.saved");
     const refreshed = await loadCustomFields();
-    if (!refreshed && customFieldListError.value) deps.actionMessage.value = "自定义字段已保存，但列表刷新失败，请重试";
+    if (!refreshed && customFieldListError.value) deps.actionMessage.value = tr("customField.savedRefreshFailed");
   }
   async function toggleCustomField(field: CustomField) {
+    if (!deps.can("custom_fields.manage")) return;
     if (customFieldActionId.value === field.id) return;
     customFieldActionId.value = field.id;
     try {
@@ -886,36 +919,37 @@ export function useSettings(deps: SettingsDeps) {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ is_active: !field.is_active }),
       });
-      deps.actionMessage.value = field.is_active ? "自定义字段已停用" : "自定义字段已启用";
+      deps.actionMessage.value = field.is_active ? tr("customField.disabled") : tr("customField.enabled");
       const refreshed = await loadCustomFields();
-      if (!refreshed && customFieldListError.value) deps.actionMessage.value = "自定义字段状态已更新，但列表刷新失败，请重试";
+      if (!refreshed && customFieldListError.value) deps.actionMessage.value = tr("customField.statusRefreshFailed");
     } catch (error) {
-      deps.actionMessage.value = errorMessage(error, "自定义字段状态更新失败");
+      deps.actionMessage.value = errorMessage(error, tr("customField.statusFailed"));
     } finally {
       customFieldActionId.value = null;
     }
   }
   async function deleteCustomField(field: CustomField) {
+    if (!deps.can("custom_fields.manage")) return;
     if ((field.assets_count || 0) > 0) {
-      deps.actionMessage.value = "字段已有资产值，不能删除，请先停用";
+      deps.actionMessage.value = tr("customField.inUse");
       return;
     }
     if (customFieldActionId.value === field.id) return;
     customFieldActionId.value = field.id;
     try {
-      if (!(await deps.confirmAction(`确定删除字段“${field.name}”吗？`))) return;
+      if (!(await deps.confirmAction(tr("customField.deleteConfirm", { name: field.name })))) return;
       await deps.request(`/custom-fields/${field.id}/`, { method: "DELETE" });
-      deps.actionMessage.value = "自定义字段已删除";
+      deps.actionMessage.value = tr("customField.deleted");
       const refreshed = await loadCustomFields();
-      if (!refreshed && customFieldListError.value) deps.actionMessage.value = "自定义字段已删除，但列表刷新失败，请重试";
+      if (!refreshed && customFieldListError.value) deps.actionMessage.value = tr("customField.deletedRefreshFailed");
     } catch (error) {
-      deps.actionMessage.value = errorMessage(error, "自定义字段删除失败");
+      deps.actionMessage.value = errorMessage(error, tr("customField.deleteFailed"));
     } finally {
       customFieldActionId.value = null;
     }
   }
   function openCustomFieldOptionModal(field?: CustomField | null, option?: CustomFieldOption) {
-    if (!field) return;
+    if (!field || !deps.can("custom_fields.manage")) return;
     editingCustomField.value = field || null;
     editingCustomFieldOption.value = option || null;
     customFieldOptionFormErrors.value = {};
@@ -929,6 +963,7 @@ export function useSettings(deps: SettingsDeps) {
     return loadCustomFieldOptions(editingCustomField.value);
   }
   async function saveCustomFieldOption() {
+    if (!deps.can("custom_fields.manage")) return;
     if (!editingCustomField.value || customFieldOptionSaving.value) return;
     customFieldOptionSaving.value = true;
     customFieldOptionFormErrors.value = {};
@@ -952,39 +987,42 @@ export function useSettings(deps: SettingsDeps) {
         "label",
         "sort_order",
       ]);
-      deps.actionMessage.value = errorMessage(error, "字段选项保存失败");
+      deps.actionMessage.value = errorMessage(error, tr("customField.optionSaveFailed"));
     } finally {
       customFieldOptionSaving.value = false;
     }
     if (!saved) return;
     showCustomFieldOptionModal.value = false;
-    deps.actionMessage.value = "字段选项已保存";
+    deps.actionMessage.value = tr("customField.optionSaved");
     const refreshed = await loadCustomFields();
-    if (!refreshed && customFieldListError.value) deps.actionMessage.value = "字段选项已保存，但字段列表刷新失败，请重试";
+    if (!refreshed && customFieldListError.value) deps.actionMessage.value = tr("customField.optionSavedRefreshFailed");
   }
   async function deleteCustomFieldOption(option: CustomFieldOption) {
+    if (!deps.can("custom_fields.manage")) return;
     if (customFieldOptionActionId.value === option.id) return;
     customFieldOptionActionId.value = option.id;
     try {
-      if (!(await deps.confirmAction(`确定删除选项“${option.label}”吗？`))) return;
+      if (!(await deps.confirmAction(tr("customField.optionDeleteConfirm", { name: option.label })))) return;
       await deps.request(`/custom-field-options/${option.id}/`, { method: "DELETE" });
-      deps.actionMessage.value = "字段选项已删除";
+      deps.actionMessage.value = tr("customField.optionDeleted");
       const refreshed = await loadCustomFieldOptions(editingCustomField.value);
-      if (!refreshed && customFieldOptionError.value) deps.actionMessage.value = "字段选项已删除，但选项列表刷新失败，请重试";
+      if (!refreshed && customFieldOptionError.value) deps.actionMessage.value = tr("customField.optionDeletedRefreshFailed");
     } catch (error) {
-      deps.actionMessage.value = errorMessage(error, "字段选项删除失败");
+      deps.actionMessage.value = errorMessage(error, tr("customField.optionDeleteFailed"));
     } finally {
       customFieldOptionActionId.value = null;
     }
   }
 
   function openTagModal(tag?: Tag) {
+    if (!deps.can("tags.manage")) return;
     editingTag.value = tag || null;
     tagFormErrors.value = {};
     tagForm.value = tag ? { name: tag.name, is_active: tag.is_active } : { name: "", is_active: true };
     showTagModal.value = true;
   }
   async function saveTag() {
+    if (!deps.can("tags.manage")) return;
     if (tagSaving.value) return;
     tagSaving.value = true;
     tagFormErrors.value = {};
@@ -1000,17 +1038,18 @@ export function useSettings(deps: SettingsDeps) {
       saved = true;
     } catch (error) {
       tagFormErrors.value = extractFieldErrors(error, ["name"]);
-      deps.actionMessage.value = errorMessage(error, "标签保存失败");
+      deps.actionMessage.value = errorMessage(error, tr("tag.saveFailed"));
     } finally {
       tagSaving.value = false;
     }
     if (!saved) return;
     showTagModal.value = false;
-    deps.actionMessage.value = "标签已保存";
+    deps.actionMessage.value = tr("tag.saved");
     const refreshed = await loadTags();
-    if (!refreshed && tagListError.value) deps.actionMessage.value = "标签已保存，但列表刷新失败，请重试";
+    if (!refreshed && tagListError.value) deps.actionMessage.value = tr("tag.savedRefreshFailed");
   }
   async function toggleTag(tag: Tag) {
+    if (!deps.can("tags.manage")) return;
     if (tagActionId.value === tag.id) return;
     tagActionId.value = tag.id;
     try {
@@ -1019,30 +1058,31 @@ export function useSettings(deps: SettingsDeps) {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ is_active: !tag.is_active }),
       });
-      deps.actionMessage.value = tag.is_active ? "标签已停用" : "标签已启用";
+      deps.actionMessage.value = tag.is_active ? tr("tag.disabled") : tr("tag.enabled");
       const refreshed = await loadTags();
-      if (!refreshed && tagListError.value) deps.actionMessage.value = "标签状态已更新，但列表刷新失败，请重试";
+      if (!refreshed && tagListError.value) deps.actionMessage.value = tr("tag.statusRefreshFailed");
     } catch (error) {
-      deps.actionMessage.value = errorMessage(error, "标签状态更新失败");
+      deps.actionMessage.value = errorMessage(error, tr("tag.statusFailed"));
     } finally {
       tagActionId.value = null;
     }
   }
   async function deleteTag(tag: Tag) {
+    if (!deps.can("tags.manage")) return;
     if ((tag.assets_count || 0) > 0) {
-      deps.actionMessage.value = "标签正在被资产使用，不能删除，请先停用";
+      deps.actionMessage.value = tr("tag.inUse");
       return;
     }
     if (tagActionId.value === tag.id) return;
     tagActionId.value = tag.id;
     try {
-      if (!(await deps.confirmAction(`确定删除标签“${tag.name}”吗？`))) return;
+      if (!(await deps.confirmAction(tr("tag.deleteConfirm", { name: tag.name })))) return;
       await deps.request(`/tags/${tag.id}/`, { method: "DELETE" });
-      deps.actionMessage.value = "标签已删除";
+      deps.actionMessage.value = tr("tag.deleted");
       const refreshed = await loadTags();
-      if (!refreshed && tagListError.value) deps.actionMessage.value = "标签已删除，但列表刷新失败，请重试";
+      if (!refreshed && tagListError.value) deps.actionMessage.value = tr("tag.deletedRefreshFailed");
     } catch (error) {
-      deps.actionMessage.value = errorMessage(error, "标签删除失败");
+      deps.actionMessage.value = errorMessage(error, tr("tag.deleteFailed"));
     } finally {
       tagActionId.value = null;
     }
@@ -1068,10 +1108,10 @@ export function useSettings(deps: SettingsDeps) {
   const tagCount = computed(() => tags.value.length);
   const currentDictionaryLabel = computed(() =>
     dictionarySection.value === "manufacturers"
-      ? "厂商"
+      ? tr("settings.manufacturers")
       : dictionarySection.value === "device-types"
-        ? "设备类型"
-        : "备件类型",
+        ? tr("settings.deviceTypes")
+        : tr("settings.spareCategories"),
   );
   function dictionaryItemUsed(item: DictionaryItem) {
     return (
@@ -1084,6 +1124,7 @@ export function useSettings(deps: SettingsDeps) {
     );
   }
   function openDictionaryModal(item?: DictionaryItem) {
+    if (!canManageDictionary()) return;
     editingDictionary.value = item || null;
     dictionaryFormErrors.value = {};
     dictionaryForm.value = item
@@ -1127,7 +1168,7 @@ export function useSettings(deps: SettingsDeps) {
     const section = dictionarySection.value;
     const label = currentDictionaryLabel.value;
     if (!canManageDictionary(section)) {
-      deps.actionMessage.value = "当前账号没有管理该数据字典的权限";
+      deps.actionMessage.value = tr("settings.dictionaryPermissionDenied");
       return;
     }
     dictionarySaving.value = true;
@@ -1157,22 +1198,22 @@ export function useSettings(deps: SettingsDeps) {
       saved = true;
     } catch (error) {
       dictionaryFormErrors.value = extractFieldErrors(error, ["name", "code", "color"]);
-      deps.actionMessage.value = errorMessage(error, `${label}保存失败`);
+      deps.actionMessage.value = errorMessage(error, tr("settings.dictionarySaveFailed", { item: label }));
     } finally {
       dictionarySaving.value = false;
     }
     if (!saved) return;
     showDictionaryModal.value = false;
-    deps.actionMessage.value = `${label}已保存`;
+    deps.actionMessage.value = tr("settings.dictionarySaved", { item: label });
     const refreshed = await loadDictionaries();
-    if (!refreshed && dictionaryError.value) deps.actionMessage.value = `${label}已保存，但列表刷新失败，请重试`;
+    if (!refreshed && dictionaryError.value) deps.actionMessage.value = tr("settings.dictionarySavedRefreshFailed", { item: label });
   }
   async function toggleDictionary(item: DictionaryItem) {
     if (dictionaryActionId.value === item.id) return;
     const section = dictionarySection.value;
     const label = currentDictionaryLabel.value;
     if (!canManageDictionary(section)) {
-      deps.actionMessage.value = "当前账号没有管理该数据字典的权限";
+      deps.actionMessage.value = tr("settings.dictionaryPermissionDenied");
       return;
     }
     dictionaryActionId.value = item.id;
@@ -1183,11 +1224,13 @@ export function useSettings(deps: SettingsDeps) {
           ? "device-types"
           : "spare-part-categories";
       await deps.request(`/${base}/${item.id}/`, { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ is_active: !item.is_active }) });
-      deps.actionMessage.value = item.is_active ? `${label}已停用` : `${label}已启用`;
+      deps.actionMessage.value = item.is_active
+        ? tr("settings.dictionaryDisabled", { item: label })
+        : tr("settings.dictionaryEnabled", { item: label });
       const refreshed = await loadDictionaries();
-      if (!refreshed && dictionaryError.value) deps.actionMessage.value = `${label}状态已更新，但列表刷新失败，请重试`;
+      if (!refreshed && dictionaryError.value) deps.actionMessage.value = tr("settings.dictionaryStatusRefreshFailed", { item: label });
     } catch (error) {
-      deps.actionMessage.value = errorMessage(error, `${label}状态更新失败`);
+      deps.actionMessage.value = errorMessage(error, tr("settings.dictionaryStatusFailed", { item: label }));
     } finally {
       dictionaryActionId.value = null;
     }
@@ -1195,39 +1238,39 @@ export function useSettings(deps: SettingsDeps) {
   async function deleteDictionary(item: DictionaryItem) {
     if (dictionaryItemUsed(item)) {
       deps.actionMessage.value = dictionarySection.value === "manufacturers"
-        ? "厂商正在被资产、软件许可或备件使用，不能删除，请先停用"
+        ? tr("settings.manufacturerInUse")
         : dictionarySection.value === "spare-categories"
-          ? "备件类型正在被备件使用，不能删除，请先停用"
-          : "字典项正在被资产使用，请先停用";
+          ? tr("settings.spareCategoryInUse")
+          : tr("settings.dictionaryItemInUse");
       return;
     }
     if (dictionaryActionId.value === item.id) return;
     const section = dictionarySection.value;
     const label = currentDictionaryLabel.value;
     if (!canManageDictionary(section)) {
-      deps.actionMessage.value = "当前账号没有管理该数据字典的权限";
+      deps.actionMessage.value = tr("settings.dictionaryPermissionDenied");
       return;
     }
     dictionaryActionId.value = item.id;
     try {
-      if (!(await deps.confirmAction(`确定删除${label}“${item.name}”吗？`))) return;
+      if (!(await deps.confirmAction(tr("settings.dictionaryDeleteConfirm", { item: label, name: item.name })))) return;
       const base = section === "manufacturers"
         ? "manufacturers"
         : section === "device-types"
           ? "device-types"
           : "spare-part-categories";
       await deps.request(`/${base}/${item.id}/`, { method: "DELETE" });
-      deps.actionMessage.value = `${label}已删除`;
+      deps.actionMessage.value = tr("settings.dictionaryDeleted", { item: label });
       const refreshed = await loadDictionaries();
-      if (!refreshed && dictionaryError.value) deps.actionMessage.value = `${label}已删除，但列表刷新失败，请重试`;
+      if (!refreshed && dictionaryError.value) deps.actionMessage.value = tr("settings.dictionaryDeletedRefreshFailed", { item: label });
     } catch (error) {
-      deps.actionMessage.value = errorMessage(error, `${label}删除失败`);
+      deps.actionMessage.value = errorMessage(error, tr("settings.dictionaryDeleteFailed", { item: label }));
     } finally {
       dictionaryActionId.value = null;
     }
   }
   function formatDateTime(value: string | null) {
-    return value ? new Date(value).toLocaleString("zh-CN") : "—";
+    return value ? new Date(value).toLocaleString(currentLocale.value) : tr("common.notAvailable");
   }
   function retryOrganization() {
     return loadOrganization();
@@ -1327,7 +1370,7 @@ export function useSettings(deps: SettingsDeps) {
   async function saveSystemSettings(): Promise<void> {
     if (systemSettingsSaving.value) return;
     if (!deps.can("settings.manage")) {
-      deps.actionMessage.value = "当前账号没有管理系统设置的权限";
+      deps.actionMessage.value = tr("settings.settingsPermissionDenied");
       return;
     }
     systemSettingsSaving.value = true;
@@ -1344,13 +1387,13 @@ export function useSettings(deps: SettingsDeps) {
       systemSettings.value = result;
       syncSystemSettingsForm(result);
       applySystemSettingsSnapshot(result);
-      deps.actionMessage.value = "系统设置已保存";
+      deps.actionMessage.value = tr("settings.settingsSaved");
     } catch (error) {
       systemSettingsFormErrors.value = extractFieldErrors(
         error,
         ["default_page_size", "default_asset_status"],
       );
-      deps.actionMessage.value = errorMessage(error, "系统设置保存失败");
+      deps.actionMessage.value = errorMessage(error, tr("settings.settingsSaveFailed"));
     } finally {
       systemSettingsSaving.value = false;
     }
@@ -1375,10 +1418,11 @@ export function useSettings(deps: SettingsDeps) {
   }
 
   async function resetSystem() {
+    if (!deps.can("system.reset")) return;
     if (systemResetSaving.value) return;
     systemResetError.value = "";
     if (systemResetConfirmation.value !== systemResetConfirmationToken.value) {
-      systemResetError.value = `请输入 ${systemResetConfirmationToken.value} 以确认恢复系统初始状态`;
+      systemResetError.value = tr("settings.resetConfirmationError", { token: systemResetConfirmationToken.value });
       return;
     }
     systemResetSaving.value = true;
@@ -1393,7 +1437,7 @@ export function useSettings(deps: SettingsDeps) {
       systemResetError.value = "";
       deps.reload();
     } catch (error) {
-      systemResetError.value = errorMessage(error, "系统恢复失败，请稍后重试");
+      systemResetError.value = errorMessage(error, tr("settings.resetFailed"));
     } finally {
       systemResetSaving.value = false;
     }

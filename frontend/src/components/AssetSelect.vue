@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, ref, watch } from "vue";
+import { useI18n } from "vue-i18n";
 import { isAbortError, pageItems, type PageResult } from "../api";
 import type { Asset } from "../types";
 import type { RequestFn } from "../types/page-context";
@@ -17,7 +18,6 @@ const props = withDefaults(defineProps<{
   minSearchLength?: number;
   pageSize?: number;
 }>(), {
-  placeholder: "输入资产编号、名称或序列号搜索",
   disabled: false,
   clearable: true,
   selectedAsset: null,
@@ -29,6 +29,8 @@ const emit = defineEmits<{
   "update:modelValue": [value: string];
   select: [asset: AssetOption | null];
 }>();
+const { t } = useI18n();
+const effectivePlaceholder = computed(() => props.placeholder || t("assetSelect.placeholder"));
 
 const queryText = ref("");
 const resultOptions = ref<AssetOption[]>([]);
@@ -58,8 +60,8 @@ function secondaryText(asset: AssetOption) {
   const parts: string[] = [];
   const serialNumber = asset.serial_number?.trim();
   const model = (asset.model || asset.model_name || "").trim();
-  if (serialNumber) parts.push(`序列号：${serialNumber}`);
-  if (model) parts.push(`型号：${model}`);
+  if (serialNumber) parts.push(`${t('asset.serialNumber')}：${serialNumber}`);
+  if (model) parts.push(`${t('asset.model')}：${model}`);
   return parts.join(" · ");
 }
 
@@ -86,9 +88,9 @@ const emptyMessage = computed(() => {
   if (searchError.value) return searchError.value;
   if (hydrationError.value) return hydrationError.value;
   if (queryText.value && queryText.value.length < props.minSearchLength) {
-    return `请输入至少 ${props.minSearchLength} 个字符开始搜索`;
+    return t("assetSelect.minSearchLength", { count: props.minSearchLength });
   }
-  return "未找到匹配资产";
+  return t("assetSelect.noMatch");
 });
 
 function cancelPendingSearch() {
@@ -141,7 +143,7 @@ async function hydrateSelectedAsset(value: string | number | null) {
     selectedOption.value = asset;
   } catch (error) {
     if (sequence !== hydrationSequence || nextController.signal.aborted || isAbortError(error)) return;
-    hydrationError.value = "资产信息加载失败，请重试";
+    hydrationError.value = t("assetSelect.hydrationFailed");
   } finally {
     if (sequence === hydrationSequence) {
       hydrationLoading.value = false;
@@ -174,7 +176,7 @@ async function fetchAssets(query: string, sequence: number) {
     if (sequence !== requestSequence || nextController.signal.aborted || isAbortError(error)) return;
     resultOptions.value = [];
     lastLoadedQuery.value = null;
-    searchError.value = "资产加载失败，请重试";
+    searchError.value = t("assetSelect.searchFailed");
   } finally {
     if (sequence === requestSequence) {
       loading.value = false;
@@ -282,10 +284,10 @@ onBeforeUnmount(() => {
     reserve-keyword
     :remote-method="scheduleSearch"
     :loading="loading || hydrationLoading"
-    loading-text="正在加载资产..."
+    :loading-text="t('assetSelect.loading')"
     :no-data-text="emptyMessage"
     :no-match-text="emptyMessage"
-    :placeholder="placeholder"
+    :placeholder="effectivePlaceholder"
     :disabled="disabled"
     :clearable="clearable"
     :validate-event="false"
@@ -308,7 +310,7 @@ onBeforeUnmount(() => {
     <template #empty>
       <div class="asset-select__empty" role="status">
         <span>{{ emptyMessage }}</span>
-        <el-button v-if="searchError || hydrationError" link type="primary" @click.stop="retrySearch">重试</el-button>
+        <el-button v-if="searchError || hydrationError" link type="primary" @click.stop="retrySearch">{{ t('common.retry') }}</el-button>
       </div>
     </template>
   </el-select>

@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed } from "vue";
+import { useI18n } from "vue-i18n";
 import { Delete, Download, Edit } from "@element-plus/icons-vue";
 import PagedTable from "./PagedTable.vue";
 import SearchField from "./SearchField.vue";
@@ -9,11 +10,12 @@ import PageContent from "./page/PageContent.vue";
 import PageToolbar from "./page/PageToolbar.vue";
 import StatusTag from "./StatusTag.vue";
 import { statusTone } from "../status";
-import { LICENSE_STATUS_OPTIONS } from "../business-enums";
+import { businessOptionLabel, LICENSE_STATUS_OPTIONS } from "../business-enums";
 import ResourceState from "./ResourceState.vue";
 import TableIconButton from "./TableIconButton.vue";
 
 const props = defineProps<{ context: LicenseContext }>();
+const { t } = useI18n();
 const context = props.context;
 const {
   licenseListLoading,
@@ -50,8 +52,8 @@ const licenseHasFilters = computed(
         <template #search>
           <SearchField
             v-model="licenseKeyword"
-            placeholder="搜索软件名称、厂商或许可类型"
-            aria-label="搜索许可证"
+            :placeholder="t('license.searchPlaceholder')"
+            :aria-label="t('license.title')"
             :loading="licenseListLoading"
             @search="searchLicenses"
           />
@@ -60,22 +62,22 @@ const licenseHasFilters = computed(
           <div class="page-toolbar__filter-group">
             <el-select
               v-model="licenseStatus"
-              placeholder="全部状态"
+              :placeholder="t('license.allStatuses')"
               clearable
               @change="searchLicenses"
             >
-              <el-option v-for="option in LICENSE_STATUS_OPTIONS" :key="option.value" :label="option.label" :value="option.value" />
+              <el-option v-for="option in LICENSE_STATUS_OPTIONS" :key="option.value" :label="businessOptionLabel(LICENSE_STATUS_OPTIONS, option.value)" :value="option.value" />
             </el-select>
           </div>
         </template>
         <template #actions>
           <el-button v-if="can('licenses.export')" class="toolbar-secondary-action toolbar-export-action" :icon="Download" :loading="exportingLicenses" :disabled="exportingLicenses" @click="exportLicenses">
-            导出数据
+            {{ t('asset.exportData') }}
           </el-button>
         </template>
         <template #primary>
           <el-button v-if="can('licenses.manage')" class="page-primary-action" type="primary" @click="openLicenseModal()">
-            新增许可
+            {{ t('license.addLicense') }}
           </el-button>
         </template>
         </PageToolbar>
@@ -84,8 +86,8 @@ const licenseHasFilters = computed(
       <PageContent surface class="license-list-card">
         <ResourceState :error="licenseListError" @retry="retryLicenseList">
           <template #error="{ error }">
-            <el-alert title="许可证数据加载失败" :description="error" type="error" show-icon :closable="false" />
-            <el-button link type="primary" @click="retryLicenseList">重新加载</el-button>
+            <el-alert :title="t('license.licenseLoadFailed')" :description="error" type="error" show-icon :closable="false" />
+            <el-button link type="primary" @click="retryLicenseList">{{ t('common.retry') }}</el-button>
           </template>
           <PagedTable
             v-model:current-page="licensePage"
@@ -99,30 +101,30 @@ const licenseHasFilters = computed(
             :data="licenses"
             v-loading="licenseListLoading"
             table-layout="fixed"
-            empty-text="暂无许可证记录"
+            :empty-text="t('license.noLicenses')"
           >
           <el-table-column
             prop="name"
-            label="软件名称"
+            :label="t('license.softwareName')"
             min-width="180"
           />
           <el-table-column
-            label="厂商"
+            :label="t('license.vendor')"
             min-width="120"
           >
             <template #default="{ row }">{{ row.manufacturer?.name || "—" }}</template>
           </el-table-column>
           <el-table-column
             prop="license_type"
-            label="许可类型"
+            :label="t('license.licenseType')"
             min-width="120"
           />
-          <el-table-column label="授权使用" min-width="190">
+          <el-table-column :label="t('license.authorizedUse')" min-width="190">
             <template #default="{ row }">
               <div class="license-capacity-cell">
                 <div class="license-capacity-values">
                   <strong>{{ row.used_count }} / {{ row.authorized_count }}</strong>
-                  <span>剩余 {{ row.remaining_count }}</span>
+                  <span>{{ t('license.remaining', { count: row.remaining_count }) }}</span>
                 </div>
                 <div class="license-capacity-progress">
                   <el-progress
@@ -134,29 +136,29 @@ const licenseHasFilters = computed(
               </div>
             </template>
           </el-table-column>
-          <el-table-column label="到期日期" width="135">
-            <template #default="{ row }">{{ row.expiry_date || "长期有效" }}</template>
+          <el-table-column :label="t('license.expiryDate')" width="135">
+            <template #default="{ row }">{{ row.expiry_date || t('license.longTermValid') }}</template>
           </el-table-column>
-          <el-table-column label="状态" width="110">
+          <el-table-column :label="t('common.status')" width="110">
             <template #default="{ row }">
               <StatusTag
                 :tone="statusTone(row.status)"
-                :label="row.status_label"
+                :label="businessOptionLabel(LICENSE_STATUS_OPTIONS, row.status)"
               />
             </template>
           </el-table-column>
           <el-table-column
             v-if="can('licenses.manage')"
-            label="操作"
+            :label="t('common.operation')"
             fixed="right"
-            width="120"
+            width="132"
           >
             <template #default="{ row }">
               <div class="ep-table-actions">
-                <TableIconButton :icon="Edit" label="编辑" type="primary" @click="openLicenseModal(row)" />
+                <TableIconButton :icon="Edit" :label="t('common.edit')" type="primary" @click="openLicenseModal(row)" />
                 <TableIconButton
                   :icon="Delete"
-                  label="删除"
+                  :label="t('common.delete')"
                   type="danger"
                   :loading="deletingLicenseId === row.id"
                   :disabled="deletingLicenseId !== null && deletingLicenseId !== row.id"
@@ -166,8 +168,8 @@ const licenseHasFilters = computed(
             </template>
           </el-table-column>
           <template #empty>
-            <el-empty :image-size="56" :description="licenseHasFilters ? '没有符合当前筛选条件的许可证' : '暂无许可证记录'">
-              <el-button v-if="licenseHasFilters" link type="primary" @click="resetLicenseFilters">清除筛选</el-button>
+            <el-empty :image-size="56" :description="licenseHasFilters ? t('license.noMatchingLicenses') : t('license.noLicenses')">
+              <el-button v-if="licenseHasFilters" link type="primary" @click="resetLicenseFilters">{{ t('common.clearFilters') }}</el-button>
             </el-empty>
           </template>
           </el-table>

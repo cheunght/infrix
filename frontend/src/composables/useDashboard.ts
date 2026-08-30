@@ -1,11 +1,14 @@
-import { computed, ref, type Ref } from "vue";
+import { computed, ref } from "vue";
 import { isAbortError } from "../api";
 import type { DashboardOverview } from "../types";
+import type { CapabilityFn } from "../types/page-context";
+import { currentLocale, i18n } from "../i18n";
 
 export interface DashboardApi {
   request: <T>(path: string, options?: RequestInit) => Promise<T>;
   beginLoad: () => number;
   isCurrentLoad: (version: number) => boolean;
+  can: CapabilityFn;
 }
 
 export function useDashboard(api: DashboardApi) {
@@ -15,12 +18,13 @@ export function useDashboard(api: DashboardApi) {
   const dashboardUpdatedAt = ref<string | null>(null);
 
   async function loadDashboardData(version = api.beginLoad()): Promise<boolean> {
+    if (!api.can("dashboard.view")) return false;
     dashboardLoading.value = true;
     dashboardError.value = "";
     try {
       const result = await api.request<DashboardOverview>("/reports/dashboard/");
       if (!api.isCurrentLoad(version)) return false;
-      if (result == null) throw new Error("Dashboard 返回数据为空");
+      if (result == null) throw new Error(i18n.global.t("common.noData"));
       dashboard.value = result;
       dashboardUpdatedAt.value = new Date().toISOString();
       return true;
@@ -28,7 +32,7 @@ export function useDashboard(api: DashboardApi) {
       if (api.isCurrentLoad(version) && !isAbortError(error)) {
         dashboardError.value = error instanceof Error && error.message
           ? error.message
-          : "Dashboard 数据加载失败";
+          : i18n.global.t("dashboard.dataLoadFailed");
       }
       return false;
     } finally {
@@ -55,11 +59,11 @@ export function useDashboard(api: DashboardApi) {
   }
 
   function dashboardDate(value: string) {
-    return new Date(value).toLocaleDateString("zh-CN");
+    return new Date(value).toLocaleDateString(currentLocale.value);
   }
 
   function dashboardDateTime(value: string) {
-    return new Date(value).toLocaleString("zh-CN", {
+    return new Date(value).toLocaleString(currentLocale.value, {
       month: "2-digit",
       day: "2-digit",
       hour: "2-digit",
@@ -68,7 +72,11 @@ export function useDashboard(api: DashboardApi) {
   }
 
   function dashboardAlertLevel(level: string) {
-    return level === "critical" ? "严重" : level === "warning" ? "警告" : "提醒";
+    return level === "critical"
+      ? i18n.global.t("dashboard.critical")
+      : level === "warning"
+        ? i18n.global.t("dashboard.warning")
+        : i18n.global.t("dashboard.notice");
   }
 
   return {

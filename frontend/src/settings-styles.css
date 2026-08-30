@@ -26,11 +26,13 @@
 }
 
 .settings-maintenance-container {
-  max-width: 840px;
+  width: 100%;
+  max-width: none;
 }
 
 .settings-system-container {
-  max-width: 900px;
+  width: 100%;
+  max-width: none;
 }
 
 .settings-system {
@@ -45,18 +47,21 @@
   gap: var(--space-lg, 16px);
 }
 
-.settings-system__heading h2 {
+.settings-system__heading h2,
+.settings-maintenance__intro h2 {
   margin: 0;
   color: var(--el-text-color-primary);
-  font-size: 16px;
+  font-size: var(--el-font-size-medium, 16px);
   font-weight: 600;
-  line-height: 1.5;
+  line-height: 22px;
 }
 
-.settings-system__heading p {
+.settings-system__heading p,
+.settings-maintenance__intro p {
   margin: var(--space-xs, 4px) 0 0;
   color: var(--el-text-color-secondary);
-  line-height: 1.6;
+  font-size: var(--el-font-size-base, 14px);
+  line-height: var(--el-line-height-primary, 24px);
 }
 
 .settings-system__actions {
@@ -98,19 +103,11 @@
   gap: var(--space-xs, 4px);
 }
 
-.settings-maintenance__intro h2 {
-  margin: 0;
-  color: var(--el-text-color-primary);
-  font-size: 16px;
-  font-weight: 600;
-  line-height: 1.5;
-}
-
-.settings-maintenance__intro p,
 .settings-maintenance__confirm p {
   margin: 0;
   color: var(--el-text-color-secondary);
-  line-height: 1.6;
+  font-size: var(--el-font-size-base, 14px);
+  line-height: var(--el-line-height-primary, 24px);
 }
 
 .settings-maintenance__action {
@@ -174,6 +171,15 @@
 
 .custom-field-validation .el-form-item__content {
   display: block;
+}
+
+/* Keep English table headings readable at the same compact density as the
+   Chinese baseline.  Long phrases may wrap at their spaces, but individual
+   words such as "Required" must not be split by the table cell. */
+.settings-custom-field-table .el-table__header .cell,
+.settings-tag-table .el-table__header .cell {
+  overflow-wrap: normal;
+  word-break: normal;
 }
 
 .audit-log-table .el-table__body-wrapper .cell {

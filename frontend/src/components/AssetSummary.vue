@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed } from "vue";
+import { useI18n } from "vue-i18n";
 import { statusLabel, statusTone } from "../status";
 import StatusTag from "./StatusTag.vue";
 
@@ -40,6 +41,7 @@ const props = withDefaults(
     showLocation: false,
   },
 );
+const { t } = useI18n();
 
 function text(value: unknown): string {
   return String(value ?? "").trim();
@@ -68,11 +70,11 @@ function normalizeAssetSummary(asset: AssetSummaryAsset): NormalizedAssetSummary
 
   return {
     assetNo: text(asset.asset_no),
-    name: text(asset.name || asset.asset_name) || "未命名资产",
+    name: text(asset.name || asset.asset_name) || t("asset.unlisted"),
     type: text(asset.device_type_name),
     manufacturer: text(asset.manufacturer_name),
     status,
-    statusLabel: text(asset.status_label) || statusLabel(status),
+    statusLabel: statusLabel(status),
     serialNumber: text(asset.serial_number),
     location: text(asset.location_label || asset.location) || [dataCenter, room, rackCode, uRange].filter(Boolean).join(" / "),
   };
@@ -83,7 +85,7 @@ const primaryText = computed(() => [normalizedAsset.value.assetNo, normalizedAss
 const secondaryText = computed(() => [
   normalizedAsset.value.type,
   normalizedAsset.value.manufacturer,
-  normalizedAsset.value.serialNumber ? `SN：${normalizedAsset.value.serialNumber}` : "",
+  normalizedAsset.value.serialNumber ? `${t('asset.serialNumber')}：${normalizedAsset.value.serialNumber}` : "",
 ].filter(Boolean).join(" · "));
 const hasStatus = computed(() => Boolean(props.showStatus && normalizedAsset.value.status));
 </script>
@@ -98,7 +100,7 @@ const hasStatus = computed(() => Boolean(props.showStatus && normalizedAsset.val
       <StatusTag v-if="hasStatus" size="small" :tone="statusTone(normalizedAsset.status)" :label="normalizedAsset.statusLabel" />
     </div>
     <div v-if="showLocation && normalizedAsset.location" class="asset-summary__location" :title="normalizedAsset.location">
-      位置：{{ normalizedAsset.location }}
+      {{ t('common.location') }}：{{ normalizedAsset.location }}
     </div>
   </div>
 </template>

@@ -137,14 +137,14 @@ class UserSerializer(serializers.ModelSerializer):
         read_only_fields = ["id", "display_name", "is_staff", "is_superuser", "groups", "assigned_role_code", "assigned_role_name", "last_login", "date_joined"]
 
 
-class CurrentUserProfileSerializer(serializers.ModelSerializer):
+class CurrentUserProfileSerializer(serializers.Serializer):
     first_name = serializers.CharField(required=False, allow_blank=True, max_length=150, trim_whitespace=True)
     last_name = serializers.CharField(required=False, allow_blank=True, max_length=150, trim_whitespace=True)
     email = serializers.EmailField(required=False, allow_blank=True, max_length=254, trim_whitespace=True)
-
-    class Meta:
-        model = User
-        fields = ["first_name", "last_name", "email"]
+    locale = serializers.ChoiceField(
+        choices=UserSecurityProfile.LOCALE_CHOICES,
+        required=False,
+    )
 
 
 class AdminPasswordResetSerializer(serializers.Serializer):

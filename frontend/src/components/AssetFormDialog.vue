@@ -1,6 +1,7 @@
 <!-- UX Reference: standard create/edit form. Reuse interaction patterns, not asset-specific fields. -->
 <script setup lang="ts">
 import { computed, nextTick, ref, watch } from "vue";
+import { useI18n } from "vue-i18n";
 import type { FormInstance, FormRules } from "element-plus";
 import type { AssetFormContext } from "../types/page-context";
 import type { CustomFieldSchema, Tag } from "../types";
@@ -9,9 +10,10 @@ import DynamicFieldRenderer from "./fields/DynamicFieldRenderer.vue";
 import FieldHelp from "./FieldHelp.vue";
 import FormDialogShell from "./FormDialogShell.vue";
 import MoneyInput from "./MoneyInput.vue";
-import { ASSET_STATUS_OPTIONS } from "../business-enums";
+import { ASSET_STATUS_OPTIONS, businessOptionLabel } from "../business-enums";
 
 const props = defineProps<{ context: AssetFormContext }>();
+const { t } = useI18n();
 const context = props.context;
 const {
   showAssetModal,
@@ -57,7 +59,7 @@ type DynamicFieldGroup = { name: string; fields: CustomFieldSchema[] };
 const dynamicFieldGroups = computed<DynamicFieldGroup[]>(() => {
   const groups = new Map<string, CustomFieldSchema[]>();
   for (const field of visibleAssetCustomFields.value) {
-    const groupName = field.group?.trim() || "其它";
+    const groupName = field.group?.trim() || t("asset.otherInfo");
     const fields = groups.get(groupName) || [];
     fields.push(field);
     groups.set(groupName, fields);
@@ -73,9 +75,9 @@ const selectableTags = computed<Tag[]>(() => {
   return Array.from(merged.values()).filter((tag) => tag.is_active || selectedIds.has(String(tag.id)));
 });
 
-const rackPlacementHelp = "不上架设备无需选择数据中心、机房、机柜和 U 位。";
-const depreciationHelp = "折旧方法：直线法";
-const residualRateHelp = "填写 0～100，例如 5 表示 5%。";
+const rackPlacementHelp = computed(() => t("assetForm.rackPlacementHelp"));
+const depreciationHelp = computed(() => t("assetForm.depreciationHelp"));
+const residualRateHelp = computed(() => t("assetForm.residualRateHelp"));
 
 const rackMountedSelectValue = computed({
   get: () => (assetForm.value.rack_mounted ? "mounted" : "unmounted"),
@@ -128,7 +130,7 @@ const residualRateValue = computed<number | null>({
 
 const requiredRule = (label: string) => ({
   required: true,
-  message: `请输入${label}`,
+  message: t("assetForm.fieldRequired", { field: label }),
   trigger: "submit",
 });
 
@@ -139,7 +141,7 @@ const ipRule = {
     const ipv4 = /^(?:(?:25[0-5]|2[0-4]\d|1?\d?\d)(?:\.|$)){4}$/;
     const ipv6 = /^[0-9a-f:]+$/i;
     if (ipv4.test(input) || (input.includes(":") && ipv6.test(input))) return callback();
-    callback(new Error("请输入有效的 IP 地址"));
+    callback(new Error(t("assetForm.validIp")));
   },
   trigger: "submit",
 };
@@ -147,7 +149,7 @@ const ipRule = {
 const dateRule = {
   validator: (_rule: unknown, value: unknown, callback: (error?: Error) => void) => {
     if (!value || /^\d{4}-\d{2}-\d{2}$/.test(String(value))) return callback();
-    callback(new Error("日期格式应为 YYYY-MM-DD"));
+    callback(new Error(t("assetForm.dateFormat")));
   },
   trigger: "submit",
 };
@@ -159,12 +161,12 @@ const rackLocationRule = {
     const end = Number(assetForm.value.rack_end_u);
     const total = Number(assetForm.value.rack_total_u);
     if (!assetForm.value.data_center || !assetForm.value.server_room_id || !assetForm.value.rack_id) {
-      return callback(new Error("请选择完整的机柜位置"));
+      return callback(new Error(t("assetForm.completeRackLocation")));
     }
     if (!Number.isInteger(start) || !Number.isInteger(end) || start < 1 || end < start) {
-      return callback(new Error("请输入有效的起止 U 位"));
+      return callback(new Error(t("assetForm.validURange")));
     }
-    if (total > 0 && end > total) return callback(new Error(`结束 U 位不能超过 ${total}U`));
+    if (total > 0 && end > total) return callback(new Error(t("assetForm.endUExceeded", { count: total })));
     callback();
   },
   trigger: "submit",
@@ -173,7 +175,7 @@ const rackLocationRule = {
 const depreciationPurchaseAmountRule = {
   validator: (_rule: unknown, value: unknown, callback: (error?: Error) => void) => {
     if (!assetForm.value.depreciation_enabled) return callback();
-    if (!isPositiveDecimalString(value)) return callback(new Error("请先填写有效的采购金额后再配置折旧"));
+    if (!isPositiveDecimalString(value)) return callback(new Error(t("assetForm.purchaseAmountRequired")));
     callback();
   },
   trigger: "submit",
@@ -182,8 +184,8 @@ const depreciationPurchaseAmountRule = {
 const depreciationStartDateRule = {
   validator: (_rule: unknown, value: unknown, callback: (error?: Error) => void) => {
     if (!assetForm.value.depreciation_enabled) return callback();
-    if (!value) return callback(new Error("请输入折旧起算日"));
-    if (!/^\d{4}-\d{2}-\d{2}$/.test(String(value))) return callback(new Error("折旧起算日格式应为 YYYY-MM-DD"));
+    if (!value) return callback(new Error(t("assetForm.depreciationStartRequired")));
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(String(value))) return callback(new Error(t("assetForm.depreciationStartFormat")));
     callback();
   },
   trigger: "submit",
@@ -192,7 +194,7 @@ const depreciationStartDateRule = {
 const depreciationYearsRule = {
   validator: (_rule: unknown, value: unknown, callback: (error?: Error) => void) => {
     if (!assetForm.value.depreciation_enabled) return callback();
-    if (!Number.isInteger(value) || Number(value) < 1) return callback(new Error("折旧年限必须是大于等于 1 的整数"));
+    if (!Number.isInteger(value) || Number(value) < 1) return callback(new Error(t("assetForm.depreciationYears")));
     callback();
   },
   trigger: "submit",
@@ -201,8 +203,8 @@ const depreciationYearsRule = {
 const residualRateRule = {
   validator: (_rule: unknown, value: unknown, callback: (error?: Error) => void) => {
     if (!assetForm.value.depreciation_enabled) return callback();
-    if (String(value ?? "").trim() === "") return callback(new Error("请输入残值率"));
-    if (percentageToRate(value) === null) return callback(new Error("残值率必须填写 0～100 之间的百分数，最多 2 位小数"));
+    if (String(value ?? "").trim() === "") return callback(new Error(t("assetForm.residualRateRequired")));
+    if (percentageToRate(value) === null) return callback(new Error(t("assetForm.residualRateInvalid")));
     callback();
   },
   trigger: "submit",
@@ -226,49 +228,49 @@ function customFieldRule(field: CustomFieldSchema) {
   return {
     validator: (_rule: unknown, value: unknown, callback: (error?: Error) => void) => {
       const empty = isCustomFieldEmpty(field, value);
-      if (empty) return callback(field.required ? new Error(`请输入${field.name}`) : undefined);
+      if (empty) return callback(field.required ? new Error(t("assetForm.fieldRequired", { field: field.name })) : undefined);
 
       const config = field.validation_config || {};
       if (field.field_type === "text" || field.field_type === "textarea") {
         const length = String(value).length;
         if (config.min_length != null && length < config.min_length) {
-          return callback(new Error(`${field.name}至少需要 ${config.min_length} 个字符`));
+          return callback(new Error(t("assetForm.fieldMinLength", { field: field.name, count: config.min_length })));
         }
         if (config.max_length != null && length > config.max_length) {
-          return callback(new Error(`${field.name}不能超过 ${config.max_length} 个字符`));
+          return callback(new Error(t("assetForm.fieldMaxLength", { field: field.name, count: config.max_length })));
         }
       }
 
       if (field.field_type === "number") {
         const number = Number(value);
-        if (!Number.isFinite(number)) return callback(new Error(`${field.name}必须是有效数字`));
+        if (!Number.isFinite(number)) return callback(new Error(t("assetForm.fieldNumber", { field: field.name })));
         const min = finiteConfigNumber(config.min);
         const max = finiteConfigNumber(config.max);
-        if (min !== undefined && number < min) return callback(new Error(`${field.name}不能小于 ${min}`));
-        if (max !== undefined && number > max) return callback(new Error(`${field.name}不能大于 ${max}`));
+        if (min !== undefined && number < min) return callback(new Error(t("assetForm.fieldMin", { field: field.name, count: min })));
+        if (max !== undefined && number > max) return callback(new Error(t("assetForm.fieldMax", { field: field.name, count: max })));
         const precision = finiteConfigNumber(config.precision);
         if (precision !== undefined && Number.isInteger(precision) && precision >= 0) {
           const factor = 10 ** precision;
           if (Number.isFinite(factor) && Math.abs(number * factor - Math.round(number * factor)) > 1e-8) {
-            return callback(new Error(`${field.name}最多保留 ${precision} 位小数`));
+            return callback(new Error(t("assetForm.fieldPrecision", { field: field.name, count: precision })));
           }
         }
       }
 
       if (field.field_type === "date") {
         const date = String(value);
-        if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) return callback(new Error(`${field.name}日期格式应为 YYYY-MM-DD`));
-        if (config.min_date && date < config.min_date) return callback(new Error(`${field.name}不能早于 ${config.min_date}`));
-        if (config.max_date && date > config.max_date) return callback(new Error(`${field.name}不能晚于 ${config.max_date}`));
+        if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) return callback(new Error(t("assetForm.fieldDateFormat", { field: field.name })));
+        if (config.min_date && date < config.min_date) return callback(new Error(t("assetForm.fieldDateMin", { field: field.name, date: config.min_date })));
+        if (config.max_date && date > config.max_date) return callback(new Error(t("assetForm.fieldDateMax", { field: field.name, date: config.max_date })));
       }
 
       if (field.field_type === "multiselect") {
-        if (!Array.isArray(value)) return callback(new Error(`${field.name}必须是选项数组`));
+        if (!Array.isArray(value)) return callback(new Error(t("assetForm.fieldArray", { field: field.name })));
         if (config.min_items != null && value.length < config.min_items) {
-          return callback(new Error(`${field.name}至少选择 ${config.min_items} 项`));
+          return callback(new Error(t("assetForm.fieldMinItems", { field: field.name, count: config.min_items })));
         }
         if (config.max_items != null && value.length > config.max_items) {
-          return callback(new Error(`${field.name}最多选择 ${config.max_items} 项`));
+          return callback(new Error(t("assetForm.fieldMaxItems", { field: field.name, count: config.max_items })));
         }
       }
 
@@ -276,7 +278,7 @@ function customFieldRule(field: CustomFieldSchema) {
         const activeValues = new Set((field.options || []).filter((option) => option.is_active).map((option) => option.value));
         const submittedValues = field.field_type === "select" ? [value] : (Array.isArray(value) ? value : []);
         if (submittedValues.some((item) => typeof item !== "string" || !activeValues.has(item))) {
-          return callback(new Error(`${field.name}包含无效或已停用选项`));
+          return callback(new Error(t("assetForm.fieldInvalidOptions", { field: field.name })));
         }
       }
 
@@ -288,10 +290,10 @@ function customFieldRule(field: CustomFieldSchema) {
 
 const assetRules = computed<FormRules>(() => {
   const rules: FormRules = {
-    asset_no: [requiredRule("资产编号")],
-    name: [requiredRule("资产名称")],
-    device_type: [requiredRule("设备类型")],
-    status: [requiredRule("资产状态")],
+    asset_no: [requiredRule(t("asset.code"))],
+    name: [requiredRule(t("asset.name"))],
+    device_type: [requiredRule(t("asset.deviceType"))],
+    status: [requiredRule(t("asset.status"))],
     business_ip: [ipRule],
     management_ip: [ipRule],
     oob_ip: [ipRule],
@@ -351,8 +353,8 @@ watch(() => assetForm.value.purchase_date, () => {
   <FormDialogShell
     v-model="showAssetModal"
     class="asset-form-dialog"
-    :title="assetModalMode === 'edit' ? '编辑资产' : assetModalMode === 'clone' ? '克隆资产' : '新增资产'"
-    description="填写资产基础资料和业务配置"
+    :title="assetModalMode === 'edit' ? t('assetForm.editTitle') : assetModalMode === 'clone' ? t('assetForm.cloneTitle') : t('assetForm.createTitle')"
+    :description="t('assetForm.description')"
     size="large"
     :loading="assetFormLoading"
     :loading-rows="10"
@@ -365,8 +367,8 @@ watch(() => assetForm.value.purchase_date, () => {
     @closed="handleDialogClosed"
   >
     <div v-if="assetFormLoadError" class="asset-form-load-error">
-      <el-alert title="资产信息加载失败" :description="assetFormLoadError" type="error" :closable="false" show-icon />
-      <el-button type="primary" plain @click="retryAssetFormLoad">重新加载</el-button>
+      <el-alert :title="t('assetForm.loadFailed')" :description="assetFormLoadError" type="error" :closable="false" show-icon />
+      <el-button type="primary" plain @click="retryAssetFormLoad">{{ t('common.retry') }}</el-button>
     </div>
 
     <el-form
@@ -381,125 +383,125 @@ watch(() => assetForm.value.purchase_date, () => {
       @submit.prevent="submitAsset"
     >
       <section class="form-dialog__section">
-        <h3 class="form-dialog__section-title">基本信息</h3>
+        <h3 class="form-dialog__section-title">{{ t('assetForm.basicInfo') }}</h3>
         <div class="horizontal-form__rows">
-        <el-form-item label="资产编号" prop="asset_no" required :error="fieldError('asset_no')">
+        <el-form-item :label="t('asset.code')" prop="asset_no" required :error="fieldError('asset_no')">
           <el-input v-model="assetForm.asset_no" :disabled="!!editingAsset" autocomplete="off" />
         </el-form-item>
-        <el-form-item label="资产名称" prop="name" required :error="fieldError('name')">
+        <el-form-item :label="t('asset.name')" prop="name" required :error="fieldError('name')">
           <el-input v-model="assetForm.name" />
         </el-form-item>
-        <el-form-item label="设备类型" prop="device_type" required :error="fieldError('device_type')">
-          <el-select v-model="assetForm.device_type" placeholder="未关联设备类型" clearable @change="syncAssetDeviceType">
+        <el-form-item :label="t('asset.deviceType')" prop="device_type" required :error="fieldError('device_type')">
+          <el-select v-model="assetForm.device_type" :placeholder="t('assetForm.unlinkedDeviceType')" clearable @change="syncAssetDeviceType">
             <el-option v-for="item in activeDeviceTypes" :key="item.id" :label="item.name" :value="String(item.id)" />
           </el-select>
         </el-form-item>
-        <el-form-item label="厂商" :error="fieldError('manufacturer_id')">
-          <el-select v-model="assetForm.manufacturer_id" placeholder="未关联厂商" clearable>
+        <el-form-item :label="t('asset.manufacturer')" :error="fieldError('manufacturer_id')">
+          <el-select v-model="assetForm.manufacturer_id" :placeholder="t('assetForm.unlinkedManufacturer')" clearable>
             <el-option v-for="item in manufacturerOptions" :key="item.id" :label="item.name" :value="String(item.id)" />
           </el-select>
         </el-form-item>
-        <el-form-item label="状态" prop="status" required :error="fieldError('status')">
+        <el-form-item :label="t('asset.status')" prop="status" required :error="fieldError('status')">
           <el-select v-model="assetForm.status">
-            <el-option v-for="option in ASSET_STATUS_OPTIONS" :key="option.value" :label="option.label" :value="option.value" />
+            <el-option v-for="option in ASSET_STATUS_OPTIONS" :key="option.value" :label="businessOptionLabel(ASSET_STATUS_OPTIONS, option.value)" :value="option.value" />
           </el-select>
         </el-form-item>
-        <el-form-item label="型号" :error="fieldError('model')"><el-input v-model="assetForm.model" placeholder="请输入型号" /></el-form-item>
-        <el-form-item label="序列号" :error="fieldError('serial_number')"><el-input v-model="assetForm.serial_number" /></el-form-item>
-        <el-form-item label="用途" :error="fieldError('purpose')"><el-input v-model="assetForm.purpose" /></el-form-item>
-        <el-form-item label="使用人" :error="fieldError('owner_name')"><el-input v-model="assetForm.owner_name" /></el-form-item>
+        <el-form-item :label="t('asset.model')" :error="fieldError('model')"><el-input v-model="assetForm.model" :placeholder="t('assetForm.modelPlaceholder')" /></el-form-item>
+        <el-form-item :label="t('asset.serialNumber')" :error="fieldError('serial_number')"><el-input v-model="assetForm.serial_number" /></el-form-item>
+        <el-form-item :label="t('asset.purpose')" :error="fieldError('purpose')"><el-input v-model="assetForm.purpose" /></el-form-item>
+        <el-form-item :label="t('asset.owner')" :error="fieldError('owner_name')"><el-input v-model="assetForm.owner_name" /></el-form-item>
         </div>
       </section>
 
       <section class="form-dialog__section">
-        <h3 class="form-dialog__section-title">位置与网络</h3>
+        <h3 class="form-dialog__section-title">{{ t('assetForm.rackAndNetwork') }}</h3>
         <div class="horizontal-form__rows">
-          <el-form-item label="上架到机柜">
-            <el-select v-model="rackMountedSelectValue" placeholder="请选择上架状态">
-              <el-option label="不上架" value="unmounted" />
-              <el-option label="上架" value="mounted" />
+          <el-form-item :label="t('assetForm.rackMounted')">
+            <el-select v-model="rackMountedSelectValue" :placeholder="t('assetForm.selectRackStatus')">
+              <el-option :label="t('assetForm.unmounted')" value="unmounted" />
+              <el-option :label="t('assetForm.mounted')" value="mounted" />
             </el-select>
             <FieldHelp :text="rackPlacementHelp" />
           </el-form-item>
-          <el-form-item v-if="!assetForm.rack_mounted" label="所属数据中心" :error="fieldError('asset_data_center')">
-            <el-select v-model="assetForm.asset_data_center" placeholder="未选择数据中心" clearable>
+          <el-form-item v-if="!assetForm.rack_mounted" :label="t('common.dataCenter')" :error="fieldError('asset_data_center')">
+            <el-select v-model="assetForm.asset_data_center" :placeholder="t('assetForm.noDataCenter')" clearable>
               <el-option v-for="center in activeDataCenters" :key="center.id" :label="center.name" :value="String(center.id)" />
             </el-select>
           </el-form-item>
         </div>
         <div v-if="assetForm.rack_mounted" class="horizontal-form__rows">
-        <el-form-item label="所属数据中心" :error="fieldError('data_center')">
-          <el-select v-model="assetForm.data_center" placeholder="未选择数据中心" clearable @change="changeAssetDataCenter">
+        <el-form-item :label="t('common.dataCenter')" :error="fieldError('data_center')">
+          <el-select v-model="assetForm.data_center" :placeholder="t('assetForm.noDataCenter')" clearable @change="changeAssetDataCenter">
             <el-option v-for="center in activeDataCenters" :key="center.id" :label="center.name" :value="String(center.id)" />
           </el-select>
         </el-form-item>
-        <el-form-item label="机房" :error="fieldError('server_room_id')">
-          <el-select v-model="assetForm.server_room_id" placeholder="请选择已有机房" clearable @change="changeAssetRoom">
+        <el-form-item :label="t('common.room')" :error="fieldError('server_room_id')">
+          <el-select v-model="assetForm.server_room_id" :placeholder="t('assetForm.selectRoom')" clearable @change="changeAssetRoom">
             <el-option v-for="room in assetRoomOptions" :key="room.id" :label="room.name" :value="String(room.id)" />
           </el-select>
         </el-form-item>
-        <el-form-item label="机柜编号" prop="rack_id" :error="fieldError('rack_id')">
-          <el-select v-model="assetForm.rack_id" placeholder="请选择已有机柜" clearable @change="changeAssetRack">
+        <el-form-item :label="t('rack.rackCode')" prop="rack_id" :error="fieldError('rack_id')">
+          <el-select v-model="assetForm.rack_id" :placeholder="t('assetForm.selectRack')" clearable @change="changeAssetRack">
             <el-option v-for="rack in assetRackOptions" :key="rack.id" :label="rack.code" :value="String(rack.id)" />
           </el-select>
         </el-form-item>
-        <el-form-item label="机柜总 U 数" :error="fieldError('rack_total_u')"><el-input v-model="assetForm.rack_total_u" disabled /></el-form-item>
-        <el-form-item label="起始 U 位" prop="rack_start_u" :error="fieldError('rack_start_u')">
-          <el-input-number v-model="rackStartUValue" :min="1" :step="1" :precision="0" :value-on-clear="null" aria-label="起始 U 位">
+        <el-form-item :label="t('assetForm.totalRackU')" :error="fieldError('rack_total_u')"><el-input v-model="assetForm.rack_total_u" disabled /></el-form-item>
+        <el-form-item :label="t('assetForm.startU')" prop="rack_start_u" :error="fieldError('rack_start_u')">
+          <el-input-number v-model="rackStartUValue" :min="1" :step="1" :precision="0" :value-on-clear="null" :aria-label="t('assetForm.startU')">
             <template #suffix>U</template>
           </el-input-number>
         </el-form-item>
-        <el-form-item label="结束 U 位" prop="rack_end_u" :error="fieldError('rack_end_u')">
-          <el-input-number v-model="rackEndUValue" :min="1" :step="1" :precision="0" :value-on-clear="null" aria-label="结束 U 位">
+        <el-form-item :label="t('assetForm.endU')" prop="rack_end_u" :error="fieldError('rack_end_u')">
+          <el-input-number v-model="rackEndUValue" :min="1" :step="1" :precision="0" :value-on-clear="null" :aria-label="t('assetForm.endU')">
             <template #suffix>U</template>
           </el-input-number>
         </el-form-item>
         </div>
-        <div class="form-dialog__subsection-title">网络地址</div>
+        <div class="form-dialog__subsection-title">{{ t('assetForm.networkAddress') }}</div>
         <div class="horizontal-form__rows">
-          <el-form-item label="业务 IP" prop="business_ip" :error="fieldError('business_ip')"><el-input v-model="assetForm.business_ip" placeholder="如：10.0.0.10" /></el-form-item>
-          <el-form-item label="管理 IP" prop="management_ip" :error="fieldError('management_ip')"><el-input v-model="assetForm.management_ip" placeholder="如：10.0.1.10" /></el-form-item>
-          <el-form-item label="带外 IP" prop="oob_ip" :error="fieldError('oob_ip')"><el-input v-model="assetForm.oob_ip" placeholder="如：10.0.2.10" /></el-form-item>
+          <el-form-item :label="t('asset.businessIp')" prop="business_ip" :error="fieldError('business_ip')"><el-input v-model="assetForm.business_ip" placeholder="10.0.0.10" /></el-form-item>
+          <el-form-item :label="t('asset.managementIp')" prop="management_ip" :error="fieldError('management_ip')"><el-input v-model="assetForm.management_ip" placeholder="10.0.1.10" /></el-form-item>
+          <el-form-item :label="t('asset.oobIp')" prop="oob_ip" :error="fieldError('oob_ip')"><el-input v-model="assetForm.oob_ip" placeholder="10.0.2.10" /></el-form-item>
         </div>
       </section>
 
       <section class="form-dialog__section">
-        <h3 class="form-dialog__section-title">采购、维保与折旧</h3>
+        <h3 class="form-dialog__section-title">{{ t('assetForm.procurementMaintenanceDepreciation') }}</h3>
         <div class="horizontal-form__rows">
-        <el-form-item label="采购日期" prop="purchase_date" :error="fieldError('purchase_date')"><el-date-picker v-model="assetForm.purchase_date" type="date" value-format="YYYY-MM-DD" /></el-form-item>
-        <el-form-item label="供应商" :error="fieldError('supplier')"><el-input v-model="assetForm.supplier" /></el-form-item>
-        <el-form-item label="采购单号" :error="fieldError('purchase_order_no')"><el-input v-model="assetForm.purchase_order_no" /></el-form-item>
-        <el-form-item label="采购金额" prop="purchase_amount" :error="fieldError('purchase_amount')">
-          <MoneyInput v-model="purchaseAmountValue" currency="CNY" placeholder="请输入采购金额" />
+        <el-form-item :label="t('asset.purchaseDate')" prop="purchase_date" :error="fieldError('purchase_date')"><el-date-picker v-model="assetForm.purchase_date" type="date" value-format="YYYY-MM-DD" /></el-form-item>
+        <el-form-item :label="t('asset.supplier')" :error="fieldError('supplier')"><el-input v-model="assetForm.supplier" /></el-form-item>
+        <el-form-item :label="t('asset.purchaseOrder')" :error="fieldError('purchase_order_no')"><el-input v-model="assetForm.purchase_order_no" /></el-form-item>
+        <el-form-item :label="t('asset.purchaseAmount')" prop="purchase_amount" :error="fieldError('purchase_amount')">
+          <MoneyInput v-model="purchaseAmountValue" currency="CNY" :placeholder="t('assetForm.purchaseAmountPlaceholder')" />
         </el-form-item>
-        <el-form-item label="维保厂商" :error="fieldError('maintenance_provider')"><el-input v-model="assetForm.maintenance_provider" /></el-form-item>
-        <el-form-item label="维保合同号" :error="fieldError('maintenance_contract_no')"><el-input v-model="assetForm.maintenance_contract_no" /></el-form-item>
-        <el-form-item label="维保开始日" prop="maintenance_start_date" :error="fieldError('maintenance_start_date')"><el-date-picker v-model="assetForm.maintenance_start_date" type="date" value-format="YYYY-MM-DD" /></el-form-item>
-        <el-form-item label="维保到期日" prop="maintenance_expiry_date" :error="fieldError('maintenance_expiry_date')"><el-date-picker v-model="assetForm.maintenance_expiry_date" type="date" value-format="YYYY-MM-DD" /></el-form-item>
-        <el-form-item label="备注" :error="fieldError('notes')"><el-input v-model="assetForm.notes" type="textarea" :rows="2" /></el-form-item>
+        <el-form-item :label="t('asset.maintenanceProvider')" :error="fieldError('maintenance_provider')"><el-input v-model="assetForm.maintenance_provider" /></el-form-item>
+        <el-form-item :label="t('asset.maintenanceContract')" :error="fieldError('maintenance_contract_no')"><el-input v-model="assetForm.maintenance_contract_no" /></el-form-item>
+        <el-form-item :label="t('asset.maintenanceStart')" prop="maintenance_start_date" :error="fieldError('maintenance_start_date')"><el-date-picker v-model="assetForm.maintenance_start_date" type="date" value-format="YYYY-MM-DD" /></el-form-item>
+        <el-form-item :label="t('asset.maintenanceExpiry')" prop="maintenance_expiry_date" :error="fieldError('maintenance_expiry_date')"><el-date-picker v-model="assetForm.maintenance_expiry_date" type="date" value-format="YYYY-MM-DD" /></el-form-item>
+        <el-form-item :label="t('common.notes')" :error="fieldError('notes')"><el-input v-model="assetForm.notes" type="textarea" :rows="2" /></el-form-item>
         </div>
         <div class="form-dialog__subsection">
-          <div class="form-dialog__subsection-title">折旧配置</div>
+          <div class="form-dialog__subsection-title">{{ t('assetForm.depreciationConfig') }}</div>
           <div class="horizontal-form__rows">
-            <el-form-item label="启用折旧" :error="fieldError('configuration')">
-              <el-select v-model="depreciationSelectValue" placeholder="请选择折旧配置">
-                <el-option label="不配置" value="disabled" />
-                <el-option label="启用" value="enabled" />
+            <el-form-item :label="t('assetForm.depreciationEnabled')" :error="fieldError('configuration')">
+              <el-select v-model="depreciationSelectValue" :placeholder="t('assetForm.selectDepreciation')">
+                <el-option :label="t('assetForm.depreciationDisabled')" value="disabled" />
+                <el-option :label="t('assetForm.depreciationEnabledOption')" value="enabled" />
               </el-select>
               <FieldHelp :text="depreciationHelp" />
             </el-form-item>
           </div>
           <div v-if="assetForm.depreciation_enabled" class="horizontal-form__rows">
-            <el-form-item label="折旧起算日" prop="depreciation_start_date" :error="fieldError('depreciation_start_date')">
+            <el-form-item :label="t('assetForm.depreciationStart')" prop="depreciation_start_date" :error="fieldError('depreciation_start_date')">
               <el-date-picker v-model="assetForm.depreciation_start_date" type="date" value-format="YYYY-MM-DD" @change="markDepreciationStartTouched" />
             </el-form-item>
-            <el-form-item label="折旧年限" prop="depreciation_years" :error="fieldError('depreciation_years')">
-              <el-input-number v-model="assetForm.depreciation_years" :min="1" :step="1" :precision="0" :value-on-clear="null" placeholder="请输入年限" aria-label="折旧年限">
-                <template #suffix>年</template>
+            <el-form-item :label="t('asset.depreciationYears')" prop="depreciation_years" :error="fieldError('depreciation_years')">
+              <el-input-number v-model="assetForm.depreciation_years" :min="1" :step="1" :precision="0" :value-on-clear="null" :placeholder="t('assetForm.yearsPlaceholder')" :aria-label="t('asset.depreciationYears')">
+                <template #suffix>{{ t('common.years') }}</template>
               </el-input-number>
             </el-form-item>
-            <el-form-item label="残值率" prop="residual_rate" :error="fieldError('residual_rate')">
-              <el-input-number v-model="residualRateValue" :min="0" :max="100" :step="0.01" :precision="2" :value-on-clear="null" placeholder="例如 5" aria-label="残值率">
+            <el-form-item :label="t('asset.residualRate')" prop="residual_rate" :error="fieldError('residual_rate')">
+              <el-input-number v-model="residualRateValue" :min="0" :max="100" :step="0.01" :precision="2" :value-on-clear="null" :placeholder="t('assetForm.residualRateExample')" :aria-label="t('asset.residualRate')">
                 <template #suffix>%</template>
               </el-input-number>
               <FieldHelp :text="residualRateHelp" />
@@ -509,32 +511,32 @@ watch(() => assetForm.value.purchase_date, () => {
       </section>
 
       <section class="form-dialog__section">
-        <h3 class="form-dialog__section-title">扩展信息</h3>
+        <h3 class="form-dialog__section-title">{{ t('assetForm.extendedInfo') }}</h3>
         <div class="horizontal-form__rows">
-          <el-form-item label="资产标签" :error="fieldError('tags')">
-            <el-select v-model="assetForm.tags" multiple clearable filterable :loading="tagListLoading" :disabled="tagListLoading" placeholder="请选择标签">
+          <el-form-item :label="t('assetForm.tags')" :error="fieldError('tags')">
+            <el-select v-model="assetForm.tags" multiple clearable filterable :loading="tagListLoading" :disabled="tagListLoading" :placeholder="t('assetForm.selectTags')">
               <el-option
                 v-for="tag in selectableTags"
                 :key="tag.id"
-                :label="tag.is_active ? tag.name : `${tag.name}（已停用）`"
+                :label="tag.is_active ? tag.name : `${tag.name}（${t('status.inactive')}）`"
                 :value="String(tag.id)"
               />
             </el-select>
             <div v-if="tagListError" class="asset-form-tag-state asset-form-tag-state--error">
               <span>{{ tagListError }}</span>
-              <el-button link type="primary" :disabled="tagListLoading" @click="retryTagList">重试</el-button>
+              <el-button link type="primary" :disabled="tagListLoading" @click="retryTagList">{{ t('assetForm.retry') }}</el-button>
             </div>
-            <div v-else-if="!tagListLoading && !selectableTags.length" class="asset-form-tag-state">暂无可用标签，请先在标签管理中维护。</div>
+            <div v-else-if="!tagListLoading && !selectableTags.length" class="asset-form-tag-state">{{ t('assetForm.noAvailableTags') }}</div>
           </el-form-item>
         </div>
         <div v-if="assetCustomSchemaLoading || assetCustomSchemaError || dynamicFieldGroups.length" class="form-dialog__subsection">
-          <div class="form-dialog__subsection-title">动态字段</div>
+          <div class="form-dialog__subsection-title">{{ t('assetForm.dynamicFields') }}</div>
           <div v-if="assetCustomSchemaLoading" class="asset-custom-schema-state">
             <el-skeleton :rows="4" animated />
           </div>
           <div v-else-if="assetCustomSchemaError" class="asset-custom-schema-state">
-            <el-alert title="扩展字段加载失败" :description="assetCustomSchemaError" type="error" :closable="false" show-icon />
-            <el-button type="primary" plain :disabled="assetFormSaving" @click="retryAssetCustomSchema">重试</el-button>
+            <el-alert :title="t('assetForm.extendedLoadFailed')" :description="assetCustomSchemaError" type="error" :closable="false" show-icon />
+            <el-button type="primary" plain :disabled="assetFormSaving" @click="retryAssetCustomSchema">{{ t('assetForm.retry') }}</el-button>
           </div>
           <div v-else-if="dynamicFieldGroups.length" class="asset-custom-field-groups">
             <section v-for="group in dynamicFieldGroups" :key="group.name" class="asset-custom-field-group">
@@ -563,9 +565,9 @@ watch(() => assetForm.value.purchase_date, () => {
     </el-form>
 
     <template #footer>
-      <el-button :disabled="assetFormSaving" @click="closeDialog">取消</el-button>
+      <el-button :disabled="assetFormSaving" @click="closeDialog">{{ t('common.cancel') }}</el-button>
       <el-button type="primary" :loading="assetFormSaving" :disabled="assetFormLoading || !!assetFormLoadError || assetCustomSchemaLoading || !!assetCustomSchemaError" @click="submitAsset">
-        保存资产
+        {{ t('assetForm.save') }}
       </el-button>
     </template>
   </FormDialogShell>

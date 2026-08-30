@@ -423,7 +423,7 @@ body {
 
 .asset-drawer-heading {
   display: flex;
-  align-items: flex-start;
+  align-items: center;
   justify-content: space-between;
   gap: 16px;
   width: 100%;
@@ -431,15 +431,29 @@ body {
 }
 
 .asset-drawer-identity {
+  display: grid;
+  gap: 2px;
   min-width: 0;
 }
 
 .asset-drawer-title-row {
   display: flex;
   align-items: center;
-  flex-wrap: wrap;
-  gap: 8px 10px;
+  flex-wrap: nowrap;
+  gap: 8px;
   min-width: 0;
+}
+
+.asset-drawer-title {
+  min-width: 0;
+  margin: 0;
+  overflow: hidden;
+  color: var(--el-text-color-primary);
+  font-size: var(--el-font-size-large);
+  font-weight: 600;
+  line-height: var(--el-line-height-primary);
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .asset-drawer-actions {
@@ -447,22 +461,16 @@ body {
   align-items: center;
   flex: 0 0 auto;
   gap: 4px;
-}
-
-.asset-drawer-kicker {
-  display: block;
-  color: var(--el-text-color-secondary);
-  font-size: 12px;
-  line-height: 18px;
+  white-space: nowrap;
 }
 
 .asset-drawer-meta {
-  max-width: 380px;
-  margin: 2px 0 0;
+  max-width: 100%;
+  margin: 0;
   overflow: hidden;
   color: var(--el-text-color-regular);
-  font-size: 13px;
-  line-height: 20px;
+  font-size: var(--el-font-size-base);
+  line-height: var(--el-line-height-primary);
   text-overflow: ellipsis;
   white-space: nowrap;
 }
@@ -508,6 +516,55 @@ body {
 
 .asset-detail-drawer .drawer-content {
   padding-bottom: 8px;
+}
+
+.asset-detail-drawer .detail-section-shell {
+  padding: 12px 0;
+}
+
+.asset-detail-drawer .detail-section-shell__header {
+  margin-bottom: 8px;
+}
+
+.asset-detail-drawer .asset-detail-description-list {
+  min-width: 0;
+}
+
+.asset-detail-drawer .asset-detail-description-list .el-descriptions__cell {
+  padding-bottom: 8px;
+  line-height: var(--el-line-height-primary);
+}
+
+.asset-detail-drawer .asset-detail-description-list .el-descriptions__label {
+  color: var(--el-text-color-secondary);
+  white-space: nowrap;
+}
+
+.asset-detail-drawer .asset-detail-description-list .el-descriptions__content {
+  min-width: 0;
+  color: var(--el-text-color-primary);
+}
+
+.asset-detail-drawer .asset-detail-description-list .description-list__value {
+  display: inline-block;
+  min-width: 0;
+  max-width: 100%;
+  overflow: hidden;
+  overflow-wrap: normal;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  word-break: normal;
+  vertical-align: top;
+}
+
+.asset-detail-drawer .asset-detail-description-list .description-list__value--wide {
+  display: block;
+  max-width: 100%;
+  overflow: visible;
+  overflow-wrap: anywhere;
+  text-overflow: clip;
+  white-space: normal;
+  word-break: break-word;
 }
 
 .asset-detail-content {
@@ -618,6 +675,16 @@ body {
   white-space: pre-wrap;
 }
 
+.asset-detail-drawer
+  .asset-detail-description-list
+  .dynamic-field-display:not(.dynamic-field-display--textarea):not(.dynamic-field-display--multiselect) {
+  overflow: hidden;
+  overflow-wrap: normal;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  word-break: normal;
+}
+
 .dynamic-field-display--number {
   font-variant-numeric: tabular-nums;
 }
@@ -643,10 +710,13 @@ body {
     gap: 10px;
   }
 
-  .asset-drawer-title-row {
-    align-items: flex-start;
-    flex-direction: column;
-    gap: 4px;
+  .asset-drawer-identity {
+    flex: 1 1 100%;
+  }
+
+  .asset-drawer-actions {
+    width: 100%;
+    justify-content: flex-start;
   }
 
   .asset-depreciation-metrics {
@@ -752,6 +822,13 @@ body {
 /* Repair list states stay compact without replacing the table shell. */
 .repair-list-alert {
   margin-bottom: 12px;
+}
+
+/* The repair status heading is longer in English; keep it as one readable
+   label without changing the shared Element Plus table typography. */
+.repair-table .el-table__header .cell {
+  overflow-wrap: normal;
+  word-break: normal;
 }
 
 .repair-fault-link,

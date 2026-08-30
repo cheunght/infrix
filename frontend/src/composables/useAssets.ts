@@ -19,7 +19,7 @@ import type {
   ServerRoom,
   Tag,
 } from "../types";
-import type { AssetFilters, AssetFormState, RequestFn } from "../types/page-context";
+import type { AssetFilters, AssetFormState, CapabilityFn, RequestFn } from "../types/page-context";
 import { isAssetStatus } from "../business-enums";
 import {
   DEPRECIATION_METHOD_STRAIGHT_LINE,
@@ -29,6 +29,10 @@ import {
   rateToPercentageText,
 } from "../depreciation";
 import { systemSettingsState } from "../system-settings";
+import { i18n } from "../i18n";
+
+const tr = (key: string, params?: Record<string, unknown>): string =>
+  String(params ? i18n.global.t(key, params) : i18n.global.t(key));
 
 export type StaticAssetColumnKey =
   | "asset_no"
@@ -140,6 +144,7 @@ export type ImportResult = {
 export type ImportStep = "upload" | "preview" | "result";
 
 export interface AssetsDeps {
+  can: CapabilityFn;
   request: RequestFn;
   download: (path: string, filename?: string) => Promise<void>;
   beginLoad: () => number;
@@ -366,10 +371,10 @@ function extractAssetFormErrors(error: unknown): {
     const message = errorText(value);
     if (!message) continue;
     if (assetFormFieldNames.has(key) || key.startsWith("custom_values.")) fields[key] = message;
-    else general.push(`${rawKey}：${message}`);
+    else general.push(`${rawKey}: ${message}`);
   }
 
-  const message = general.join("；") || candidate.message || "资产保存失败";
+  const message = general.join("；") || candidate.message || tr("asset.saveFailed");
   return { fields, message };
 }
 
@@ -473,7 +478,7 @@ export function useAssets(deps: AssetsDeps) {
       label: field.name,
       dynamic: true,
       field,
-      scopeLabel: field.device_type_name || "全局",
+      scopeLabel: field.device_type_name || tr("common.global"),
       width: field.field_type === "textarea" ? 160 : 130,
     })),
   );
@@ -553,7 +558,7 @@ export function useAssets(deps: AssetsDeps) {
           assetListCustomSchemaLoaded.value = false;
           assetListCustomSchemaError.value = error instanceof Error && error.message
             ? error.message
-            : "扩展列配置加载失败，请重试";
+            : tr("asset.extendedColumnsLoadFailed");
         }
         return false;
       } finally {
@@ -609,7 +614,7 @@ export function useAssets(deps: AssetsDeps) {
           assetFilterCustomSchemaLoaded.value = false;
           assetFilterCustomSchemaError.value = error instanceof Error && error.message
             ? error.message
-            : "动态筛选字段加载失败，请重试";
+            : tr("asset.dynamicFiltersLoadFailed");
         }
         return false;
       } finally {
@@ -642,7 +647,7 @@ export function useAssets(deps: AssetsDeps) {
       ? error.details as Record<string, unknown>
       : {};
     const message = errorText(details.custom_filters);
-    return message ? `筛选条件无效：${message}` : "";
+    return message ? tr("asset.invalidFilter", { message }) : "";
   }
 
   function assetOrderingValue(): string | undefined {
@@ -707,7 +712,7 @@ export function useAssets(deps: AssetsDeps) {
   }
 
   async function loadAssets(version = deps.beginLoad()): Promise<boolean> {
-    if (!deps.authenticated.value) return false;
+    if (!deps.authenticated.value || !deps.can("assets.view")) return false;
     ensureAssetListCustomSchema();
     ensureAssetFilterCustomSchema();
     if (deps.isCurrentLoad(version)) {
@@ -735,7 +740,7 @@ export function useAssets(deps: AssetsDeps) {
       if (deps.isCurrentLoad(version) && !isAbortError(error)) {
         assetListError.value = invalidCustomFilterError(error) || (error instanceof Error && error.message
           ? error.message
-          : "资产数据加载失败，请稍后重试");
+          : tr("asset.dataLoadFailed"));
       }
       return false;
     } finally {
@@ -847,7 +852,7 @@ export function useAssets(deps: AssetsDeps) {
       if (requestId === assetCustomSchemaRequestId.value && !isAbortError(error)) {
         assetCustomSchemaError.value = error instanceof Error && error.message
           ? error.message
-          : "扩展字段加载失败，请重试";
+          : tr("asset.extendedFieldsLoadFailed");
       }
       return false;
     } finally {
@@ -859,6 +864,7 @@ export function useAssets(deps: AssetsDeps) {
   }
 
   async function openAssetDetail(assetId: number) {
+    if (!deps.can("assets.view")) return;
     const requestId = ++detailRequestId.value;
     detailAssetId.value = assetId;
     deps.showAssetDetail.value = true;
@@ -870,7 +876,7 @@ export function useAssets(deps: AssetsDeps) {
       if (requestId === detailRequestId.value) deps.detailAsset.value = asset;
     } catch (error) {
       if (requestId === detailRequestId.value && !isAbortError(error)) {
-        deps.detailError.value = error instanceof Error ? error.message : "资产详情加载失败";
+        deps.detailError.value = error instanceof Error ? error.message : tr("asset.assetDetailLoadFailed");
       }
     } finally {
       if (requestId === detailRequestId.value) deps.detailLoading.value = false;
@@ -893,6 +899,7 @@ export function useAssets(deps: AssetsDeps) {
   }
 
   async function openAssetEditor(assetId: number, clone = false) {
+    if (!deps.can("assets.manage")) return;
     const requestId = ++assetFormRequestId.value;
     assetFormTarget.value = { assetId, clone, isNew: false };
     assetFormLoadError.value = "";
@@ -983,7 +990,7 @@ export function useAssets(deps: AssetsDeps) {
       }
     } catch (error) {
       if (requestId === assetFormRequestId.value && !isAbortError(error)) {
-        assetFormLoadError.value = error instanceof Error ? error.message : "资产信息加载失败";
+        assetFormLoadError.value = error instanceof Error ? error.message : tr("asset.formLoadFailed");
         deps.actionMessage.value = assetFormLoadError.value;
       }
     } finally {
@@ -992,6 +999,7 @@ export function useAssets(deps: AssetsDeps) {
   }
 
   async function openNewAssetModal() {
+    if (!deps.can("assets.manage")) return;
     const requestId = ++assetFormRequestId.value;
     assetFormTarget.value = { assetId: null, clone: false, isNew: true };
     assetFormLoadError.value = "";
@@ -1010,7 +1018,7 @@ export function useAssets(deps: AssetsDeps) {
       await loadAssetCustomSchema("");
     } catch (error) {
       if (requestId === assetFormRequestId.value && !isAbortError(error)) {
-        assetFormLoadError.value = error instanceof Error ? error.message : "资产关联数据加载失败";
+        assetFormLoadError.value = error instanceof Error ? error.message : tr("asset.relatedDataLoadFailed");
         deps.actionMessage.value = assetFormLoadError.value;
       }
     } finally {
@@ -1053,6 +1061,7 @@ export function useAssets(deps: AssetsDeps) {
   }
 
   async function saveAsset() {
+    if (!deps.can("assets.manage")) return;
     if (assetFormSaving.value || assetCustomSchemaLoading.value || assetCustomSchemaError.value) return;
     const editingAssetId = editingAsset.value?.id || null;
     assetFormFieldErrors.value = {};
@@ -1065,7 +1074,7 @@ export function useAssets(deps: AssetsDeps) {
       ),
     );
     if (existingDepreciation && !assetForm.value.depreciation_enabled) {
-      const confirmed = await deps.confirmAction("确认清除当前资产的折旧配置？\n仅清除折旧配置，不影响采购金额和历史审计。");
+      const confirmed = await deps.confirmAction(tr("asset.clearDepreciationConfirm"));
       if (!confirmed) return;
     }
     assetFormSaving.value = true;
@@ -1119,7 +1128,7 @@ export function useAssets(deps: AssetsDeps) {
           (value) => !String(value || "").trim(),
         )
       ) {
-        deps.actionMessage.value = "已开启上架到机柜，请完整选择数据中心、机房、机柜和起止 U 位";
+        deps.actionMessage.value = tr("asset.rackPlacementIncomplete");
         return;
       }
       const method = editingAsset.value ? "PATCH" : "POST";
@@ -1176,10 +1185,10 @@ export function useAssets(deps: AssetsDeps) {
         refreshFailed = refreshFailed || Boolean(deps.detailError.value);
       }
       deps.actionMessage.value = refreshFailed
-        ? "资产已保存，但页面刷新失败"
+        ? tr("asset.savedRefreshFailed")
         : wasEditing
-          ? "资产及关联信息已更新"
-          : "资产及关联信息已保存";
+          ? tr("asset.updated")
+          : tr("asset.saved");
     } catch (error) {
       const parsed = extractAssetFormErrors(error);
       assetFormFieldErrors.value = parsed.fields;
@@ -1210,23 +1219,25 @@ export function useAssets(deps: AssetsDeps) {
   }
 
   async function deleteAsset(asset: Asset) {
-    if (!(await deps.confirmAction(`确定删除资产“${asset.asset_no}”吗？`))) return;
+    if (!deps.can("assets.manage")) return;
+    if (!(await deps.confirmAction(tr("asset.deleteConfirm", { asset: asset.asset_no })))) return;
     try {
       await deps.request(`/assets/${asset.id}/`, { method: "DELETE" });
       selectedAssetIds.value = selectedAssetIds.value.filter((id) => id !== asset.id);
-      deps.actionMessage.value = "资产已删除";
+      deps.actionMessage.value = tr("asset.deleted");
       if (!(await loadAssets())) {
-        deps.actionMessage.value = "资产已删除，但列表刷新失败：请稍后重试";
+        deps.actionMessage.value = tr("asset.deletedRefreshFailed");
       }
     } catch (error) {
-      deps.actionMessage.value = error instanceof Error ? error.message : "资产删除失败";
+      deps.actionMessage.value = error instanceof Error ? error.message : tr("asset.deleteFailed");
     }
   }
 
   async function deleteSelectedAssets() {
+    if (!deps.can("assets.manage")) return;
     const ids = [...selectedAssetIds.value];
     if (!ids.length || assetBatchDeleteSaving.value) return;
-    if (!(await deps.confirmAction(`确定删除选中的 ${ids.length} 项资产吗？删除后无法恢复。`))) return;
+    if (!(await deps.confirmAction(tr("asset.batchDeleteConfirm", { count: ids.length })))) return;
     assetBatchDeleteSaving.value = true;
     assetBatchDeleteResult.value = null;
     showAssetBatchDeleteResult.value = false;
@@ -1239,16 +1250,16 @@ export function useAssets(deps: AssetsDeps) {
       });
       assetBatchDeleteResult.value = result;
       const mutationMessage = result.failed
-        ? `批量删除完成：${result.succeeded} 项成功，${result.failed} 项失败`
-        : `已成功删除 ${result.succeeded} 项资产`;
+        ? tr("asset.batchDeleteSummary", { succeeded: result.succeeded, failed: result.failed })
+        : tr("asset.batchDeleteSuccess", { count: result.succeeded });
       deps.actionMessage.value = mutationMessage;
       const refreshed = await loadAssets();
       if (!refreshed) {
-        deps.actionMessage.value = `${mutationMessage}；列表刷新失败，请重新加载`;
+        deps.actionMessage.value = `${mutationMessage}；${tr("common.refreshFailed")}，${tr("common.retry")}`;
       }
       if (result.failed) showAssetBatchDeleteResult.value = true;
     } catch (error) {
-      deps.actionMessage.value = error instanceof Error ? error.message : "批量删除资产失败";
+      deps.actionMessage.value = error instanceof Error ? error.message : tr("asset.batchDeleteFailed");
     } finally {
       assetBatchDeleteSaving.value = false;
     }
@@ -1261,13 +1272,14 @@ export function useAssets(deps: AssetsDeps) {
   }
 
   async function exportAssets() {
+    if (!deps.can("assets.export")) return;
     if (exportingAssets.value) return;
     exportingAssets.value = true;
     const query = buildExportQuery(assetQueryParams(false));
     try {
-      await deps.download(`/reports/assets/export/${query ? `?${query}` : ""}`, "资产台账.xlsx");
+      await deps.download(`/reports/assets/export/${query ? `?${query}` : ""}`, tr("asset.exportFilename"));
     } catch (error) {
-      deps.actionMessage.value = error instanceof Error ? error.message : "导出失败，请稍后重试";
+      deps.actionMessage.value = error instanceof Error ? error.message : tr("asset.exportFailed");
     } finally {
       exportingAssets.value = false;
     }
@@ -1281,7 +1293,7 @@ export function useAssets(deps: AssetsDeps) {
       !visibleAssetColumns.value.includes(columnKey) &&
       visibleAssetColumns.value.filter(isDynamicAssetColumnKey).length >= MAX_DYNAMIC_ASSET_COLUMNS
     ) {
-      ElMessage.info(`扩展列最多同时显示 ${MAX_DYNAMIC_ASSET_COLUMNS} 个`);
+      ElMessage.info(tr("asset.maxDynamicColumns", { count: MAX_DYNAMIC_ASSET_COLUMNS }));
       return;
     }
     if (visibleAssetColumns.value.includes(columnKey)) {
@@ -1340,8 +1352,8 @@ export function useAssets(deps: AssetsDeps) {
   }
 
   function formatImportError(detail: unknown): string {
-    if (Array.isArray(detail)) return detail.map(formatImportError).join("；");
-    if (detail && typeof detail === "object") return Object.entries(detail).map(([key, value]) => `${key}：${formatImportError(value)}`).join("；");
+    if (Array.isArray(detail)) return detail.map(formatImportError).join("; ");
+    if (detail && typeof detail === "object") return Object.entries(detail).map(([key, value]) => `${key}: ${formatImportError(value)}`).join("; ");
     return String(detail ?? "");
   }
   function importErrorText(detail: unknown) { return formatImportError(detail); }
@@ -1357,6 +1369,7 @@ export function useAssets(deps: AssetsDeps) {
     importResult.value = { created: 0, total: 0, errors: [] };
   }
   function openImportDialog() {
+    if (!deps.can("assets.manage")) return;
     if (importPreviewing.value || importing.value) return;
     resetImportState();
     showImportDialog.value = true;
@@ -1375,6 +1388,7 @@ export function useAssets(deps: AssetsDeps) {
     importPreviewError.value = "";
   }
   async function onElementUploadChange(file: { raw?: File }) {
+    if (!deps.can("assets.manage")) return;
     const selected = file.raw || null;
     if (!selected || importPreviewing.value || importing.value) return;
     importFile.value = selected;
@@ -1384,6 +1398,7 @@ export function useAssets(deps: AssetsDeps) {
     await previewImport();
   }
   async function previewImport() {
+    if (!deps.can("assets.manage")) return;
     if (!importFile.value) return;
     const form = new FormData();
     form.append("file", importFile.value);
@@ -1395,10 +1410,10 @@ export function useAssets(deps: AssetsDeps) {
       const preview = await deps.request<ImportPreview>("/assets/import/preview/", { method: "POST", body: form, signal: importController.signal });
       importPreview.value = preview;
       importStep.value = "preview";
-      deps.actionMessage.value = `预览完成：可导入 ${preview.valid} 条，异常 ${preview.invalid} 条`;
+      deps.actionMessage.value = tr("asset.importPreviewSummary", { valid: preview.valid, invalid: preview.invalid });
     } catch (error) {
       if (isAbortError(error)) return;
-      importPreviewError.value = error instanceof Error ? error.message : "导入文件预览失败，请检查文件后重试";
+      importPreviewError.value = error instanceof Error ? error.message : tr("asset.importPreviewFailed");
       deps.actionMessage.value = importPreviewError.value;
     } finally {
       importPreviewing.value = false;
@@ -1410,6 +1425,7 @@ export function useAssets(deps: AssetsDeps) {
     return importPreview.value.rows.filter((row) => !row.valid);
   });
   async function confirmImportPreview() {
+    if (!deps.can("assets.manage")) return;
     if (!importPreview.value?.valid || importPreview.value.invalid || !importFile.value || importing.value) return;
     const form = new FormData();
     form.append("file", importFile.value);
@@ -1421,7 +1437,7 @@ export function useAssets(deps: AssetsDeps) {
       const result = await deps.request<ImportResult>("/assets/import/", { method: "POST", body: form, signal: importController.signal });
       importResult.value = result;
       importStep.value = "result";
-      deps.actionMessage.value = `导入完成：成功导入 ${result.created} 条资产`;
+      deps.actionMessage.value = tr("asset.importSuccess", { count: result.created });
       await loadAssets();
     } catch (error) {
       if (isAbortError(error)) return;
@@ -1434,7 +1450,7 @@ export function useAssets(deps: AssetsDeps) {
           importPreviewFilter.value = latest.invalid ? "errors" : "all";
         }
       }
-      importPreviewError.value = error instanceof Error ? error.message : "确认导入失败，请检查预览结果后重试";
+      importPreviewError.value = error instanceof Error ? error.message : tr("asset.importConfirmFailed");
       deps.actionMessage.value = importPreviewError.value;
     } finally {
       importing.value = false;
@@ -1442,16 +1458,16 @@ export function useAssets(deps: AssetsDeps) {
     }
   }
   async function copyImportErrors() {
-    const text = importResult.value.errors.map((item) => `第${item.line}行：${formatImportError(item.detail)}`).join("\n");
+    const text = importResult.value.errors.map((item) => `${tr("common.line")} ${item.line}: ${formatImportError(item.detail)}`).join("\n");
     try {
       await navigator.clipboard.writeText(text);
-      ElMessage.success("失败明细已复制");
+      ElMessage.success(tr("asset.importErrorsCopied"));
     } catch {
-      ElMessage.warning("浏览器不允许直接复制，请手动选择明细");
+      ElMessage.warning(tr("asset.copyDenied"));
     }
   }
   function downloadImportErrors() {
-    const rows = ["行号,错误明细", ...importResult.value.errors.map((item) => `${item.line},"${formatImportError(item.detail).replace(/"/g, '""')}"`)];
+    const rows = [`${tr("common.line")},${tr("common.errorDetails")}`, ...importResult.value.errors.map((item) => `${item.line},"${formatImportError(item.detail).replace(/"/g, '""')}"`)];
     const url = URL.createObjectURL(new Blob([`\ufeff${rows.join("\n")}`], { type: "text/csv;charset=utf-8" }));
     const link = document.createElement("a");
     link.href = url;
@@ -1460,10 +1476,11 @@ export function useAssets(deps: AssetsDeps) {
     URL.revokeObjectURL(url);
   }
   async function downloadImportTemplate() {
+    if (!deps.can("assets.manage")) return;
     try {
       await deps.download("/assets/import/template/", "asset-import-template.xlsx");
     } catch (error) {
-      if (!isAbortError(error)) deps.actionMessage.value = error instanceof Error ? error.message : "导入模板下载失败";
+      if (!isAbortError(error)) deps.actionMessage.value = error instanceof Error ? error.message : tr("asset.importTemplateFailed");
     }
   }
   async function syncAssetDeviceType() {
@@ -1474,7 +1491,7 @@ export function useAssets(deps: AssetsDeps) {
       (field) => field.device_type != null && String(field.device_type) === previousType && hasCustomValue(previousValues, field.key),
     );
     if (editingAsset.value && previousType !== nextType && hasPreviousScopedValues) {
-      const confirmed = await deps.confirmAction("切换设备类型后，原设备类型的扩展字段将作为历史数据保留，新设备类型将使用新的字段配置，是否继续？");
+      const confirmed = await deps.confirmAction(tr("asset.deviceTypeSwitchConfirm"));
       if (!confirmed) {
         assetForm.value.device_type = previousType;
         return;

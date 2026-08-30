@@ -33,7 +33,26 @@ body {
 }
 
 .login-card {
+  position: relative;
   text-align: center;
+}
+
+.login-language-switcher {
+  position: absolute;
+  top: 12px;
+  right: 12px;
+}
+
+.language-switcher__trigger {
+  gap: 6px;
+}
+
+.language-switcher__option {
+  display: inline-flex;
+  width: 100%;
+  align-items: center;
+  justify-content: space-between;
+  gap: 24px;
 }
 
 .login-card form {

@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed } from "vue";
+import { useI18n } from "vue-i18n";
 import {
   ArrowRight,
   Box,
@@ -25,9 +26,10 @@ import type { DashboardContext } from "../types/page-context";
 import StatusTag, { type StatusTagType } from "./StatusTag.vue";
 import PageContainer from "./page/PageContainer.vue";
 import ResourceState from "./ResourceState.vue";
-import { ASSET_STATUS_LABEL_MAP, isAssetStatus } from "../business-enums";
+import { isAssetStatus } from "../business-enums";
 
 const props = defineProps<{ context: DashboardContext }>();
+const { t } = useI18n();
 const {
   dashboard,
   dashboardLoading,
@@ -97,10 +99,28 @@ function openDataCenterRacks(item: DashboardDataCenterOverview) {
 }
 
 function recentChangeTagType(action: string): StatusTagType {
-  if (["故障", "报废"].includes(action)) return "danger";
-  if (["状态变化", "下架"].includes(action)) return "warning";
-  if (["新增", "上架"].includes(action)) return "success";
+  if (["故障", "报废", "fault", "retired"].includes(action)) return "danger";
+  if (["状态变化", "下架", "status_change", "unmounted"].includes(action)) return "warning";
+  if (["新增", "上架", "created", "mounted"].includes(action)) return "success";
   return "info";
+}
+
+function recentChangeLabel(action: string): string {
+  const labels: Record<string, string> = {
+    "故障": "dashboard.actionFault",
+    "报废": "dashboard.actionRetire",
+    "状态变化": "dashboard.actionStatusChange",
+    "下架": "dashboard.actionUnmount",
+    "新增": "dashboard.actionCreate",
+    "上架": "dashboard.actionMount",
+    fault: "dashboard.actionFault",
+    retired: "dashboard.actionRetire",
+    status_change: "dashboard.actionStatusChange",
+    unmounted: "dashboard.actionUnmount",
+    created: "dashboard.actionCreate",
+    mounted: "dashboard.actionMount",
+  };
+  return labels[action] ? t(labels[action]) : action;
 }
 
 function utilization(value: number) {
@@ -114,14 +134,14 @@ function utilization(value: number) {
       <el-alert
         v-if="dashboardError && dashboard"
         class="dashboard-error-banner"
-        title="Dashboard 数据加载失败"
+        :title="t('dashboard.dataLoadFailed')"
         :description="dashboardError"
         type="error"
         show-icon
         :closable="false"
       >
         <template #default>
-          <el-button link type="primary" :loading="dashboardLoading" @click="refreshDashboard">重新加载</el-button>
+          <el-button link type="primary" :loading="dashboardLoading" @click="refreshDashboard">{{ t('common.retry') }}</el-button>
         </template>
       </el-alert>
 
@@ -138,16 +158,16 @@ function utilization(value: number) {
         v-else-if="!dashboard && dashboardError"
         class="dashboard-state dashboard-state--error"
         icon="error"
-        title="Dashboard 数据加载失败"
+        :title="t('dashboard.dataLoadFailed')"
         :sub-title="dashboardError"
       >
         <template #extra>
-          <el-button type="primary" plain :loading="dashboardLoading" @click="refreshDashboard">重新加载</el-button>
+          <el-button type="primary" plain :loading="dashboardLoading" @click="refreshDashboard">{{ t('common.retry') }}</el-button>
         </template>
       </el-result>
 
       <template v-else>
-        <section class="dashboard-kpi-row" aria-label="资产核心指标">
+        <section class="dashboard-kpi-row" :aria-label="t('dashboard.assetCoreMetrics')">
           <el-card
             shadow="never"
             class="dashboard-stat-card dashboard-stat-card--assets"
@@ -161,8 +181,8 @@ function utilization(value: number) {
             <div class="dashboard-stat">
               <span class="dashboard-stat__icon" aria-hidden="true"><el-icon :size="20"><Monitor /></el-icon></span>
               <div class="dashboard-stat__content">
-                <el-statistic title="资产总数" :value="dashboardData.assets.total" />
-                <div class="dashboard-stat__hint">全部纳管资产</div>
+                <el-statistic :title="t('dashboard.totalAssets')" :value="dashboardData.assets.total" />
+                <div class="dashboard-stat__hint">{{ t('dashboard.allManagedAssets') }}</div>
               </div>
             </div>
           </el-card>
@@ -179,8 +199,8 @@ function utilization(value: number) {
             <div class="dashboard-stat">
               <span class="dashboard-stat__icon" aria-hidden="true"><el-icon :size="20"><CircleCheck /></el-icon></span>
               <div class="dashboard-stat__content">
-                <el-statistic :title="ASSET_STATUS_LABEL_MAP.in_use" :value="dashboardData.assets.in_use" />
-                <div class="dashboard-stat__hint">当前正在使用</div>
+                <el-statistic :title="t('dashboard.assetsInUse')" :value="dashboardData.assets.in_use" />
+                <div class="dashboard-stat__hint">{{ t('dashboard.currentlyInUse') }}</div>
               </div>
             </div>
           </el-card>
@@ -197,8 +217,8 @@ function utilization(value: number) {
             <div class="dashboard-stat">
               <span class="dashboard-stat__icon" aria-hidden="true"><el-icon :size="20"><Box /></el-icon></span>
               <div class="dashboard-stat__content">
-                <el-statistic :title="ASSET_STATUS_LABEL_MAP.in_stock" :value="dashboardData.assets.in_stock" />
-                <div class="dashboard-stat__hint">当前在库资产</div>
+                <el-statistic :title="t('dashboard.assetsInStock')" :value="dashboardData.assets.in_stock" />
+                <div class="dashboard-stat__hint">{{ t('dashboard.currentlyInStock') }}</div>
               </div>
             </div>
           </el-card>
@@ -215,8 +235,8 @@ function utilization(value: number) {
             <div class="dashboard-stat">
               <span class="dashboard-stat__icon" aria-hidden="true"><el-icon :size="20"><Tools /></el-icon></span>
               <div class="dashboard-stat__content">
-                <el-statistic :title="ASSET_STATUS_LABEL_MAP.repair" :value="dashboardData.assets.repair" />
-                <div class="dashboard-stat__hint">存在未闭环维修</div>
+                <el-statistic :title="t('dashboard.assetsInRepair')" :value="dashboardData.assets.repair" />
+                <div class="dashboard-stat__hint">{{ t('dashboard.currentlyUnderRepair') }}</div>
               </div>
             </div>
           </el-card>
@@ -224,7 +244,7 @@ function utilization(value: number) {
 
         <section class="dashboard-attention-section" aria-labelledby="dashboard-attention-title">
           <div class="dashboard-section-heading">
-            <strong id="dashboard-attention-title">立即关注</strong>
+            <strong id="dashboard-attention-title">{{ t('dashboard.attention') }}</strong>
           </div>
           <div class="dashboard-attention-grid">
             <el-card
@@ -239,9 +259,9 @@ function utilization(value: number) {
             >
               <span class="dashboard-attention-card__icon" aria-hidden="true"><el-icon :size="20"><Warning /></el-icon></span>
               <span class="dashboard-attention-card__content">
-                <span class="dashboard-attention-card__title">未关闭故障</span>
+                <span class="dashboard-attention-card__title">{{ t('dashboard.openFaults') }}</span>
                 <strong>{{ dashboardData.alerts?.open_faults }}</strong>
-                <small>{{ dashboardData.alerts?.open_faults ? "需要跟进的设备故障" : "当前无未关闭故障" }}</small>
+                <small>{{ dashboardData.alerts?.open_faults ? t('dashboard.needsFollowUp') : t('dashboard.noOpenFaults') }}</small>
               </span>
               <span class="dashboard-attention-card__action" aria-hidden="true">
                 <el-icon class="dashboard-attention-card__arrow"><ArrowRight /></el-icon>
@@ -259,12 +279,12 @@ function utilization(value: number) {
             >
               <span class="dashboard-attention-card__icon" aria-hidden="true"><el-icon :size="20"><Key /></el-icon></span>
               <span class="dashboard-attention-card__content">
-                <span class="dashboard-attention-card__title">软件许可风险</span>
+                <span class="dashboard-attention-card__title">{{ t('dashboard.licenseRisk') }}</span>
                 <strong>{{ licenseRiskTotal }}</strong>
-                <small v-if="!licenseRiskTotal">当前无许可风险</small>
+                <small v-if="!licenseRiskTotal">{{ t('dashboard.noLicenseRisk') }}</small>
                 <span v-else class="dashboard-attention-risk-links">
-                  <el-button link class="dashboard-attention-risk-link" @click.stop="goToLicenses({ status: 'expired' })" @keydown.stop>已过期 {{ licenseSummary.expired }}</el-button>
-                  <el-button link class="dashboard-attention-risk-link" @click.stop="goToLicenses({ status: 'expiring' })" @keydown.stop>即将到期 {{ licenseSummary.expiring }}</el-button>
+                  <el-button link class="dashboard-attention-risk-link" @click.stop="goToLicenses({ status: 'expired' })" @keydown.stop>{{ t('status.expired') }} {{ licenseSummary.expired }}</el-button>
+                  <el-button link class="dashboard-attention-risk-link" @click.stop="goToLicenses({ status: 'expiring' })" @keydown.stop>{{ t('status.expiring') }} {{ licenseSummary.expiring }}</el-button>
                 </span>
               </span>
               <span class="dashboard-attention-card__action" aria-hidden="true">
@@ -283,7 +303,7 @@ function utilization(value: number) {
             >
               <span class="dashboard-attention-card__icon" aria-hidden="true"><el-icon :size="20"><Timer /></el-icon></span>
               <span class="dashboard-attention-card__content">
-                <span class="dashboard-attention-card__title">30 天内维保到期</span>
+                <span class="dashboard-attention-card__title">{{ t('dashboard.warrantyExpiring') }}</span>
                 <strong>{{ dashboardData.expiring.within_30_days }}</strong>
                 <small>
                   <el-button
@@ -292,8 +312,8 @@ function utilization(value: number) {
                     class="dashboard-attention-risk-link"
                     @click.stop="goToAssets({ warranty: 'expired' })"
                     @keydown.stop
-                  >已过期 {{ dashboardData.expiring.expired || 0 }} 项</el-button>
-                  <span v-else>已过期 {{ dashboardData.expiring.expired || 0 }} 项</span>
+                  >{{ t('dashboard.expiredItems', { count: dashboardData.expiring.expired || 0 }) }}</el-button>
+                  <span v-else>{{ t('dashboard.expiredItems', { count: dashboardData.expiring.expired || 0 }) }}</span>
                 </small>
               </span>
               <span v-if="can('assets.view')" class="dashboard-attention-card__action" aria-hidden="true">
@@ -306,21 +326,21 @@ function utilization(value: number) {
         <section class="dashboard-overview-row">
           <el-card shadow="never" class="dashboard-panel dashboard-panel--status">
             <template #header>
-              <div class="dashboard-card-heading"><strong>资产状态分布</strong><el-button v-if="can('assets.view')" text type="primary" @click="goToAssets()">详情 <el-icon><ArrowRight /></el-icon></el-button></div>
+              <div class="dashboard-card-heading"><strong>{{ t('dashboard.statusDistribution') }}</strong><el-button v-if="can('assets.view')" text type="primary" @click="goToAssets()">{{ t('common.details') }} <el-icon><ArrowRight /></el-icon></el-button></div>
             </template>
             <DashboardDonut
               :items="statusItems"
               :total="statusTotal"
-              center-label="资产总数"
+              :center-label="t('dashboard.totalAssets')"
               :selectable="can('assets.view')"
               @select="openStatusDrilldown"
             />
           </el-card>
           <el-card shadow="never" class="dashboard-panel dashboard-panel--resources">
             <template #header>
-              <div class="dashboard-card-heading"><strong>数据中心 / 机柜资源概览</strong><el-button v-if="can('racks.view')" text type="primary" @click="openResourceLocations">查看全部 <el-icon><ArrowRight /></el-icon></el-button></div>
+              <div class="dashboard-card-heading"><strong>{{ t('dashboard.resourceOverview') }}</strong><el-button v-if="can('racks.view')" text type="primary" @click="openResourceLocations">{{ t('dashboard.viewAll') }} <el-icon><ArrowRight /></el-icon></el-button></div>
             </template>
-            <ResourceState :empty="!resourceItems.length" empty-text="暂无数据中心资源">
+            <ResourceState :empty="!resourceItems.length" :empty-text="t('dashboard.noResource')">
               <el-table
                 class="dashboard-resource-table"
                 :data="resourceItems"
@@ -328,14 +348,14 @@ function utilization(value: number) {
                 table-layout="fixed"
                 @row-click="openDataCenterRacks"
               >
-                <el-table-column label="数据中心" min-width="160">
+                <el-table-column :label="t('dashboard.dataCenter')" min-width="160">
                   <template #default="{ row }">
                     <el-button
                       v-if="can('racks.view')"
                       link
                       type="primary"
                       class="dashboard-resource-name"
-                      :aria-label="`查看${row.data_center}机柜`"
+                      :aria-label="t('rack.viewRack') + ' ' + row.data_center"
                       @click.stop="openDataCenterRacks(row)"
                     >
                       <OfficeBuilding />{{ row.data_center }}
@@ -343,13 +363,13 @@ function utilization(value: number) {
                     <span v-else class="dashboard-resource-name"><OfficeBuilding />{{ row.data_center }}</span>
                   </template>
                 </el-table-column>
-                <el-table-column label="机房 / 机柜" width="120">
+                <el-table-column :label="t('dashboard.roomRack')" width="120">
                   <template #default="{ row }">{{ row.room_count }} / {{ row.rack_count }}</template>
                 </el-table-column>
-                <el-table-column label="已用 U / 总 U" width="120">
+                <el-table-column :label="t('dashboard.usedUTotalU')" width="120">
                   <template #default="{ row }">{{ row.used_u }} / {{ row.total_u }}</template>
                 </el-table-column>
-                <el-table-column label="U 位利用率" min-width="170">
+                <el-table-column :label="t('dashboard.uUtilization')" min-width="170">
                   <template #default="{ row }">
                     <div class="dashboard-resource-utilization">
                       <b>{{ row.utilization.toFixed(1) }}%</b>
@@ -364,34 +384,36 @@ function utilization(value: number) {
 
         <section class="dashboard-summary-row" :class="{ 'is-single': !can('faults.view') }">
           <el-card shadow="never" class="dashboard-panel dashboard-panel--activity" :class="{ 'is-empty': !recentChangeItems.length }">
-            <template #header><div class="dashboard-card-heading"><strong>最近资产变更</strong><el-button v-if="can('audit.view') || can('assets.view')" text type="primary" @click="openChanges">查看全部 <el-icon><ArrowRight /></el-icon></el-button></div></template>
-            <ResourceState :empty="!recentChangeItems.length" empty-text="暂无资产变更">
+            <template #header><div class="dashboard-card-heading"><strong>{{ t('dashboard.assetChanges') }}</strong><el-button v-if="can('audit.view') || can('assets.view')" text type="primary" @click="openChanges">{{ t('dashboard.viewAll') }} <el-icon><ArrowRight /></el-icon></el-button></div></template>
+            <ResourceState :empty="!recentChangeItems.length" :empty-text="t('dashboard.noAssetChanges')">
               <div class="dashboard-activity-list">
-              <component
+              <el-button
                 v-for="row in recentChangeItems"
                 :key="row.id"
-                :is="can('assets.view') ? 'button' : 'div'"
-                :type="can('assets.view') ? 'button' : undefined"
+                :tag="can('assets.view') ? 'button' : 'div'"
+                text
+                native-type="button"
                 class="dashboard-activity-item"
+                :class="{ 'is-static': !can('assets.view') }"
                 @click="can('assets.view') && openAssetDetail(row.asset_id)"
               >
                 <time class="dashboard-activity-time">{{ dashboardDateTime(row.created_at) }}</time>
                 <span class="dashboard-activity-main">
                   <strong>{{ row.asset_no }} / {{ row.asset_name }}</strong>
-                  <small>{{ row.action }} · {{ row.location || "未上架" }}</small>
+                  <small>{{ recentChangeLabel(row.action) }} · {{ row.location || t('dashboard.notMounted') }}</small>
                 </span>
                 <span class="dashboard-activity-meta">
-                  <span>{{ row.actor_name || "系统" }}</span>
-                  <StatusTag :tone="recentChangeTagType(row.action)" :label="row.action" />
+                  <span>{{ row.actor_name || t('dashboard.systemActor') }}</span>
+                  <StatusTag :tone="recentChangeTagType(row.action)" :label="recentChangeLabel(row.action)" />
                 </span>
-              </component>
+              </el-button>
               </div>
             </ResourceState>
           </el-card>
 
           <el-card v-if="can('faults.view')" shadow="never" class="dashboard-panel dashboard-panel--faults" :class="{ 'is-empty': !recentFaultItems.length }">
-            <template #header><div class="dashboard-card-heading"><strong>最近未关闭故障</strong><el-button text type="primary" @click="goToRepairs({ is_closed: 'false' })">查看全部 <el-icon><ArrowRight /></el-icon></el-button></div></template>
-            <ResourceState :empty="!recentFaultItems.length" empty-text="暂无未关闭故障">
+            <template #header><div class="dashboard-card-heading"><strong>{{ t('dashboard.openFaultList') }}</strong><el-button text type="primary" @click="goToRepairs({ is_closed: 'false' })">{{ t('dashboard.viewAll') }} <el-icon><ArrowRight /></el-icon></el-button></div></template>
+            <ResourceState :empty="!recentFaultItems.length" :empty-text="t('dashboard.noOpenFaultList')">
               <div class="dashboard-fault-list">
               <el-button
                 v-for="row in recentFaultItems"
@@ -406,7 +428,7 @@ function utilization(value: number) {
                   <strong>{{ row.asset_no }} / {{ row.asset_name }}</strong>
                   <small>{{ row.title }}</small>
                 </span>
-                <StatusTag tone="warning" label="未关闭" />
+                <StatusTag tone="warning" :label="t('status.open')" />
               </el-button>
               </div>
             </ResourceState>

@@ -1,16 +1,13 @@
 import type { AuditLog } from "./types";
 import { depreciationMethodLabel, formatResidualRate } from "./depreciation";
+import { currentLocale, i18n } from "./i18n";
 import {
-  ASSET_STATUS_LABEL_MAP,
   businessOptionLabel,
-  INVENTORY_ITEM_STATUS_LABEL_MAP,
   INVENTORY_RESOLUTION_ACTION_OPTIONS,
   INVENTORY_RESOLUTION_STATUS_OPTIONS,
-  INVENTORY_TASK_STATUS_LABEL_MAP,
-  LICENSE_STATUS_LABEL_MAP,
-  RACK_STATUS_LABEL_MAP,
   STOCK_OPERATION_OPTIONS,
 } from "./business-enums";
+import { statusLabel } from "./status";
 
 type AuditRecord = Record<string, unknown>;
 
@@ -49,195 +46,45 @@ export type AuditDetail = {
 };
 
 const RESOURCE_LABELS: Record<string, string> = {
-  asset: "资产",
-  manufacturer: "厂商",
-  device_type: "设备类型",
-  data_center: "数据中心",
-  server_room: "机房",
-  rack: "机柜",
-  custom_field: "自定义字段",
-  custom_field_option: "字段选项",
-  tag: "标签",
-  fault_event: "故障",
-  repair_record: "维修记录",
-  software_license: "软件许可",
-  spare_part: "备件",
-  spare_part_category: "备件类型",
-  spare_stock_transaction: "库存流水",
-  inventory_task: "盘点任务",
-  inventory_item: "盘点项目",
-  user: "用户",
-  auth_login: "登录",
-  system: "系统",
-  system_settings: "系统设置",
+  asset: "auditLog.resources.asset",
+  manufacturer: "auditLog.resources.manufacturer",
+  device_type: "auditLog.resources.device_type",
+  data_center: "auditLog.resources.data_center",
+  server_room: "auditLog.resources.server_room",
+  rack: "auditLog.resources.rack",
+  custom_field: "auditLog.resources.custom_field",
+  custom_field_option: "auditLog.resources.custom_field_option",
+  tag: "auditLog.resources.tag",
+  fault_event: "auditLog.resources.fault_event",
+  repair_record: "auditLog.resources.repair_record",
+  software_license: "auditLog.resources.software_license",
+  spare_part: "auditLog.resources.spare_part",
+  spare_part_category: "auditLog.resources.spare_part_category",
+  spare_stock_transaction: "auditLog.resources.spare_stock_transaction",
+  inventory_task: "auditLog.resources.inventory_task",
+  inventory_item: "auditLog.resources.inventory_item",
+  user: "auditLog.resources.user",
+  auth_login: "auditLog.resources.auth_login",
+  system: "auditLog.resources.system",
+  system_settings: "auditLog.resources.system_settings",
 };
 
 const ACTION_LABELS: Record<string, string> = {
-  create: "新增",
-  update: "修改",
-  delete: "删除",
-  complete: "完成",
-  close: "关闭",
-  reopen: "重新打开",
-  resolve: "处理",
-  login_success: "登录成功",
-  login_failure: "登录失败",
-  login_locked: "账号锁定",
-  system_reset: "恢复系统初始状态",
+  create: "auditLog.actions.create",
+  update: "auditLog.actions.update",
+  delete: "auditLog.actions.delete",
+  complete: "auditLog.actions.complete",
+  close: "auditLog.actions.close",
+  reopen: "auditLog.actions.reopen",
+  resolve: "auditLog.actions.resolve",
+  login_success: "auditLog.actions.login_success",
+  login_failure: "auditLog.actions.login_failure",
+  login_locked: "auditLog.actions.login_locked",
+  system_reset: "auditLog.actions.system_reset",
 };
 
-export const auditResourceOptions = Object.entries(RESOURCE_LABELS).map(([value, label]) => ({ label, value }));
-export const auditActionOptions = Object.entries(ACTION_LABELS).map(([value, label]) => ({ label, value }));
-
-const FIELD_LABELS: Record<string, string> = {
-  id: "编号",
-  asset_no: "资产编号",
-  asset_name: "资产名称",
-  name: "名称",
-  code: "编码",
-  username: "用户名",
-  display_name: "显示名称",
-  first_name: "名",
-  last_name: "姓",
-  email: "邮箱",
-  status: "状态",
-  status_before_repair: "维修前状态",
-  is_active: "状态",
-  is_closed: "是否关闭",
-  device_type: "设备类型",
-  device_type_name: "设备类型",
-  manufacturer: "厂商",
-  manufacturer_name: "厂商",
-  model: "型号",
-  specification: "规格",
-  unit: "计量单位",
-  safety_stock: "安全库存",
-  storage_location: "存放位置",
-  total_quantity: "库存数量",
-  is_low_stock: "低库存",
-  model_name: "型号",
-  manufacturer_model: "厂商/型号",
-  serial_number: "序列号",
-  purpose: "用途",
-  department: "部门",
-  department_name: "部门",
-  owner: "使用人",
-  owner_name: "使用人",
-  data_center: "数据中心",
-  data_center_name: "数据中心",
-  asset_data_center: "数据中心",
-  asset_data_center_name: "数据中心",
-  server_room: "机房",
-  server_room_name: "机房",
-  rack: "机柜",
-  rack_code: "机柜",
-  rack_allocation: "位置",
-  location: "位置",
-  start_u: "起始 U",
-  end_u: "结束 U",
-  rack_start_u: "起始 U",
-  rack_end_u: "结束 U",
-  actual_data_center: "实际数据中心",
-  actual_data_center_name: "实际数据中心",
-  actual_server_room: "实际机房",
-  actual_server_room_name: "实际机房",
-  actual_rack: "实际机柜",
-  actual_rack_code: "实际机柜",
-  actual_start_u: "实际起始 U",
-  actual_end_u: "实际结束 U",
-  system_data_center: "系统数据中心",
-  system_data_center_name: "系统数据中心",
-  system_server_room: "系统机房",
-  system_server_room_name: "系统机房",
-  system_rack: "系统机柜",
-  system_rack_code: "系统机柜",
-  system_start_u: "系统起始 U",
-  system_end_u: "系统结束 U",
-  provider: "维修厂商",
-  started_at: "开始时间",
-  finished_at: "完成时间",
-  occurred_at: "发生时间",
-  resolved_at: "解决时间",
-  checked_at: "盘点时间",
-  checked_by: "盘点人",
-  checked_by_name: "盘点人",
-  notes: "备注",
-  reason: "故障原因",
-  description: "故障描述",
-  expiry_date: "到期日",
-  purchase_date: "采购日期",
-  depreciation_start_date: "折旧起算日",
-  depreciation_years: "折旧年限",
-  residual_rate: "残值率",
-  depreciation_method: "折旧方法",
-  default_page_size: "默认每页条数",
-  default_asset_status: "新资产默认状态",
-  created_at: "创建时间",
-  updated_at: "更新时间",
-  tags: "标签",
-  tag_names: "标签",
-  custom_fields: "自定义字段",
-  custom_values: "自定义字段",
-  custom_value_snapshot: "自定义字段",
-  custom_changes: "自定义字段",
-  authorized_count: "授权数量",
-  used_count: "已用数量",
-  remaining_count: "剩余数量",
-  utilization: "使用率",
-  license_type: "许可类型",
-  part_name: "备件",
-  category: "备件类型",
-  category_name: "备件类型",
-  operation_type: "操作类型",
-  operation_type_label: "操作类型",
-  quantity: "数量",
-  quantity_delta: "变化数量",
-  before_quantity: "操作前库存",
-  after_quantity: "操作后库存",
-  reference: "参考单号/用途",
-  source_data_center: "来源数据中心",
-  source_data_center_name: "来源数据中心",
-  source_server_room: "来源机房",
-  source_server_room_name: "来源机房",
-  target_data_center: "目标数据中心",
-  target_data_center_name: "目标数据中心",
-  target_server_room: "目标机房",
-  target_server_room_name: "目标机房",
-  resolution_status: "处理状态",
-  resolution_status_label: "处理状态",
-  resolution_action: "处理方式",
-  resolution_action_label: "处理方式",
-  resolution_note: "处理备注",
-  resolved_by: "处理人",
-  resolved_by_name: "处理人",
-  exception_status: "异常状态",
-  task: "盘点任务",
-  task_name: "盘点任务",
-  item: "盘点项目",
-  item_id: "盘点项目",
-  asset_changed: "是否更新资产",
-  ip: "IP 地址",
-  ip_address: "IP 地址",
-  failure_reason: "失败原因",
-  login_reason: "登录原因",
-  user_agent: "客户端",
-  source: "来源",
-  transition: "状态变化",
-};
-
-const STATUS_LABELS: Record<string, string> = {
-  ...ASSET_STATUS_LABEL_MAP,
-  ...INVENTORY_ITEM_STATUS_LABEL_MAP,
-  ...INVENTORY_TASK_STATUS_LABEL_MAP,
-  ...LICENSE_STATUS_LABEL_MAP,
-  ...RACK_STATUS_LABEL_MAP,
-  resolved: "已处理",
-  unresolved: "未处理",
-  unconfigured: "未配置",
-  not_started: "尚未开始",
-  depreciating: "折旧中",
-  fully_depreciated: "已折旧完",
-};
+export const auditResourceOptions = Object.entries(RESOURCE_LABELS).map(([value, labelKey]) => ({ labelKey, value }));
+export const auditActionOptions = Object.entries(ACTION_LABELS).map(([value, labelKey]) => ({ labelKey, value }));
 
 const REFERENCE_KEYS = new Set([
   "actor",
@@ -368,7 +215,8 @@ function isDateKey(key: string): boolean {
 
 function labelForKey(key: string): string {
   const normalized = key.split(".").pop() || key;
-  return FIELD_LABELS[normalized] || FIELD_LABELS[key] || normalized;
+  const translationKey = `auditLog.fields.${normalized}`;
+  return i18n.global.te(translationKey) ? String(i18n.global.t(translationKey)) : normalized.replace(/_/g, " ");
 }
 
 function statusText(value: unknown, key: string): string | null {
@@ -378,7 +226,7 @@ function statusText(value: unknown, key: string): string | null {
   if (normalizedKey === "resolution_status") return businessOptionLabel(INVENTORY_RESOLUTION_STATUS_OPTIONS, value);
   if (normalizedKey === "operation_type") return businessOptionLabel(STOCK_OPERATION_OPTIONS, value);
   if (normalizedKey === "status" || normalizedKey === "status_before_repair" || normalizedKey.endsWith("_status")) {
-    return STATUS_LABELS[value] || value;
+    return statusLabel(value);
   }
   return null;
 }
@@ -451,14 +299,14 @@ function formatObjectValue(value: AuditRecord, key: string, resourceType?: strin
   const entries = Object.entries(value)
     .filter(([entryKey]) => !isSensitiveKey(entryKey))
     .slice(0, 6)
-    .map(([entryKey, entryValue]) => `${labelForKey(entryKey)}：${formatAuditValue(entryValue, entryKey, resourceType)}`);
-  return entries.length ? entries.join("；") : "—";
+    .map(([entryKey, entryValue]) => `${labelForKey(entryKey)}: ${formatAuditValue(entryValue, entryKey, resourceType)}`);
+  return entries.length ? entries.join("; ") : String(i18n.global.t("auditLog.empty"));
 }
 
 export function formatAuditValue(value: unknown, key = "", resourceType?: string): string {
-  if (isSensitiveKey(key)) return "已隐藏";
-  if (value === null || value === undefined || value === "") return "—";
-  if (typeof value === "boolean") return value ? "是" : "否";
+  if (isSensitiveKey(key)) return String(i18n.global.t("auditLog.hidden"));
+  if (value === null || value === undefined || value === "") return String(i18n.global.t("auditLog.empty"));
+  if (typeof value === "boolean") return value ? String(i18n.global.t("common.yes")) : String(i18n.global.t("common.no"));
   const normalizedKey = lowerKey(key).split(".").pop() || key;
   if (normalizedKey === "depreciation_method" && typeof value === "string") return depreciationMethodLabel(value);
   if (normalizedKey === "residual_rate") return formatResidualRate(value);
@@ -473,20 +321,21 @@ export function formatAuditValue(value: unknown, key = "", resourceType?: string
     return REFERENCE_KEYS.has(lowerKey(key).split(".").pop() || key) ? `#${String(value)}` : String(value);
   }
   if (Array.isArray(value)) {
-    const items = value.map((item) => formatAuditValue(item, key, resourceType)).filter((item) => item !== "—");
-    return items.length ? items.join("、") : "—";
+    const empty = String(i18n.global.t("auditLog.empty"));
+    const items = value.map((item) => formatAuditValue(item, key, resourceType)).filter((item) => item !== empty);
+    return items.length ? items.join(", ") : empty;
   }
   if (isRecord(value)) return formatObjectValue(value, key, resourceType);
   return String(value);
 }
 
 export function formatAuditDateTime(value: unknown): string {
-  if (value === null || value === undefined || value === "") return "—";
+  if (value === null || value === undefined || value === "") return String(i18n.global.t("auditLog.empty"));
   return formatDateValue(String(value));
 }
 
 function redactValue(value: unknown, key = ""): unknown {
-  if (isSensitiveKey(key)) return "已隐藏";
+  if (isSensitiveKey(key)) return i18n.global.t("auditLog.hidden");
   if (Array.isArray(value)) return value.map((item) => redactValue(item));
   if (!isRecord(value)) return value;
   return Object.fromEntries(Object.entries(value).map(([entryKey, entryValue]) => [entryKey, redactValue(entryValue, entryKey)]));
@@ -497,19 +346,21 @@ export function formatRawAuditPayload(payload: Record<string, unknown>): AuditRe
 }
 
 export function resourceLabel(value: string): string {
-  return RESOURCE_LABELS[value] || value || "未知资源";
+  const key = RESOURCE_LABELS[value];
+  return key ? String(i18n.global.t(key)) : value || String(i18n.global.t("auditLog.unknownResource"));
 }
 
 export function actionLabel(value: string): string {
-  return ACTION_LABELS[value] || value || "未知动作";
+  const key = ACTION_LABELS[value];
+  return key ? String(i18n.global.t(key)) : value || String(i18n.global.t("auditLog.unknownAction"));
 }
 
 export function auditLogActionLabel(log: AuditLog): string {
   const extra = getExtra(log);
-  if (log.resource_type === "system" && log.action === "system_reset") return "恢复系统初始状态";
-  if (log.resource_type === "user" && extra.password_reset) return "管理员重置密码";
-  if (log.resource_type === "user" && extra.password_change) return "修改密码";
-  if (log.resource_type === "user" && extra.profile_update) return "修改资料";
+  if (log.resource_type === "system" && log.action === "system_reset") return String(i18n.global.t("auditLog.actions.system_reset"));
+  if (log.resource_type === "user" && extra.password_reset) return String(i18n.global.t("auditLog.adminPasswordReset"));
+  if (log.resource_type === "user" && extra.password_change) return String(i18n.global.t("auditLog.passwordChange"));
+  if (log.resource_type === "user" && extra.profile_update) return String(i18n.global.t("auditLog.profileUpdate"));
   return actionLabel(log.action);
 }
 
@@ -535,7 +386,7 @@ function objectLabelFromSnapshot(snapshot: AuditRecord, resourceType: string): s
 }
 
 export function auditObjectLabel(log: AuditLog): string {
-  if (log.resource_type === "system_settings") return "系统设置";
+  if (log.resource_type === "system_settings") return String(i18n.global.t("auditLog.systemSettings"));
   const extra = getExtra(log);
   const before = getSnapshot(log.payload, "before");
   const after = getSnapshot(log.payload, "after");
@@ -544,7 +395,7 @@ export function auditObjectLabel(log: AuditLog): string {
   const fromExtra = firstDefined(extra.target_username, extra.username, extra.asset_no, extra.asset_name, extra.object_name, extra.name);
   if (fromExtra !== undefined) return String(fromExtra);
   if (log.resource_id) return `#${log.resource_id}`;
-  return "—";
+  return String(i18n.global.t("auditLog.empty"));
 }
 
 function tagNames(value: unknown): string[] {
@@ -572,8 +423,12 @@ function customChanges(log: AuditLog): AuditChange[] {
   if (!Array.isArray(changes)) return [];
   return changes.flatMap((item) => {
     if (!isRecord(item)) return [];
-    const key = String(firstDefined(item.name, item.key, item.field_id, "自定义字段"));
-    const label = String(firstDefined(item.name, item.key, `字段 #${String(item.field_id ?? "—")}`));
+    const key = String(firstDefined(item.name, item.key, item.field_id, "custom_value"));
+    const label = String(firstDefined(
+      item.name,
+      item.key,
+      i18n.global.t("auditLog.fieldFallback", { id: String(item.field_id ?? i18n.global.t("auditLog.empty")) }),
+    ));
     const change = makeChange(key, item.old_value, item.new_value, log.resource_type);
     return [{
       ...change,
@@ -619,10 +474,18 @@ function tagChange(before: unknown, after: unknown, resourceType: string): Audit
   const added = afterNames.filter((name) => !beforeNames.includes(name));
   const removed = beforeNames.filter((name) => !afterNames.includes(name));
   const operations = [
-    added.length ? `新增“${added.join("、")}”` : "",
-    removed.length ? `移除“${removed.join("、")}”` : "",
+    added.length ? String(i18n.global.t("auditLog.tagAdded", { value: added.join(", ") })) : "",
+    removed.length ? String(i18n.global.t("auditLog.tagRemoved", { value: removed.join(", ") })) : "",
   ].filter(Boolean);
-  return makeChange("tags", beforeNames, afterNames, resourceType, `标签：${operations.join("，") || "已调整"}`);
+  return makeChange(
+    "tags",
+    beforeNames,
+    afterNames,
+    resourceType,
+    String(i18n.global.t("auditLog.tagChange", {
+      value: operations.join(", ") || i18n.global.t("auditLog.tagsAdjusted"),
+    })),
+  );
 }
 
 function positionChange(before: AuditRecord, after: AuditRecord, resourceType: string): AuditChange | null {
@@ -632,12 +495,15 @@ function positionChange(before: AuditRecord, after: AuditRecord, resourceType: s
   if (beforeText === afterText) return null;
   return {
     key: "location",
-    label: "位置",
+    label: labelForKey("location"),
     before: beforeText,
     after: afterText,
-    beforeText: beforeText || "—",
-    afterText: afterText || "—",
-    summary: `位置：${formatAuditValue(beforeText, "location", resourceType)} → ${formatAuditValue(afterText, "location", resourceType)}`,
+    beforeText: beforeText || String(i18n.global.t("auditLog.empty")),
+    afterText: afterText || String(i18n.global.t("auditLog.empty")),
+    summary: String(i18n.global.t("auditLog.positionChange", {
+      before: formatAuditValue(beforeText, "location", resourceType),
+      after: formatAuditValue(afterText, "location", resourceType),
+    })),
   };
 }
 
@@ -681,9 +547,9 @@ function loginMetadata(log: AuditLog): AuditMetadata[] {
   const username = firstDefined(extra.username, payload.username, log.actor_username);
   const ip = firstDefined(extra.ip, extra.ip_address, payload.ip, payload.ip_address);
   const reason = firstDefined(extra.reason, extra.failure_reason, extra.login_reason, payload.reason, payload.failure_reason);
-  if (username !== undefined) metadata.push({ label: "用户名", value: formatAuditValue(username, "username", log.resource_type) });
-  if (ip !== undefined) metadata.push({ label: "IP 地址", value: formatAuditValue(ip, "ip", log.resource_type) });
-  if (reason !== undefined) metadata.push({ label: "原因", value: formatAuditValue(reason, "reason", log.resource_type) });
+  if (username !== undefined) metadata.push({ label: labelForKey("username"), value: formatAuditValue(username, "username", log.resource_type) });
+  if (ip !== undefined) metadata.push({ label: labelForKey("ip"), value: formatAuditValue(ip, "ip", log.resource_type) });
+  if (reason !== undefined) metadata.push({ label: labelForKey("reason"), value: formatAuditValue(reason, "reason", log.resource_type) });
   return metadata;
 }
 
@@ -701,7 +567,11 @@ function fieldsFromSnapshot(log: AuditLog): AuditField[] {
     const key = String(firstDefined(item.key, item.field_id, "custom_value"));
     fields.push({
       key: `custom:${key}`,
-      label: String(firstDefined(item.name, item.key, `字段 #${String(item.field_id ?? "—")}`)),
+      label: String(firstDefined(
+        item.name,
+        item.key,
+        i18n.global.t("auditLog.fieldFallback", { id: String(item.field_id ?? i18n.global.t("auditLog.empty")) }),
+      )),
       value: item.value,
       valueText: formatCustomValue(log, item, item.value),
     });
@@ -712,26 +582,49 @@ function fieldsFromSnapshot(log: AuditLog): AuditField[] {
 function summaryForLogin(log: AuditLog): string {
   const extra = getExtra(log);
   const reason = firstDefined(extra.reason, extra.failure_reason, extra.login_reason);
-  return reason === undefined ? actionLabel(log.action) : `${actionLabel(log.action)}：${String(reason)}`;
+  return reason === undefined
+    ? actionLabel(log.action)
+    : String(i18n.global.t("auditLog.loginSummary", { action: actionLabel(log.action), reason: String(reason) }));
 }
 
 export function auditChangeSummary(log: AuditLog): string {
   if (log.resource_type === "auth_login") return summaryForLogin(log);
-  if (log.resource_type === "system" && log.action === "system_reset") return "恢复系统初始状态";
+  if (log.resource_type === "system" && log.action === "system_reset") return String(i18n.global.t("auditLog.actions.system_reset"));
   const object = auditObjectLabel(log);
+  const resource = resourceLabel(log.resource_type);
   const extra = getExtra(log);
-  if (log.resource_type === "user" && extra.password_reset) return `管理员重置密码 ${object}`;
-  if (log.resource_type === "user" && extra.password_change) return `修改密码 ${object}`;
-  if (log.action === "create") return `新增${resourceLabel(log.resource_type)} ${object}`;
-  if (log.action === "delete") return `删除${resourceLabel(log.resource_type)} ${object}`;
+  if (log.resource_type === "user" && extra.password_reset) {
+    return String(i18n.global.t("auditLog.summary.adminPasswordReset", { object }));
+  }
+  if (log.resource_type === "user" && extra.password_change) {
+    return String(i18n.global.t("auditLog.summary.passwordChange", { object }));
+  }
+  if (log.resource_type === "user" && extra.profile_update) {
+    return String(i18n.global.t("auditLog.summary.profileUpdate", { object }));
+  }
+  if (log.action === "create") {
+    return String(i18n.global.t("auditLog.summary.created", { resource, object }));
+  }
+  if (log.action === "delete") {
+    return String(i18n.global.t("auditLog.summary.deleted", { resource, object }));
+  }
   const changes = auditChanges(log);
   if (!changes.length) {
-    if (log.action === "resolve" && extra.resolution_action !== undefined) return `处理方式：${formatAuditValue(extra.resolution_action, "resolution_action", log.resource_type)}`;
-    return `${actionLabel(log.action)}${resourceLabel(log.resource_type)} ${object}`;
+    if (log.action === "resolve" && extra.resolution_action !== undefined) {
+      return `${labelForKey("resolution_action")}: ${formatAuditValue(extra.resolution_action, "resolution_action", log.resource_type)}`;
+    }
+    if (log.action === "update") {
+      return String(i18n.global.t("auditLog.summary.updated", { resource, object }));
+    }
+    return String(i18n.global.t("auditLog.summary.action", {
+      action: auditLogActionLabel(log),
+      resource,
+      object,
+    }));
   }
-  const parts = changes.slice(0, 2).map((change) => change.summary || `${change.label}：${change.beforeText} → ${change.afterText}`);
-  const suffix = changes.length > parts.length ? ` 等 ${changes.length} 项` : "";
-  return `${parts.join("；")}${suffix}`;
+  const parts = changes.slice(0, 2).map((change) => change.summary || `${change.label}: ${change.beforeText} → ${change.afterText}`);
+  const suffix = changes.length > parts.length ? ` ${i18n.global.t("auditLog.changeCount", { count: changes.length })}` : "";
+  return `${parts.join("; ")}${suffix}`;
 }
 
 export function auditDetail(log: AuditLog): AuditDetail {
@@ -743,7 +636,11 @@ export function auditDetail(log: AuditLog): AuditDetail {
     actionLabel: auditLogActionLabel(log),
     objectLabel: auditObjectLabel(log),
     summary: auditChangeSummary(log),
-    changeTitle: isDelete ? "删除前数据" : isCreate ? "新增时数据" : "字段变更",
+    changeTitle: isDelete
+      ? String(i18n.global.t("auditLog.deleteBefore"))
+      : isCreate
+        ? String(i18n.global.t("auditLog.createAt"))
+        : String(i18n.global.t("auditLog.fieldChanges")),
     changes: auditChanges(log),
     fields,
     metadata: log.resource_type === "auth_login" ? loginMetadata(log) : [],

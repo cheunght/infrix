@@ -1,16 +1,17 @@
 import type { DepreciationStatus } from "./types";
+import { i18n } from "./i18n";
 
 export const DEPRECIATION_METHOD_STRAIGHT_LINE = "straight_line" as const;
 
 export const DEPRECIATION_STATUS_LABELS: Record<DepreciationStatus, string> = {
-  unconfigured: "未配置",
-  not_started: "尚未开始",
-  depreciating: "折旧中",
-  fully_depreciated: "已折旧完",
+  unconfigured: "depreciation.status.unconfigured",
+  not_started: "depreciation.status.notStarted",
+  depreciating: "depreciation.status.depreciating",
+  fully_depreciated: "depreciation.status.fullyDepreciated",
 };
 
 export const DEPRECIATION_METHOD_LABELS: Record<string, string> = {
-  [DEPRECIATION_METHOD_STRAIGHT_LINE]: "直线法",
+  [DEPRECIATION_METHOD_STRAIGHT_LINE]: "depreciation.methods.straightLine",
 };
 
 type DecimalParts = { integer: string; fraction: string };
@@ -64,7 +65,7 @@ export function rateToPercentageText(value: unknown): string | null {
 
 export function formatResidualRate(value: unknown): string {
   const percentage = rateToPercentageText(value);
-  return percentage === null ? "—" : `${percentage}%`;
+  return percentage === null ? String(i18n.global.t("common.notAvailable")) : `${percentage}%`;
 }
 
 export function isPositiveDecimalString(value: unknown): boolean {
@@ -74,7 +75,7 @@ export function isPositiveDecimalString(value: unknown): boolean {
 }
 
 export function formatMoneyDecimalString(value: unknown): string {
-  if (value === null || value === undefined || String(value).trim() === "") return "—";
+  if (value === null || value === undefined || String(value).trim() === "") return String(i18n.global.t("common.notAvailable"));
   const text = String(value).trim();
   const match = /^(-?)(\d+)(?:\.(\d+))?$/.exec(text);
   if (!match) return text;
@@ -97,17 +98,18 @@ export function formatDepreciationProgress(
 ): string {
   const fromBackend = fractionPercentageText(progress);
   if (fromBackend !== null) return `${fromBackend}%`;
-  if (!totalMonths || totalMonths <= 0 || elapsedMonths == null) return "—";
+  if (!totalMonths || totalMonths <= 0 || elapsedMonths == null) return String(i18n.global.t("common.notAvailable"));
   const fallback = Math.min(100, Math.max(0, Math.round((elapsedMonths / totalMonths) * 100)));
   return `${fallback}%`;
 }
 
 export function depreciationStatusLabel(value: string | null | undefined): string {
-  return value && value in DEPRECIATION_STATUS_LABELS
-    ? DEPRECIATION_STATUS_LABELS[value as DepreciationStatus]
-    : "—";
+  if (!value || !(value in DEPRECIATION_STATUS_LABELS)) return String(i18n.global.t("common.notAvailable"));
+  return String(i18n.global.t(DEPRECIATION_STATUS_LABELS[value as DepreciationStatus]));
 }
 
 export function depreciationMethodLabel(value: string | null | undefined): string {
-  return value ? DEPRECIATION_METHOD_LABELS[value] || value : "—";
+  if (!value) return String(i18n.global.t("common.notAvailable"));
+  const key = DEPRECIATION_METHOD_LABELS[value];
+  return key ? String(i18n.global.t(key)) : value;
 }

@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed } from "vue";
+import { useI18n } from "vue-i18n";
 import { Money } from "@element-plus/icons-vue";
 
 type CurrencyCode = "CNY" | "USD" | "EUR" | "GBP" | "JPY" | "HKD";
@@ -38,6 +39,7 @@ const props = withDefaults(
     maxlength: undefined,
   },
 );
+const { t } = useI18n();
 
 const emit = defineEmits<{
   "update:modelValue": [value: string | null];
@@ -65,7 +67,7 @@ const currencySymbol = computed(() => props.symbol || props.prefix || currencySy
   >
     <template #prefix>
       <el-icon aria-hidden="true"><Money /></el-icon>
-      <span :aria-label="`币种 ${currencySymbol}`">{{ currencySymbol }}</span>
+      <span :aria-label="`${t('common.currency')} ${currencySymbol}`">{{ currencySymbol }}</span>
     </template>
     <template v-if="suffix" #suffix><span aria-hidden="true">{{ suffix }}</span></template>
   </el-input>

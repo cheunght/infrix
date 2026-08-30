@@ -1,5 +1,7 @@
 <script setup lang="ts">
+import { useI18n } from "vue-i18n";
 import type { RackCanvasContext } from "../types/page-context";
+const { t } = useI18n();
 const props = defineProps<{ context: RackCanvasContext }>();
 const context = props.context;
 const {
@@ -20,11 +22,15 @@ const {
 } = context;
 
 function allocationPrimary(allocation: RackCanvasContext["displayedRacks"]["value"][number]["allocations"][number]) {
-  return allocation.asset_no?.trim() || allocation.asset_name?.trim() || "未命名资产";
+  return allocation.asset_no?.trim() || allocation.asset_name?.trim() || t("asset.unlisted");
 }
 
 function allocationMeta(allocation: RackCanvasContext["displayedRacks"]["value"][number]["allocations"][number]) {
-  return [allocation.device_type_name || "未分类", `U${allocation.start_u}–U${allocation.end_u}`].join(" · ");
+  return [allocation.device_type_name || t("rack.unclassified"), `U${allocation.start_u}–U${allocation.end_u}`].join(" · ");
+}
+
+function allocationTooltip(allocation: RackCanvasContext["displayedRacks"]["value"][number]["allocations"][number]) {
+  return [allocationPrimary(allocation), allocationMeta(allocation)].join(" · ");
 }
 
 function rackUnitNumber(totalU: number, rowIndex: number) {
@@ -32,7 +38,7 @@ function rackUnitNumber(totalU: number, rowIndex: number) {
 }
 
 function rackUnitLabel(totalU: number, rowIndex: number) {
-  return String(rackUnitNumber(totalU, rowIndex)).padStart(2, "0");
+  return String(rackUnitNumber(totalU, rowIndex));
 }
 
 function isMajorUnit(totalU: number, rowIndex: number) {
@@ -47,9 +53,9 @@ function isMajorUnit(totalU: number, rowIndex: number) {
       <el-skeleton :rows="8" animated />
     </div>
     <div v-else-if="rackCanvasError" class="rack-panel-state rack-panel-error" role="alert">
-      <strong>机柜详情加载失败</strong>
+      <strong>{{ t('rack.rackLoadFailed') }}</strong>
       <span>{{ rackCanvasError }}</span>
-      <el-button type="primary" plain @click="retryRackView">重新加载</el-button>
+      <el-button type="primary" plain @click="retryRackView">{{ t('common.retry') }}</el-button>
     </div>
     <div
       v-else-if="displayedRacks.length"
@@ -63,12 +69,14 @@ function isMajorUnit(totalU: number, rowIndex: number) {
         shadow="never"
         :class="{ active: focusedRack?.id === rack.id }"
       >
-        <div class="rack-u-head">
-          <strong>{{ rack.code }}</strong>
-          <span class="rack-u-head__capacity">
-            {{ rackUsedU(rack) }} / {{ rack.total_u }} U · {{ rackUtilization(rack) }}%
-          </span>
-        </div>
+        <template #header>
+          <div class="rack-u-head">
+            <strong>{{ rack.code }}</strong>
+            <span class="rack-u-head__capacity">
+              {{ rackUsedU(rack) }} / {{ rack.total_u }} U · {{ rackUtilization(rack) }}%
+            </span>
+          </div>
+        </template>
         <div class="rack-body-scroll">
           <div class="rack-body" :style="rackBodyStyle(rack)">
             <div class="rack-u-scale" aria-hidden="true">
@@ -79,7 +87,7 @@ function isMajorUnit(totalU: number, rowIndex: number) {
                 :class="{ 'rack-u-mark--major': isMajorUnit(rack.total_u, u) }"
               >{{ rackUnitLabel(rack.total_u, u) }}</span>
             </div>
-            <div class="rack-slot-area" :aria-label="`${rack.code} U 位区域`">
+            <div class="rack-slot-area" :aria-label="`${rack.code} ${t('rack.uPosition')}`">
               <div class="rack-slot-grid" aria-hidden="true">
                 <span
                   v-for="u in rack.total_u"
@@ -98,17 +106,26 @@ function isMajorUnit(totalU: number, rowIndex: number) {
                   class="rack-device-slot"
                   :style="rackAllocationStyle(rack, allocation)"
                 >
-                  <el-button
-                    text
-                    native-type="button"
-                    class="device"
-                    :class="{ 'device-selected': detailAsset?.id === allocation.asset, 'rack-device--one-u': allocation.units === 1 }"
-                    :aria-label="`${allocationPrimary(allocation)}，${allocationMeta(allocation)}`"
-                    @click.stop="openRackAssetDetail(allocation.asset, rack.id)"
-                  >
-                    <span class="rack-device__primary">{{ allocationPrimary(allocation) }}</span>
-                    <small v-if="allocation.units >= 2" class="rack-device__meta">{{ allocationMeta(allocation) }}</small>
-                  </el-button>
+                  <span class="rack-device-tooltip">
+                    <el-tooltip
+                      :content="allocationTooltip(allocation)"
+                      placement="top"
+                    >
+                      <el-button
+                        text
+                        native-type="button"
+                        class="device"
+                        :class="{ 'device-selected': detailAsset?.id === allocation.asset, 'rack-device--one-u': allocation.units === 1 }"
+                        :aria-label="`${allocationPrimary(allocation)}，${allocationMeta(allocation)}`"
+                        @click.stop="openRackAssetDetail(allocation.asset, rack.id)"
+                      >
+                        <span class="rack-device__content">
+                          <span class="rack-device__primary">{{ allocationPrimary(allocation) }}</span>
+                          <span v-if="allocation.units >= 2" class="rack-device__meta">{{ allocationMeta(allocation) }}</span>
+                        </span>
+                      </el-button>
+                    </el-tooltip>
+                  </span>
                 </div>
               </div>
             </div>
@@ -117,8 +134,8 @@ function isMajorUnit(totalU: number, rowIndex: number) {
       </el-card>
     </div>
     <div v-else class="rack-panel-empty">
-      <el-empty :description="hasRackFilters ? '没有符合筛选条件的机柜' : '暂无机柜'" />
-      <el-button v-if="hasRackFilters" link type="primary" @click="resetRackFilters">清除筛选</el-button>
+      <el-empty :description="hasRackFilters ? t('rack.noMatchingRacks') : t('rack.noRack')" />
+      <el-button v-if="hasRackFilters" link type="primary" @click="resetRackFilters">{{ t('common.clearFilters') }}</el-button>
     </div>
   </section>
 </template>
