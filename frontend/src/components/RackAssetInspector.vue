@@ -4,7 +4,7 @@ import { useI18n } from "vue-i18n";
 import { Close } from "@element-plus/icons-vue";
 import AssetDetailContent from "./AssetDetailContent.vue";
 import type { AssetDetail } from "../types";
-import type { RackInspectorContext } from "../types/page-context";
+import type { RackInspectorContext } from "../page-context";
 
 const props = defineProps<{ context: RackInspectorContext }>();
 const { t } = useI18n();

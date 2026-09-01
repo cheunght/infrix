@@ -31,7 +31,7 @@ from .system_settings import get_system_settings
 
 IMPORT_MAX_FILE_SIZE = 10 * 1024 * 1024
 IMPORT_MAX_ROWS = 10000
-IMPORT_TEMPLATE_VERSION = "asset-import-v2"
+IMPORT_TEMPLATE_FORMAT = "infrix-asset-import"
 
 IMPORT_COLUMNS = (
     ("asset_no", "资产编号", True, "资产唯一编号；文件内不能重复，系统中已存在的编号不能再次导入。"),
@@ -72,7 +72,6 @@ IMPORT_FIELD_LABELS = {key: label for key, label, _required, _description in IMP
 IMPORT_FIELD_LABELS.update({"configuration": "机柜位置", "custom_values": "自定义字段"})
 IMPORT_BASE_HEADERS = {key for key, _label, _required, _description in IMPORT_COLUMNS}
 IMPORT_REQUIRED_HEADERS = {key for key, _label, required, _description in IMPORT_COLUMNS if required}
-IMPORT_ALIASES = {"asset_model", "rack_total_u", "procurement_notes", "maintenance_notes"}
 IMPORT_STATUS_VALUES = frozenset(ASSET_IMPORT_STATUS_VALUES)
 IMPORT_CUSTOM_HEADER_RE = re.compile(r"custom__[a-z][a-z0-9_]*$")
 
@@ -155,7 +154,7 @@ def _normalize_headers(values):
         raise ImportFileError("导入文件包含重复字段名，请保留每个字段一列")
     unknown = [
         header for header in headers
-        if header not in IMPORT_BASE_HEADERS and header not in IMPORT_ALIASES and not IMPORT_CUSTOM_HEADER_RE.fullmatch(header)
+        if header not in IMPORT_BASE_HEADERS and not IMPORT_CUSTOM_HEADER_RE.fullmatch(header)
     ]
     if unknown:
         raise ImportFileError(f"导入文件包含未知字段：{'、'.join(unknown)}")
@@ -500,7 +499,7 @@ def _prepare_payload(row, headers):
         "manufacturer_id": manufacturer.pk if manufacturer else None,
         "device_type": device_type.pk,
         "asset_data_center": asset_data_center.pk if asset_data_center else None,
-        "model": row.get("model", "").strip() or row.get("asset_model", "").strip(),
+        "model": row.get("model", "").strip(),
         "manufacturer_model": row.get("manufacturer_model", "").strip(),
         "serial_number": row.get("serial_number", "").strip() or None,
         "purpose": row.get("purpose", "").strip(),
@@ -632,7 +631,7 @@ def build_import_template():
         sheet.column_dimensions[get_column_letter(index)].width = min(max(len(header) + 4, 14), 28)
 
     guide = workbook.create_sheet("填写说明")
-    guide.append(["模板版本", IMPORT_TEMPLATE_VERSION])
+    guide.append(["模板格式", IMPORT_TEMPLATE_FORMAT])
     guide.append(["说明", "标准字段名位于资产导入 sheet 第一行；不要修改字段名。空单元格按当前资产表单语义处理。"])
     guide.append([])
     guide.append(["字段", "显示名称", "必填", "填写说明"])
@@ -646,7 +645,7 @@ def build_import_template():
     guide.append(["日期格式", "Excel 日期单元格或 YYYY-MM-DD；不接受模糊日期。"])
     guide.append(["机柜位置", "数据中心 + 机房 + 机柜编号 + 起始 U + 结束 U 必须同时填写；位置按真实层级匹配并复用现有 U 位冲突校验。"])
     guide.append(["标签", "多个标签用英文分号、中文分号或逗号分隔；不存在或停用标签会阻止整批导入。"])
-    guide.append(["导入策略", "V1 只新增资产；已存在资产编号、文件内重复编号或任意校验错误都会阻止确认。"])
+    guide.append(["导入策略", "只新增资产；已存在资产编号、文件内重复编号或任意校验错误都会阻止确认。"])
     guide.freeze_panes = "A5"
     guide.column_dimensions["A"].width = 24
     guide.column_dimensions["B"].width = 24

@@ -9,6 +9,14 @@ BASE_DIR = Path(__file__).resolve().parent.parent
 _DEVELOPMENT_SECRET_KEY = "dev-only-change-me"
 _TRUE_VALUES = {"1", "true", "yes", "on"}
 _FALSE_VALUES = {"0", "false", "no", "off"}
+_PRODUCTION_DB_PASSWORD_PLACEHOLDERS = {
+    "change-me",
+    "changeme",
+    "password",
+    "<database-password>",
+    "数据库密码",
+    "请替换为数据库密码",
+}
 
 
 def _env_bool(name, default):
@@ -36,6 +44,55 @@ def _env_list(name, default=()):
     if raw_value is None:
         return list(default)
     return [item.strip() for item in raw_value.split(",") if item.strip()]
+
+
+def validate_database_settings(
+    *,
+    engine,
+    password="",
+    name="",
+    user="",
+    host="",
+    port="3306",
+    is_production,
+):
+    """Validate the supported database contract without exposing credentials."""
+    normalized_engine = str(engine or "").strip().lower()
+    if normalized_engine not in {"mysql", "sqlite"}:
+        if is_production:
+            raise ImproperlyConfigured(
+                "Unsupported DB_ENGINE for production; production requires mysql."
+            )
+        raise ImproperlyConfigured("Unsupported DB_ENGINE; use mysql or sqlite.")
+
+    if not is_production:
+        return
+
+    if normalized_engine != "mysql":
+        raise ImproperlyConfigured(
+            "Production requires DB_ENGINE=mysql; SQLite is only supported for development and tests."
+        )
+
+    required_values = {
+        "DB_NAME": name,
+        "DB_USER": user,
+        "DB_PASSWORD": password,
+        "DB_HOST": host,
+    }
+    for setting_name, value in required_values.items():
+        if not str(value or "").strip():
+            raise ImproperlyConfigured(
+                f"Production MySQL requires {setting_name}; the value is missing."
+            )
+    if str(password).strip().lower() in _PRODUCTION_DB_PASSWORD_PLACEHOLDERS:
+        raise ImproperlyConfigured("Production DB_PASSWORD must not be a placeholder.")
+
+    try:
+        normalized_port = int(str(port).strip())
+    except (TypeError, ValueError) as exc:
+        raise ImproperlyConfigured("Production DB_PORT must be an integer.") from exc
+    if not 1 <= normalized_port <= 65535:
+        raise ImproperlyConfigured("Production DB_PORT must be between 1 and 65535.")
 
 
 def validate_production_settings(
@@ -229,17 +286,35 @@ TEMPLATES = [{
 }]
 WSGI_APPLICATION = "config.wsgi.application"
 
-if os.getenv("DB_ENGINE") == "mysql":
+DB_ENGINE = os.getenv("DB_ENGINE", "").strip().lower()
+if not DB_ENGINE and not IS_PRODUCTION:
+    DB_ENGINE = "sqlite"
+DB_PASSWORD = os.getenv("DB_PASSWORD", "")
+DB_NAME = os.getenv("DB_NAME", "" if IS_PRODUCTION else "infrix").strip()
+DB_USER = os.getenv("DB_USER", "" if IS_PRODUCTION else "infrix").strip()
+DB_HOST = os.getenv("DB_HOST", "" if IS_PRODUCTION else "127.0.0.1").strip()
+DB_PORT = os.getenv("DB_PORT", "3306").strip()
+validate_database_settings(
+    engine=DB_ENGINE,
+    password=DB_PASSWORD,
+    name=DB_NAME,
+    user=DB_USER,
+    host=DB_HOST,
+    port=DB_PORT,
+    is_production=IS_PRODUCTION,
+)
+
+if DB_ENGINE == "mysql":
     DATABASES = {"default": {
         "ENGINE": "django.db.backends.mysql",
-        "NAME": os.getenv("DB_NAME", "itam"),
-        "USER": os.getenv("DB_USER", "itam"),
-        "PASSWORD": os.getenv("DB_PASSWORD", "itam"),
-        "HOST": os.getenv("DB_HOST", "127.0.0.1"),
-        "PORT": os.getenv("DB_PORT", "3306"),
+        "NAME": DB_NAME,
+        "USER": DB_USER,
+        "PASSWORD": DB_PASSWORD,
+        "HOST": DB_HOST,
+        "PORT": DB_PORT,
         "OPTIONS": {"charset": "utf8mb4"},
     }}
-else:
+elif DB_ENGINE == "sqlite":
     DATABASES = {"default": {"ENGINE": "django.db.backends.sqlite3", "NAME": BASE_DIR / "db.sqlite3"}}
 
 AUTH_PASSWORD_VALIDATORS = [

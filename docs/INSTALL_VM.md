@@ -1,71 +1,105 @@
-# Rocky Linux 9 安装与更新说明
+# Rocky Linux 9 Official Automatic Installation and Upgrade Guide
 
-本文适用于将 Infrix 部署到 Rocky Linux 9 虚拟机。安装脚本会安装 Python、Node.js、Nginx、MariaDB、Gunicorn，创建 systemd 服务，并构建 Vue 前端。
+This guide describes how to deploy or upgrade Infrix on a Rocky Linux 9 virtual machine. The installer provisions the application runtime, Python environment, frontend build, systemd service, Nginx configuration, and—when requested—local MariaDB.
 
-仓库只保存源码、迁移、配置示例和必要资源，不保存 SQLite、MySQL 数据、账号、密钥、虚拟环境或前端依赖。私有 GitHub 仓库拉取后，需要按本文重新创建环境。
+This is the official automatic-installation guide. `deploy/install.sh` is the single automatic installation entry point and supports Rocky Linux 9.x only. It verifies `/etc/os-release` and accepts `ID=rocky` with `VERSION_ID=9`, `9.x`, or `9.<minor>`. Other Linux environments must use the distribution-agnostic [Manual Deployment Guide](MANUAL_DEPLOYMENT.md).
 
-脚本不会修改 SELinux 和防火墙配置；本说明假设这两项已经按现场要求关闭或由现场统一管理。
+The manual guide describes application-level requirements rather than a distribution support list. It does not imply that Infrix has been automatically tested on every Linux distribution.
 
-本部署脚本的生产契约是：外部 HTTPS 网关终止 TLS，私网 Nginx 只监听 TCP 80，
-并把可信网关覆盖后的 `X-Forwarded-Proto` 传给 Django。TCP 80 不得直接暴露给
-不受信任的客户端；网关必须将该请求头设置为单一的 `https` 或 `http`，不能把
-客户端任意传入的值直接追加转发。若现场由 Nginx 自身终止 TLS，请不要套用这套
-HTTP 内部转发配置，应按 `DJANGO_HTTPS_MODE=direct` 设计并单独核对证书和代理配置。
+The repository contains source code, migrations, configuration templates, and required assets only. It does not contain SQLite or MySQL data, user accounts, secrets, virtual environments, frontend dependencies, or build output. A private GitHub checkout must be configured again on the target host according to this guide.
 
-## 上线前必读
+The installer preserves SELinux enforcement. When SELinux is Enforcing or Permissive, it verifies and persistently enables the narrowly required `httpd_can_network_connect` boolean so Nginx can proxy to Gunicorn; it never runs `setenforce 0` and never uses `chmod 777`. For a local MariaDB deployment it also binds the database to `127.0.0.1` and stops if port 3306 is listening on a non-loopback address. Firewall, Security Group, and external TLS controls remain the deployment owner's responsibility.
 
-- 安装或更新脚本会在执行迁移前自动备份 MySQL 数据库；备份失败会立即停止部署。
-- 升级后自动建立四个预设角色：系统管理员、资产管理员、维修人员、只读审计员。预设角色不能重命名或删除。
-- 现有超级管理员归入系统管理员；其他现有账号默认归入只读审计员。上线后请由系统管理员逐一核对账号角色。
-- 机房和机柜必须先在“机房资源 / 机房维护”中建立。资产录入和 Excel/CSV 导入不会再自动创建位置基础数据。
-- 更新完成后脚本会执行迁移、预设角色检查、Django 部署检查及 HTTP 健康检查。
-- 迁移前后会输出资产、故障、维修、许可证和机柜数量；迁移失败时会打印备份文件及恢复命令示例。
+## Deployment Contract
 
-## 一、准备条件
+The supported production path is:
 
-- Rocky Linux 9，使用 root 或具有 sudo 权限的账号。
-- 虚拟机可以访问 Rocky Linux 软件源和 npm/Python 包源。
-- 服务器的 TCP 80 仅供可信 HTTPS 网关访问；网关负责公网 HTTPS、证书和到本机 80 端口的转发。
-- 项目源码完整，至少包含 `backend/manage.py`、`backend/requirements.txt`、`frontend/package.json` 和 `frontend/package-lock.json`。
+- An external HTTPS gateway terminates public TLS.
+- The private Nginx listener accepts TCP port 80 only from that trusted gateway.
+- The gateway overwrites `X-Forwarded-Proto` with one authoritative value: `https` or `http`.
+- Nginx forwards that value to Django.
+- Django runs with `DJANGO_HTTPS_MODE=proxy` and production security settings enabled.
 
-## 二、上传或获取源码
+Do not expose the internal port 80 listener directly to untrusted clients. The installer and production release gate require proxy mode for this Nginx deployment. If Nginx itself must terminate TLS, design and verify a separate direct-TLS deployment instead of applying this internal HTTP configuration unchanged.
 
-使用 Git 获取源码：
+## Before You Begin
+
+- A fresh MySQL installation must confirm that the target database is empty before it can generate a new secret or migrate.
+- An existing Infrix installation is upgraded in place by default. The installer preserves the environment file and business data, creates a database backup before migration, and applies the current Django migration set.
+- Upgrades are supported from the Infrix baseline represented by the current migration files. If the database contains migration records whose files are not present in the reviewed package, the installer stops before replacing application code.
+- The installer initializes four preset roles: System Administrator, Asset Administrator, Maintenance Operator, and Read-only Auditor. Preset roles cannot be renamed or deleted.
+- Existing superusers are assigned to System Administrator. Other existing accounts default to Read-only Auditor. Verify every account after deployment.
+- Data centers, server rooms, and racks must be created in the application before assets are entered or imported. Asset import does not create missing location master data.
+- The installer runs the current Django migrations, preset-role checks, Django checks, static-file checks, and HTTP health checks.
+- The installer prints pre- and post-initialization counts for key business tables.
+
+## 1. Prerequisites
+
+The target host must meet these conditions:
+
+- Rocky Linux 9 with root access or an account that can run the installer with `sudo`.
+- Access to the Rocky Linux package repositories and the Python/npm package registries.
+- TCP port 80 restricted to the trusted HTTPS gateway.
+- A complete source tree containing at least `backend/manage.py`, `backend/requirements.txt`, `frontend/package.json`, and `frontend/package-lock.json`.
+- At least Python 3.10 and Node.js 18 available, or permission for the installer to install them.
+- For local MariaDB mode, the installer must be allowed to manage the MariaDB listener and keep TCP port 3306 loopback-only.
+
+## 2. Obtain the Source
+
+Clone the repository to a staging directory:
 
 ```bash
 sudo -i
 dnf install -y git
-git clone <仓库地址> /tmp/itam-src
-cd /tmp/itam-src
+git clone <repository-url> /tmp/infrix-src
+cd /tmp/infrix-src
 ```
 
-如果源码已经上传到服务器，直接进入项目根目录即可：
+If the source has already been uploaded, enter the project root directly:
 
 ```bash
-cd /tmp/itam-src
+cd /tmp/infrix-src
 ```
 
-不要把 `/etc/itam/itam.env` 放进源码目录，也不要把数据库文件提交到 Git。
+Do not place `/etc/infrix/infrix.env` inside the source tree. Do not commit database files, secrets, backups, or generated dependencies.
 
-## 三、首次安装
+## 3. Installation and Upgrade
 
-### 1. 设置部署参数
+### 3.1 Configure Deployment Variables
 
-生产安装必须显式提供域名或 IP，不能使用 `DJANGO_ALLOWED_HOSTS=*`。以下示例假设
-公网 HTTPS 地址为 `itam.example.com`；如使用 IP，请将两处域名替换为实际 IP。
+The following example uses `infrix.example.com` as the public HTTPS host. Replace it with the real hostname or IP address before running the installer.
 
 ```bash
-export SERVER_NAME=itam.example.com
-export DJANGO_ALLOWED_HOSTS='itam.example.com'
-export DJANGO_CSRF_TRUSTED_ORIGINS='https://itam.example.com'
+export SERVER_NAME=infrix.example.com
+export DJANGO_ENV=production
+export DJANGO_DEBUG=0
+export DJANGO_ALLOWED_HOSTS='infrix.example.com'
+export DJANGO_CSRF_TRUSTED_ORIGINS='https://infrix.example.com'
 export DJANGO_HTTPS_MODE=proxy
-export DB_NAME=itam
-export DB_USER=itam
-export DB_PASSWORD='请替换为数据库密码'
+export DJANGO_SECURE_SSL_REDIRECT=1
+export DJANGO_SESSION_COOKIE_SECURE=1
+export DJANGO_CSRF_COOKIE_SECURE=1
+export DJANGO_SECURE_HSTS_SECONDS=3600
+export DJANGO_SECURE_HSTS_INCLUDE_SUBDOMAINS=0
+export DJANGO_SECURE_HSTS_PRELOAD=0
+export DJANGO_USE_X_FORWARDED_HOST=0
+export DB_ENGINE=mysql
+export DB_NAME=infrix
+export DB_USER=infrix
+export DB_HOST=127.0.0.1
+export DB_PASSWORD='<database-password>'
+export DB_PORT=3306
 ```
 
-如果这台 Rocky 主机仍用于开发环境，请显式切换为开发模式；开发模式允许
-`DJANGO_ALLOWED_HOSTS=*`，并保留 HTTP、调试模式和非 secure cookie：
+Replace `<database-password>` with a real password before execution. Do not put the real password into the repository or a shell history that is accessible to other users.
+
+Production requires an explicit MySQL/MariaDB configuration. `DB_NAME`, `DB_USER`, `DB_PASSWORD`, and `DB_HOST` must be non-empty. SQLite, an empty `DB_ENGINE`, an unknown database engine, wildcard `DJANGO_ALLOWED_HOSTS`, non-HTTPS CSRF origins, insecure cookies, and invalid proxy settings are rejected.
+
+On a fresh production installation, `DJANGO_SECRET_KEY` may be omitted and will be generated only after the installer confirms that the target MySQL database is empty. You may provide a random secret of at least 50 characters instead. Never omit the secret from an existing production environment file: an existing installation with a missing secret is a hard failure.
+
+If `/etc/infrix/infrix.env` already exists, the installer loads that file and preserves its values. Exported variables do not override values already present in the environment file.
+
+For a Rocky Linux host used as a development environment, configure it explicitly as development. This mode keeps the local HTTP and SQLite workflow:
 
 ```bash
 export DJANGO_ENV=development
@@ -77,249 +111,267 @@ export DJANGO_SECURE_SSL_REDIRECT=0
 export DJANGO_SESSION_COOKIE_SECURE=0
 export DJANGO_CSRF_COOKIE_SECURE=0
 export DJANGO_SECURE_HSTS_SECONDS=0
+export DJANGO_USE_X_FORWARDED_HOST=0
+export DB_ENGINE=sqlite
 ```
 
-如果 `/etc/itam/itam.env` 已经存在，脚本以该文件为准；重试前请直接编辑其中的
-`DJANGO_ENV`、`DJANGO_ALLOWED_HOSTS` 和其他开发配置。
+If `DJANGO_ALLOWED_HOSTS` is omitted in development mode, the installer defaults to `127.0.0.1,localhost`. When the application will be opened from another host, set `SERVER_NAME` or `DJANGO_ALLOWED_HOSTS` to the test host explicitly; use `DJANGO_ALLOWED_HOSTS='*'` only for an isolated development network.
 
-可选参数：
+Optional deployment variables:
 
 ```bash
-export APP_DIR=/opt/itam
-export APP_USER=itam
-export BACKUP_DIR=/var/backups/itam
+export APP_DIR=/opt/infrix
+export APP_USER=infrix
+export BACKUP_DIR=/var/backups/infrix
 export GUNICORN_WORKERS=3
 ```
 
-### 2. 执行安装
+`INSTALL_MODE=auto` is the default. It selects `fresh` when no Infrix runtime is detected and `upgrade` when the target already has an Infrix service, virtual environment, database, or environment file. A source tree alone is not an installed runtime, so a staged or interrupted source synchronization can be reused for a fresh installation. To make the intent explicit, use `INSTALL_MODE=fresh` for a new target or `INSTALL_MODE=upgrade` for an existing baseline installation.
+
+The installer also accepts `ENV_FILE`, `SYSTEMD_UNIT_FILE`, `NGINX_CONF_FILE`, `SOURCE_DIR`, `PYTHON_BIN`, `SKIP_MARIADB`, and `BACKUP_DIR`. Use absolute paths for file and directory overrides.
+
+### 3.2 Run the Production Preflight
+
+Before installing system packages or writing system configuration, validate an existing environment file:
+
+```bash
+ENV_FILE=/etc/infrix/infrix.env ./deploy/install.sh --preflight
+```
+
+Preflight validates the production contract and does not modify the system or database. It requires the environment file to exist and requires the current Nginx deployment's proxy mode.
+
+`--preflight` is a configuration-only check and intentionally does not perform the Rocky Linux host check. Running it on another platform does not make that platform an automatically supported installation target.
+
+### 3.3 Run the Installer
+
+Make the script executable and run it with the exported variables preserved through `sudo`:
 
 ```bash
 chmod +x deploy/install.sh
 sudo -E ./deploy/install.sh
 ```
 
-安装脚本按以下顺序执行：
+The default `INSTALL_MODE=auto` selects the correct path. For a fresh target, you may make the choice explicit:
 
-1. 检查 Rocky Linux 9 和项目文件。
-2. 安装系统依赖。
-3. 创建 `itam` 系统用户和 `/opt/itam` 应用目录。
-4. 创建或补齐 `/etc/itam/itam.env`，已有密钥和数据库配置不会覆盖。
-5. 启动 MariaDB，创建数据库和数据库用户。
-6. 在迁移前将数据库备份到 `/var/backups/itam/`。
-7. 创建 `backend/.venv`，安装 Django 和 Gunicorn。
-8. 执行数据库迁移、Django 检查、生产安全门禁和静态文件收集。
-9. 执行 `npm ci` 和 `npm run build`。
-10. 写入 `itam.service` 和 Nginx 配置并执行健康检查。
+```bash
+export INSTALL_MODE=fresh
+sudo -E ./deploy/install.sh
+```
 
-服务启动和 HTTP 健康检查会自动重试；若仍失败，脚本会输出 `systemctl status`
-和最近的 Gunicorn 日志，便于直接定位数据库、迁移或环境变量问题。
+For an existing Infrix baseline installation, use the upgrade path explicitly when desired:
 
-如果 Rocky 9 自带的 `/etc/nginx/conf.d/default.conf` 与 Infrix 都使用
-`server_name _`，脚本会先将该默认配置备份到 `BACKUP_DIR`，再停用它，避免
-Nginx 将请求转到默认站点。备份文件可以在需要时手工恢复。
+```bash
+export INSTALL_MODE=upgrade
+sudo -E ./deploy/install.sh
+```
 
-安装完成后，脚本会显示访问地址和环境文件位置。
+The installer runs in this order:
 
-## 四、使用外部 MariaDB
+1. Validate the source tree, target paths, environment mode, and database contract.
+2. Install system packages, including Python, Node.js, Nginx, and MariaDB packages when required.
+3. For an upgrade, stop the active Infrix service, verify the existing migration ledger against the baseline, and create a restricted database backup.
+4. Create the `infrix` system user and application directory, then synchronize the reviewed source tree.
+5. Create or load the production environment file; existing environment values and secrets are preserved. If the existing systemd unit points to a different environment-file path and `ENV_FILE` was not explicitly set, that path is reused.
+6. Start and initialize local MariaDB, unless `SKIP_MARIADB=1` or SQLite development mode is selected.
+7. For a fresh MySQL install, verify that the target database contains no tables.
+8. Create `backend/.venv` and install the backend requirements.
+9. Run `npm ci` and `npm run build`; the deployment stops if the frontend build does not produce `frontend/dist/index.html`.
+10. Run the current Django migrations, system checks, preset-role checks, and static-file collection.
+11. Write the systemd unit with a required `EnvironmentFile`, write the Nginx reverse-proxy configuration, and validate Nginx syntax.
+12. Enable the services and run API and frontend health checks.
 
-如果数据库不在本机，提前在数据库服务器创建数据库和用户，然后设置：
+The generated service runs Gunicorn on the private application port and serves the built frontend through Nginx. If a health check fails, the installer prints the service status and recent Gunicorn logs and exits non-zero.
+
+If `/etc/nginx/conf.d/default.conf` conflicts with the Infrix configuration, the installer moves it into `BACKUP_DIR` before disabling it. Existing sites that use port 80 must be reviewed manually; Infrix uses `SERVER_NAME` for precise host matching when it cannot claim the default server.
+
+## 4. Use an External MariaDB Server
+
+Create the database and application user on the external database server, then configure the application host as follows:
 
 ```bash
 export SKIP_MARIADB=1
+export DJANGO_ENV=production
+export DJANGO_DEBUG=0
+export DJANGO_ALLOWED_HOSTS='infrix.example.com'
+export DJANGO_CSRF_TRUSTED_ORIGINS='https://infrix.example.com'
+export DJANGO_HTTPS_MODE=proxy
+export DB_ENGINE=mysql
 export DB_HOST=db.example.internal
 export DB_PORT=3306
-export DB_NAME=itam
-export DB_USER=itam
-export DB_PASSWORD='数据库密码'
+export DB_NAME=infrix
+export DB_USER=infrix
+export DB_PASSWORD='<database-password>'
 sudo -E ./deploy/install.sh
 ```
 
-外部数据库必须允许应用服务器访问，并授予 `itam` 用户对 `itam` 数据库的建表、修改表和索引权限。脚本仍会在迁移前尝试备份外部数据库；如果备份权限不足，脚本会停止，不会继续迁移。
+Replace the placeholder before running the command. The external database must allow the application host to connect and must grant the application user permission to create and alter tables and indexes in the `infrix` database.
 
-## 五、创建管理员和访问系统
+`SKIP_MARIADB=1` skips local MariaDB initialization only. In `fresh` mode the installer verifies that the external target database is empty before creating the current schema. In `upgrade` mode it validates the existing migration ledger and creates a database backup before applying migrations.
 
-不要使用系统 Python 直接执行 `python manage.py`。生产环境统一使用 `run.sh`，它会自动加载 `/etc/itam/itam.env`：
+## 5. Create an Administrator and Access the Application
+
+Do not invoke Django with the system Python. Use `run.sh`, which loads `/etc/infrix/infrix.env` by default:
 
 ```bash
-cd /opt/itam/backend
-sudo -u itam ./run.sh createsuperuser
+cd /opt/infrix/backend
+sudo -u infrix ./run.sh createsuperuser
 ```
 
-正式访问地址（由外部 HTTPS 网关提供）：
+With the standard external HTTPS gateway, the main endpoints are:
 
-- 首页：`https://itam.example.com/`
-- 管理后台：`https://itam.example.com/admin/`
-- API 文档：`https://itam.example.com/api/docs/`
+- Application: `https://infrix.example.com/`
+- Django admin: `https://infrix.example.com/admin/`
+- API documentation: `https://infrix.example.com/api/docs/`
 
-## 六、安装后检查
+If the environment file is stored elsewhere, pass it explicitly:
 
 ```bash
-systemctl status itam --no-pager
+sudo -u infrix env INFIX_ENV_FILE=/path/to/infrix.env ./run.sh check
+```
+
+## 6. Post-Installation Verification
+
+Check the services and internal API endpoint:
+
+```bash
+systemctl status infrix --no-pager
 systemctl status nginx --no-pager
 systemctl status mariadb --no-pager
 
-curl -fsS -H 'X-Forwarded-Proto: https' \
+curl -fsS -H 'X-Forwarded-Proto: https' \\
   http://127.0.0.1:8001/api/v1/auth/csrf/
-curl -fsS https://itam.example.com/api/v1/auth/csrf/
+curl -fsS https://infrix.example.com/api/v1/auth/csrf/
 
-journalctl -u itam -n 100 --no-pager
-cd /opt/itam/backend
-sudo -u itam ./run.sh showmigrations assets
+journalctl -u infrix -n 100 --no-pager
+cd /opt/infrix/backend
+sudo -u infrix ./run.sh showmigrations assets
 ```
 
-### 一键上线验收
+### One-Command Release Acceptance
 
-安装或更新完成后，可以使用只读验收脚本复核服务、迁移、核心数据表、机柜 U 位、静态资源和反向代理：
+After an installation or update, run the read-only acceptance script:
 
 ```bash
-cd /opt/itam
+cd /opt/infrix
 chmod +x deploy/verify-release.sh
-sudo APP_DIR=/opt/itam APP_USER=itam BASE_URL=https://itam.example.com \
+sudo APP_DIR=/opt/infrix APP_USER=infrix BASE_URL=https://infrix.example.com \\
   ./deploy/verify-release.sh
 ```
 
-验收脚本不会修改数据库。它会检查：
+In production mode, the script blocks on:
 
-- `itam` 和 Nginx 服务是否运行。
-- 生产模式下，密钥、Host、CSRF 来源、HTTPS 代理、安全 Cookie、HSTS 和代理 Host 策略是否通过阻断式门禁；开发模式仅执行基础可运行性检查，并允许 `DJANGO_ALLOWED_HOSTS=*`。
-- Django 配置、预设角色和模型迁移是否完整。
-- 资产、数据中心、机房、机柜、故障、维修、许可证、盘点、备件、自定义字段、标签和审计表是否存在，并输出数量。
-- 机柜上架记录是否存在 U 位越界或重叠。
-- 前端 `index.html`、`platform-icon.png` 和 `/api/v1/auth/csrf/` 是否可访问。
+- `infrix` and Nginx service status.
+- A required systemd `EnvironmentFile` pointing to the expected environment file.
+- The Nginx `X-Forwarded-Proto` proxy contract.
+- Production secrets, hosts, CSRF origins, HTTPS mode, secure cookies, HSTS, and forwarded-host policy.
+- `python manage.py check --deploy` security results.
+- Migration drift, unapplied migrations, preset roles, and required application tables.
+- Rack U-position overlaps and out-of-range allocations.
+- Frontend `index.html`, `platform-icon.png`, and API health endpoints.
 
-如果验收失败，脚本会输出 Gunicorn 状态和最近日志。迁移失败时仍以安装脚本打印的迁移前数据库备份为准进行恢复。
+The acceptance script does not replace manual verification of the firewall, Security Group, external TLS gateway, certificate chain, trusted request path, or browser behavior.
 
-开发环境验收时可使用 HTTP 地址，例如：
+For a development deployment, use an HTTP base URL:
 
 ```bash
-sudo APP_DIR=/opt/itam APP_USER=itam BASE_URL=http://127.0.0.1 \
+sudo APP_DIR=/opt/infrix APP_USER=infrix BASE_URL=http://127.0.0.1 \\
   ./deploy/verify-release.sh
 ```
 
-如果 API 健康检查失败，先查看：
+If the API health check fails, inspect the service log:
 
 ```bash
-journalctl -u itam -f
+journalctl -u infrix -f
 ```
 
-安装脚本在健康检查失败时还会自动输出 `systemctl status itam` 和最近的
-Gunicorn 日志。若 `127.0.0.1:8001` 连接被拒绝，说明 Gunicorn 进程没有保持运行，
-优先检查数据库连接、环境文件权限和迁移错误；若 Nginx 返回 400，检查是否仍有
-其他配置声明了冲突的 `server_name _`。若出现 HTTPS 重定向循环，检查外部网关
-是否将 `X-Forwarded-Proto` 覆盖为单一的 `https`，以及 TCP 80 是否只接受网关流量。
+Common causes include an incorrect database password, incomplete migrations, unreadable `/etc/infrix/infrix.env`, a conflicting Nginx server block, or a gateway that does not overwrite `X-Forwarded-Proto` with a single authoritative value. An HTTPS redirect loop usually means that the gateway reports the wrong protocol or that untrusted clients can reach the internal port 80 listener.
 
-常见原因是数据库密码错误、迁移未完成或 `/etc/itam/itam.env` 没有被服务读取。
-
-## 七、更新版本
-
-### 1. 备份环境文件
-
-安装脚本会自动在迁移前备份 MariaDB，但更新前仍建议单独备份环境文件：
+## 7. Confirm the Installation
 
 ```bash
-mkdir -p /var/backups/itam
-cp -a /etc/itam/itam.env \
-  /var/backups/itam/itam.env-$(date +%F-%H%M%S)
+systemctl status infrix --no-pager
+curl -fsS https://infrix.example.com/api/v1/auth/csrf/
+cd /opt/infrix/backend
+sudo -u infrix ./run.sh showmigrations assets
 ```
 
-### 2. 更新源码并重新部署
-
-```bash
-cd /tmp/itam-src
-git pull
-sudo -E ./deploy/install.sh
-```
-
-如果源码不是 Git 仓库，上传新版本覆盖源码目录后执行同样的安装命令。不要覆盖 `/etc/itam/itam.env`。
-
-脚本会保留虚拟环境、数据库和环境文件，重新安装依赖、执行迁移、构建前端并重启服务。数据库迁移失败时，先查看迁移前备份和服务日志，不要反复删除数据库。
-
-从私有 GitHub 仓库更新时，确认服务器已经配置 GitHub SSH key 或凭据，并检查当前仓库没有本地未提交修改：
-
-```bash
-git status --short
-git pull --ff-only
-sudo -E ./deploy/install.sh
-```
-
-如果 `git pull --ff-only` 因本地修改停止，请先备份现场文件，不要直接覆盖生产目录。
-
-### 3. 更新后确认
-
-```bash
-systemctl status itam --no-pager
-curl -fsS https://itam.example.com/api/v1/auth/csrf/
-cd /opt/itam/backend
-sudo -u itam ./run.sh showmigrations assets
-```
-
-## 八、手工备份与恢复
-
-备份：
-
-```bash
-mkdir -p /var/backups/itam
-MYSQL_PWD='数据库密码' mariadb-dump \
-  -h 127.0.0.1 -P 3306 -u itam \
-  --single-transaction --routines --events itam \
-  > /var/backups/itam/itam-$(date +%F-%H%M%S).sql
-chmod 600 /var/backups/itam/*.sql
-```
-
-恢复前停止应用：
-
-```bash
-systemctl stop itam
-MYSQL_PWD='数据库密码' mariadb -h 127.0.0.1 -P 3306 -u itam itam \
-  < /var/backups/itam/itam-YYYY-MM-DD-HHMMSS.sql
-systemctl start itam
-```
-
-## 九、常见问题
+## 8. Troubleshooting
 
 ### `ModuleNotFoundError: No module named 'django'`
 
-不要使用系统 Python。执行：
+Do not use the system Python. Run:
 
 ```bash
-cd /opt/itam/backend
-sudo -u itam ./run.sh check
+cd /opt/infrix/backend
+sudo -u infrix ./run.sh check
 ```
 
-如果虚拟环境损坏，可重新运行安装脚本；脚本会按需重建 `backend/.venv`。
+If the virtual environment is damaged, rerun the installer with `INSTALL_MODE=upgrade`; it will rebuild an incompatible virtual environment while preserving the environment file and database. If the migration ledger belongs to a pre-baseline release, export or restore the database separately and provision a compatible migration path before upgrading.
 
-### 数据库 `Access denied for user 'itam'`
+### Database `Access denied for user 'infrix'`
 
-检查 `/etc/itam/itam.env` 中的 `DB_HOST`、`DB_PORT`、`DB_NAME`、`DB_USER` 和 `DB_PASSWORD`，然后确认数据库用户已授权。修改环境文件后重启：
+Review `DB_HOST`, `DB_PORT`, `DB_NAME`, `DB_USER`, and `DB_PASSWORD` in `/etc/infrix/infrix.env`. Confirm that the database user is allowed to connect from the application host and has the required privileges. Restart the service after correcting the environment file:
 
 ```bash
-systemctl restart itam
+systemctl restart infrix
 ```
 
-### 迁移提示有未应用迁移
+### A Django migration is unapplied
+
+The installer applies the current Django migration set. If an installation or upgrade was interrupted, fix the reported database or permission issue and rerun the installer with the same `INSTALL_MODE`; an upgrade automatically creates a new backup before retrying:
 
 ```bash
-cd /opt/itam/backend
-sudo -u itam ./run.sh migrate --noinput
-sudo -u itam ./run.sh showmigrations assets
-systemctl restart itam
+cd /opt/infrix/backend
+sudo -u infrix ./run.sh migrate --noinput
+sudo -u infrix ./run.sh showmigrations assets
 ```
 
-### 页面更新后仍显示旧版本
+### The browser still shows an older frontend
 
-浏览器执行强制刷新；确认前端构建成功，并检查：
+Force-refresh the browser, confirm that the build completed, and inspect the deployed artifact and service log:
 
 ```bash
-ls -l /opt/itam/frontend/dist/index.html
-journalctl -u itam -n 50 --no-pager
+ls -l /opt/infrix/frontend/dist/index.html
+journalctl -u infrix -n 50 --no-pager
 ```
 
-## 十、安全提示
+### `Production environment file not found` during installation
 
-- `/etc/itam/itam.env` 权限应保持为 `640`，属主为 `root:itam`。
-- 生产环境必须使用 `DJANGO_ENV=production`、`DJANGO_DEBUG=0`、随机且足够长度的 `DJANGO_SECRET_KEY`，以及明确的 `DJANGO_ALLOWED_HOSTS`。
-- `DJANGO_CSRF_TRUSTED_ORIGINS` 只从生产环境文件读取 HTTPS 来源，不在代码中写入真实域名。
-- 生产配置默认使用 `DJANGO_SECURE_HSTS_SECONDS=3600`，不自动启用 HSTS 子域或 preload；确认所有子域均 HTTPS 后再单独评估提升范围。
-- Django 生产配置启用安全 Session/CSRF Cookie、`XFrameOptionsMiddleware` 和 `X_FRAME_OPTIONS=DENY`；Nginx 静态前端响应也补充 HSTS、X-Frame-Options 和 nosniff。
-- 数据库密码不要提交到 Git 或聊天记录；SELinux 和防火墙由现场策略管理，本脚本不会修改它们。
-- `deploy/verify-release.sh` 在生产模式下会检查上述配置和 `python manage.py check --deploy`；发现安全告警、缺失配置或非 HTTPS 验收地址会阻断上线。开发模式允许 HTTP 验收地址，但仍会检查服务、迁移、核心数据表和静态资源。
+`INSTALL_MODE=auto` treats a service, virtual environment, database, or environment file as an installed runtime. A source tree alone does not trigger upgrade mode, so a staged or interrupted source synchronization can be reused for a fresh installation. On a real existing deployment, restore the original environment file or point the installer to it explicitly:
+
+```bash
+sudo ENV_FILE=/absolute/path/to/infrix.env INSTALL_MODE=upgrade \
+  ./deploy/install.sh
+```
+
+When `ENV_FILE` is not explicitly set, the installer also reuses an existing environment-file path declared by the Infrix systemd unit. It never generates a replacement production secret for an existing runtime. If the database contains migration records from a release whose migration files are absent from this baseline package, stop and export or restore that database through a separately reviewed migration path.
+
+### Nginx returns HTTP 400 or HTTPS redirects loop
+
+Check for another server block declaring a conflicting `server_name _`. Then verify that the external gateway overwrites `X-Forwarded-Proto` with exactly `https` for public HTTPS requests and that only the gateway can reach the internal TCP 80 listener.
+
+### The API is unavailable after deployment
+
+Inspect the application status and recent logs:
+
+```bash
+systemctl status infrix --no-pager
+journalctl -u infrix -n 100 --no-pager
+```
+
+Prioritize database connectivity, environment-file permissions, migration failures, and port conflicts.
+
+## 9. Production Security Checklist
+
+- Keep `/etc/infrix/infrix.env` at mode `640` and ownership `root:infrix`.
+- Use `DJANGO_ENV=production`, `DJANGO_DEBUG=0`, a random `DJANGO_SECRET_KEY` of sufficient length, and explicit allowed hosts.
+- Use MySQL/MariaDB in production. SQLite is limited to development, tests, and one-time clean-install verification.
+- Define HTTPS CSRF trusted origins in the production environment file; do not hard-code real production domains in application code.
+- The default HSTS value is `3600` seconds. Subdomain HSTS and preload remain disabled until every relevant subdomain has been verified to support HTTPS.
+- Django enables secure session and CSRF cookies, `XFrameOptionsMiddleware`, and `X_FRAME_OPTIONS=DENY`. Nginx adds HSTS, X-Frame-Options, and `nosniff` to static frontend responses.
+- Never commit or share database passwords, environment files, backups, or private keys.
+- The installer keeps SELinux enabled and configures only the required Nginx-to-Gunicorn SELinux boolean. The deployment owner must verify Security Groups, firewall rules, certificates, and the real external request path.
+- In local MariaDB mode, the installer keeps port 3306 on loopback and verifies that it is not exposed on a non-loopback interface. External database exposure remains the database/network administrator's responsibility.
+- In external TLS gateway mode, the gateway must overwrite `X-Forwarded-Proto` with a single value and the internal port 80 listener must accept only trusted gateway traffic.
+- Before production use, confirm the reviewed source commit, production preflight, either an empty fresh target or a verified upgrade backup, successful Django migrations, HTTPS behavior, firewall policy, and an application smoke test.
+- `deploy/verify-release.sh` checks the production configuration and `python manage.py check --deploy`. It blocks on missing configuration, unexpected security warnings, or a non-HTTPS production acceptance URL.

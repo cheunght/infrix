@@ -1,7 +1,8 @@
 import { computed, onBeforeUnmount, ref } from "vue";
-import { ElMessage, ElMessageBox } from "element-plus";
+import { ElMessage } from "element-plus/es/components/message/index.mjs";
+import { ElMessageBox } from "element-plus/es/components/message-box/index.mjs";
 import { currentLocale, i18n } from "../i18n";
-import { buildExportQuery, pageItems, pageTotal, type PageResult } from "../api";
+import { ApiError, buildExportQuery, pageItems, pageTotal, type PageResult } from "../api";
 import type {
   Asset,
   InventoryBulkNormalResponse,
@@ -18,7 +19,7 @@ import type {
   ServerRoom,
 } from "../types";
 import { parseAssetQrValue } from "../asset-qr";
-import type { InventoryContext } from "../types/page-context";
+import type { InventoryContext } from "../page-context";
 import {
   businessOptionLabel,
   businessOptionTone,
@@ -177,16 +178,6 @@ export function useInventory(context: InventoryContext) {
   const auxError = computed(() =>
     Object.values(auxErrors.value).find((message) => Boolean(message)) || "",
   );
-  // Kept as a compatibility aggregate for any page-level consumers. Tables use
-  // their own loading state so opening a dialog never hides a list.
-  const loading = computed(
-    () =>
-      taskListLoading.value ||
-      itemListLoading.value ||
-      taskDetailLoading.value ||
-      auxLoading.value,
-  );
-
   function taskStatusLabel(status: string) {
     return businessOptionLabel(INVENTORY_TASK_STATUS_OPTIONS, status);
   }
@@ -1137,7 +1128,10 @@ export function useInventory(context: InventoryContext) {
       return true;
     } catch (error) {
       const message = error instanceof Error ? error.message : "";
-      if (message.includes("已被处理")) {
+      const errorCode = error instanceof ApiError && error.details && typeof error.details === "object"
+        ? String((error.details as { code?: unknown }).code || "")
+        : "";
+      if (errorCode === "inventory_item_already_resolved") {
         const [itemsLoaded, taskLoaded] = await Promise.all([
           loadItems(),
           refreshActiveTask(taskId),
@@ -1555,7 +1549,6 @@ export function useInventory(context: InventoryContext) {
   onBeforeUnmount(clearScopePreview);
 
   return {
-    loading,
     taskListLoading,
     taskListError,
     itemListLoading,

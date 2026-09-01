@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { useI18n } from "vue-i18n";
-import type { RackCanvasContext } from "../types/page-context";
+import type { RackCanvasContext } from "../page-context";
 const { t } = useI18n();
 const props = defineProps<{ context: RackCanvasContext }>();
 const context = props.context;

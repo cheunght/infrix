@@ -1,5 +1,5 @@
 :root {
-  --itam-primary-blue: #2563eb;
+  --infrix-primary-blue: #2563eb;
   --el-color-primary: #2563eb;
   --el-color-primary-rgb: 37, 99, 235;
   --el-color-primary-light-3: #6d9af5;
@@ -8,20 +8,19 @@
   --el-color-primary-light-8: #dce8fd;
   --el-color-primary-light-9: #eef4ff;
   --el-color-primary-dark-2: #1d4ed8;
-  --itam-sidebar-bg: #ffffff;
-  --itam-sidebar-border: #e4e7ed;
-  --itam-sidebar-text: #303746;
-  --itam-sidebar-icon: #6b7280;
-  --itam-sidebar-muted: #7c8ba3;
-  --itam-sidebar-hover: #f6f7f9;
-  --itam-page-bg: #f5f7fa;
+  --infrix-sidebar-bg: #ffffff;
+  --infrix-sidebar-border: #e4e7ed;
+  --infrix-sidebar-text: #303746;
+  --infrix-sidebar-icon: #6b7280;
+  --infrix-sidebar-muted: #7c8ba3;
+  --infrix-sidebar-hover: #f6f7f9;
+  --infrix-page-bg: #f5f7fa;
 
-  /* Phase 2 design tokens. Keep the existing ITAM variables above as
-     compatibility aliases while new shared components use semantic names. */
-  --color-brand-primary: var(--itam-primary-blue);
+  /* Shared semantic tokens map the brand palette to the component system. */
+  --color-brand-primary: var(--infrix-primary-blue);
   --color-brand-primary-hover: #1d4ed8;
   --color-brand-primary-soft: #eef4ff;
-  --color-page-bg: var(--itam-page-bg);
+  --color-page-bg: var(--infrix-page-bg);
   --color-surface: #ffffff;
   --color-border: #e4e7ed;
   --color-border-soft: #edf1f6;
@@ -64,7 +63,7 @@
 }
 
 body {
-  background: var(--itam-page-bg);
+  background: var(--infrix-page-bg);
 }
 .shell {
   min-height: 100dvh;
@@ -73,8 +72,8 @@ body {
   position: relative;
   overflow: hidden;
   padding: 0;
-  border-right: 1px solid var(--itam-sidebar-border);
-  background: var(--itam-sidebar-bg);
+  border-right: 1px solid var(--infrix-sidebar-border);
+  background: var(--infrix-sidebar-bg);
   min-width: 0;
   flex: 0 0 var(--sidebar-width);
   transition:
@@ -109,22 +108,22 @@ body {
   gap: var(--space-lg);
   height: var(--header-height);
   padding: 0 18px;
-  color: var(--itam-sidebar-text);
+  color: var(--infrix-sidebar-text);
   font-weight: 600;
   white-space: nowrap;
 }
 .ep-sidebar-menu {
-  --el-menu-bg-color: var(--itam-sidebar-bg);
-  --el-menu-text-color: var(--itam-sidebar-text);
-  --el-menu-hover-text-color: var(--itam-primary-blue);
-  --el-menu-hover-bg-color: var(--itam-sidebar-hover);
-  --el-menu-active-color: var(--itam-primary-blue);
+  --el-menu-bg-color: var(--infrix-sidebar-bg);
+  --el-menu-text-color: var(--infrix-sidebar-text);
+  --el-menu-hover-text-color: var(--infrix-primary-blue);
+  --el-menu-hover-bg-color: var(--infrix-sidebar-hover);
+  --el-menu-active-color: var(--infrix-primary-blue);
   border-right: 0;
 }
 .ep-main {
   min-width: 0;
   padding: 0;
-  background: var(--itam-page-bg);
+  background: var(--infrix-page-bg);
   scrollbar-gutter: stable;
 }
 .app-header {
@@ -140,16 +139,144 @@ body {
   margin: 0;
   font-size: var(--el-font-size-extra-large);
 }
+.app-header .page-heading {
+  min-width: 0;
+}
 .header-tools {
   display: flex;
   align-items: center;
   gap: 14px;
 }
-.ep-global-search {
+.app-header .ep-global-search {
   width: 320px;
+  max-width: 100%;
 }
-.ep-user-name {
-  margin-left: 8px;
+.app-header .user-menu__trigger {
+  display: inline-flex;
+  align-items: center;
+  min-width: 0;
+  height: 48px;
+  min-height: 48px;
+  padding: 4px 6px 4px 4px;
+  border: 1px solid transparent;
+  border-radius: 12px;
+  background: transparent;
+  color: var(--el-text-color-primary);
+  transition: background-color 160ms ease, border-color 160ms ease, color 160ms ease;
+}
+.app-header .user-menu__trigger > span {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+}
+
+.user-menu__content {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  column-gap: 12px;
+}
+
+.app-header .user-menu__trigger.el-button:hover,
+.app-header .user-menu__trigger.el-button:focus-visible {
+  border-color: var(--el-color-primary-light-8);
+  background: var(--el-color-primary-light-9);
+  color: var(--el-color-primary-dark-2);
+}
+
+.user-menu__avatar {
+  display: inline-flex;
+  flex: 0 0 36px;
+  align-items: center;
+  justify-content: center;
+  width: 36px;
+  height: 36px;
+  border: 1px solid var(--el-color-primary-light-8);
+  border-radius: 12px;
+  background: var(--el-color-primary-light-9);
+  color: var(--el-color-primary-dark-2);
+  font-size: 14px;
+  font-weight: 750;
+  letter-spacing: 0.04em;
+  line-height: 1;
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.6);
+}
+
+.user-menu__identity {
+  display: flex;
+  flex: 1 1 auto;
+  max-width: 156px;
+  min-width: 0;
+  flex-direction: column;
+  align-items: flex-start;
+  justify-content: center;
+  line-height: 1.1;
+  text-align: left;
+}
+
+.user-menu__name {
+  min-width: 0;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.user-menu__name {
+  color: var(--el-text-color-primary);
+  font-size: 14px;
+  font-weight: 650;
+  line-height: 18px;
+}
+
+.user-menu__chevron {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  flex: 0 0 auto;
+  margin-left: 2px;
+  border-radius: 8px;
+  color: var(--el-text-color-secondary);
+  font-size: 16px;
+  transition: transform 160ms ease, color 160ms ease;
+}
+
+.user-menu.is-opened .user-menu__chevron {
+  color: var(--el-color-primary);
+  transform: rotate(180deg);
+}
+@media (max-width: 560px) {
+  .app-header .user-menu__trigger {
+    width: 40px;
+    min-width: 40px;
+    padding: 4px;
+  }
+
+  .user-menu__content {
+    justify-content: center;
+  }
+
+  .user-menu__avatar {
+    flex-basis: 32px;
+    width: 32px;
+    height: 32px;
+    border-radius: 10px;
+    font-size: 12px;
+  }
+
+  .user-menu__identity,
+  .user-menu__chevron {
+    display: none;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .app-header .user-menu__trigger,
+  .user-menu__chevron {
+    transition: none;
+  }
 }
 .form-grid .el-form-item {
   min-width: 0;
@@ -186,40 +313,19 @@ body {
   display: flex;
 }
 /* Final interaction baseline for every business page. Keep these rules at
-   the end of the stylesheet so legacy native-control overrides cannot make
+   the end of the stylesheet so native-control overrides cannot make
    one page feel taller or denser than another. */
-.itam-search-field .el-input__prefix {
+.infrix-search-field .el-input__prefix {
   color: var(--el-text-color-secondary);
 }
 
-.itam-search-field .el-input__inner {
+.infrix-search-field .el-input__inner {
   min-width: 0;
-}
-
-.ep-main .el-dialog textarea.el-textarea__inner {
-  min-height: 82px;
-  height: auto;
 }
 
 @media (max-width: 760px) {
   .ep-main {
     padding: 0 14px 16px;
-  }
-
-  .ep-main .el-table {
-    min-width: 720px;
-  }
-
-  .ep-main .el-table__body-wrapper,
-  .ep-main .el-table__header-wrapper {
-    overflow-x: auto;
-  }
-}
-
-@media (max-width: 560px) {
-  .ep-main .el-pagination {
-    justify-content: flex-start;
-    flex-wrap: wrap;
   }
 }
 
@@ -270,23 +376,6 @@ body {
   margin: 0;
 }
 
-/* The navigation toggle belongs to the page header, immediately beside the
-   sidebar edge, so it remains available without taking space in the menu. */
-.ep-main .page-heading {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  min-width: 0;
-}
-
-.ep-main .ep-main-collapse-button {
-  flex: 0 0 32px;
-  width: 32px;
-  min-width: 32px;
-  margin: 0;
-  padding: 0;
-}
-
 .import-error-list {
   max-height: 360px;
   margin-top: 14px;
@@ -330,7 +419,7 @@ body {
 }
 
 .asset-import-upload__icon {
-  color: var(--itam-primary-blue);
+  color: var(--infrix-primary-blue);
   font-size: 30px;
   line-height: 1;
 }
@@ -1210,17 +1299,13 @@ body {
 /* Table operation controls share one compact alignment baseline. Element Plus
    owns the button geometry; this wrapper only arranges the action controls. */
 :root {
-  --itam-button-gap: 8px;
-}
-
-.ep-main .ep-table-actions,
-.ep-main .el-dialog__footer {
-  display: inline-flex;
-  align-items: center;
-  gap: var(--itam-button-gap);
+  --infrix-button-gap: 8px;
 }
 
 .ep-main .ep-table-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--infrix-button-gap);
   justify-content: flex-start;
   flex-wrap: nowrap;
   max-width: 100%;
@@ -1229,22 +1314,13 @@ body {
   vertical-align: middle;
 }
 
-.ep-main .el-dialog__footer .el-button + .el-button {
-  margin-left: 0;
-}
-
-.ep-main .el-dialog__footer {
-  justify-content: flex-end;
-  width: 100%;
-}
-
 /* Element Plus may teleport dialogs outside .ep-main; keep the same footer
    and text-button rules when that happens. */
 .el-dialog__footer {
   display: flex;
   align-items: center;
   justify-content: flex-end;
-  gap: var(--itam-button-gap);
+  gap: var(--infrix-button-gap);
 }
 
 .spare-location-panel {
@@ -1323,31 +1399,31 @@ body {
 /* -------------------------------------------------------------------------
    Infrix light brand finish
    Keep these rules last so the shell brand remains stable alongside the
-   legacy page styles while Element Plus owns the Menu states.
+   existing page styles while Element Plus owns the Menu states.
    ------------------------------------------------------------------------- */
 :root {
-  --itam-primary-blue: #2563eb;
-  --itam-sidebar-bg: #ffffff;
-  --itam-sidebar-border: #e5eaf2;
-  --itam-sidebar-text: #24324a;
-  --itam-sidebar-icon: #7183a0;
-  --itam-sidebar-muted: #7183a0;
-  --itam-sidebar-hover: #f7f9fc;
+  --infrix-primary-blue: #2563eb;
+  --infrix-sidebar-bg: #ffffff;
+  --infrix-sidebar-border: #e5eaf2;
+  --infrix-sidebar-text: #24324a;
+  --infrix-sidebar-icon: #7183a0;
+  --infrix-sidebar-muted: #7183a0;
+  --infrix-sidebar-hover: #f7f9fc;
 }
 
 .sidebar-brand {
   box-sizing: border-box;
   height: 72px;
   padding: 0 18px;
-  gap: 10px;
-  color: var(--itam-sidebar-text) !important;
+  gap: 8px;
+  color: var(--infrix-sidebar-text) !important;
   font-size: 17px;
   font-weight: 700;
   letter-spacing: 0.01em;
 }
 
 .shell:not(.sidebar-collapsed) > .ep-sidebar .sidebar-brand {
-  padding: 0 18px 0 10px !important;
+  padding: 0 8px 0 10px !important;
 }
 
 .sidebar-brand-icon {
@@ -1362,24 +1438,46 @@ body {
 
 .sidebar-wordmark {
   display: block;
-  width: 180px !important;
-  height: 64px !important;
+  flex: 0 1 150px;
+  width: 150px !important;
+  min-width: 0;
+  height: 56px !important;
   object-fit: contain;
   background: transparent;
   border-radius: 0;
+}
+
+.ep-sidebar-collapse-button {
+  box-sizing: border-box;
+  display: inline-flex;
+  flex: 0 0 32px !important;
+  align-items: center;
+  justify-content: center;
+  width: 32px !important;
+  min-width: 32px !important;
+  height: 32px;
+  min-height: 32px;
+  margin: 0 !important;
+  padding: 0 !important;
+  color: var(--infrix-sidebar-icon);
+}
+
+.ep-sidebar-collapse-button .header-control-icon {
+  color: inherit;
 }
 
 .shell.sidebar-collapsed > .ep-sidebar .sidebar-brand {
   width: 64px !important;
   height: 72px;
   padding: 0 !important;
+  gap: 4px;
   justify-content: center;
 }
 
 .shell.sidebar-collapsed > .ep-sidebar .sidebar-brand-icon {
-  flex-basis: 32px !important;
-  width: 32px !important;
-  height: 32px !important;
+  flex: 0 0 28px !important;
+  width: 28px !important;
+  height: 28px !important;
   margin: 0 !important;
 }
 
@@ -1418,7 +1516,7 @@ body {
 
 .login-brand-subtitle {
   margin-top: 6px;
-  color: var(--itam-sidebar-icon);
+  color: var(--infrix-sidebar-icon);
   font-size: 14px;
   line-height: 1.4;
   letter-spacing: 0.04em;
@@ -1430,12 +1528,12 @@ body {
 
 .login-card h1 {
   margin: 8px 0 4px;
-  color: var(--itam-sidebar-text) !important;
+  color: var(--infrix-sidebar-text) !important;
   letter-spacing: 0.08em;
 }
 
 .login-card p {
-  color: var(--itam-sidebar-icon) !important;
+  color: var(--infrix-sidebar-icon) !important;
 }
 
 /* License list: keep the page local loading/error states and capacity details
@@ -1506,13 +1604,6 @@ body {
   font-weight: 600;
 }
 
-.ep-main .ep-global-search {
-  box-sizing: border-box;
-  flex: 0 1 320px !important;
-  width: 320px !important;
-  max-width: 320px !important;
-  min-width: 0 !important;
-}
 .user-account-form .el-input,
 .user-account-form .el-select,
 .user-account-form .user-account-role {
@@ -1573,198 +1664,6 @@ body {
   }
 }
 
-@media (max-width: 900px) {
-  .ep-main .ep-global-search {
-    flex: 1 1 100% !important;
-    width: 100% !important;
-    max-width: none !important;
-    min-width: 0 !important;
-  }
-
-}
-
-/* App-shell global search. Element Plus owns the popper position and surface;
-   these rules only keep the reference width and the result list readable. */
-.ep-main .global-search {
-  flex: 0 1 320px !important;
-  width: 320px !important;
-  max-width: 320px !important;
-  min-width: 0 !important;
-}
-
-.ep-main .global-search-input {
-  width: 100%;
-}
-
-.global-search-loading {
-  color: var(--itam-primary-blue);
-}
-
-.global-search-panel {
-  max-height: min(560px, calc(100vh - var(--header-height) - 24px));
-  overflow-y: auto;
-}
-
-.global-search-panel__header,
-.global-search-section__header {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 12px;
-}
-
-.global-search-panel__header {
-  min-height: 34px;
-  padding: 0 10px;
-  color: var(--color-text-primary);
-  font-size: var(--el-font-size-extra-small);
-  font-weight: 600;
-  letter-spacing: 0.02em;
-}
-
-.global-search-panel__status {
-  color: var(--color-text-muted);
-  font-weight: 400;
-}
-
-.global-search-panel__loading,
-.global-search-panel__empty {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  gap: 8px;
-  min-height: 48px;
-  padding: 12px 16px;
-  color: var(--color-text-muted);
-  font-size: var(--el-font-size-extra-small);
-}
-
-.global-search-section {
-  padding: 6px 0;
-}
-
-.global-search-section + .global-search-section {
-  border-top: 1px solid var(--color-border-soft);
-}
-
-.global-search-section__header {
-  min-height: 32px;
-  padding: 0 10px;
-  color: var(--color-text-secondary);
-  font-size: var(--el-font-size-extra-small);
-  font-weight: 600;
-}
-
-.global-search-section__view-all.el-button {
-  flex: 0 0 auto;
-  min-height: auto;
-  padding: 3px 0;
-  font-weight: 500;
-}
-
-.global-search-result.el-button {
-  display: grid;
-  grid-template-columns: auto minmax(0, 1fr) auto;
-  align-items: center;
-  width: 100%;
-  gap: 10px;
-  min-height: 58px;
-  padding: 9px 10px;
-  border: 1px solid transparent;
-  border-radius: var(--el-border-radius-base);
-  background: transparent;
-  color: var(--color-text-primary);
-  cursor: pointer;
-  text-align: left;
-  font: inherit;
-}
-
-.global-search-result.el-button:hover,
-.global-search-result.el-button.is-active {
-  border-color: var(--color-border-soft);
-  background: var(--color-brand-primary-soft);
-}
-
-.global-search-result.el-button:focus-visible {
-  outline: 2px solid var(--color-brand-primary);
-  outline-offset: -2px;
-}
-
-.global-search-result__marker {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  min-width: 38px;
-  height: 24px;
-  padding: 0 7px;
-  border-radius: var(--el-border-radius-small);
-  font-size: 11px;
-  font-weight: 600;
-  white-space: nowrap;
-}
-
-.global-search-result__marker--asset {
-  background: var(--color-brand-primary-soft);
-  color: var(--color-brand-primary);
-}
-
-.global-search-result__marker--rack {
-  background: var(--el-fill-color-light);
-  color: var(--color-text-secondary);
-}
-
-.global-search-result__marker--fault {
-  background: var(--el-color-danger-light-9);
-  color: var(--color-danger);
-}
-
-.global-search-result__body {
-  display: grid;
-  min-width: 0;
-  gap: 3px;
-}
-
-.global-search-result__body strong,
-.global-search-result__body small {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.global-search-result__body strong {
-  color: var(--color-text-primary);
-  font-size: var(--el-font-size-base);
-  font-weight: 600;
-}
-
-.global-search-result__body small {
-  color: var(--color-text-muted);
-  font-size: var(--el-font-size-extra-small);
-  line-height: 1.4;
-}
-
-.global-search-result__arrow {
-  color: var(--color-text-muted);
-  font-size: 15px;
-}
-
-.global-search-section__error {
-  padding: 8px 10px;
-  color: var(--color-danger);
-  font-size: var(--el-font-size-extra-small);
-}
-
-@media (max-width: 900px) {
-  .ep-main .global-search {
-    width: 100% !important;
-    max-width: none !important;
-  }
-
-  .global-search-panel {
-    max-height: calc(100vh - var(--header-height) - 32px);
-  }
-}
-
 /* Keep the application viewport itself from acquiring a second horizontal
    scrollbar when a card, table or filter group has long content.  Individual
    data tables retain their own responsive behavior; the page shell never
@@ -1779,7 +1678,7 @@ body,
 }
 
 .ep-main > *,
-.ep-main .itam-page,
+.ep-main .infrix-page,
 .ep-main .el-card,
 .ep-main .ep-toolbar {
   box-sizing: border-box;
@@ -1830,7 +1729,7 @@ body,
 .settings-user-primary-actions {
   display: inline-flex;
   align-items: center;
-  gap: var(--itam-button-gap, 8px);
+  gap: var(--infrix-button-gap, 8px);
   min-width: 0;
   white-space: nowrap;
 }
@@ -1881,42 +1780,45 @@ body,
   white-space: nowrap;
 }
 
-/* Keep the filter reference as one compact control so Element Plus can anchor
-   its popper to the complete header label, rather than to an icon at the edge. */
+/* Keep the filter reference as one compact Element Plus control so its popper
+   stays anchored to the complete header label. */
 .asset-table-header-dropdown.el-dropdown {
-  display: flex;
-  width: max-content;
+  display: inline-flex;
   max-width: 100%;
-  /* Element Plus sets the dropdown root to regular text and line-height: 1;
-     restore the table-cell header context before the reference inherits it. */
   font: inherit;
   color: inherit;
   line-height: inherit;
 }
 
-.asset-table-header-dropdown-trigger {
+.asset-table-header-filter-trigger.el-button {
   display: inline-flex;
   max-width: 100%;
   min-width: 0;
   align-items: center;
   gap: 4px;
-  /* Use the dropdown's native reference element instead of an el-button so
-     filter-only headers inherit the exact typography of the table .cell. */
+  padding: 0;
   font: inherit;
   color: inherit;
   line-height: inherit;
   text-align: left;
-  cursor: pointer;
 }
 
-.asset-table-header-dropdown-trigger__label {
+.asset-table-header-filter-trigger.el-button > span {
+  display: inline-flex;
+  max-width: 100%;
+  min-width: 0;
+  align-items: center;
+  gap: 4px;
+}
+
+.asset-table-header-filter-trigger__label {
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
-.asset-table-header-dropdown-trigger .el-icon {
+.asset-table-header-filter-trigger .el-icon {
   flex: 0 0 auto;
 }
 
@@ -2426,7 +2328,7 @@ body,
   display: inline-flex;
   align-items: center;
   justify-content: flex-end;
-  gap: var(--itam-button-gap);
+  gap: var(--infrix-button-gap);
 }
 
 .action-dialog__footer-actions .el-button {
@@ -2455,7 +2357,7 @@ body,
 .action-dialog .el-select,
 .action-dialog .el-date-editor,
 .action-dialog .el-input-number,
-.action-dialog .itam-search-field {
+.action-dialog .infrix-search-field {
   width: 100%;
 }
 

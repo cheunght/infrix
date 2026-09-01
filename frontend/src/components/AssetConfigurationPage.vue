@@ -4,7 +4,7 @@ import { useRoute } from "vue-router";
 import CustomFieldSettingsPage from "./CustomFieldSettingsPage.vue";
 import TagSettingsPage from "./TagSettingsPage.vue";
 import type { AssetConfigSection } from "../router";
-import type { PageContext } from "../types/page-context";
+import type { PageContext } from "../page-context";
 
 const props = defineProps<{ context: PageContext }>();
 const route = useRoute();

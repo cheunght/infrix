@@ -249,6 +249,41 @@ export type DashboardLicenseSummary = {
   expiring: number;
   expired: number;
 };
+export type OperationalAlertLevel = "critical" | "warning" | "notice";
+export type OperationalAlert = {
+  id: string;
+  kind: "maintenance" | "license" | "fault" | "inventory" | "spare" | string;
+  state: string;
+  level: OperationalAlertLevel;
+  entity_id: number;
+  asset_id?: number;
+  asset_no?: string;
+  asset_name?: string;
+  name?: string;
+  code?: string;
+  reference?: string;
+  due_date?: string;
+  due_at?: string;
+  occurred_at?: string;
+  days_remaining?: number;
+  days_overdue?: number;
+  pending_count?: number;
+  quantity?: number;
+  safety_stock?: number;
+  used_count?: number;
+  authorized_count?: number;
+};
+export type OperationalAlertSummary = {
+  total: number;
+  critical: number;
+  warning: number;
+  notice: number;
+};
+export type OperationalAlertsResponse = {
+  generated_at: string;
+  summary: OperationalAlertSummary;
+  alerts: OperationalAlert[];
+};
 export type DepreciationStatus = "unconfigured" | "not_started" | "depreciating" | "fully_depreciated";
 export type DepreciationInfo = {
   method: string | null;
@@ -550,7 +585,7 @@ export type FacilitySummary = {
 };
 export type FaultEvent = { id: number; asset: number; asset_no: string; asset_name: string; occurred_at: string; reason: string; description: string; is_closed: boolean; repair: { id: number; fault: number; provider: string; started_at: string | null; finished_at: string | null; notes: string } | null };
 export type Role = { id: number; code: string; name: string; description: string; user_count?: number };
-export type ManagedUser = { id: number; username: string; display_name: string; first_name: string; last_name: string; email: string; is_active: boolean; is_staff: boolean; is_superuser: boolean; groups: number[]; assigned_role_code: string; assigned_role_name: string; last_login: string | null; date_joined: string };
+export type ManagedUser = { id: number; username: string; display_name: string; first_name: string; last_name: string; email: string; is_active: boolean; is_staff: boolean; is_superuser: boolean; groups: number[]; assigned_role_code: string | null; assigned_role_name: string; last_login: string | null; date_joined: string };
 export type AuditLog = { id: number; actor_username: string | null; actor_display_name: string; action: string; resource_type: string; resource_id: string; payload: Record<string, unknown>; created_at: string };
 export type SoftwareLicense = { id: number; name: string; manufacturer: Manufacturer | null; license_type: string; authorized_count: number; used_count: number; utilization: number; remaining_count: number; expiry_date: string | null; status: LicenseStatus; status_label: string; days_remaining: number | null; notes: string };
 export type SparePart = {

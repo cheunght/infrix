@@ -2,7 +2,7 @@ import { computed, ref, type Ref } from "vue";
 import type { LocationQuery } from "vue-router";
 import { buildExportQuery, isAbortError, pageItems, pageTotal, type PageResult } from "../api";
 import type { DictionaryItem, LicenseStatus, SoftwareLicense } from "../types";
-import type { CapabilityFn, RequestFn } from "../types/page-context";
+import type { CapabilityFn, RequestFn } from "../page-context";
 import { LICENSE_STATUS_OPTIONS } from "../business-enums";
 import { i18n } from "../i18n";
 

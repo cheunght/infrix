@@ -17,7 +17,7 @@ import AssetSelect from "../AssetSelect.vue";
 import AssetSummary from "../AssetSummary.vue";
 import StatusTag from "../StatusTag.vue";
 import type { Asset, AssetDetail, Page } from "../../types";
-import type { AssetFormContext, PageContext, RequestFn } from "../../types/page-context";
+import type { AssetFormContext, PageContext, RequestFn } from "../../page-context";
 import { statusTone } from "../../status";
 import { currentLocale, type Locale } from "../../i18n";
 import { useI18n } from "vue-i18n";

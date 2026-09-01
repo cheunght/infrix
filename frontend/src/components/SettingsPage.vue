@@ -13,7 +13,7 @@ import PageToolbar from "./page/PageToolbar.vue";
 import StatusTag from "./StatusTag.vue";
 import ActionDialogShell from "./ActionDialogShell.vue";
 import TableIconButton from "./TableIconButton.vue";
-import type { SettingsContext } from "../types/page-context";
+import type { SettingsContext } from "../page-context";
 import type { AuditLog } from "../types";
 import { ASSET_STATUS_OPTIONS, businessOptionLabel, roleDescription, roleLabel } from "../business-enums";
 import {
@@ -238,7 +238,7 @@ function systemSettingOptionLabel(key: string, option: { value: string | number;
 </script>
 
 <template>
-  <div class="itam-page settings-page">
+  <div class="infrix-page settings-page">
     <CustomFieldSettingsPage v-if="settingsSection === 'custom-fields'" :context="props.context" />
     <TagSettingsPage v-else-if="settingsSection === 'tags'" :context="props.context" />
 

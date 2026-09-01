@@ -27,6 +27,7 @@ from .enum_contracts import (
     STOCK_OPERATION_TYPE_VALUES,
 )
 from .license_status import LICENSE_STATUS_LABELS, license_status_value
+from .reporting.capacity import rack_effective_used_u
 from .services import apply_asset_custom_values, apply_asset_tags, apply_spare_stock_transaction, configure_asset, inventory_snapshot_location, inventory_task_can_delete, validate_inventory_resolution_request
 from .roles import ROLE_AUDITOR, ROLE_DEFINITIONS, ROLE_NAME_TO_CODE, preset_group_for_code, user_role_code
 from .system_reset import SYSTEM_RESET_CONFIRMATION
@@ -74,7 +75,7 @@ class UserSerializer(serializers.ModelSerializer):
 
     def get_assigned_role_name(self, obj) -> str:
         code = user_role_code(obj)
-        return ROLE_DEFINITIONS.get(code, {}).get("name", "只读审计员")
+        return ROLE_DEFINITIONS.get(code, {}).get("name", "")
 
     def get_extra_kwargs(self):
         extra_kwargs = super().get_extra_kwargs()
@@ -1067,12 +1068,8 @@ def _asset_custom_fields(obj):
     if obj.device_type_id:
         scope |= Q(device_type_id=obj.device_type_id)
     fields = CustomField.objects.filter(scope).select_related("device_type").prefetch_related("options").order_by("sort_order", "id")
-    # Include disabled historical fields even when the device type still has
-    # them defined, so old values remain visible and read-only in the UI.
-    known_ids = {field.id for field in fields}
-    historical = CustomField.objects.filter(asset_values__asset=obj).exclude(pk__in=known_ids).select_related("device_type").prefetch_related("options")
     result = []
-    for field in list(fields) + list(historical):
+    for field in fields:
         result.append({
             "id": field.id,
             "key": field.key,
@@ -1135,7 +1132,7 @@ class DepreciationListResponseSerializer(serializers.Serializer):
 class AssetListSerializer(serializers.ModelSerializer):
     """Small, flat representation used by the paged asset ledger.
 
-    The detail endpoint intentionally keeps the historical nested payload.  The
+    The detail endpoint intentionally keeps the full nested payload.  The
     list endpoint can opt into this representation with ``compact=1`` so a
     page of assets does not materialize every procurement, maintenance and IP
     column into a large nested JSON document.
@@ -1500,7 +1497,7 @@ class AssetWriteSerializer(serializers.ModelSerializer):
             with transaction.atomic():
                 asset = Asset.objects.create(**validated_data)
                 configure_asset(asset, configuration)
-                apply_asset_custom_values(asset, custom_values, is_create=True)
+                apply_asset_custom_values(asset, custom_values)
                 apply_asset_tags(asset, tags or [])
         except DjangoValidationError as exc:
             raise serializers.ValidationError(getattr(exc, "message_dict", {"configuration": exc.messages})) from exc
@@ -1514,7 +1511,6 @@ class AssetWriteSerializer(serializers.ModelSerializer):
         custom_values = validated_data.pop("custom_values", None)
         missing = object()
         requested_asset_data_center = validated_data.get("asset_data_center", missing)
-        old_device_type_id = instance.device_type_id
         try:
             with transaction.atomic():
                 if (
@@ -1531,7 +1527,6 @@ class AssetWriteSerializer(serializers.ModelSerializer):
                     instance,
                     custom_values or {},
                     submitted=custom_values is not None,
-                    old_device_type_id=old_device_type_id,
                 )
                 if tags is not None:
                     apply_asset_tags(instance, tags)
@@ -1888,21 +1883,7 @@ class RackSerializer(serializers.ModelSerializer):
         return len(obj.allocations.all())
 
     def get_used_u(self, obj) -> int:
-        """Return effective occupied U, including a single-U gap between devices.
-
-        The gap rule is shared by the placement service, dashboard aggregates,
-        and the rack management UI: a one-U gap separating two devices cannot
-        be reused, while larger gaps remain available.
-        """
-        allocations = sorted(
-            obj.allocations.all(),
-            key=lambda allocation: (allocation.start_u, allocation.end_u),
-        )
-        occupied = sum(allocation.units for allocation in allocations)
-        for previous, current in zip(allocations, allocations[1:]):
-            if current.start_u - previous.end_u - 1 == 1:
-                occupied += 1
-        return min(occupied, obj.total_u or 0)
+        return rack_effective_used_u(obj.allocations.all(), obj.total_u or 0)
 
     def get_free_u(self, obj) -> int:
         return max((obj.total_u or 0) - self.get_used_u(obj), 0)

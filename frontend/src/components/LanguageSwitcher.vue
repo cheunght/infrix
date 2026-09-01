@@ -1,20 +1,30 @@
 <script setup lang="ts">
 import { useI18n } from "vue-i18n";
 import { Check, Compass } from "@element-plus/icons-vue";
-import { localeLabel, setLocale, SUPPORTED_LOCALES, type Locale } from "../i18n";
+import { loadLocaleMessages, setLocale, SUPPORTED_LOCALES, type Locale } from "../i18n";
+
+withDefaults(defineProps<{ disabled?: boolean }>(), { disabled: false });
+const emit = defineEmits<{ change: [locale: Locale] }>();
 
 const { t, locale } = useI18n();
 
-function changeLocale(value: string | number | object) {
-  setLocale(value);
+async function changeLocale(value: string | number | object) {
+  await loadLocaleMessages(value);
+  const locale = setLocale(value);
+  emit("change", locale);
 }
 </script>
 
 <template>
   <el-dropdown class="language-switcher" trigger="click" @command="changeLocale">
-    <el-button class="language-switcher__trigger" text :aria-label="t('auth.languagePreference')">
-      <el-icon><Compass /></el-icon>
-      <span>{{ localeLabel(locale as Locale) }}</span>
+    <el-button
+      class="language-switcher__trigger"
+      text
+      :disabled="disabled"
+      :aria-label="t('auth.languagePreference')"
+      :title="t('auth.languagePreference')"
+    >
+      <el-icon class="header-control-icon"><Compass /></el-icon>
     </el-button>
     <template #dropdown>
       <el-dropdown-menu>

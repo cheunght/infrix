@@ -28,7 +28,7 @@ const emit = defineEmits<{
 
 <template>
   <el-input
-    class="itam-search-field"
+    class="infrix-search-field"
     :model-value="modelValue"
     :placeholder="props.placeholder || t('common.search')"
     :disabled="disabled"

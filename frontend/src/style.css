@@ -44,7 +44,23 @@ body {
 }
 
 .language-switcher__trigger {
-  gap: 6px;
+  width: 40px;
+  height: 40px;
+  min-height: 40px;
+  padding: 0;
+  justify-content: center;
+}
+
+.language-switcher__trigger .el-icon {
+  font-size: 20px;
+}
+
+.header-control-icon {
+  width: 20px;
+  height: 20px;
+  flex: 0 0 20px;
+  font-size: 20px;
+  line-height: 20px;
 }
 
 .language-switcher__option {

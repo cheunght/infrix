@@ -6,7 +6,7 @@ import ResourceState from "./ResourceState.vue";
 import StatusTag from "./StatusTag.vue";
 import TableIconButton from "./TableIconButton.vue";
 import type { DataCenter, ServerRoom } from "../types";
-import type { RackSharedContext } from "../types/page-context";
+import type { RackSharedContext } from "../page-context";
 
 const props = defineProps<{ context: RackSharedContext }>();
 const { t } = useI18n();

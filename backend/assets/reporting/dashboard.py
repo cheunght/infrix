@@ -24,7 +24,7 @@ from .constants import (
 
 
 def build_dashboard_payload(scope, *, include_faults=True, include_licenses=True):
-    """Build the complete backwards-compatible dashboard response."""
+    """Build the complete dashboard response."""
     asset_distributions = _build_asset_distributions(scope)
     capacity = build_dashboard_capacity(scope)
     expiry = _build_expiry_data(scope)

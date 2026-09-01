@@ -2,7 +2,7 @@ import { ref, type Ref } from "vue";
 import type { LocationQuery } from "vue-router";
 import { buildExportQuery, isAbortError, pageItems, pageTotal, type PageResult } from "../api";
 import type { Asset, FaultEvent } from "../types";
-import type { CapabilityFn, RequestFn } from "../types/page-context";
+import type { CapabilityFn, RequestFn } from "../page-context";
 import { i18n } from "../i18n";
 
 const tr = (key: string, params?: Record<string, unknown>): string =>

@@ -1,9 +1,9 @@
 import { createApp } from 'vue'
-import ElementPlus from 'element-plus'
 import 'element-plus/dist/index.css'
 import App from './App.vue'
 import { router } from './router'
-import { i18n } from './i18n'
+import { currentLocale, i18n, loadLocaleMessages } from './i18n'
+import { registerShellElementComponents } from './element-plus-components'
 import './style.css'
 import './feature-styles.css'
 import './rack-view.css'
@@ -12,5 +12,9 @@ import './components/page/page-layout.css'
 import './settings-styles.css'
 
 const app = createApp(App)
-app.use(router).use(i18n).use(ElementPlus)
-router.isReady().then(() => app.mount('#app'))
+app.use(router).use(i18n)
+registerShellElementComponents(app)
+Promise.all([
+  router.isReady(),
+  loadLocaleMessages(currentLocale.value).catch(() => undefined),
+]).then(() => app.mount('#app'))

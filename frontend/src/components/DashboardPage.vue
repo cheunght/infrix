@@ -22,7 +22,7 @@ import type {
   DashboardStatus,
   DashboardOverview,
 } from "../types";
-import type { DashboardContext } from "../types/page-context";
+import type { DashboardContext } from "../page-context";
 import StatusTag, { type StatusTagType } from "./StatusTag.vue";
 import PageContainer from "./page/PageContainer.vue";
 import ResourceState from "./ResourceState.vue";
@@ -129,7 +129,7 @@ function utilization(value: number) {
 </script>
 
 <template>
-  <PageContainer class="itam-page dashboard-shell">
+  <PageContainer class="infrix-page dashboard-shell">
     <div class="dashboard-body">
       <el-alert
         v-if="dashboardError && dashboard"

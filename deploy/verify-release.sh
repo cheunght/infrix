@@ -2,15 +2,17 @@
 set -Eeuo pipefail
 IFS=$'\n\t'
 
-APP_DIR="${APP_DIR:-/opt/itam}"
-APP_USER="${APP_USER:-itam}"
-ENV_FILE="${ENV_FILE:-/etc/itam/itam.env}"
+APP_DIR="${APP_DIR:-/opt/infrix}"
+APP_USER="${APP_USER:-infrix}"
+ENV_FILE="${ENV_FILE:-/etc/infrix/infrix.env}"
 BASE_URL="${BASE_URL:-}"
+SYSTEMD_UNIT_FILE="${SYSTEMD_UNIT_FILE:-/etc/systemd/system/infrix.service}"
+NGINX_CONF_FILE="${NGINX_CONF_FILE:-/etc/nginx/conf.d/infrix.conf}"
 
 fail() {
   echo "验收失败：$*" >&2
-  systemctl status itam --no-pager >&2 2>/dev/null || true
-  journalctl -u itam -n 60 --no-pager >&2 2>/dev/null || true
+  systemctl status infrix --no-pager >&2 2>/dev/null || true
+  journalctl -u infrix -n 60 --no-pager >&2 2>/dev/null || true
   exit 1
 }
 
@@ -33,7 +35,7 @@ env_value() {
 
 production_security_gate() {
   local env_value_value debug_value secret_value hosts_value csrf_origins_value
-  local https_mode ssl_redirect session_secure csrf_secure hsts_seconds forwarded_host
+  local https_mode ssl_redirect session_secure csrf_secure hsts_seconds forwarded_host base_url_lower
   env_value_value="$(env_value DJANGO_ENV)"
   debug_value="$(env_value DJANGO_DEBUG)"
   secret_value="$(env_value DJANGO_SECRET_KEY)"
@@ -67,10 +69,19 @@ production_security_gate() {
   [[ "$csrf_secure" == "1" ]] || fail "DJANGO_CSRF_COOKIE_SECURE 必须为 1。"
   [[ "$hsts_seconds" =~ ^[1-9][0-9]*$ ]] || fail "DJANGO_SECURE_HSTS_SECONDS 必须为正整数。"
   [[ "$forwarded_host" == "0" ]] || fail "DJANGO_USE_X_FORWARDED_HOST 必须为 0。"
-  case "${BASE_URL,,}" in
+  base_url_lower="$(printf '%s' "$BASE_URL" | tr '[:upper:]' '[:lower:]')"
+  case "$base_url_lower" in
     https://*) ;;
     *) fail "BASE_URL 必须显式使用 https://，以验证正式入口。" ;;
   esac
+  [[ -f "$APP_DIR/scripts/check-production-config.py" ]] || \
+    fail "缺少生产配置校验脚本：$APP_DIR/scripts/check-production-config.py"
+  runuser -u "$APP_USER" -- "$APP_DIR/backend/.venv/bin/python" \
+    "$APP_DIR/scripts/check-production-config.py" \
+    --env-file "$ENV_FILE" --require-proxy || fail "生产配置 preflight 未通过。"
+  [[ -f "$NGINX_CONF_FILE" ]] || fail "未找到 Nginx 配置：$NGINX_CONF_FILE"
+  grep -Fq 'proxy_set_header X-Forwarded-Proto $http_x_forwarded_proto;' "$NGINX_CONF_FILE" || \
+    fail "Nginx 未保留受信任外部网关的 X-Forwarded-Proto 转发契约。"
   log "生产安全配置门禁通过（密钥值不会输出）。"
 }
 
@@ -99,13 +110,20 @@ case "$deployment_env" in
     fail "DJANGO_ENV 必须是 development 或 production。"
     ;;
 esac
-case "${BASE_URL,,}" in
+base_url_lower="$(printf '%s' "$BASE_URL" | tr '[:upper:]' '[:lower:]')"
+case "$base_url_lower" in
   http://*|https://*) ;;
   *) fail "BASE_URL 必须使用 http:// 或 https://。" ;;
 esac
 
 log "检查 systemd 服务"
-systemctl is-active --quiet itam || fail "itam.service 未运行。"
+[[ -f "$SYSTEMD_UNIT_FILE" ]] || fail "未找到 systemd 服务定义：$SYSTEMD_UNIT_FILE"
+grep -Fxq "EnvironmentFile=$ENV_FILE" "$SYSTEMD_UNIT_FILE" || \
+  fail "systemd 服务必须使用 required EnvironmentFile=$ENV_FILE。"
+if grep -Eq '^EnvironmentFile=-' "$SYSTEMD_UNIT_FILE"; then
+  fail "systemd 服务不允许将生产环境文件标记为 optional。"
+fi
+systemctl is-active --quiet infrix || fail "infrix.service 未运行。"
 systemctl is-active --quiet nginx || fail "nginx 未运行。"
 
 log "检查 Django 配置和迁移"
@@ -159,4 +177,4 @@ echo "应用目录：$APP_DIR"
 echo "环境文件：$ENV_FILE"
 echo "检查地址：${BASE_URL%/}"
 echo "最近备份："
-find /var/backups/itam -maxdepth 1 -type f -printf '%TY-%Tm-%Td %TH:%TM %p\n' 2>/dev/null | sort -r | head -5 || true
+find /var/backups/infrix -maxdepth 1 -type f -printf '%TY-%Tm-%Td %TH:%TM %p\n' 2>/dev/null | sort -r | head -5 || true

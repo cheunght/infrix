@@ -88,12 +88,12 @@ def user_role_code(user):
     for code, definition in ROLE_DEFINITIONS.items():
         if definition["name"] in names:
             return code
-    return ROLE_AUDITOR
+    return None
 
 
 def user_capabilities(user):
     code = user_role_code(user)
-    capabilities = ROLE_CAPABILITIES.get(code, ROLE_CAPABILITIES[ROLE_AUDITOR])
+    capabilities = ROLE_CAPABILITIES.get(code, set())
     if "*" in capabilities:
         return sorted({
             capability
@@ -109,9 +109,7 @@ def user_has_capability(user, capability):
         return False
     if user.is_superuser:
         return True
-    capabilities = ROLE_CAPABILITIES.get(
-        user_role_code(user), ROLE_CAPABILITIES[ROLE_AUDITOR]
-    )
+    capabilities = ROLE_CAPABILITIES.get(user_role_code(user), set())
     return "*" in capabilities or capability in capabilities
 
 

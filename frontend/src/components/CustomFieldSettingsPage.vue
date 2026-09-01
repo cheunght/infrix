@@ -3,7 +3,7 @@ import { computed, proxyRefs, ref } from "vue";
 import { useI18n } from "vue-i18n";
 import { CircleCheck, CircleClose, Delete, Edit } from "@element-plus/icons-vue";
 import type { FormInstance, FormRules } from "element-plus";
-import type { CustomFieldContext } from "../types/page-context";
+import type { CustomFieldContext } from "../page-context";
 import type { CustomField, CustomFieldValidationConfig } from "../types";
 import PageContainer from "./page/PageContainer.vue";
 import PageContent from "./page/PageContent.vue";

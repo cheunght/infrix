@@ -120,13 +120,16 @@ def confirm_inventory_item_normal(
     from .audit import write_audit_log
     from .serializers import InventoryItemSerializer
 
+    task_id = InventoryItem.objects.filter(pk=item_id).values_list("task_id", flat=True).first()
+    if task_id is None:
+        raise InventoryItem.DoesNotExist
+    task = InventoryTask.objects.select_for_update().get(pk=task_id)
     item = InventoryItem.objects.select_for_update().select_related(
         "asset",
         "checked_by",
         "resolved_by",
         "actual_rack__room__data_center",
     ).get(pk=item_id)
-    task = InventoryTask.objects.select_for_update().get(pk=item.task_id)
     if task.status != "in_progress":
         raise DRFValidationError({"detail": "已完成的盘点任务不能批量标记为正常"})
     if require_pending and item.status != "pending":
@@ -241,19 +244,25 @@ def resolve_inventory_item(*, item_id, action, note, actor, request):
     from .audit import asset_audit_snapshot, write_audit_log
     from .serializers import InventoryItemSerializer
 
+    task_id = InventoryItem.objects.filter(pk=item_id).values_list("task_id", flat=True).first()
+    if task_id is None:
+        raise InventoryItem.DoesNotExist
+    task = InventoryTask.objects.select_for_update().get(pk=task_id)
     item = InventoryItem.objects.select_for_update().select_related(
         "asset",
         "checked_by",
         "resolved_by",
         "actual_rack__room__data_center",
     ).get(pk=item_id)
-    task = InventoryTask.objects.select_for_update().get(pk=item.task_id)
     asset = Asset.objects.select_for_update().get(pk=item.asset_id)
 
     if item.status not in INVENTORY_EXCEPTION_STATUSES:
         raise DRFValidationError({"detail": "只有异常盘点项可以处理"})
     if item.resolution_status != "pending":
-        raise DRFValidationError({"detail": "该异常已被处理"})
+        raise DRFValidationError({
+            "detail": "该异常已被处理",
+            "code": "inventory_item_already_resolved",
+        })
     if action == "confirm_missing" and item.status != "not_found":
         raise DRFValidationError({"action": "确认设备缺失只适用于未找到的资产"})
     if action == "update_asset" and item.status != "location_mismatch":
@@ -343,7 +352,7 @@ def update_asset_placement(asset: Asset, *, rack: Rack, start_u: int, end_u: int
         or not rack.room.data_center.is_active
         or getattr(rack, "status", "in_use") != "in_use"
     ):
-        raise ValidationError({"rack_code": "预留或停用的机柜不能用于资产"})
+        raise ValidationError({"rack_id": "预留或停用的机柜不能用于资产"})
     if start_u < 1 or end_u < 1:
         raise ValidationError({"rack_start_u": "U 位必须大于等于 1"})
     if end_u < start_u:
@@ -394,24 +403,23 @@ def configure_asset(asset: Asset, data):
     """Replace rack, IP, procurement and maintenance details for an asset."""
     data = data or {}
     data_center_value = _value(data, "data_center")
-    room_id, room_name = _value(data, "server_room_id"), _value(data, "server_room")
-    rack_id, rack_code = _value(data, "rack_id"), _value(data, "rack_code")
-    room_value, rack_value = room_id or room_name, rack_id or rack_code
+    room_id = _value(data, "server_room_id")
+    rack_id = _value(data, "rack_id")
     # ``rack_total_u`` is a display-only value supplied by the form.  It is
     # intentionally not part of the completeness check, otherwise a new
     # non-rack-mounted asset (whose default capacity is 45) would be treated
     # as a partially configured rack placement.
     start_u_value = _value(data, "rack_start_u")
     end_u_value = _value(data, "rack_end_u")
-    location_values = [data_center_value, room_value, rack_value, start_u_value, end_u_value]
+    location_values = [data_center_value, room_id, rack_id, start_u_value, end_u_value]
     if any(location_values):
         if not all(location_values):
             missing = [
                 label
                 for label, value in (
                     ("数据中心", data_center_value),
-                    ("机房", room_value),
-                    ("机柜编号", rack_value),
+                    ("机房", room_id),
+                    ("机柜", rack_id),
                     ("起始 U", start_u_value),
                     ("结束 U", end_u_value),
                 )
@@ -424,27 +432,30 @@ def configure_asset(asset: Asset, data):
             start_u, end_u = int(_value(data, "rack_start_u")), int(_value(data, "rack_end_u"))
         except ValueError as exc:
             raise ValidationError("U 位必须是数字") from exc
-        data_center = DataCenter.objects.filter(pk=int(data_center_value)).first() if data_center_value.isdigit() else DataCenter.objects.filter(name=data_center_value).first()
+        try:
+            data_center = DataCenter.objects.filter(pk=int(data_center_value)).first()
+        except (TypeError, ValueError):
+            data_center = None
         if not data_center:
             raise ValidationError({"data_center": "数据中心必须从数据字典中选择"})
         if not data_center.is_active:
             raise ValidationError({"data_center": "停用的数据中心不能用于资产"})
-        if room_id:
-            room = ServerRoom.objects.filter(pk=room_id, data_center=data_center).first()
-        else:
-            room = ServerRoom.objects.filter(data_center=data_center, name__iexact=room_name).first()
+        try:
+            room = ServerRoom.objects.filter(pk=int(room_id), data_center=data_center).first()
+        except (TypeError, ValueError):
+            room = None
         if not room:
-            raise ValidationError({"server_room": "未找到所选机房，请先在机房机柜维护中创建"})
+            raise ValidationError({"server_room_id": "未找到所选机房，请先在机房机柜维护中创建"})
         if not room.is_active:
-            raise ValidationError({"server_room": "停用的机房不能用于资产"})
-        if rack_id:
-            rack = Rack.objects.filter(pk=rack_id, room=room).first()
-        else:
-            rack = Rack.objects.filter(room=room, code__iexact=rack_code).first()
+            raise ValidationError({"server_room_id": "停用的机房不能用于资产"})
+        try:
+            rack = Rack.objects.filter(pk=int(rack_id), room=room).first()
+        except (TypeError, ValueError):
+            rack = None
         if not rack:
-            raise ValidationError({"rack_code": "未找到所选机柜，请先在机房机柜维护中创建"})
+            raise ValidationError({"rack_id": "未找到所选机柜，请先在机房机柜维护中创建"})
         if not rack.is_active or getattr(rack, "status", "in_use") != "in_use":
-            raise ValidationError({"rack_code": "预留或停用的机柜不能用于资产"})
+            raise ValidationError({"rack_id": "预留或停用的机柜不能用于资产"})
         update_asset_placement(asset, rack=rack, start_u=start_u, end_u=end_u)
     else:
         RackUnitAllocation.objects.filter(asset=asset).delete()
@@ -565,13 +576,8 @@ def _custom_value_payload(field, raw):
     return payload
 
 
-def apply_asset_custom_values(asset: Asset, values, *, submitted=True, is_create=False, old_device_type_id=None):
-    """Validate and persist partial values for the asset's current device type.
-
-    Values belonging to another device type are historical data.  They are not
-    part of the current validation set and must never be deleted on a device
-    type change.
-    """
+def apply_asset_custom_values(asset: Asset, values, *, submitted=True):
+    """Validate and persist values for the asset's current device type."""
     if values is None:
         values = {}
     if not isinstance(values, dict):
@@ -586,6 +592,12 @@ def apply_asset_custom_values(asset: Asset, values, *, submitted=True, is_create
         unknown = [key for key in values if key not in by_key]
         if unknown:
             raise ValidationError({"custom_values": f"不存在或不属于当前设备类型的字段：{'、'.join(str(key) for key in unknown)}"})
+
+    # A device type change starts a new current-field set. Values scoped to
+    # another device type are not part of that set and are removed.
+    AssetCustomValue.objects.filter(asset=asset).exclude(
+        Q(field__device_type__isnull=True) | Q(field__device_type_id=asset.device_type_id)
+    ).delete()
 
     existing_values = {
         item.field_id: _stored_custom_value(item)

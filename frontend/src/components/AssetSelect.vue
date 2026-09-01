@@ -3,7 +3,7 @@ import { computed, onBeforeUnmount, ref, watch } from "vue";
 import { useI18n } from "vue-i18n";
 import { isAbortError, pageItems, type PageResult } from "../api";
 import type { Asset } from "../types";
-import type { RequestFn } from "../types/page-context";
+import type { RequestFn } from "../page-context";
 
 export type AssetOption = Pick<Asset, "id" | "asset_no" | "name"> &
   Partial<Pick<Asset, "model" | "model_name" | "serial_number">>;

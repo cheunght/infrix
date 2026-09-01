@@ -13,7 +13,7 @@ import PageContainer from "./page/PageContainer.vue";
 import PageContent from "./page/PageContent.vue";
 import PageToolbar from "./page/PageToolbar.vue";
 import type { Rack, RackStatus, ServerRoom } from "../types";
-import type { RackSharedContext } from "../types/page-context";
+import type { RackSharedContext } from "../page-context";
 import { rackStatusValue } from "../business-enums";
 
 const props = defineProps<{ context: RackSharedContext }>();
@@ -123,7 +123,7 @@ function handleCurrentRackCommand(command: string) {
 </script>
 
 <template>
-  <div class="itam-page racks-page">
+  <div class="infrix-page racks-page">
     <PageContainer class="racks-module-page">
       <template #toolbar>
         <PageToolbar>

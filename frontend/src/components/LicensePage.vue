@@ -4,7 +4,7 @@ import { useI18n } from "vue-i18n";
 import { Delete, Download, Edit } from "@element-plus/icons-vue";
 import PagedTable from "./PagedTable.vue";
 import SearchField from "./SearchField.vue";
-import type { LicenseContext } from "../types/page-context";
+import type { LicenseContext } from "../page-context";
 import PageContainer from "./page/PageContainer.vue";
 import PageContent from "./page/PageContent.vue";
 import PageToolbar from "./page/PageToolbar.vue";
@@ -46,7 +46,7 @@ const licenseHasFilters = computed(
 </script>
 
 <template>
-  <PageContainer class="itam-page">
+  <PageContainer class="infrix-page">
       <template #toolbar>
         <PageToolbar>
         <template #search>

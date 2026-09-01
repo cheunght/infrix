@@ -1,15 +1,18 @@
 <script setup lang="ts">
 import {
   computed,
+  defineAsyncComponent,
   nextTick,
   onBeforeUnmount,
   onMounted,
   ref,
   watch,
 } from "vue";
-import { ElMessage, ElMessageBox } from "element-plus";
+import { ElMessage } from "element-plus/es/components/message/index.mjs";
+import { ElMessageBox } from "element-plus/es/components/message-box/index.mjs";
 import type { MenuInstance } from "element-plus";
 import {
+  ArrowDown,
   Checked,
   Expand,
   Fold,
@@ -31,17 +34,16 @@ import { useLicenses } from "./composables/useLicenses";
 import { useRepairs } from "./composables/useRepairs";
 import { useSpareParts } from "./composables/useSpareParts";
 import { useSettings } from "./composables/useSettings";
-import { useGlobalSearch, type GlobalSearchModule } from "./composables/useGlobalSearch";
 import { useRoute, useRouter, type RouteLocationRaw } from "vue-router";
-import GlobalOverlayHost from "./components/overlays/GlobalOverlayHost.vue";
 import ApiErrorAlert from "./components/ApiErrorAlert.vue";
-import GlobalSearch from "./components/GlobalSearch.vue";
+import SearchField from "./components/SearchField.vue";
+import NotificationCenter from "./components/NotificationCenter.vue";
 import LanguageSwitcher from "./components/LanguageSwitcher.vue";
 import infrixMark from "./assets/infrix-mark.png";
 import infrixWordmark from "./assets/infrix-wordmark.png";
 import { hasCapability } from "./permissions";
 import { statusLabel } from "./status";
-import { currentLocale, elementPlusLocale, setLocale, type Locale } from "./i18n";
+import { currentLocale, elementPlusLocale, normalizeLocale, setLocale, type Locale } from "./i18n";
 import { useI18n } from "vue-i18n";
 import {
   routeForPage,
@@ -49,14 +51,42 @@ import {
   type RackSection,
   type SettingsSection,
 } from "./router";
+import {
+  ensureElementPlusComponents,
+  type ElementPlusComponentName,
+} from "./element-plus-components";
 import type {
   Page,
-  Asset,
   AssetDetail,
-  FaultEvent,
-  Rack,
+  OperationalAlert,
 } from "./types";
-import type { PageContext } from "./types/page-context";
+import type { PageContext } from "./page-context";
+
+const globalOverlayElementComponents: readonly ElementPlusComponentName[] = [
+  "ElAlert",
+  "ElColorPicker",
+  "ElDatePicker",
+  "ElDialog",
+  "ElDrawer",
+  "ElEmpty",
+  "ElInputNumber",
+  "ElOption",
+  "ElRadioButton",
+  "ElRadioGroup",
+  "ElSelect",
+  "ElSkeleton",
+  "ElStep",
+  "ElSteps",
+  "ElTable",
+  "ElTableColumn",
+  "ElTag",
+  "ElUpload",
+];
+const GlobalOverlayHost = defineAsyncComponent(async () => {
+  await ensureElementPlusComponents(globalOverlayElementComponents);
+  return import("./components/overlays/GlobalOverlayHost.vue");
+});
+
 const route = useRoute();
 const router = useRouter();
 const { t } = useI18n();
@@ -78,13 +108,24 @@ const roleCode = ref("");
 const permissions = ref<string[]>([]);
 const can = (capability: string) => hasCapability(permissions.value, capability);
 const sidebarCollapsed = ref(
-  localStorage.getItem("itam.sidebar.collapsed") === "1" ||
+  localStorage.getItem("infrix.sidebar.collapsed") === "1" ||
     (window.matchMedia?.("(max-width: 900px)").matches &&
-      !localStorage.getItem("itam.sidebar.collapsed")),
+      !localStorage.getItem("infrix.sidebar.collapsed")),
 );
 const sidebarMenu = ref<MenuInstance>();
 const userName = ref("");
 const username = ref("");
+const userInitials = computed(() => {
+  const label = String(userName.value || username.value || "").trim();
+  if (!label) return "?";
+  const parts = label.split(/\s+/).filter(Boolean);
+  if (parts.length > 1) {
+    const first = Array.from(parts[0] || "")[0] || "";
+    const last = Array.from(parts[parts.length - 1] || "")[0] || "";
+    return `${first}${last}`.toUpperCase();
+  }
+  return Array.from(parts[0] || "?")[0]?.toUpperCase() || "?";
+});
 const password = ref("");
 const loginError = ref("");
 const placeholderTitle = ref("");
@@ -99,12 +140,6 @@ const {
   request,
   download,
 } = apiClient;
-const {
-  query: globalSearchQuery,
-  state: globalSearchState,
-  focus: focusGlobalSearch,
-  close: closeGlobalSearch,
-} = useGlobalSearch({ request, can });
 const {
   dashboard,
   dashboardLoading,
@@ -141,6 +176,7 @@ const profileForm = ref<{ first_name: string; last_name: string; email: string; 
 });
 const profileLoading = ref(false);
 const profileSaving = ref(false);
+const localeSaving = ref(false);
 const profileError = ref("");
 const profileFormErrors = ref<Record<string, string>>({});
 const roleName = ref("");
@@ -527,6 +563,7 @@ const {
   assetSortOrder,
   applySystemSettingsDefaults,
   assetSearch,
+  assetLookup,
   assetFilters,
   assetListLoading,
   assetListError,
@@ -595,6 +632,7 @@ const {
   resetAssetFilters,
   changeAssetPage,
   changeAssetPageSize,
+  lookupAsset,
   syncAssetDeviceType,
   changeAssetDataCenter,
   changeAssetRoom,
@@ -701,26 +739,15 @@ const spares = useSpareParts({
 });
 const {
   spareParts,
-  spareStocks,
-  spareTransactions,
   sparePartCount,
-  spareStockCount,
-  spareTransactionCount,
   sparePage,
   sparePageSize,
-  spareStockPage,
-  spareStockPageSize,
-  spareTransactionPage,
-  spareTransactionPageSize,
   spareRooms,
   spareSearch,
   spareCategory,
   spareManufacturer,
   spareListDataCenter,
   spareListRoom,
-  spareDataCenter,
-  spareRoom,
-  spareSelectedPart,
   sparePartForm,
   showSparePartModal,
   spareSaving,
@@ -747,11 +774,6 @@ const {
   changeSparePageSize,
   exportSpareParts,
   exportSpareTransactions,
-  selectSparePart,
-  changeSpareStockPage,
-  changeSpareStockPageSize,
-  changeSpareTransactionPage,
-  changeSpareTransactionPageSize,
   openSparePartModal,
   saveSparePart,
   deleteSparePart,
@@ -759,7 +781,6 @@ const {
   saveSpareOperation,
   spareOperationLabel,
   stockLocations,
-  stockLoading,
   stockLocationLoadingByPart,
   stockLocationErrorByPart,
   stockLocationTotalsByPart,
@@ -798,7 +819,6 @@ const navItems = [
 ];
 
 function closeTransientUi() {
-  closeGlobalSearch();
   closeAssetDetail();
   showAssetModal.value = false;
   showFaultModal.value = false;
@@ -912,6 +932,9 @@ function syncRouteState(): boolean {
   if (routePage === "ledger") syncAssetFiltersFromQuery(route.query);
   if (routePage === "repairs") syncRepairFiltersFromQuery(route.query);
   if (routePage === "licenses") syncLicenseFiltersFromQuery(route.query);
+  if (routePage === "spares") {
+    spareSearch.value = routeQueryValue("search");
+  }
   return clearRouteQuery(queryKeysToClear);
 }
 
@@ -1038,49 +1061,40 @@ function goToRepairs(query: Record<string, string> = {}) {
   navigateToRoute({ name: "repairs", query });
 }
 
-async function handleGlobalSearchAsset(asset: Asset) {
-  if (!can("assets.view")) return;
-  closeGlobalSearch();
-  await openAssetDetail(asset.id);
-}
-
-function handleGlobalSearchRack(rack: Rack) {
-  if (!can("racks.view")) return;
-  closeGlobalSearch();
-  openRackSection("view", {
-    room: String(rack.room),
-    rack: String(rack.id),
-    rack_code: rack.code,
-  });
-}
-
-function handleGlobalSearchFault(fault: FaultEvent) {
-  if (!can("faults.view")) return;
-  closeGlobalSearch();
-  goToRepairs({ fault: String(fault.id) });
-}
-
-function handleGlobalSearchViewAll(module: GlobalSearchModule) {
-  const search = globalSearchQuery.value.trim();
-  if (!search) return;
-  closeGlobalSearch();
-  if (module === "assets") {
-    if (!can("assets.view")) return;
-    goToAssets({ search });
+function handleNotificationSelect(alert: OperationalAlert) {
+  if (alert.kind === "maintenance" && alert.asset_id) {
+    void openAssetDetail(alert.asset_id);
     return;
   }
-  if (module === "racks") {
-    if (!can("racks.view")) return;
-    openRackSection("view", { rack_code: search });
+  if (alert.kind === "license") {
+    goToLicenses({ search: alert.name || alert.reference || "" });
     return;
   }
-  if (!can("faults.view")) return;
-  goToRepairs({ search, is_closed: "false" });
+  if (alert.kind === "fault") {
+    goToRepairs({ fault: String(alert.entity_id) });
+    return;
+  }
+  if (alert.kind === "inventory") {
+    navigateToRoute({ name: "inventory" }, true);
+    return;
+  }
+  if (alert.kind === "spare") {
+    goToSpares({ search: alert.code || alert.name || "" });
+  }
 }
 
 function goToLicenses(query: Record<string, string> = {}) {
   if (!can("licenses.view")) return;
   navigateToRoute({ name: "licenses", query });
+}
+
+function goToSpares(query: Record<string, string> = {}) {
+  if (!can("spares.view")) return;
+  if (Object.prototype.hasOwnProperty.call(query, "search")) {
+    spareSearch.value = query.search || "";
+  }
+  sparePage.value = 1;
+  navigateToRoute({ name: "spares", query });
 }
 
 function resetMainScroll() {
@@ -1097,7 +1111,7 @@ function resetMainScroll() {
 function toggleSidebar() {
   sidebarCollapsed.value = !sidebarCollapsed.value;
   localStorage.setItem(
-    "itam.sidebar.collapsed",
+    "infrix.sidebar.collapsed",
     sidebarCollapsed.value ? "1" : "0",
   );
   if (!sidebarCollapsed.value) openActiveSidebarSubmenu();
@@ -1137,6 +1151,29 @@ async function confirmAction(message: string) {
     return true;
   } catch {
     return false;
+  }
+}
+
+async function persistLocalePreference(locale: Locale) {
+  if (!authenticated.value || localeSaving.value) return;
+  const previousLocale = profileForm.value.locale;
+  localeSaving.value = true;
+  profileForm.value.locale = locale;
+  try {
+    const user = await request<{ locale?: string }>("/auth/me/", {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ locale }),
+    });
+    const savedLocale = normalizeLocale(user.locale || locale);
+    profileForm.value.locale = savedLocale;
+    setLocale(savedLocale);
+  } catch {
+    profileForm.value.locale = previousLocale;
+    setLocale(previousLocale);
+    actionMessage.value = t("auth.languageSaveFailed");
+  } finally {
+    localeSaving.value = false;
   }
 }
 function facilitySectionQuery(section: RackSection): Record<string, string> {
@@ -1484,7 +1521,7 @@ const pageContext = {
   resetLicenseFilters, retryLicenseList, deletingLicenseId, exportLicenses,
   openLicenseModal, deleteLicense, licenses, licensePage,
   licensePageSize, licenseCount, changeLicensePage, changeLicensePageSize,
-  spareParts, spareStocks, spareTransactions, sparePartCount, spareStockCount, spareTransactionCount,
+  spareParts, sparePartCount,
   sparePage, sparePageSize,
   spareSearch, spareCategory, spareManufacturer, spareListDataCenter, spareListRoom,
   spareRooms, spareCategories,
@@ -1494,7 +1531,7 @@ const pageContext = {
   openSpareOperation, spareOperationType, spareOperationForm, showSpareOperationModal,
   spareOperationSaving, spareOperationError, spareOperationCurrentQuantity, spareOperationLocationLabel,
   spareOperationLocationLocked, spareTransactionFilters, saveSpareOperation, spareOperationLabel,
-  stockLocations, stockLoading, stockLocationLoadingByPart, stockLocationErrorByPart,
+  stockLocations, stockLocationLoadingByPart, stockLocationErrorByPart,
   stockLocationTotalsByPart, stockLocationLoadedByPart, loadStockLocations, transactionRows, transactionCount,
   transactionPage, transactionPageSize, transactionLoading, transactionError, loadTransactions,
   changeTransactionPage, changeTransactionPageSize,
@@ -1564,6 +1601,25 @@ const overlayAssetDetail = {
   detailLoading,
   detailError,
 };
+const globalOverlayLoaded = ref(false);
+const hasOpenGlobalOverlay = computed(() => Boolean(
+  showAssetDetail.value ||
+  showAssetModal.value ||
+  showImportDialog.value ||
+  showDataCenterModal.value ||
+  showRoomModal.value ||
+  showLicenseModal.value ||
+  showFaultModal.value ||
+  showRepairModal.value ||
+  showUserModal.value ||
+  showUserResetModal.value ||
+  showProfileModal.value ||
+  showDictionaryModal.value ||
+  showPasswordModal.value,
+));
+watch(hasOpenGlobalOverlay, (isOpen) => {
+  if (isOpen) globalOverlayLoaded.value = true;
+}, { immediate: true });
 </script>
 
 <template>
@@ -1624,6 +1680,15 @@ const overlayAssetDetail = {
           :src="infrixWordmark"
           alt="Infrix"
         />
+        <el-button
+          class="ep-sidebar-collapse-button"
+          text
+          :title="sidebarCollapsed ? t('common.expandNavigation') : t('common.collapseNavigation')"
+          :aria-label="sidebarCollapsed ? t('common.expandNavigation') : t('common.collapseNavigation')"
+          @click="toggleSidebar"
+          ><el-icon class="header-control-icon"
+            ><Expand v-if="sidebarCollapsed" /><Fold v-else /></el-icon
+        ></el-button>
       </div>
       <el-menu
         ref="sidebarMenu"
@@ -1700,36 +1765,36 @@ const overlayAssetDetail = {
     </el-aside>
     <el-container class="shell-main">
       <el-header class="app-header"
-        ><div class="page-heading">
-          <el-button
-            class="ep-main-collapse-button"
-            text
-            :title="sidebarCollapsed ? t('common.expandNavigation') : t('common.collapseNavigation')"
-            :aria-label="sidebarCollapsed ? t('common.expandNavigation') : t('common.collapseNavigation')"
-            @click="toggleSidebar"
-            ><el-icon
-              ><Expand v-if="sidebarCollapsed" /><Fold v-else /></el-icon
-          ></el-button>
-          <h1>{{ pageTitle }}</h1>
-        </div>
+        ><div class="page-heading"><h1>{{ pageTitle }}</h1></div>
         <div class="header-tools">
-          <GlobalSearch
-            v-model="globalSearchQuery"
-            :state="globalSearchState"
-            @focus="focusGlobalSearch"
-            @close="closeGlobalSearch"
-            @select-asset="handleGlobalSearchAsset"
-            @select-rack="handleGlobalSearchRack"
-            @select-fault="handleGlobalSearchFault"
-            @view-all="handleGlobalSearchViewAll"
+          <SearchField
+            class="ep-global-search"
+            v-model="assetLookup"
+            :placeholder="t('asset.searchPlaceholder')"
+            :aria-label="t('asset.title')"
+            @search="lookupAsset"
           />
-          <LanguageSwitcher />
-          <el-dropdown trigger="click"
-            ><el-button text
-              ><el-avatar :size="30" :icon="User" /><span
-                class="ep-user-name"
-                >{{ userName || t('common.currentUser') }}</span
-              ></el-button
+          <NotificationCenter
+            v-if="can('dashboard.view')"
+            :request="request"
+            :can="can"
+            :username="username"
+            @select="handleNotificationSelect"
+          />
+          <LanguageSwitcher :disabled="localeSaving" @change="persistLocalePreference" />
+          <el-dropdown class="user-menu" trigger="click"
+            ><el-button
+              class="user-menu__trigger"
+              text
+              :aria-label="userName || t('common.currentUser')"
+              :title="userName || t('common.currentUser')"
+              ><span class="user-menu__content"
+                ><span class="user-menu__avatar" aria-hidden="true">{{ userInitials }}</span
+                ><span class="user-menu__identity"
+                  ><span class="user-menu__name">{{ userName || t('common.currentUser') }}</span></span
+                ><el-icon class="user-menu__chevron" aria-hidden="true"><ArrowDown /></el-icon
+              ></span
+            ></el-button
             ><template #dropdown
               ><el-dropdown-menu
                 ><el-dropdown-item @click="openProfileSettings"
@@ -1755,6 +1820,7 @@ const overlayAssetDetail = {
           </div>
         </div>
         <GlobalOverlayHost
+          v-if="globalOverlayLoaded"
           :request="request"
           :asset-context="pageContext"
           :asset-detail="overlayAssetDetail"

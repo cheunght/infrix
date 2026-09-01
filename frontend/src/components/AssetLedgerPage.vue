@@ -2,7 +2,7 @@
 <script setup lang="ts">
 import { computed, ref, watch } from "vue";
 import { useI18n } from "vue-i18n";
-import { ArrowDown, ArrowUp, Check, CopyDocument, Delete, Download, Edit, Grid, Operation, Upload } from "@element-plus/icons-vue";
+import { ArrowDown, Check, CopyDocument, Delete, Download, Edit, Grid, Operation, Upload } from "@element-plus/icons-vue";
 import type { Asset } from "../types";
 import PagedTable from "./PagedTable.vue";
 import SearchField from "./SearchField.vue";
@@ -16,7 +16,7 @@ import ActionDialogShell from "./ActionDialogShell.vue";
 import TableIconButton from "./TableIconButton.vue";
 import AssetQrDialog from "./AssetQrDialog.vue";
 import DynamicFieldDisplay from "./fields/DynamicFieldDisplay.vue";
-import type { AssetLedgerContext } from "../types/page-context";
+import type { AssetLedgerContext } from "../page-context";
 import { ASSET_STATUS_OPTIONS, businessOptionLabel, isAssetStatus } from "../business-enums";
 import {
   ASSET_SORT_FIELD_MAP,
@@ -173,7 +173,6 @@ const staticAssetColumnLabelKeys: Record<string, string> = {
   data_center: "location.dataCenter",
   server_room: "location.room",
   rack_code: "asset.location",
-  u_range: "asset.uRange",
   business_ip: "asset.businessIp",
   management_ip: "asset.managementIp",
   oob_ip: "asset.oobIp",
@@ -251,7 +250,7 @@ function openSelectedQrDialog() {
 </script>
 
 <template>
-  <PageContainer class="itam-page">
+  <PageContainer class="infrix-page">
       <template #toolbar>
         <PageToolbar>
           <template #search>
@@ -374,18 +373,18 @@ function openSelectedQrDialog() {
                   @command="(command: string) => handleAssetHeaderFilterCommand(column.key, command)"
                   @visible-change="(visible: boolean) => handleAssetHeaderDropdownVisible(column.key, visible)"
                 >
-                  <span
-                    class="asset-table-header-dropdown-trigger"
+                  <el-button
+                    text
+                    class="asset-table-header-filter-trigger"
                     :aria-expanded="assetHeaderDropdownOpen === column.key"
                     :aria-label="t('common.search') + ' ' + assetColumnLabel(column)"
-                    @click.stop
+                    aria-haspopup="menu"
                   >
-                    <span class="asset-table-header-dropdown-trigger__label">{{ assetColumnLabel(column) }}</span>
+                    <span class="asset-table-header-filter-trigger__label">{{ assetColumnLabel(column) }}</span>
                     <el-icon aria-hidden="true">
-                      <ArrowUp v-if="assetHeaderDropdownOpen === column.key" />
-                      <ArrowDown v-else />
+                      <ArrowDown />
                     </el-icon>
-                  </span>
+                  </el-button>
                   <template #dropdown>
                     <el-dropdown-menu>
                       <el-dropdown-item v-for="option in assetHeaderFilterOptions(column.key)" :key="option.value" :command="option.value">

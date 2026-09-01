@@ -1,6 +1,6 @@
 import { computed, reactive, ref, watch, type ComputedRef, type Ref } from "vue";
 import type { LocationQuery } from "vue-router";
-import { ElMessage } from "element-plus";
+import { ElMessage } from "element-plus/es/components/message/index.mjs";
 import { ApiError, buildExportQuery, isAbortError, pageItems, pageTotal, type PageResult } from "../api";
 import type { Page } from "../types";
 import type {
@@ -19,7 +19,7 @@ import type {
   ServerRoom,
   Tag,
 } from "../types";
-import type { AssetFilters, AssetFormState, CapabilityFn, RequestFn } from "../types/page-context";
+import type { AssetFilters, AssetFormState, CapabilityFn, RequestFn } from "../page-context";
 import { isAssetStatus } from "../business-enums";
 import {
   DEPRECIATION_METHOD_STRAIGHT_LINE,
@@ -47,7 +47,6 @@ export type StaticAssetColumnKey =
   | "data_center"
   | "server_room"
   | "rack_code"
-  | "u_range"
   | "business_ip"
   | "management_ip"
   | "oob_ip"
@@ -198,13 +197,8 @@ const defaultColumns: AssetColumnOption[] = [
   { key: "notes", label: "备注" },
 ];
 
-const legacyColumnKeys: StaticAssetColumnKey[] = ["u_range"];
-const legacyColumnAliases: Partial<Record<StaticAssetColumnKey, StaticAssetColumnKey>> = {
-  u_range: "rack_code",
-};
 const supportedColumnKeys = new Set<StaticAssetColumnKey>([
   ...defaultColumns.map((column) => column.key as StaticAssetColumnKey),
-  ...legacyColumnKeys,
 ]);
 
 const requiredColumnKeys = defaultColumns
@@ -212,7 +206,7 @@ const requiredColumnKeys = defaultColumns
   .map((column) => column.key);
 
 function normalizeVisibleColumns(keys: AssetColumnKey[], dynamicKeys?: Set<string>): AssetColumnKey[] {
-  const selected = new Set<AssetColumnKey>(keys.map((key) => legacyColumnAliases[key as StaticAssetColumnKey] || key));
+  const selected = new Set<AssetColumnKey>(keys);
   const normalizedStatic = defaultColumns
     .filter((column) => selected.has(column.key) || column.required)
     .map((column) => column.key);
@@ -265,7 +259,7 @@ function emptyAssetForm(defaultStatus = systemSettingsState.defaultAssetStatus):
 
 function loadSavedColumns(): AssetColumnKey[] {
   try {
-    const saved = JSON.parse(localStorage.getItem("itam.asset.columns") || "null");
+    const saved = JSON.parse(localStorage.getItem("infrix.asset.columns") || "null");
     if (Array.isArray(saved)) {
       const valid = saved.filter((key): key is AssetColumnKey =>
         typeof key === "string" && (supportedColumnKeys.has(key as StaticAssetColumnKey) || isDynamicAssetColumnKey(key)),
@@ -319,15 +313,6 @@ const assetFormFieldNames = new Set([
   "custom_values",
 ]);
 
-const assetFormFieldAliases: Record<string, string> = {
-  asset_name: "name",
-  type: "device_type",
-  device_type_id: "device_type",
-  server_room: "server_room_id",
-  room: "server_room_id",
-  rack: "rack_id",
-};
-
 function errorText(value: unknown): string {
   if (Array.isArray(value)) return value.map(errorText).filter(Boolean).join("；");
   if (value && typeof value === "object") {
@@ -367,7 +352,7 @@ function extractAssetFormErrors(error: unknown): {
       }
       continue;
     }
-    const key = assetFormFieldAliases[rawKey] || rawKey;
+    const key = rawKey;
     const message = errorText(value);
     if (!message) continue;
     if (assetFormFieldNames.has(key) || key.startsWith("custom_values.")) fields[key] = message;
@@ -399,6 +384,7 @@ export function useAssets(deps: AssetsDeps) {
     },
   );
   const assetSearch = ref("");
+  const assetLookup = ref("");
   const assetFilters = reactive<AssetFilters>({
     status: "",
     deviceType: "",
@@ -450,7 +436,6 @@ export function useAssets(deps: AssetsDeps) {
   const assetCustomSchemaError = ref("");
   const assetCustomSchemaRequestId = ref(0);
   const assetCustomFieldDeviceType = ref("");
-  const assetCustomFieldHistoryValues = ref<Record<string, unknown>>({});
   const assetCustomFieldUserEditedKeys = new Set<string>();
   let assetCustomSchemaController: AbortController | null = null;
   const assetFormTarget = ref<{ assetId: number | null; clone: boolean; isNew: boolean }>({
@@ -516,7 +501,7 @@ export function useAssets(deps: AssetsDeps) {
   });
 
   function saveVisibleColumns() {
-    localStorage.setItem("itam.asset.columns", JSON.stringify(visibleAssetColumns.value));
+    localStorage.setItem("infrix.asset.columns", JSON.stringify(visibleAssetColumns.value));
   }
 
   function selectedAssetCustomColumnKeys(): string[] {
@@ -777,15 +762,10 @@ export function useAssets(deps: AssetsDeps) {
 
   function reconcileCustomValuesForSchema(schema: CustomFieldSchema[]) {
     const current = assetForm.value.custom_values || {};
-    const history = assetCustomFieldHistoryValues.value;
     const next: Record<string, unknown> = {};
     for (const field of visibleCustomFields(schema)) {
       if (hasCustomValue(current, field.key)) {
         next[field.key] = current[field.key];
-        continue;
-      }
-      if (assetModalMode.value === "edit" && hasCustomValue(history, field.key)) {
-        next[field.key] = history[field.key];
         continue;
       }
       if (assetModalMode.value === "new" && !assetCustomFieldUserEditedKeys.has(field.key)) {
@@ -800,7 +780,7 @@ export function useAssets(deps: AssetsDeps) {
   function resetCustomValuesForDeviceType(deviceTypeId: string) {
     if (!deviceTypeId) return;
     const values = assetForm.value.custom_values || {};
-    for (const field of visibleCustomFields(assetCustomFieldSchema.value)) {
+    for (const field of assetCustomFieldSchema.value) {
       if (field.device_type != null && String(field.device_type) === deviceTypeId) {
         delete values[field.key];
         assetCustomFieldUserEditedKeys.delete(field.key);
@@ -909,7 +889,6 @@ export function useAssets(deps: AssetsDeps) {
     editingAsset.value = clone ? null : ({ id: assetId } as Asset);
     assetForm.value = emptyAssetForm();
     depreciationStartTouched.value = false;
-    assetCustomFieldHistoryValues.value = {};
     assetCustomFieldUserEditedKeys.clear();
     resetAssetCustomSchemaState();
     showAssetModal.value = true;
@@ -922,8 +901,6 @@ export function useAssets(deps: AssetsDeps) {
       const rack = detail.rack_allocation;
       const procurement = detail.procurement_records[0];
       const maintenance = detail.maintenance_contracts[0];
-      const historyValues = { ...(detail.custom_values || {}) };
-      assetCustomFieldHistoryValues.value = historyValues;
       assetForm.value = {
         ...emptyAssetForm(),
         asset_no: detail.asset_no,
@@ -968,7 +945,7 @@ export function useAssets(deps: AssetsDeps) {
         tags: (detail.tags || [])
           .filter((tag) => !clone || tag.is_active)
           .map((tag) => String(tag.id)),
-        custom_values: historyValues,
+        custom_values: { ...(detail.custom_values || {}) },
       };
       depreciationStartTouched.value = Boolean(detail.depreciation_start_date);
       await loadAssetCustomSchema(detail.device_type ? String(detail.device_type) : "");
@@ -1008,7 +985,6 @@ export function useAssets(deps: AssetsDeps) {
     assetModalMode.value = "new";
     assetForm.value = emptyAssetForm();
     depreciationStartTouched.value = false;
-    assetCustomFieldHistoryValues.value = {};
     assetCustomFieldUserEditedKeys.clear();
     resetAssetCustomSchemaState();
     showAssetModal.value = true;
@@ -1172,7 +1148,6 @@ export function useAssets(deps: AssetsDeps) {
       editingAsset.value = null;
       assetForm.value = emptyAssetForm();
       depreciationStartTouched.value = false;
-      assetCustomFieldHistoryValues.value = {};
       assetCustomFieldUserEditedKeys.clear();
       await loadAssets();
       let refreshFailed = Boolean(assetListError.value);
@@ -1334,7 +1309,6 @@ export function useAssets(deps: AssetsDeps) {
       data_center: asset.data_center || rack?.data_center || "—",
       server_room: asset.server_room || rack?.server_room || "—",
       rack_code: rack ? [rack.server_room, rack.rack_code].filter(Boolean).join(" / ") : asset.rack_code || "—",
-      u_range: asset.u_range || (rack ? `U${rack.start_u}–U${rack.end_u}` : "—"),
       business_ip: network("business") || "—",
       management_ip: network("management") || "—",
       oob_ip: network("oob") || "—",
@@ -1487,7 +1461,7 @@ export function useAssets(deps: AssetsDeps) {
     const nextType = assetForm.value.device_type;
     const previousType = assetCustomFieldDeviceType.value;
     const previousValues = assetForm.value.custom_values || {};
-    const hasPreviousScopedValues = previousType !== "" && visibleCustomFields(assetCustomFieldSchema.value).some(
+    const hasPreviousScopedValues = previousType !== "" && assetCustomFieldSchema.value.some(
       (field) => field.device_type != null && String(field.device_type) === previousType && hasCustomValue(previousValues, field.key),
     );
     if (editingAsset.value && previousType !== nextType && hasPreviousScopedValues) {
@@ -1640,6 +1614,32 @@ export function useAssets(deps: AssetsDeps) {
     await loadAssets();
   }
 
+  async function lookupAsset(): Promise<void> {
+    const query = assetLookup.value.trim();
+    if (!query || !deps.can("assets.view")) return;
+    try {
+      const params = new URLSearchParams({ search: query, page_size: "100", compact: "1" });
+      const requestedCustomColumns = selectedAssetCustomColumnKeys();
+      if (requestedCustomColumns.length) params.set("custom_columns", requestedCustomColumns.join(","));
+      const payload = await deps.request<PageResult<Asset> | Asset[]>(`/assets/?${params.toString()}`);
+      const matches = pageItems(payload);
+      if (matches.length === 1) {
+        await openAssetDetail(matches[0].id);
+        return;
+      }
+      assetSearch.value = query;
+      assetPage.value = 1;
+      assets.value = matches;
+      assetCount.value = matches.length;
+      deps.actionMessage.value = matches.length
+        ? tr("asset.quickLookupFound", { count: matches.length })
+        : tr("asset.quickLookupNotFound", { query });
+      deps.goToLedger();
+    } catch (error) {
+      deps.actionMessage.value = error instanceof Error ? error.message : tr("asset.quickLookupFailed");
+    }
+  }
+
   function applySystemSettingsDefaults(): void {
     assetPageSizeUserSelected = false;
     assetPageSize.value = systemSettingsState.defaultPageSize;
@@ -1658,6 +1658,7 @@ export function useAssets(deps: AssetsDeps) {
     assetSortOrder,
     applySystemSettingsDefaults,
     assetSearch,
+    assetLookup,
     assetFilters,
     assetListLoading,
     exportingAssets,
@@ -1746,6 +1747,7 @@ export function useAssets(deps: AssetsDeps) {
     resetAssetFilters,
     changeAssetPage,
     changeAssetPageSize,
+    lookupAsset,
     syncAssetDeviceType,
     changeAssetDataCenter,
     changeAssetRoom,

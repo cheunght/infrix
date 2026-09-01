@@ -12,7 +12,7 @@ import ResourceState from "./ResourceState.vue";
 import TableIconButton from "./TableIconButton.vue";
 import { statusTone } from "../status";
 import type { FaultEvent } from "../types";
-import type { RepairContext } from "../types/page-context";
+import type { RepairContext } from "../page-context";
 
 const props = defineProps<{ context: RepairContext }>();
 const { t, locale } = useI18n();
@@ -80,7 +80,7 @@ function repairActionIcon(fault: FaultEvent) {
 </script>
 
 <template>
-  <PageContainer class="itam-page repair-page">
+  <PageContainer class="infrix-page repair-page">
       <template #toolbar>
         <PageToolbar>
           <template #search>

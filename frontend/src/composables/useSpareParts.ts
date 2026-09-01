@@ -1,7 +1,7 @@
 import { ref, type Ref } from "vue";
 import { buildExportQuery, isAbortError, pageItems, pageTotal, type PageResult } from "../api";
 import type { DataCenter, ServerRoom, SparePart, SparePartCategory, SparePartFormState, SpareStock, SpareTransaction } from "../types";
-import type { CapabilityFn, RequestFn } from "../types/page-context";
+import type { CapabilityFn, RequestFn } from "../page-context";
 import {
   businessOptionLabel,
   STOCK_OPERATION_OPTIONS,
@@ -35,26 +35,15 @@ export interface SparePartsDeps {
 
 export function useSpareParts(deps: SparePartsDeps) {
   const spareParts = ref<SparePart[]>([]);
-  const spareStocks = ref<SpareStock[]>([]);
-  const spareTransactions = ref<SpareTransaction[]>([]);
   const sparePartCount = ref(0);
-  const spareStockCount = ref(0);
-  const spareTransactionCount = ref(0);
   const sparePage = ref(1);
   const sparePageSize = ref(50);
-  const spareStockPage = ref(1);
-  const spareStockPageSize = ref(50);
-  const spareTransactionPage = ref(1);
-  const spareTransactionPageSize = ref(50);
   const spareRooms = ref<ServerRoom[]>([]);
   const spareSearch = ref("");
   const spareCategory = ref("");
   const spareManufacturer = ref("");
   const spareListDataCenter = ref("");
   const spareListRoom = ref("");
-  const spareDataCenter = ref("");
-  const spareRoom = ref("");
-  const spareSelectedPart = ref<SparePart | null>(null);
   const sparePartForm = ref<SparePartFormState>({
     code: "", name: "", category: "", manufacturer: "", model: "", specification: "", unit: "piece",
     initial_quantity: 0, initial_data_center: "", initial_server_room: "", current_quantity: 0,
@@ -69,8 +58,6 @@ export function useSpareParts(deps: SparePartsDeps) {
   const exportingSpares = ref(false);
   const spareListRequestId = ref(0);
   let spareListController: AbortController | null = null;
-  const selectedDataRequestId = ref(0);
-  let selectedDataController: AbortController | null = null;
 
   const spareOperationType = ref<StockOperationType>("inbound");
   const spareOperationForm = ref({
@@ -96,10 +83,6 @@ export function useSpareParts(deps: SparePartsDeps) {
   const stockLocationLoadedByPart = ref<Record<number, boolean>>({});
   const stockLocationRequestIds = new Map<number, number>();
   const stockLocationControllers = new Map<number, AbortController>();
-  // Keep the old name in the public context for pages that have not migrated
-  // yet; both refs point at the same per-part state.
-  const stockLoading = stockLocationLoadingByPart;
-
   const transactionRows = ref<SpareTransaction[]>([]);
   const transactionCount = ref(0);
   const transactionPage = ref(1);
@@ -164,11 +147,6 @@ export function useSpareParts(deps: SparePartsDeps) {
       sparePartCount.value = nextCount;
       spareRooms.value = pageItems(roomResult);
       deps.spareCategories.value = pageItems(categoryResult);
-      if (spareSelectedPart.value) {
-        const current = spareParts.value.find((part) => part.id === spareSelectedPart.value?.id);
-        if (current) spareSelectedPart.value = current;
-        void loadSelectedPartData(spareSelectedPart.value.id);
-      }
       return true;
     } catch (error) {
       if (requestId === spareListRequestId.value && deps.isCurrentLoad(version) && !isAbortError(error)) {
@@ -188,7 +166,6 @@ export function useSpareParts(deps: SparePartsDeps) {
     const detail = await deps.request<SparePart>(`/spare-parts/${partId}/`);
     const index = spareParts.value.findIndex((part) => part.id === partId);
     if (index >= 0) spareParts.value.splice(index, 1, detail);
-    if (spareSelectedPart.value?.id === partId) spareSelectedPart.value = detail;
     return detail;
   }
 
@@ -242,51 +219,6 @@ export function useSpareParts(deps: SparePartsDeps) {
       deps.actionMessage.value = errorMessage(error, tr("spare.exportFailed"));
     } finally {
       exportingSpares.value = false;
-    }
-  }
-
-  function selectSparePart(part: SparePart | null, resetFilters = true) {
-    spareSelectedPart.value = part;
-    if (!part) selectedDataController?.abort();
-    if (resetFilters) {
-      spareStockPage.value = 1;
-      spareTransactionPage.value = 1;
-    }
-    spareStocks.value = [];
-    spareTransactions.value = [];
-    spareStockCount.value = 0;
-    spareTransactionCount.value = 0;
-    if (part) void loadSelectedPartData(part.id);
-  }
-
-  async function loadSelectedPartData(partId: number) {
-    if (!deps.can("spares.view")) return;
-    const requestId = ++selectedDataRequestId.value;
-    selectedDataController?.abort();
-    const controller = new AbortController();
-    selectedDataController = controller;
-    const stockParams = new URLSearchParams({ part: String(partId), page: String(spareStockPage.value), page_size: String(spareStockPageSize.value) });
-    const transactionParams = new URLSearchParams({ part: String(partId), page: String(spareTransactionPage.value), page_size: String(spareTransactionPageSize.value) });
-    if (spareDataCenter.value) stockParams.set("data_center", spareDataCenter.value);
-    if (spareRoom.value) stockParams.set("server_room", spareRoom.value);
-    if (spareTransactionFilters.value.operation_type) transactionParams.set("operation_type", spareTransactionFilters.value.operation_type);
-    if (spareTransactionFilters.value.start) transactionParams.set("start", spareTransactionFilters.value.start);
-    if (spareTransactionFilters.value.end) transactionParams.set("end", spareTransactionFilters.value.end);
-    try {
-      const [stockResult, transactionResult] = await Promise.all([
-        deps.request<PageResult<SpareStock> | SpareStock[]>(`/spare-stocks/?${stockParams.toString()}`, { signal: controller.signal }),
-        deps.request<PageResult<SpareTransaction> | SpareTransaction[]>(`/spare-transactions/?${transactionParams.toString()}`, { signal: controller.signal }),
-      ]);
-      if (stockResult == null || transactionResult == null || requestId !== selectedDataRequestId.value || spareSelectedPart.value?.id !== partId) return;
-      spareStocks.value = pageItems(stockResult);
-      spareStockCount.value = pageTotal(stockResult);
-      spareTransactions.value = pageItems(transactionResult);
-      spareTransactionCount.value = pageTotal(transactionResult);
-    } catch {
-      // This legacy selected-part context is not rendered by the current page;
-      // its independent requests must never create an unhandled rejection.
-    } finally {
-      if (requestId === selectedDataRequestId.value && selectedDataController === controller) selectedDataController = null;
     }
   }
 
@@ -377,11 +309,6 @@ export function useSpareParts(deps: SparePartsDeps) {
     transactionPage.value = 1;
     void loadTransactions(partId);
   }
-  function changeSpareStockPage(page: number) { spareStockPage.value = Math.max(1, page); if (spareSelectedPart.value) void loadSelectedPartData(spareSelectedPart.value.id); }
-  function changeSpareStockPageSize(size: number) { spareStockPageSize.value = size; spareStockPage.value = 1; if (spareSelectedPart.value) void loadSelectedPartData(spareSelectedPart.value.id); }
-  function changeSpareTransactionPage(page: number) { spareTransactionPage.value = Math.max(1, page); if (spareSelectedPart.value) void loadSelectedPartData(spareSelectedPart.value.id); }
-  function changeSpareTransactionPageSize(size: number) { spareTransactionPageSize.value = size; spareTransactionPage.value = 1; if (spareSelectedPart.value) void loadSelectedPartData(spareSelectedPart.value.id); }
-
   function openSparePartModal(part?: SparePart) {
     if (!deps.can("spares.manage")) return;
     editingSparePart.value = part || null;
@@ -467,7 +394,6 @@ export function useSpareParts(deps: SparePartsDeps) {
       if (!(await deps.confirmAction(tr("spare.deleteConfirm", { name: part.name })))) return;
       await deps.request(`/spare-parts/${part.id}/`, { method: "DELETE" });
       deps.actionMessage.value = tr("spare.deleted");
-      if (spareSelectedPart.value?.id === part.id) spareSelectedPart.value = null;
       if (!(await loadSpareData()) && spareListError.value) deps.actionMessage.value = tr("spare.deletedRefreshFailed");
     } catch (error) {
       deps.actionMessage.value = errorMessage(error, tr("spare.deleteFailed"));
@@ -482,7 +408,7 @@ export function useSpareParts(deps: SparePartsDeps) {
     spareOperationType.value = operationType;
     let remembered: Partial<SpareOperationLocation> | null = null;
     if (!location) {
-      try { remembered = JSON.parse(localStorage.getItem("itam.spare.last_location") || "null") as Partial<SpareOperationLocation> | null; } catch { remembered = null; }
+      try { remembered = JSON.parse(localStorage.getItem("infrix.spare.last_location") || "null") as Partial<SpareOperationLocation> | null; } catch { remembered = null; }
     }
     const rememberedCenter = remembered?.data_center ? deps.dataCenters.value.find((center) => center.is_active && center.id === Number(remembered?.data_center)) : null;
     const rememberedRoom = rememberedCenter && remembered?.server_room ? spareRooms.value.find((room) => room.is_active && room.id === Number(remembered?.server_room) && room.data_center === rememberedCenter.id) : null;
@@ -517,7 +443,7 @@ export function useSpareParts(deps: SparePartsDeps) {
       await deps.request("/spare-transactions/", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload) });
       const locationDataCenter = STOCK_SOURCE_OPERATION_VALUES.includes(operation) ? form.source_data_center : form.target_data_center;
       const locationServerRoom = STOCK_SOURCE_OPERATION_VALUES.includes(operation) ? form.source_server_room : form.target_server_room;
-      if (locationDataCenter) localStorage.setItem("itam.spare.last_location", JSON.stringify({ data_center: Number(locationDataCenter), server_room: locationServerRoom ? Number(locationServerRoom) : null }));
+      if (locationDataCenter) localStorage.setItem("infrix.spare.last_location", JSON.stringify({ data_center: Number(locationDataCenter), server_room: locationServerRoom ? Number(locationServerRoom) : null }));
       showSpareOperationModal.value = false;
       deps.actionMessage.value = tr("spare.transactionSaved");
       const refreshed = await loadSpareData();
@@ -537,19 +463,18 @@ export function useSpareParts(deps: SparePartsDeps) {
   }
 
   return {
-    spareParts, spareStocks, spareTransactions, sparePartCount, spareStockCount, spareTransactionCount,
-    sparePage, sparePageSize, spareStockPage, spareStockPageSize, spareTransactionPage, spareTransactionPageSize,
-    spareRooms, spareSearch, spareCategory, spareManufacturer, spareListDataCenter, spareListRoom, spareDataCenter, spareRoom,
+    spareParts, sparePartCount,
+    sparePage, sparePageSize,
+    spareRooms, spareSearch, spareCategory, spareManufacturer, spareListDataCenter, spareListRoom,
     spareCategories: deps.spareCategories,
-    spareSelectedPart, sparePartForm, showSparePartModal, editingSparePart, spareSaving, deletingSparePartId,
+    sparePartForm, showSparePartModal, editingSparePart, spareSaving, deletingSparePartId,
     spareListLoading, spareListError, exportingSpares, loadSpareData, refreshSparePart, searchSpareParts, resetSpareFilters, retrySpareList,
     spareOperationType, spareOperationForm, showSpareOperationModal, spareOperationSaving, spareOperationError, spareOperationCurrentQuantity,
     spareOperationLocationLabel, spareOperationLocationLocked, spareTransactionFilters,
-    stockLocations, stockLoading, stockLocationLoadingByPart, stockLocationErrorByPart, stockLocationTotalsByPart,
+    stockLocations, stockLocationLoadingByPart, stockLocationErrorByPart, stockLocationTotalsByPart,
     stockLocationLoadedByPart, loadStockLocations, transactionRows, transactionCount, transactionPage, transactionPageSize,
     transactionLoading, transactionError, loadTransactions, changeTransactionPage, changeTransactionPageSize,
-    changeSparePage, changeSparePageSize, selectSparePart, changeSpareStockPage, changeSpareStockPageSize,
-    changeSpareTransactionPage, changeSpareTransactionPageSize, openSparePartModal, saveSparePart,
+    changeSparePage, changeSparePageSize, openSparePartModal, saveSparePart,
     deleteSparePart, openSpareOperation, saveSpareOperation, spareOperationLabel, exportSpareParts, exportSpareTransactions,
   };
 }

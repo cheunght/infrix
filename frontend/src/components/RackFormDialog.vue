@@ -3,7 +3,7 @@ import { computed, nextTick, ref, watch } from "vue";
 import { useI18n } from "vue-i18n";
 import type { FormInstance, FormRules } from "element-plus";
 import type { Rack, RackFormState } from "../types";
-import type { RackManagementContext } from "../types/page-context";
+import type { RackManagementContext } from "../page-context";
 import FieldHelp from "./FieldHelp.vue";
 import FormDialogShell from "./FormDialogShell.vue";
 import { RACK_STATUS_OPTIONS, businessOptionLabel } from "../business-enums";

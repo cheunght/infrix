@@ -17,7 +17,7 @@ import type {
   UserBatchStatusResponse,
 } from "../types";
 import type { SettingsSection } from "../router";
-import type { CapabilityFn, RequestFn } from "../types/page-context";
+import type { CapabilityFn, RequestFn } from "../page-context";
 import { applySystemSettings as applySystemSettingsSnapshot } from "../system-settings";
 import { currentLocale, i18n } from "../i18n";
 
@@ -36,7 +36,7 @@ export interface SettingsDeps {
   actionMessage: Ref<string>;
 }
 
-export const SYSTEM_RESET_CONFIRMATION = "RESET ITAM";
+export const SYSTEM_RESET_CONFIRMATION = "RESET INFRIX";
 
 type CustomFieldOptionForm = {
   value: string;
@@ -589,7 +589,7 @@ export function useSettings(deps: SettingsDeps) {
           password: "",
           confirm_password: "",
           is_active: user.is_active,
-          role_code: user.assigned_role_code || "auditor",
+          role_code: user.assigned_role_code || "",
         }
       : {
           username: "",

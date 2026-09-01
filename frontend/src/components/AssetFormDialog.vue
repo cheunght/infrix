@@ -3,7 +3,7 @@
 import { computed, nextTick, ref, watch } from "vue";
 import { useI18n } from "vue-i18n";
 import type { FormInstance, FormRules } from "element-plus";
-import type { AssetFormContext } from "../types/page-context";
+import type { AssetFormContext } from "../page-context";
 import type { CustomFieldSchema, Tag } from "../types";
 import { isPositiveDecimalString, percentageToRate } from "../depreciation";
 import DynamicFieldRenderer from "./fields/DynamicFieldRenderer.vue";

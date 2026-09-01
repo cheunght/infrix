@@ -66,6 +66,7 @@ from .roles import ROLE_DEFINITIONS, ROLE_NAME_TO_CODE, user_capabilities, user_
 from .reporting import (
     DashboardScopeError,
     build_dashboard_payload,
+    build_alerts_payload,
     build_rack_capacity_rows,
     rack_effective_used_u,
     resolve_dashboard_scope,
@@ -338,12 +339,6 @@ class AssetViewSet(AuditedModelViewSetMixin, viewsets.ModelViewSet):
                 description="使用资产台账的轻量列表响应。",
             ),
             OpenApiParameter(
-                name="tag",
-                type=OpenApiTypes.STR,
-                required=False,
-                description="兼容旧版：按单个标签名称筛选资产。",
-            ),
-            OpenApiParameter(
                 name="tags",
                 type=OpenApiTypes.STR,
                 required=False,
@@ -361,12 +356,6 @@ class AssetViewSet(AuditedModelViewSetMixin, viewsets.ModelViewSet):
                 required=False,
                 enum=["within_30_days", "expired"],
                 description="按维保到期状态筛选：within_30_days 表示今天至未来 30 天内到期，expired 表示已过期。",
-            ),
-            OpenApiParameter(
-                name="custom__{field_key}",
-                type=OpenApiTypes.STR,
-                required=False,
-                description="兼容旧版动态字段等值/文本包含筛选；field_key 为运行时字段编码。",
             ),
             OpenApiParameter(
                 name="custom__{field_key}__{operator}",
@@ -425,12 +414,9 @@ class AssetViewSet(AuditedModelViewSetMixin, viewsets.ModelViewSet):
                         to_attr="list_custom_values",
                     )
                 )
-        tag = self.request.query_params.get("tag", "").strip()
         tag_ids = self._tag_filter_ids()
         if tag_ids:
             queryset = queryset.filter(asset_tags__tag_id__in=tag_ids)
-        if tag:
-            queryset = queryset.filter(asset_tags__tag__name__iexact=tag)
         data_center = self.request.query_params.get("data_center", "").strip()
         try:
             data_center_id = int(data_center) if data_center else None
@@ -476,7 +462,7 @@ class AssetViewSet(AuditedModelViewSetMixin, viewsets.ModelViewSet):
             else:
                 values = values.filter(_custom_filter_multiselect_membership(value))
             queryset = queryset.filter(Exists(values))
-        if tag or tag_ids:
+        if tag_ids:
             queryset = queryset.distinct()
         return queryset
 
@@ -492,7 +478,7 @@ class AssetViewSet(AuditedModelViewSetMixin, viewsets.ModelViewSet):
         return queryset.order_by(*ordering)
 
     def _tag_filter_ids(self):
-        """Parse the multi-tag filter while retaining the legacy name filter."""
+        """Parse the multi-tag ID filter."""
         raw_values = self.request.query_params.getlist("tags")
         if not raw_values:
             return []
@@ -537,6 +523,9 @@ class AssetViewSet(AuditedModelViewSetMixin, viewsets.ModelViewSet):
         errors = []
         validated = []
         for query_key, field_key, explicit_operator, raw_value in parsed:
+            if explicit_operator is None:
+                errors.append(f"{query_key}：必须指定操作符")
+                continue
             field = fields.get(field_key)
             if not field:
                 errors.append(f"{query_key}：字段不存在")
@@ -547,7 +536,7 @@ class AssetViewSet(AuditedModelViewSetMixin, viewsets.ModelViewSet):
             if not field.filterable:
                 errors.append(f"{field.name}：字段未开启筛选")
                 continue
-            operator = explicit_operator or ("contains" if field.field_type in {"text", "textarea", "multiselect"} else "eq")
+            operator = explicit_operator
             if operator not in CUSTOM_FILTER_OPERATORS_BY_TYPE.get(field.field_type, set()):
                 errors.append(f"{field.name}：不支持“{operator}”操作")
                 continue
@@ -755,6 +744,26 @@ class RackViewSet(AuditedModelViewSetMixin, viewsets.ModelViewSet):
         if status in RACK_STATUS_VALUES:
             queryset = queryset.filter(status=status)
         return queryset.order_by("room__data_center__name", "room__name", "code")
+
+    @transaction.atomic
+    def perform_update(self, serializer):
+        # Match the rack -> allocations lock order used by asset placement and
+        # repeat validation after acquiring the locks. Otherwise a concurrent
+        # placement can make an earlier capacity check stale before save.
+        locked_rack = Rack.objects.select_for_update().get(pk=serializer.instance.pk)
+        list(
+            RackUnitAllocation.objects.select_for_update()
+            .filter(rack_id=locked_rack.pk)
+            .order_by("pk")
+        )
+        locked_serializer = self.get_serializer(
+            locked_rack,
+            data=self.request.data,
+            partial=self.request.method == "PATCH",
+        )
+        locked_serializer.is_valid(raise_exception=True)
+        super().perform_update(locked_serializer)
+        serializer.instance = locked_serializer.instance
 
     @transaction.atomic
     def perform_destroy(self, instance):
@@ -1824,7 +1833,13 @@ class InventoryTaskViewSet(AuditedModelViewSetMixin, viewsets.ModelViewSet):
         task = InventoryTask.objects.select_for_update().get(pk=self.get_object().pk)
         if task.status == "completed":
             return Response(InventoryTaskSerializer(task).data)
-        pending = task.items.filter(status="pending").count()
+        items = list(
+            InventoryItem.objects.select_for_update()
+            .filter(task_id=task.pk)
+            .order_by("pk")
+            .only("status")
+        )
+        pending = sum(item.status == "pending" for item in items)
         if pending:
             return Response({"detail": f"还有 {pending} 台设备未盘点，不能完成任务"}, status=400)
         task.status = "completed"
@@ -1842,7 +1857,7 @@ class InventoryTaskViewSet(AuditedModelViewSetMixin, viewsets.ModelViewSet):
     @action(detail=True, methods=["post"], url_path="reopen")
     @transaction.atomic
     def reopen(self, request, pk=None):
-        task = self.get_object()
+        task = InventoryTask.objects.select_for_update().get(pk=self.get_object().pk)
         task.status = "in_progress"
         task.completed_at = None
         task.save(update_fields=["status", "completed_at", "updated_at"])
@@ -1947,15 +1962,25 @@ class InventoryItemViewSet(viewsets.ModelViewSet):
 
     @transaction.atomic
     def perform_update(self, serializer):
-        item = serializer.instance
-        if item.task.status == "completed":
+        # Validation initially happens before perform_update. Lock in the same
+        # task -> item order as completion, then validate the submitted result
+        # again so completion cannot race with this write.
+        task = InventoryTask.objects.select_for_update().get(pk=serializer.instance.task_id)
+        item = self.get_queryset().select_for_update().get(pk=serializer.instance.pk)
+        locked_serializer = self.get_serializer(
+            item,
+            data=self.request.data,
+            partial=True,
+        )
+        locked_serializer.is_valid(raise_exception=True)
+        if task.status == "completed":
             raise DRFValidationError({"detail": "已完成的盘点任务已锁定，不能修改"})
-        if serializer.validated_data.get("status", item.status) == "normal":
+        if locked_serializer.validated_data.get("status", item.status) == "normal":
             updated = confirm_inventory_item_normal(
                 item_id=item.pk,
                 actor=self.request.user,
                 request=self.request,
-                notes=serializer.validated_data.get("notes"),
+                notes=locked_serializer.validated_data.get("notes"),
                 source="inventory_result",
             )
             serializer.instance = updated
@@ -1968,7 +1993,7 @@ class InventoryItemViewSet(viewsets.ModelViewSet):
             item.notes,
         )
         before = InventoryItemSerializer(item).data
-        updated = serializer.save()
+        updated = locked_serializer.save()
         if updated.status == "pending":
             updated.checked_by = None
             updated.checked_at = None
@@ -2003,6 +2028,7 @@ class InventoryItemViewSet(viewsets.ModelViewSet):
             before=before,
             after=InventoryItemSerializer(updated).data,
         )
+        serializer.instance = updated
 
     @extend_schema(
         request=InventoryResolutionSerializer,
@@ -2218,6 +2244,9 @@ class AuditLogViewSet(viewsets.ReadOnlyModelViewSet):
         return super().list(request, *args, **kwargs)
 
 
+LOGIN_USERNAME_MAX_LENGTH = User._meta.get_field(User.USERNAME_FIELD).max_length or 150
+
+
 def _security_profile(user):
     profile, _ = UserSecurityProfile.objects.get_or_create(
         user=user,
@@ -2326,7 +2355,7 @@ def _auth_response(user):
         "is_staff": user.is_staff,
         "is_admin": user_has_capability(user, "organization.manage"),
         "role_code": role_code,
-        "role_name": ROLE_DEFINITIONS.get(role_code, {}).get("name", "只读审计员"),
+        "role_name": ROLE_DEFINITIONS.get(role_code, {}).get("name", ""),
         "permissions": user_capabilities(user),
         "password_change_required": security_profile.must_change_password,
         "locale": security_profile.locale,
@@ -2340,6 +2369,14 @@ def _auth_response(user):
 def auth_login(request):
     username = str(request.data.get("username", "")).strip()
     password = request.data.get("password", "")
+    if len(username) > LOGIN_USERNAME_MAX_LENGTH:
+        return Response(
+            {
+                "detail": f"用户名不能超过 {LOGIN_USERNAME_MAX_LENGTH} 个字符",
+                "code": "invalid_username",
+            },
+            status=400,
+        )
     ip = _login_ip(request)
     locked, retry_after = _login_lock_status(username, ip)
     matched_user = User.objects.filter(username__iexact=username).first() if username else None
@@ -2552,9 +2589,7 @@ def asset_import(request):
         OpenApiParameter(name="data_center", type=OpenApiTypes.INT, required=False),
         OpenApiParameter(name="tags", type=OpenApiTypes.STR, required=False, description="标签 ID，支持逗号分隔。"),
         OpenApiParameter(name="warranty", type=OpenApiTypes.STR, required=False, enum=["within_30_days", "expired"]),
-        OpenApiParameter(name="custom__{field_key}", type=OpenApiTypes.STR, required=False),
         OpenApiParameter(name="custom__{field_key}__{operator}", type=OpenApiTypes.STR, required=False),
-        OpenApiParameter(name="ids", type=OpenApiTypes.STR, required=False, description="兼容旧版：按资产 ID 逗号分隔；与当前筛选条件叠加。"),
     ],
     responses=OpenApiTypes.BINARY,
     description="导出当前资产台账筛选结果，不受分页参数影响。",
@@ -2568,14 +2603,6 @@ def asset_export(request):
         request,
         filter_backends=[DjangoFilterBackend, SearchFilter],
     ).order_by("asset_no")
-    ids_param = request.query_params.get("ids", "").strip()
-    if ids_param:
-        try:
-            asset_ids = [int(value) for value in ids_param.split(",") if value.strip()]
-        except ValueError:
-            return Response({"detail": "资产 ID 格式不正确"}, status=400)
-        queryset = queryset.filter(id__in=asset_ids)
-
     limit_response = _export_limit_response(queryset, "资产导出结果")
     if limit_response:
         return limit_response
@@ -2700,11 +2727,7 @@ def repair_record_export(request):
 @permission_classes([CanViewLicenses])
 def license_summary(request):
     counts = license_status_counts()
-    return Response({
-        **counts,
-        # This is a non-status reporting alias retained for dashboard clients.
-        "within_90_days": counts["expiring"],
-    })
+    return Response(counts)
 
 
 @extend_schema(
@@ -2860,6 +2883,20 @@ def dashboard_overview(request):
         scope,
         include_faults=user_has_capability(request.user, "faults.view"),
         include_licenses=user_has_capability(request.user, "licenses.view"),
+    ))
+
+
+@extend_schema(responses=OpenApiTypes.OBJECT)
+@api_view(["GET"])
+@permission_classes([CanViewDashboard])
+def alerts_overview(request):
+    """Return actionable reminders assembled from existing business data."""
+    return Response(build_alerts_payload(
+        include_assets=user_has_capability(request.user, "assets.view"),
+        include_licenses=user_has_capability(request.user, "licenses.view"),
+        include_faults=user_has_capability(request.user, "faults.view"),
+        include_inventory=user_has_capability(request.user, "inventory.view"),
+        include_spares=user_has_capability(request.user, "spares.view"),
     ))
 
 
@@ -3091,6 +3128,6 @@ def rack_layout_export(request):
     if not racks:
         book.create_sheet("无机柜数据")["A1"] = "暂无机柜数据"
     response = HttpResponse(content_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
-    response["Content-Disposition"] = f'attachment; filename="itam-rack-layout-{timezone.localdate().isoformat()}.xlsx"'
+    response["Content-Disposition"] = f'attachment; filename="infrix-rack-layout-{timezone.localdate().isoformat()}.xlsx"'
     book.save(response)
     return response

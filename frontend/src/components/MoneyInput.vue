@@ -22,8 +22,6 @@ const props = withDefaults(
     readonly?: boolean;
     currency?: CurrencyCode;
     symbol?: string;
-    /** @deprecated Use currency or symbol. Kept for existing callers. */
-    prefix?: string;
     suffix?: string;
     maxlength?: string | number;
   }>(),
@@ -34,7 +32,6 @@ const props = withDefaults(
     readonly: false,
     currency: "CNY",
     symbol: "",
-    prefix: "",
     suffix: "",
     maxlength: undefined,
   },
@@ -49,7 +46,7 @@ function handleUpdate(value: string) {
   emit("update:modelValue", value === "" ? null : value);
 }
 
-const currencySymbol = computed(() => props.symbol || props.prefix || currencySymbols[props.currency]);
+const currencySymbol = computed(() => props.symbol || currencySymbols[props.currency]);
 </script>
 
 <template>

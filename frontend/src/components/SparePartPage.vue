@@ -15,7 +15,7 @@ import FormDialogShell from "./FormDialogShell.vue";
 import StatusTag from "./StatusTag.vue";
 import TableIconButton from "./TableIconButton.vue";
 import type { DataCenter, DictionaryItem, ServerRoom, SparePart, SparePartCategory, SpareStock, SpareTransaction } from "../types";
-import type { SpareContext } from "../types/page-context";
+import type { SpareContext } from "../page-context";
 import type { StockOperationType } from "../types";
 import {
   SPARE_UNIT_OPTIONS,
@@ -246,7 +246,7 @@ watch(showSpareOperationModal, (open, wasOpen) => { if (!open && wasOpen) refres
 </script>
 
 <template>
-  <div class="itam-page spare-page">
+  <div class="infrix-page spare-page">
     <PageContainer>
       <template #toolbar>
         <PageToolbar>

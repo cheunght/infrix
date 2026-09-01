@@ -256,17 +256,10 @@ const procurementDetailFields = computed<DetailField[]>(() => {
 
 type AssetCustomField = NonNullable<AssetDetail["custom_fields"]>[number];
 type DynamicFieldGroup = { name: string; fields: AssetCustomField[] };
-type HistoricalFieldGroup = { key: string; deviceTypeName: string; fields: AssetCustomField[] };
 
 function isCurrentScope(field: AssetCustomField): boolean {
   const currentDeviceType = asset.value?.device_type;
   return field.device_type == null || (currentDeviceType != null && String(field.device_type) === String(currentDeviceType));
-}
-
-function isHistoricalField(field: AssetCustomField): boolean {
-  // A disabled device-type field is no longer part of the active runtime
-  // scope, but its stored value remains useful historical information.
-  return !isCurrentScope(field) || (field.is_active === false && field.device_type != null);
 }
 
 function groupCurrentFields(fields: AssetCustomField[]): DynamicFieldGroup[] {
@@ -282,35 +275,11 @@ function groupCurrentFields(fields: AssetCustomField[]): DynamicFieldGroup[] {
     .filter((group) => group.fields.some((field) => hasContent(field.value)));
 }
 
-function historicalFieldSort(a: AssetCustomField, b: AssetCustomField): number {
-  const aName = a.device_type_name || "";
-  const bName = b.device_type_name || "";
-  return aName.localeCompare(bName, "zh-CN") ||
-    (a.device_type || 0) - (b.device_type || 0) ||
-    a.sort_order - b.sort_order ||
-    a.id - b.id;
-}
-
 const currentFieldGroups = computed<DynamicFieldGroup[]>(() => {
   const fields = (asset.value?.custom_fields || []).filter((field) =>
-    isCurrentScope(field) && !isHistoricalField(field) && field.detail_visible === true,
+    isCurrentScope(field) && field.is_active !== false && field.detail_visible === true,
   );
   return groupCurrentFields(fields);
-});
-
-const historicalFieldGroups = computed<HistoricalFieldGroup[]>(() => {
-  const fields = (asset.value?.custom_fields || [])
-    .filter((field) => isHistoricalField(field) && hasContent(field.value))
-    .sort(historicalFieldSort);
-  const groups = new Map<string, HistoricalFieldGroup>();
-  for (const field of fields) {
-    const deviceTypeName = field.device_type_name || `${t("common.deviceType")} #${field.device_type ?? "?"}`;
-    const key = `${field.device_type ?? "none"}:${deviceTypeName}`;
-    const group = groups.get(key) || { key, deviceTypeName, fields: [] };
-    group.fields.push(field);
-    groups.set(key, group);
-  }
-  return Array.from(groups.values());
 });
 
 function fieldLabel(field: AssetCustomField): string {
@@ -460,21 +429,6 @@ function retryDetail() {
             <DynamicFieldDisplay :field="field" :value="field.value" />
           </template>
         </DescriptionList>
-      </DetailSection>
-
-      <DetailSection v-if="historicalFieldGroups.length" :title="t('asset.historicalExtendedFields')">
-        <div v-for="group in historicalFieldGroups" :key="group.key" class="asset-detail-custom-group">
-          <h4>{{ t('asset.historicalExtendedFields') }} · {{ group.deviceTypeName }}</h4>
-          <DescriptionList
-            class="asset-detail-description-list"
-            :items="dynamicFieldItems(group.fields)"
-            :columns="descriptionColumns"
-          >
-            <template v-for="field in group.fields" #[`value-field-${field.id}`]>
-              <DynamicFieldDisplay :field="field" :value="field.value" />
-            </template>
-          </DescriptionList>
-        </div>
       </DetailSection>
 
       <DetailSection v-if="hasNotes" :title="t('common.notes')">

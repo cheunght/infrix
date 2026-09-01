@@ -1,4 +1,4 @@
-"""Pure V1 straight-line depreciation calculations.
+"""Pure straight-line depreciation calculations.
 
 The calculator never writes an asset, procurement record, audit log or cache.
 It accepts the existing procurement amount as its original value and returns a
@@ -172,7 +172,7 @@ def calculate_depreciation(
     depreciation_method,
     as_of_date: date | None = None,
 ) -> dict[str, object]:
-    """Calculate one asset's V1 depreciation without mutating any state."""
+    """Calculate one asset's depreciation without mutating any state."""
 
     if (
         _is_blank(amount)

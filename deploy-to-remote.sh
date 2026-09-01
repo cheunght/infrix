@@ -8,11 +8,11 @@ usage() {
 
 示例：
   ./deploy-to-remote.sh root@rocky-host
-  ./deploy-to-remote.sh deploy@server-host /opt/itam-src
+  ./deploy-to-remote.sh deploy@server-host /opt/infrix-src
 
 说明：
   ssh-target       SSH 目标，例如 user@hostname 或 ~/.ssh/config 中的主机别名
-  remote-source-dir 远程源码目录，默认使用 ITAM_REMOTE_SRC 或 /opt/itam-src
+  remote-source-dir 远程源码目录，默认使用 INFRIX_REMOTE_SRC 或 /opt/infrix-src
 EOF
 }
 
@@ -35,7 +35,7 @@ fi
 if [[ $# -eq 2 ]]; then
   REMOTE_SRC="$2"
 else
-  REMOTE_SRC="${ITAM_REMOTE_SRC:-/opt/itam-src}"
+  REMOTE_SRC="${INFRIX_REMOTE_SRC:-/opt/infrix-src}"
 fi
 if [[ -z "$REMOTE_SRC" || "$REMOTE_SRC" == -* ]]; then
   echo "错误：remote-source-dir 不能为空或以短横线开头。" >&2
@@ -72,4 +72,4 @@ rsync -az --delete --progress \
   ./ "$HOST:$REMOTE_SRC/"
 
 ssh "$HOST" \
-  "cd -- $REMOTE_SRC_QUOTED && SOURCE_DIR=$REMOTE_SRC_QUOTED APP_DIR=/opt/itam bash deploy/install.sh"
+  "cd -- $REMOTE_SRC_QUOTED && sudo -E env SOURCE_DIR=$REMOTE_SRC_QUOTED APP_DIR=/opt/infrix bash deploy/install.sh"

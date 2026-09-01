@@ -426,12 +426,7 @@ export interface SpareContext {
   dataCenters: Ref<DataCenter[]>;
   manufacturers: Ref<DictionaryItem[]>;
   request: RequestFn;
-  spareStocks: Ref<SpareStock[]>;
-  spareTransactions: Ref<SpareTransaction[]>;
-  spareStockCount: Ref<number>;
-  spareTransactionCount: Ref<number>;
   stockLocations: Ref<Record<number, SpareStock[]>>;
-  stockLoading: Ref<Record<number, boolean>>;
   stockLocationLoadingByPart: Ref<Record<number, boolean>>;
   stockLocationErrorByPart: Ref<Record<number, string>>;
   stockLocationTotalsByPart: Ref<Record<number, number>>;

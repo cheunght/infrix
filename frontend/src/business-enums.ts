@@ -195,7 +195,7 @@ export function rackStatusValue(status?: string | null, isActive: boolean | unde
 }
 
 export function rackStatusLabel(status?: string | null, isActive: boolean | undefined = true): string {
-  return RACK_STATUS_LABEL_MAP[rackStatusValue(status, isActive)];
+  return businessOptionLabel(RACK_STATUS_OPTIONS, rackStatusValue(status, isActive));
 }
 
 export function rackStatusTone(status?: string | null, isActive: boolean | undefined = true): StatusTone {

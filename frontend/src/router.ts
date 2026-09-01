@@ -1,6 +1,10 @@
 import { defineComponent, h, type Component } from "vue";
 import { createWebHistory, createRouter, type RouteLocationRaw, type RouteRecordRaw } from "vue-router";
 import type { Page } from "./types";
+import {
+  ensureElementPlusComponents,
+  type ElementPlusComponentName,
+} from "./element-plus-components";
 
 export type SettingsSection =
   | "system"
@@ -12,10 +16,7 @@ export type SettingsSection =
   | "maintenance";
 export type AssetConfigSection = "custom-fields" | "tags";
 
-// The old data-center and room sections remain accepted as compatibility input
-// for callers and deep links, but both now resolve to the unified locations
-// view. Only the locations and rack-view sections are rendered by the app.
-export type RackSection = "locations" | "view" | "data-centers" | "rooms";
+export type RackSection = "locations" | "view";
 export type LocationTypeFilter = "" | "data-center" | "room";
 export type LocationStatusFilter = "" | "active" | "inactive";
 
@@ -28,16 +29,153 @@ const RoutePlaceholder = defineComponent({
   },
 });
 
+const lazyPage = (
+  loader: () => Promise<Component>,
+  elementComponents: readonly ElementPlusComponentName[],
+) => async () => {
+  await ensureElementPlusComponents(elementComponents);
+  return loader();
+};
+
 const pageComponents: Partial<Record<Page, () => Promise<Component>>> = {
-  dashboard: () => import("./components/DashboardPage.vue"),
-  ledger: () => import("./components/AssetLedgerPage.vue"),
-  "asset-config": () => import("./components/AssetConfigurationPage.vue"),
-  racks: () => import("./components/RackViewPage.vue"),
-  repairs: () => import("./components/RepairPage.vue"),
-  licenses: () => import("./components/LicensePage.vue"),
-  spares: () => import("./components/SparePartPage.vue"),
-  inventory: () => import("./components/InventoryPage.vue"),
-  settings: () => import("./components/SettingsPage.vue"),
+  dashboard: lazyPage(() => import("./components/DashboardPage.vue"), [
+    "ElCard",
+    "ElEmpty",
+    "ElProgress",
+    "ElSkeleton",
+    "ElStatistic",
+    "ElTable",
+    "ElTableColumn",
+    "ElTag",
+  ]),
+  ledger: lazyPage(() => import("./components/AssetLedgerPage.vue"), [
+    "ElCard",
+    "ElCheckbox",
+    "ElDialog",
+    "ElEmpty",
+    "ElOption",
+    "ElPagination",
+    "ElPopover",
+    "ElSelect",
+    "ElSkeleton",
+    "ElTable",
+    "ElTableColumn",
+    "ElTag",
+    "ElTooltip",
+  ]),
+  "asset-config": lazyPage(() => import("./components/AssetConfigurationPage.vue"), [
+    "ElCard",
+    "ElCheckbox",
+    "ElDatePicker",
+    "ElDialog",
+    "ElEmpty",
+    "ElInputNumber",
+    "ElOption",
+    "ElPagination",
+    "ElSelect",
+    "ElSkeleton",
+    "ElTable",
+    "ElTableColumn",
+    "ElTag",
+    "ElTooltip",
+  ]),
+  racks: lazyPage(() => import("./components/RackViewPage.vue"), [
+    "ElCard",
+    "ElDescriptions",
+    "ElDescriptionsItem",
+    "ElDialog",
+    "ElDrawer",
+    "ElEmpty",
+    "ElInputNumber",
+    "ElOption",
+    "ElPagination",
+    "ElProgress",
+    "ElSelect",
+    "ElSkeleton",
+    "ElTable",
+    "ElTableColumn",
+    "ElTag",
+    "ElTooltip",
+  ]),
+  repairs: lazyPage(() => import("./components/RepairPage.vue"), [
+    "ElCard",
+    "ElEmpty",
+    "ElOption",
+    "ElPagination",
+    "ElSelect",
+    "ElSkeleton",
+    "ElTable",
+    "ElTableColumn",
+    "ElTag",
+    "ElTooltip",
+  ]),
+  licenses: lazyPage(() => import("./components/LicensePage.vue"), [
+    "ElCard",
+    "ElEmpty",
+    "ElOption",
+    "ElPagination",
+    "ElProgress",
+    "ElSelect",
+    "ElSkeleton",
+    "ElTable",
+    "ElTableColumn",
+    "ElTag",
+    "ElTooltip",
+  ]),
+  spares: lazyPage(() => import("./components/SparePartPage.vue"), [
+    "ElCard",
+    "ElDatePicker",
+    "ElDialog",
+    "ElDrawer",
+    "ElInputNumber",
+    "ElOption",
+    "ElPagination",
+    "ElSelect",
+    "ElSkeleton",
+    "ElTable",
+    "ElTableColumn",
+    "ElTag",
+    "ElTooltip",
+  ]),
+  inventory: lazyPage(() => import("./components/InventoryPage.vue"), [
+    "ElCard",
+    "ElDatePicker",
+    "ElDialog",
+    "ElEmpty",
+    "ElInputNumber",
+    "ElPagination",
+    "ElPopover",
+    "ElProgress",
+    "ElSelect",
+    "ElOption",
+    "ElSkeleton",
+    "ElTable",
+    "ElTableColumn",
+    "ElTooltip",
+  ]),
+  settings: lazyPage(() => import("./components/SettingsPage.vue"), [
+    "ElCard",
+    "ElCheckbox",
+    "ElCollapse",
+    "ElCollapseItem",
+    "ElDatePicker",
+    "ElDescriptions",
+    "ElDescriptionsItem",
+    "ElDialog",
+    "ElDrawer",
+    "ElEmpty",
+    "ElInputNumber",
+    "ElOption",
+    "ElPagination",
+    "ElSelect",
+    "ElSkeleton",
+    "ElTabPane",
+    "ElTable",
+    "ElTableColumn",
+    "ElTabs",
+    "ElTag",
+    "ElTooltip",
+  ]),
 };
 
 declare module "vue-router" {
@@ -57,18 +195,16 @@ const pageRoute = (
   page: Page,
   titleKey: string,
   extraMeta: Record<string, unknown> = {},
-  alias: string[] = [],
 ): RouteRecordRaw => ({
   path,
   name,
   component: pageComponents[page] || RoutePlaceholder,
-  alias,
   meta: { page, titleKey, ...extraMeta },
 });
 
 export const routes: RouteRecordRaw[] = [
-  pageRoute("/", "dashboard", "dashboard", "nav.dashboard", {}, ["/dashboard"]),
-  pageRoute("/assets", "assets", "ledger", "asset.title", {}, ["/asset-list", "/ledger"]),
+  pageRoute("/", "dashboard", "dashboard", "nav.dashboard"),
+  pageRoute("/assets", "assets", "ledger", "asset.title"),
   {
     path: "/racks",
     name: "racks",
@@ -80,27 +216,13 @@ export const routes: RouteRecordRaw[] = [
     "racks",
     "nav.locations",
     { rackSection: "locations" },
-    ["/racks-locations"],
   ),
-  {
-    path: "/racks/data-centers",
-    name: "racks-data-centers",
-    redirect: (to) => ({ name: "racks-locations", query: to.query }),
-    alias: ["/racks-data-centers"],
-  },
-  {
-    path: "/racks/rooms",
-    name: "racks-rooms",
-    redirect: (to) => ({ name: "racks-locations", query: to.query }),
-    alias: ["/racks-rooms"],
-  },
   pageRoute(
     "/racks/view",
     "racks-view",
     "racks",
     "nav.rackView",
     { rackSection: "view" },
-    ["/racks-view"],
   ),
   pageRoute("/licenses", "licenses", "licenses", "license.title"),
   pageRoute("/inventory", "inventory", "inventory", "inventory.title"),
@@ -112,7 +234,6 @@ export const routes: RouteRecordRaw[] = [
     "asset-config",
     "nav.customFields",
     { assetConfigSection: "custom-fields" },
-    ["/asset-configuration"],
   ),
   {
     path: "/settings",
@@ -125,7 +246,6 @@ export const routes: RouteRecordRaw[] = [
     "settings",
     "nav.system",
     { settingsSection: "system" },
-    ["/settings-system"],
   ),
   pageRoute(
     "/settings/dictionaries",
@@ -133,33 +253,13 @@ export const routes: RouteRecordRaw[] = [
     "settings",
     "nav.dictionaries",
     { settingsSection: "dictionaries" },
-    ["/settings-dictionaries"],
   ),
-  {
-    path: "/settings/custom-fields",
-    name: "settings-custom-fields",
-    redirect: (to) => ({
-      name: "asset-configuration",
-      query: { ...to.query, tab: "custom-fields" },
-    }),
-    alias: ["/settings-custom-fields"],
-  },
-  {
-    path: "/settings/tags",
-    name: "settings-tags",
-    redirect: (to) => ({
-      name: "asset-configuration",
-      query: { ...to.query, tab: "tags" },
-    }),
-    alias: ["/settings-tags"],
-  },
   pageRoute(
     "/settings/organization",
     "settings-organization",
     "settings",
     "nav.organization",
     { settingsSection: "organization" },
-    ["/settings-organization"],
   ),
   pageRoute(
     "/settings/audit",
@@ -167,7 +267,6 @@ export const routes: RouteRecordRaw[] = [
     "settings",
     "nav.audit",
     { settingsSection: "audit" },
-    ["/settings-audit"],
   ),
   pageRoute(
     "/settings/maintenance",
@@ -175,7 +274,6 @@ export const routes: RouteRecordRaw[] = [
     "settings",
     "nav.maintenance",
     { settingsSection: "maintenance" },
-    ["/settings-maintenance"],
   ),
   {
     path: "/:pathMatch(.*)*",

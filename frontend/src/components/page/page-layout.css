@@ -41,14 +41,14 @@
   min-width: 0;
 }
 
-/* Keep the optional compatibility class on the same vertical rhythm as every
-   other page.  It must not create a special grid that changes the baseline. */
+/* Keep compact-control pages on the same vertical rhythm as every other page.
+   The modifier must not create a special grid that changes the baseline. */
 .page-container--compact-controls {
   display: flex;
   flex-direction: column;
 }
 
-/* The legacy stylesheet contains a naked `header { margin-bottom: 28px; }`
+/* The global stylesheet contains a naked `header { margin-bottom: 28px; }`
    rule.  Keep the new page header completely scoped so it cannot introduce
    an unexpected vertical gap when it is mounted inside a routed page. */
 header.page-header {
@@ -86,7 +86,7 @@ header.page-header.page-header--compact {
 
 .page-header__title {
   margin: 0;
-  color: var(--itam-sidebar-text, #24324a);
+  color: var(--infrix-sidebar-text, #24324a);
   font-size: var(--el-font-size-extra-large, 20px);
   font-weight: 600;
   line-height: 24px;
@@ -94,7 +94,7 @@ header.page-header.page-header--compact {
 
 .page-header__description {
   margin: 0;
-  color: var(--itam-sidebar-muted, #7183a0);
+  color: var(--infrix-sidebar-muted, #7183a0);
   font-size: var(--el-font-size-small, 13px);
   line-height: 18px;
 }
@@ -197,12 +197,13 @@ header.page-header.page-header--compact {
   /* A filter rail is a complete control group.  Let the outer toolbar wrap
      the rail when needed, instead of shrinking its Selects into icon-only
      triggers or letting the group overflow its own flex item. */
-  flex: 0 0 auto;
+  flex: 0 1 auto;
   flex-direction: row;
   align-items: center;
   gap: var(--page-toolbar-gap);
-  flex-wrap: nowrap;
+  flex-wrap: wrap;
   min-width: 0;
+  max-width: 100%;
   overflow: visible;
 }
 
@@ -218,7 +219,7 @@ header.page-header.page-header--compact {
   display: flex;
   flex: 0 1 auto;
   flex-direction: row;
-  flex-wrap: nowrap;
+  flex-wrap: wrap;
   width: auto;
   max-width: 100%;
   min-width: 0;
@@ -229,9 +230,9 @@ header.page-header.page-header--compact {
 
 .page-toolbar__filter-group {
   display: flex;
-  flex: 0 0 auto;
+  flex: 0 1 auto;
   flex-direction: row;
-  flex-wrap: nowrap;
+  flex-wrap: wrap;
   align-items: center;
   gap: var(--page-toolbar-gap);
   min-width: 0;
@@ -244,7 +245,7 @@ header.page-header.page-header--compact {
   margin-left: 0;
 }
 
-.toolbar-slot > .itam-search-field,
+.toolbar-slot > .infrix-search-field,
 .toolbar-slot > .el-input,
 .toolbar-slot > .el-select,
 .toolbar-slot > .el-date-editor,
@@ -283,7 +284,7 @@ header.page-header.page-header--compact {
   min-width: 160px;
 }
 
-.toolbar-search > .itam-search-field {
+.toolbar-search > .infrix-search-field {
   width: min(100%, 320px);
   max-width: 100%;
 }
@@ -418,7 +419,7 @@ header.page-header.page-header--compact {
     flex-wrap: wrap;
   }
 
-  .toolbar-search > .itam-search-field {
+  .toolbar-search > .infrix-search-field {
     width: 100%;
     max-width: none;
     min-width: 0;
@@ -581,6 +582,8 @@ header.page-header.page-header--compact {
   .app-header .header-tools {
     width: auto;
     margin-top: 0;
+    min-width: 0;
+    flex-wrap: wrap;
   }
 }
 
@@ -606,6 +609,13 @@ header.page-header.page-header--compact {
 
   .app-header .header-tools {
     width: 100%;
+    gap: var(--space-sm);
+  }
+
+  .app-header .ep-global-search {
+    flex: 1 1 100%;
+    width: 100%;
+    max-width: none;
   }
 
   .page-container {

@@ -2,7 +2,7 @@
 import { computed } from "vue";
 import { useI18n } from "vue-i18n";
 import type { Rack } from "../types";
-import type { RackListContext } from "../types/page-context";
+import type { RackListContext } from "../page-context";
 import StatusTag from "./StatusTag.vue";
 import ResourceState from "./ResourceState.vue";
 import { rackStatusLabel, rackStatusTone, rackStatusValue } from "../business-enums";

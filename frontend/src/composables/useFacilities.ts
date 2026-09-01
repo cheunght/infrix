@@ -15,7 +15,7 @@ import type {
   LocationTypeFilter,
   RackSection,
 } from "../router";
-import type { CapabilityFn, RequestFn } from "../types/page-context";
+import type { CapabilityFn, RequestFn } from "../page-context";
 import { i18n } from "../i18n";
 
 const tr = (key: string, params?: Record<string, unknown>): string =>

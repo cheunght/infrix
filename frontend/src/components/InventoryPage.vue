@@ -29,10 +29,10 @@ import FieldHelp from "./FieldHelp.vue";
 import FormDialogShell from "./FormDialogShell.vue";
 import TableIconButton from "./TableIconButton.vue";
 import AssetQrScanner from "./AssetQrScanner.vue";
-import { ElMessageBox } from "element-plus";
+import { ElMessageBox } from "element-plus/es/components/message-box/index.mjs";
 import type { FormInstance, FormRules } from "element-plus";
 import type { InventoryItem } from "../types";
-import type { InventoryContext } from "../types/page-context";
+import type { InventoryContext } from "../page-context";
 import { useInventory } from "../composables/useInventory";
 import { businessOptionLabel, INVENTORY_ITEM_STATUS_OPTIONS } from "../business-enums";
 
@@ -368,7 +368,7 @@ onMounted(async () => {
 </script>
 
 <template>
-  <div class="itam-page">
+  <div class="infrix-page">
     <PageContainer v-if="!activeTask">
       <template #toolbar>
         <PageToolbar>

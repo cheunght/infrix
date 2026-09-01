@@ -12,7 +12,7 @@ import StatusTag from "./StatusTag.vue";
 import PagedTable from "./PagedTable.vue";
 import FormDialogShell from "./FormDialogShell.vue";
 import TableIconButton from "./TableIconButton.vue";
-import type { TagContext } from "../types/page-context";
+import type { TagContext } from "../page-context";
 
 const props = defineProps<{ context: TagContext }>();
 const { t } = useI18n();

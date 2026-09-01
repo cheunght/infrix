@@ -1,6 +1,6 @@
 import type { Ref } from "vue";
 import { ApiError, flattenError, isAbortError } from "../api";
-import type { RequestFn } from "../types/page-context";
+import type { RequestFn } from "../page-context";
 import { i18n, normalizeLocale, type Locale } from "../i18n";
 import { roleLabel } from "../business-enums";
 import { hasCapability } from "../permissions";
@@ -51,7 +51,7 @@ type AuthPayload = {
   is_staff: boolean;
   is_admin?: boolean;
   is_active?: boolean;
-  role_code: string;
+  role_code?: string | null;
   role_name?: string;
   permissions: string[];
   password_change_required: boolean;
@@ -82,10 +82,11 @@ export function useAuth(deps: AuthDeps) {
       locale: normalizeLocale(user.locale || deps.locale.value),
     };
     deps.setLocale(user.locale || deps.locale.value);
-    deps.roleName.value = roleLabel(user.role_code, user.role_name || user.role_code);
+    const roleCode = user.role_code || "";
+    deps.roleName.value = roleLabel(roleCode, user.role_name || roleCode);
     deps.userIsActive.value = user.is_active !== false;
     deps.lastLogin.value = user.last_login || null;
-    deps.roleCode.value = user.role_code;
+    deps.roleCode.value = roleCode;
     deps.permissions.value = user.permissions;
     deps.isAdmin.value = hasCapability(deps.permissions.value, "organization.manage");
     deps.passwordChangeRequired.value = Boolean(user.password_change_required);

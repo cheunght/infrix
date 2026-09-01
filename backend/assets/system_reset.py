@@ -44,7 +44,7 @@ from .roles import ROLE_DEFINITIONS, ROLE_SYSTEM_ADMIN
 from .system_settings import reset_system_settings
 
 
-SYSTEM_RESET_CONFIRMATION = "RESET ITAM"
+SYSTEM_RESET_CONFIRMATION = "RESET INFRIX"
 _RESET_LOCK = Lock()
 
 

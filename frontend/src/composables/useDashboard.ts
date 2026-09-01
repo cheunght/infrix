@@ -1,7 +1,7 @@
 import { computed, ref } from "vue";
 import { isAbortError } from "../api";
 import type { DashboardOverview } from "../types";
-import type { CapabilityFn } from "../types/page-context";
+import type { CapabilityFn } from "../page-context";
 import { currentLocale, i18n } from "../i18n";
 
 export interface DashboardApi {

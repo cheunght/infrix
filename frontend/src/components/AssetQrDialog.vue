@@ -2,7 +2,7 @@
 import { nextTick, ref, watch } from "vue";
 import { useI18n } from "vue-i18n";
 import { Download, Grid, Printer } from "@element-plus/icons-vue";
-import { ElMessage } from "element-plus";
+import { ElMessage } from "element-plus/es/components/message/index.mjs";
 import QRCode from "qrcode";
 import type { Asset } from "../types";
 import { assetLocationLabel, buildAssetQrValue } from "../asset-qr";

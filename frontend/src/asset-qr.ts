@@ -36,8 +36,8 @@ export function buildAssetQrValue(asset: Pick<Asset, "id" | "asset_no">): string
 function parseObject(value: unknown): ParsedAssetQrValue | null {
   if (!value || typeof value !== "object" || Array.isArray(value)) return null;
   const record = value as Record<string, unknown>;
-  const assetId = positiveId(record.asset_id ?? record.assetId ?? record.id);
-  const assetNo = String(record.asset_no ?? record.assetNo ?? "").trim();
+  const assetId = positiveId(record.asset_id);
+  const assetNo = String(record.asset_no ?? "").trim();
   return assetId || assetNo ? { assetId, assetNo } : null;
 }
 
@@ -61,15 +61,9 @@ export function parseAssetQrValue(rawValue: string): ParsedAssetQrValue | null {
   if (isUrl) {
     try {
       const url = new URL(raw, typeof window === "undefined" ? "http://localhost" : window.location.origin);
-      const routeAssetId = positiveId(url.searchParams.get("asset_id") || url.searchParams.get("id"));
-      const routeAssetNo = decoded(url.searchParams.get("asset_no") || url.searchParams.get("assetNo"));
+      const routeAssetId = positiveId(url.searchParams.get("asset_id"));
+      const routeAssetNo = decoded(url.searchParams.get("asset_no"));
       if (routeAssetId || routeAssetNo) return { assetId: routeAssetId, assetNo: routeAssetNo };
-
-      if (url.protocol === "itam:") {
-        const pathId = positiveId(url.pathname.replace(/^\/+/, ""));
-        const pathAssetNo = decoded(url.searchParams.get("asset_no"));
-        if (pathId || pathAssetNo) return { assetId: pathId, assetNo: pathAssetNo };
-      }
       return null;
     } catch {
       return null;
