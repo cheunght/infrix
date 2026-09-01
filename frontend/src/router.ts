@@ -41,11 +41,7 @@ const pageComponents: Partial<Record<Page, () => Promise<Component>>> = {
   dashboard: lazyPage(() => import("./components/DashboardPage.vue"), [
     "ElCard",
     "ElEmpty",
-    "ElProgress",
     "ElSkeleton",
-    "ElStatistic",
-    "ElTable",
-    "ElTableColumn",
     "ElTag",
   ]),
   ledger: lazyPage(() => import("./components/AssetLedgerPage.vue"), [

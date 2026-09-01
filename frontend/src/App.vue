@@ -1121,9 +1121,11 @@ function openActiveSidebarSubmenu() {
     page.value === "settings"
       ? ["settings"]
       : page.value === "asset-config"
-        ? ["asset-menu", "asset-config-menu"]
-        : page.value === "ledger" || page.value === "spares"
+        ? ["asset-menu", "spares-menu", "asset-config-menu"]
+        : page.value === "ledger"
           ? ["asset-menu"]
+          : page.value === "spares"
+            ? ["asset-menu", "spares-menu"]
           : page.value === "racks"
             ? ["racks-menu"]
             : [];
@@ -1294,7 +1296,12 @@ function navigate(item: (typeof navItems)[number]) {
   if (item.page === "repairs") repairPage.value = 1;
   if (item.page === "licenses") licensePage.value = 1;
   if (item.page === "spares") sparePage.value = 1;
-  if (item.page === "spares") nextTick(() => sidebarMenu.value?.open("asset-menu"));
+  if (item.page === "spares") {
+    nextTick(() => {
+      sidebarMenu.value?.open("asset-menu");
+      sidebarMenu.value?.open("spares-menu");
+    });
+  }
   if (item.page === "racks") {
     rackPage.value = 1;
     openRackSection("locations");
@@ -1372,7 +1379,10 @@ function handleMenuSelect(index: string) {
   if (index === "spares") {
     const spareItem = navItems.find((entry) => entry.page === "spares");
     if (spareItem) navigate(spareItem);
-    nextTick(() => sidebarMenu.value?.open("asset-menu"));
+    nextTick(() => {
+      sidebarMenu.value?.open("asset-menu");
+      sidebarMenu.value?.open("spares-menu");
+    });
     return;
   }
   if (index === "racks-menu" || index === "racks") {
@@ -1710,18 +1720,24 @@ watch(hasOpenGlobalOverlay, (isOpen) => {
           ><template #title><el-icon><Monitor /></el-icon><span>{{ t('nav.assets') }}</span></template
           ><el-menu-item v-if="can('assets.view')" index="asset-list">{{ t('nav.assetList') }}</el-menu-item
           ><el-sub-menu
-            v-if="can('custom_fields.view') || can('tags.view')"
-            index="asset-config-menu"
+            v-if="can('spares.view') || can('custom_fields.view') || can('tags.view')"
+            index="spares-menu"
           >
-            <template #title>{{ t('nav.assetConfiguration') }}</template>
-            <el-menu-item v-if="can('custom_fields.view')" index="asset-config-custom-fields"
-              >{{ t('nav.customFields') }}</el-menu-item
+            <template #title>{{ t('nav.spareParts') }}</template>
+            <el-menu-item v-if="can('spares.view')" index="spares">{{ t('nav.spareList') }}</el-menu-item>
+            <el-sub-menu
+              v-if="can('custom_fields.view') || can('tags.view')"
+              index="asset-config-menu"
             >
-            <el-menu-item v-if="can('tags.view')" index="asset-config-tags"
-              >{{ t('nav.tags') }}</el-menu-item
-            >
+              <template #title>{{ t('nav.assetConfiguration') }}</template>
+              <el-menu-item v-if="can('custom_fields.view')" index="asset-config-custom-fields"
+                >{{ t('nav.customFields') }}</el-menu-item
+              >
+              <el-menu-item v-if="can('tags.view')" index="asset-config-tags"
+                >{{ t('nav.tags') }}</el-menu-item
+              >
+            </el-sub-menu>
           </el-sub-menu>
-          <el-menu-item v-if="can('spares.view')" index="spares">{{ t('nav.spareParts') }}</el-menu-item
         ></el-sub-menu
         >
         <el-sub-menu v-if="can('racks.view')" index="racks-menu">

@@ -46,7 +46,7 @@ const segments = computed(() => {
 </script>
 
 <template>
-  <div class="dashboard-donut-layout">
+  <div v-if="items.length > 0 && total > 0" class="dashboard-donut-layout">
     <div class="dashboard-donut" :aria-label="`${centerLabel} ${total}`">
       <svg viewBox="0 0 112 112" role="img" aria-hidden="true">
         <circle class="dashboard-donut-track" cx="56" cy="56" :r="radius" />
@@ -88,7 +88,9 @@ const segments = computed(() => {
         <strong>{{ item.count }}</strong>
         <small>{{ total ? ((item.count / total) * 100).toFixed(1) : "0.0" }}%</small>
       </component>
-      <el-empty v-if="!items.length || !total" :description="t('common.noData')" :image-size="42" />
     </div>
+  </div>
+  <div v-else class="dashboard-donut-empty" role="status">
+    <el-empty :description="t('common.noData')" :image-size="42" />
   </div>
 </template>

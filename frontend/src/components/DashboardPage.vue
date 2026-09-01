@@ -2,29 +2,35 @@
 import { computed } from "vue";
 import { useI18n } from "vue-i18n";
 import {
+  ArrowDown,
   ArrowRight,
-  Box,
   CircleCheck,
+  Clock,
+  DataAnalysis,
+  DocumentChecked,
   Key,
   Monitor,
   OfficeBuilding,
+  Plus,
+  Refresh,
   Timer,
-  Tools,
   Warning,
 } from "@element-plus/icons-vue";
 import DashboardDonut from "./DashboardDonut.vue";
 import "../dashboard.css";
 import type {
   DashboardAlert,
-  DashboardDataCenterOverview,
+  DashboardInventorySummary,
   DashboardLicenseSummary,
   DashboardRecentChange,
   DashboardStatus,
+  DashboardTypeDistribution,
   DashboardOverview,
 } from "../types";
 import type { DashboardContext } from "../page-context";
 import StatusTag, { type StatusTagType } from "./StatusTag.vue";
 import PageContainer from "./page/PageContainer.vue";
+import PageHeader from "./page/PageHeader.vue";
 import ResourceState from "./ResourceState.vue";
 import { isAssetStatus } from "../business-enums";
 
@@ -34,29 +40,30 @@ const {
   dashboard,
   dashboardLoading,
   dashboardError,
+  dashboardUpdatedAt,
   refreshDashboard,
   handleMenuSelect,
   goToAssets,
   goToRepairs,
   goToLicenses,
   openAssetDetail,
+  openNewAssetModal,
   openRackSection,
   can,
   dashboardDateTime,
 } = props.context;
-// The template only reaches the main content branch after the null/error
-// states above. Keep that runtime guard explicit while giving Vue's template
-// type checker a non-null view of the loaded response.
+
+// The template only reaches the loaded branch after the null/error states
+// above. Keep this explicit cast so the template remains strongly typed.
 const dashboardData = computed(() => dashboard.value as DashboardOverview);
 
 const statusItems = computed<DashboardStatus[]>(
   () => dashboard.value?.status_distribution || [],
 );
 const statusTotal = computed(() => dashboard.value?.assets.total ?? 0);
-const dataCenterItems = computed<DashboardDataCenterOverview[]>(
-  () => dashboard.value?.data_center_overview || [],
+const typeItems = computed<DashboardTypeDistribution[]>(
+  () => (dashboard.value?.type_distribution || []).slice(0, 6),
 );
-const resourceItems = computed(() => dataCenterItems.value.slice(0, 5));
 const recentChangeItems = computed<DashboardRecentChange[]>(
   () => (dashboard.value?.recent_changes || []).slice(0, 5),
 );
@@ -66,10 +73,47 @@ const recentFaultItems = computed<DashboardAlert[]>(
 const licenseSummary = computed<DashboardLicenseSummary | null>(
   () => dashboard.value?.licenses || null,
 );
+const inventorySummary = computed<DashboardInventorySummary | null>(
+  () => dashboard.value?.inventory_summary || null,
+);
 const licenseRiskTotal = computed(() => {
   const summary = licenseSummary.value;
   return summary ? summary.expiring + summary.expired : 0;
 });
+const rackTotalU = computed(() => {
+  const racks = dashboard.value?.racks;
+  return racks ? racks.used_u + racks.free_u : 0;
+});
+const rackUtilization = computed(() => ratio(
+  dashboard.value?.racks.used_u ?? 0,
+  rackTotalU.value,
+));
+const inUseRate = computed(() => ratio(
+  dashboard.value?.assets.in_use ?? 0,
+  dashboard.value?.assets.total ?? 0,
+));
+const dashboardLoadedAt = computed(() => dashboardUpdatedAt.value
+  ? dashboardDateTime(dashboardUpdatedAt.value)
+  : "");
+const hasQuickActions = computed(() => (
+  can("assets.manage") ||
+  can("assets.view") ||
+  can("racks.view") ||
+  can("inventory.view")
+));
+
+function ratio(value: number, total: number) {
+  if (!total) return 0;
+  return Math.round((value / total) * 1000) / 10;
+}
+
+function utilization(value: number) {
+  return Math.min(100, Math.max(0, Number(value || 0)));
+}
+
+function typePercent(item: DashboardTypeDistribution) {
+  return utilization(ratio(item.count, statusTotal.value));
+}
 
 function openChanges() {
   if (can("audit.view")) handleMenuSelect("settings-audit");
@@ -93,9 +137,9 @@ function openResourceLocations() {
   openRackSection("locations");
 }
 
-function openDataCenterRacks(item: DashboardDataCenterOverview) {
-  if (!can("racks.view")) return;
-  openRackSection("view", { data_center: String(item.data_center_id) });
+function openInventory() {
+  if (!can("inventory.view")) return;
+  handleMenuSelect("inventory");
 }
 
 function recentChangeTagType(action: string): StatusTagType {
@@ -122,14 +166,56 @@ function recentChangeLabel(action: string): string {
   };
   return labels[action] ? t(labels[action]) : action;
 }
-
-function utilization(value: number) {
-  return Math.min(100, Math.max(0, Number(value || 0)));
-}
 </script>
 
 <template>
   <PageContainer class="infrix-page dashboard-shell">
+    <template #header>
+      <PageHeader
+        :title="t('dashboard.overviewTitle')"
+      >
+        <template #actions>
+          <div class="dashboard-header-actions">
+            <span v-if="dashboardLoadedAt" class="dashboard-loaded-at">
+              <el-icon aria-hidden="true"><Clock /></el-icon>
+              {{ t('dashboard.loadedAt', { time: dashboardLoadedAt }) }}
+            </span>
+            <el-button
+              text
+              type="primary"
+              :loading="dashboardLoading"
+              :aria-label="t('dashboard.refresh')"
+              @click="refreshDashboard"
+            >
+              <el-icon aria-hidden="true"><Refresh /></el-icon>{{ t('dashboard.refresh') }}
+            </el-button>
+            <el-dropdown v-if="hasQuickActions" class="dashboard-quick-actions" trigger="click">
+              <el-button text type="primary">
+                <el-icon aria-hidden="true"><Plus /></el-icon>{{ t('dashboard.quickActions') }}
+                <el-icon aria-hidden="true"><ArrowDown /></el-icon>
+              </el-button>
+              <template #dropdown>
+                <el-dropdown-menu>
+                  <el-dropdown-item v-if="can('assets.manage')" @click="openNewAssetModal">
+                    <el-icon><Plus /></el-icon>{{ t('dashboard.newAsset') }}
+                  </el-dropdown-item>
+                  <el-dropdown-item v-if="can('assets.view')" @click="goToAssets">
+                    <el-icon><Monitor /></el-icon>{{ t('dashboard.viewAssets') }}
+                  </el-dropdown-item>
+                  <el-dropdown-item v-if="can('racks.view')" @click="openResourceLocations">
+                    <el-icon><OfficeBuilding /></el-icon>{{ t('dashboard.viewLocations') }}
+                  </el-dropdown-item>
+                  <el-dropdown-item v-if="can('inventory.view')" @click="openInventory">
+                    <el-icon><DocumentChecked /></el-icon>{{ t('dashboard.viewInventory') }}
+                  </el-dropdown-item>
+                </el-dropdown-menu>
+              </template>
+            </el-dropdown>
+          </div>
+        </template>
+      </PageHeader>
+    </template>
+
     <div class="dashboard-body">
       <el-alert
         v-if="dashboardError && dashboard"
@@ -167,166 +253,158 @@ function utilization(value: number) {
       </el-result>
 
       <template v-else>
-        <section class="dashboard-kpi-row" :aria-label="t('dashboard.assetCoreMetrics')">
+        <section class="dashboard-kpi-grid" :aria-label="t('dashboard.assetCoreMetrics')">
           <el-card
             shadow="never"
-            class="dashboard-stat-card dashboard-stat-card--assets"
-            :class="{ 'dashboard-stat-card--interactive': can('assets.view') }"
+            class="dashboard-kpi-card dashboard-kpi-card--assets"
+            :class="{ 'is-interactive': can('assets.view') }"
             :role="can('assets.view') ? 'button' : undefined"
             :tabindex="can('assets.view') ? 0 : undefined"
             @click="can('assets.view') && goToAssets()"
             @keydown.enter="can('assets.view') && goToAssets()"
             @keydown.space.prevent="can('assets.view') && goToAssets()"
           >
-            <div class="dashboard-stat">
-              <span class="dashboard-stat__icon" aria-hidden="true"><el-icon :size="20"><Monitor /></el-icon></span>
-              <div class="dashboard-stat__content">
-                <el-statistic :title="t('dashboard.totalAssets')" :value="dashboardData.assets.total" />
-                <div class="dashboard-stat__hint">{{ t('dashboard.allManagedAssets') }}</div>
-              </div>
+            <div class="dashboard-kpi-card__label">
+              <span class="dashboard-kpi-card__icon" aria-hidden="true"><Monitor /></span>
+              <span>{{ t('dashboard.totalAssets') }}</span>
+            </div>
+            <strong class="dashboard-kpi-card__value">{{ dashboardData.assets.total }}</strong>
+            <div class="dashboard-kpi-breakdown">
+              <span>{{ dashboardData.assets.in_use }} {{ t('dashboard.assetsInUse') }}</span>
+              <span>{{ dashboardData.assets.in_stock }} {{ t('dashboard.assetsInStock') }}</span>
+              <span>{{ dashboardData.assets.repair }} {{ t('dashboard.assetsInRepair') }}</span>
             </div>
           </el-card>
+
           <el-card
             shadow="never"
-            class="dashboard-stat-card dashboard-stat-card--in-use"
-            :class="{ 'dashboard-stat-card--interactive': can('assets.view') }"
+            class="dashboard-kpi-card dashboard-kpi-card--usage"
+            :class="{ 'is-interactive': can('assets.view') }"
             :role="can('assets.view') ? 'button' : undefined"
             :tabindex="can('assets.view') ? 0 : undefined"
             @click="can('assets.view') && goToAssets({ status: 'in_use' })"
             @keydown.enter="can('assets.view') && goToAssets({ status: 'in_use' })"
             @keydown.space.prevent="can('assets.view') && goToAssets({ status: 'in_use' })"
           >
-            <div class="dashboard-stat">
-              <span class="dashboard-stat__icon" aria-hidden="true"><el-icon :size="20"><CircleCheck /></el-icon></span>
-              <div class="dashboard-stat__content">
-                <el-statistic :title="t('dashboard.assetsInUse')" :value="dashboardData.assets.in_use" />
-                <div class="dashboard-stat__hint">{{ t('dashboard.currentlyInUse') }}</div>
-              </div>
+            <div class="dashboard-kpi-card__label">
+              <span class="dashboard-kpi-card__icon" aria-hidden="true"><CircleCheck /></span>
+              <span>{{ t('dashboard.inUseRate') }}</span>
             </div>
+            <strong class="dashboard-kpi-card__value">{{ inUseRate.toFixed(1) }}%</strong>
+            <div class="dashboard-kpi-card__support">{{ dashboardData.assets.in_use }} {{ t('dashboard.assets') }} · {{ t('dashboard.currentlyInUse') }}</div>
           </el-card>
+
           <el-card
             shadow="never"
-            class="dashboard-stat-card dashboard-stat-card--in-stock"
-            :class="{ 'dashboard-stat-card--interactive': can('assets.view') }"
-            :role="can('assets.view') ? 'button' : undefined"
-            :tabindex="can('assets.view') ? 0 : undefined"
-            @click="can('assets.view') && goToAssets({ status: 'in_stock' })"
-            @keydown.enter="can('assets.view') && goToAssets({ status: 'in_stock' })"
-            @keydown.space.prevent="can('assets.view') && goToAssets({ status: 'in_stock' })"
+            class="dashboard-kpi-card dashboard-kpi-card--capacity"
+            :class="{ 'is-interactive': can('racks.view') }"
+            :role="can('racks.view') ? 'button' : undefined"
+            :tabindex="can('racks.view') ? 0 : undefined"
+            @click="can('racks.view') && openResourceLocations()"
+            @keydown.enter="can('racks.view') && openResourceLocations()"
+            @keydown.space.prevent="can('racks.view') && openResourceLocations()"
           >
-            <div class="dashboard-stat">
-              <span class="dashboard-stat__icon" aria-hidden="true"><el-icon :size="20"><Box /></el-icon></span>
-              <div class="dashboard-stat__content">
-                <el-statistic :title="t('dashboard.assetsInStock')" :value="dashboardData.assets.in_stock" />
-                <div class="dashboard-stat__hint">{{ t('dashboard.currentlyInStock') }}</div>
-              </div>
+            <div class="dashboard-kpi-card__label">
+              <span class="dashboard-kpi-card__icon" aria-hidden="true"><DataAnalysis /></span>
+              <span>{{ t('dashboard.rackCapacity') }}</span>
             </div>
+            <strong class="dashboard-kpi-card__value">{{ rackUtilization.toFixed(1) }}%</strong>
+            <div class="dashboard-kpi-card__support">{{ dashboardData.racks.used_u }} / {{ rackTotalU }} U · {{ dashboardData.racks.free_u }} {{ t('dashboard.freeCapacity') }}</div>
           </el-card>
+
           <el-card
             shadow="never"
-            class="dashboard-stat-card dashboard-stat-card--repair"
-            :class="{ 'dashboard-stat-card--interactive': can('assets.view') }"
-            :role="can('assets.view') ? 'button' : undefined"
-            :tabindex="can('assets.view') ? 0 : undefined"
-            @click="can('assets.view') && goToAssets({ status: 'repair' })"
-            @keydown.enter="can('assets.view') && goToAssets({ status: 'repair' })"
-            @keydown.space.prevent="can('assets.view') && goToAssets({ status: 'repair' })"
+            class="dashboard-kpi-card dashboard-kpi-card--locations"
+            :class="{ 'is-interactive': can('racks.view') }"
+            :role="can('racks.view') ? 'button' : undefined"
+            :tabindex="can('racks.view') ? 0 : undefined"
+            @click="can('racks.view') && openResourceLocations()"
+            @keydown.enter="can('racks.view') && openResourceLocations()"
+            @keydown.space.prevent="can('racks.view') && openResourceLocations()"
           >
-            <div class="dashboard-stat">
-              <span class="dashboard-stat__icon" aria-hidden="true"><el-icon :size="20"><Tools /></el-icon></span>
-              <div class="dashboard-stat__content">
-                <el-statistic :title="t('dashboard.assetsInRepair')" :value="dashboardData.assets.repair" />
-                <div class="dashboard-stat__hint">{{ t('dashboard.currentlyUnderRepair') }}</div>
-              </div>
+            <div class="dashboard-kpi-card__label">
+              <span class="dashboard-kpi-card__icon" aria-hidden="true"><OfficeBuilding /></span>
+              <span>{{ t('dashboard.locations') }}</span>
             </div>
+            <strong class="dashboard-kpi-card__value">{{ dashboardData.data_centers?.total || 0 }}</strong>
+            <div class="dashboard-kpi-card__support">{{ dashboardData.racks.total }} {{ t('dashboard.racks') }} · {{ t('dashboard.activeInfrastructure') }}</div>
           </el-card>
         </section>
 
-        <section class="dashboard-attention-section" aria-labelledby="dashboard-attention-title">
+        <section class="dashboard-risk-section" aria-labelledby="dashboard-risk-title">
           <div class="dashboard-section-heading">
-            <strong id="dashboard-attention-title">{{ t('dashboard.attention') }}</strong>
+            <strong id="dashboard-risk-title">{{ t('dashboard.riskSummaryTitle') }}</strong>
           </div>
-          <div class="dashboard-attention-grid">
-            <el-card
+          <div class="dashboard-risk-grid">
+            <button
               v-if="can('faults.view') && dashboardData.alerts"
-              shadow="never"
-              class="dashboard-attention-card dashboard-attention-card--fault dashboard-attention-card--interactive"
-              role="button"
-              tabindex="0"
+              type="button"
+              class="dashboard-risk-item dashboard-risk-item--fault"
               @click="goToRepairs({ is_closed: 'false' })"
-              @keydown.enter="goToRepairs({ is_closed: 'false' })"
-              @keydown.space.prevent="goToRepairs({ is_closed: 'false' })"
             >
-              <span class="dashboard-attention-card__icon" aria-hidden="true"><el-icon :size="20"><Warning /></el-icon></span>
-              <span class="dashboard-attention-card__content">
-                <span class="dashboard-attention-card__title">{{ t('dashboard.openFaults') }}</span>
-                <strong>{{ dashboardData.alerts?.open_faults }}</strong>
-                <small>{{ dashboardData.alerts?.open_faults ? t('dashboard.needsFollowUp') : t('dashboard.noOpenFaults') }}</small>
+              <span class="dashboard-risk-item__icon" aria-hidden="true"><Warning /></span>
+              <span class="dashboard-risk-item__copy">
+                <small>{{ t('dashboard.openFaults') }}</small>
+                <strong>{{ dashboardData.alerts.open_faults }}</strong>
               </span>
-              <span class="dashboard-attention-card__action" aria-hidden="true">
-                <el-icon class="dashboard-attention-card__arrow"><ArrowRight /></el-icon>
-              </span>
-            </el-card>
-            <el-card
+              <el-icon aria-hidden="true"><ArrowRight /></el-icon>
+            </button>
+            <button
               v-if="can('licenses.view') && licenseSummary"
-              shadow="never"
-              class="dashboard-attention-card dashboard-attention-card--license dashboard-attention-card--interactive"
-              role="button"
-              tabindex="0"
+              type="button"
+              class="dashboard-risk-item dashboard-risk-item--license"
               @click="goToLicenses()"
-              @keydown.enter="goToLicenses()"
-              @keydown.space.prevent="goToLicenses()"
             >
-              <span class="dashboard-attention-card__icon" aria-hidden="true"><el-icon :size="20"><Key /></el-icon></span>
-              <span class="dashboard-attention-card__content">
-                <span class="dashboard-attention-card__title">{{ t('dashboard.licenseRisk') }}</span>
+              <span class="dashboard-risk-item__icon" aria-hidden="true"><Key /></span>
+              <span class="dashboard-risk-item__copy">
+                <small>{{ t('dashboard.licenseRisk') }}</small>
                 <strong>{{ licenseRiskTotal }}</strong>
-                <small v-if="!licenseRiskTotal">{{ t('dashboard.noLicenseRisk') }}</small>
-                <span v-else class="dashboard-attention-risk-links">
-                  <el-button link class="dashboard-attention-risk-link" @click.stop="goToLicenses({ status: 'expired' })" @keydown.stop>{{ t('status.expired') }} {{ licenseSummary.expired }}</el-button>
-                  <el-button link class="dashboard-attention-risk-link" @click.stop="goToLicenses({ status: 'expiring' })" @keydown.stop>{{ t('status.expiring') }} {{ licenseSummary.expiring }}</el-button>
-                </span>
+                <span>{{ t('dashboard.expiredItems', { count: licenseSummary.expired }) }} · {{ t('dashboard.expiringItems', { count: licenseSummary.expiring }) }}</span>
               </span>
-              <span class="dashboard-attention-card__action" aria-hidden="true">
-                <el-icon class="dashboard-attention-card__arrow"><ArrowRight /></el-icon>
-              </span>
-            </el-card>
-            <el-card
-              class="dashboard-attention-card dashboard-attention-card--maintenance"
-              shadow="never"
-              :class="{ 'dashboard-attention-card--interactive': can('assets.view') }"
-              :role="can('assets.view') ? 'button' : undefined"
-              :tabindex="can('assets.view') ? 0 : undefined"
-              @click="can('assets.view') && goToAssets({ warranty: 'within_30_days' })"
-              @keydown.enter="can('assets.view') && goToAssets({ warranty: 'within_30_days' })"
-              @keydown.space.prevent="can('assets.view') && goToAssets({ warranty: 'within_30_days' })"
+              <el-icon aria-hidden="true"><ArrowRight /></el-icon>
+            </button>
+            <button
+              v-if="can('assets.view')"
+              type="button"
+              class="dashboard-risk-item dashboard-risk-item--maintenance"
+              @click="goToAssets({ warranty: 'within_30_days' })"
             >
-              <span class="dashboard-attention-card__icon" aria-hidden="true"><el-icon :size="20"><Timer /></el-icon></span>
-              <span class="dashboard-attention-card__content">
-                <span class="dashboard-attention-card__title">{{ t('dashboard.warrantyExpiring') }}</span>
+              <span class="dashboard-risk-item__icon" aria-hidden="true"><Timer /></span>
+              <span class="dashboard-risk-item__copy">
+                <small>{{ t('dashboard.warrantyExpiring') }}</small>
                 <strong>{{ dashboardData.expiring.within_30_days }}</strong>
-                <small>
-                  <el-button
-                    v-if="can('assets.view')"
-                    link
-                    class="dashboard-attention-risk-link"
-                    @click.stop="goToAssets({ warranty: 'expired' })"
-                    @keydown.stop
-                  >{{ t('dashboard.expiredItems', { count: dashboardData.expiring.expired || 0 }) }}</el-button>
-                  <span v-else>{{ t('dashboard.expiredItems', { count: dashboardData.expiring.expired || 0 }) }}</span>
-                </small>
+                <span>{{ t('dashboard.expiredItems', { count: dashboardData.expiring.expired || 0 }) }}</span>
               </span>
-              <span v-if="can('assets.view')" class="dashboard-attention-card__action" aria-hidden="true">
-                <el-icon class="dashboard-attention-card__arrow"><ArrowRight /></el-icon>
+              <el-icon aria-hidden="true"><ArrowRight /></el-icon>
+            </button>
+            <button
+              v-if="inventorySummary"
+              type="button"
+              class="dashboard-risk-item dashboard-risk-item--inventory"
+              :class="{ 'is-static': !can('inventory.view') }"
+              :disabled="!can('inventory.view')"
+              @click="openInventory"
+            >
+              <span class="dashboard-risk-item__icon" aria-hidden="true"><DocumentChecked /></span>
+              <span class="dashboard-risk-item__copy">
+                <small>{{ t('dashboard.inventoryAttention') }}</small>
+                <strong>{{ inventorySummary.pending + inventorySummary.abnormal }}</strong>
+                <span>{{ t('dashboard.inventoryAttentionDetail', { pending: inventorySummary.pending, abnormal: inventorySummary.abnormal }) }}</span>
               </span>
-            </el-card>
+              <el-icon v-if="can('inventory.view')" aria-hidden="true"><ArrowRight /></el-icon>
+            </button>
           </div>
         </section>
 
-        <section class="dashboard-overview-row">
+        <section class="dashboard-analysis-grid">
           <el-card shadow="never" class="dashboard-panel dashboard-panel--status">
             <template #header>
-              <div class="dashboard-card-heading"><strong>{{ t('dashboard.statusDistribution') }}</strong><el-button v-if="can('assets.view')" text type="primary" @click="goToAssets()">{{ t('common.details') }} <el-icon><ArrowRight /></el-icon></el-button></div>
+              <div class="dashboard-card-heading">
+                <strong>{{ t('dashboard.portfolioHealthTitle') }}</strong>
+                <el-button v-if="can('assets.view')" text type="primary" @click="goToAssets()">
+                  {{ t('common.details') }} <el-icon><ArrowRight /></el-icon>
+                </el-button>
+              </div>
             </template>
             <DashboardDonut
               :items="statusItems"
@@ -336,100 +414,91 @@ function utilization(value: number) {
               @select="openStatusDrilldown"
             />
           </el-card>
-          <el-card shadow="never" class="dashboard-panel dashboard-panel--resources">
+
+          <el-card shadow="never" class="dashboard-panel dashboard-panel--types">
             <template #header>
-              <div class="dashboard-card-heading"><strong>{{ t('dashboard.resourceOverview') }}</strong><el-button v-if="can('racks.view')" text type="primary" @click="openResourceLocations">{{ t('dashboard.viewAll') }} <el-icon><ArrowRight /></el-icon></el-button></div>
+              <div class="dashboard-card-heading">
+                <strong>{{ t('dashboard.assetMixTitle') }}</strong>
+              </div>
             </template>
-            <ResourceState :empty="!resourceItems.length" :empty-text="t('dashboard.noResource')">
-              <el-table
-                class="dashboard-resource-table"
-                :data="resourceItems"
-                row-key="data_center_id"
-                table-layout="fixed"
-                @row-click="openDataCenterRacks"
-              >
-                <el-table-column :label="t('dashboard.dataCenter')" min-width="160">
-                  <template #default="{ row }">
-                    <el-button
-                      v-if="can('racks.view')"
-                      link
-                      type="primary"
-                      class="dashboard-resource-name"
-                      :aria-label="t('rack.viewRack') + ' ' + row.data_center"
-                      @click.stop="openDataCenterRacks(row)"
-                    >
-                      <OfficeBuilding />{{ row.data_center }}
-                    </el-button>
-                    <span v-else class="dashboard-resource-name"><OfficeBuilding />{{ row.data_center }}</span>
-                  </template>
-                </el-table-column>
-                <el-table-column :label="t('dashboard.roomRack')" width="120">
-                  <template #default="{ row }">{{ row.room_count }} / {{ row.rack_count }}</template>
-                </el-table-column>
-                <el-table-column :label="t('dashboard.usedUTotalU')" width="120">
-                  <template #default="{ row }">{{ row.used_u }} / {{ row.total_u }}</template>
-                </el-table-column>
-                <el-table-column :label="t('dashboard.uUtilization')" min-width="170">
-                  <template #default="{ row }">
-                    <div class="dashboard-resource-utilization">
-                      <b>{{ row.utilization.toFixed(1) }}%</b>
-                      <el-progress :percentage="utilization(row.utilization)" :show-text="false" :stroke-width="4" />
-                    </div>
-                  </template>
-                </el-table-column>
-              </el-table>
+            <ResourceState :empty="!typeItems.length" :empty-text="t('dashboard.noTypeData')">
+              <div class="dashboard-type-list">
+                <div v-for="item in typeItems" :key="item.type || item.label" class="dashboard-type-row">
+                  <div class="dashboard-type-row__label">
+                    <span>{{ item.label || item.type }}</span>
+                    <strong>{{ item.count }}</strong>
+                  </div>
+                  <div class="dashboard-type-row__track" role="progressbar" :aria-valuenow="item.count" aria-valuemin="0" :aria-valuemax="statusTotal">
+                    <span :style="{ width: `${typePercent(item)}%`, backgroundColor: item.color }"></span>
+                  </div>
+                </div>
+              </div>
             </ResourceState>
           </el-card>
         </section>
 
-        <section class="dashboard-summary-row" :class="{ 'is-single': !can('faults.view') }">
+        <section class="dashboard-summary-grid">
           <el-card shadow="never" class="dashboard-panel dashboard-panel--activity" :class="{ 'is-empty': !recentChangeItems.length }">
-            <template #header><div class="dashboard-card-heading"><strong>{{ t('dashboard.assetChanges') }}</strong><el-button v-if="can('audit.view') || can('assets.view')" text type="primary" @click="openChanges">{{ t('dashboard.viewAll') }} <el-icon><ArrowRight /></el-icon></el-button></div></template>
+            <template #header>
+              <div class="dashboard-card-heading">
+                <strong>{{ t('dashboard.activityTitle') }}</strong>
+                <el-button v-if="can('audit.view') || can('assets.view')" text type="primary" @click="openChanges">
+                  {{ t('dashboard.viewAll') }} <el-icon><ArrowRight /></el-icon>
+                </el-button>
+              </div>
+            </template>
             <ResourceState :empty="!recentChangeItems.length" :empty-text="t('dashboard.noAssetChanges')">
               <div class="dashboard-activity-list">
-              <el-button
-                v-for="row in recentChangeItems"
-                :key="row.id"
-                :tag="can('assets.view') ? 'button' : 'div'"
-                text
-                native-type="button"
-                class="dashboard-activity-item"
-                :class="{ 'is-static': !can('assets.view') }"
-                @click="can('assets.view') && openAssetDetail(row.asset_id)"
-              >
-                <time class="dashboard-activity-time">{{ dashboardDateTime(row.created_at) }}</time>
-                <span class="dashboard-activity-main">
-                  <strong>{{ row.asset_no }} / {{ row.asset_name }}</strong>
-                  <small>{{ recentChangeLabel(row.action) }} · {{ row.location || t('dashboard.notMounted') }}</small>
-                </span>
-                <span class="dashboard-activity-meta">
-                  <span>{{ row.actor_name || t('dashboard.systemActor') }}</span>
-                  <StatusTag :tone="recentChangeTagType(row.action)" :label="recentChangeLabel(row.action)" />
-                </span>
-              </el-button>
+                <el-button
+                  v-for="row in recentChangeItems"
+                  :key="row.id"
+                  :tag="can('assets.view') ? 'button' : 'div'"
+                  text
+                  native-type="button"
+                  class="dashboard-activity-item"
+                  :class="{ 'is-static': !can('assets.view') }"
+                  @click="can('assets.view') && openAssetDetail(row.asset_id)"
+                >
+                  <time class="dashboard-activity-time">{{ dashboardDateTime(row.created_at) }}</time>
+                  <span class="dashboard-activity-main">
+                    <strong>{{ row.asset_no }} / {{ row.asset_name }}</strong>
+                    <small>{{ recentChangeLabel(row.action) }} · {{ row.location || t('dashboard.notMounted') }}</small>
+                  </span>
+                  <span class="dashboard-activity-meta">
+                    <span>{{ row.actor_name || t('dashboard.systemActor') }}</span>
+                    <StatusTag :tone="recentChangeTagType(row.action)" :label="recentChangeLabel(row.action)" />
+                  </span>
+                </el-button>
               </div>
             </ResourceState>
           </el-card>
 
           <el-card v-if="can('faults.view')" shadow="never" class="dashboard-panel dashboard-panel--faults" :class="{ 'is-empty': !recentFaultItems.length }">
-            <template #header><div class="dashboard-card-heading"><strong>{{ t('dashboard.openFaultList') }}</strong><el-button text type="primary" @click="goToRepairs({ is_closed: 'false' })">{{ t('dashboard.viewAll') }} <el-icon><ArrowRight /></el-icon></el-button></div></template>
+            <template #header>
+              <div class="dashboard-card-heading">
+                <strong>{{ t('dashboard.faultActivityTitle') }}</strong>
+                <el-button text type="primary" @click="goToRepairs({ is_closed: 'false' })">
+                  {{ t('dashboard.viewAll') }} <el-icon><ArrowRight /></el-icon>
+                </el-button>
+              </div>
+            </template>
             <ResourceState :empty="!recentFaultItems.length" :empty-text="t('dashboard.noOpenFaultList')">
               <div class="dashboard-fault-list">
-              <el-button
-                v-for="row in recentFaultItems"
-                :key="row.id"
-                text
-                native-type="button"
-                class="dashboard-fault-item"
-                @click="openRecentFault(row)"
-              >
-                <time class="dashboard-fault-time">{{ dashboardDateTime(row.occurred_at) }}</time>
-                <span class="dashboard-fault-main">
-                  <strong>{{ row.asset_no }} / {{ row.asset_name }}</strong>
-                  <small>{{ row.title }}</small>
-                </span>
-                <StatusTag tone="warning" :label="t('status.open')" />
-              </el-button>
+                <el-button
+                  v-for="row in recentFaultItems"
+                  :key="row.id"
+                  text
+                  native-type="button"
+                  class="dashboard-fault-item"
+                  @click="openRecentFault(row)"
+                >
+                  <time class="dashboard-fault-time">{{ dashboardDateTime(row.occurred_at) }}</time>
+                  <span class="dashboard-fault-main">
+                    <strong>{{ row.asset_no }} / {{ row.asset_name }}</strong>
+                    <small>{{ row.title }}</small>
+                  </span>
+                  <StatusTag tone="warning" :label="t('status.open')" />
+                </el-button>
               </div>
             </ResourceState>
           </el-card>
