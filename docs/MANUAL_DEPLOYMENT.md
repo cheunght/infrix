@@ -61,7 +61,7 @@ python3 -m venv /opt/infrix/backend/.venv
 
 Do not install the application requirements into the system Python and do not use `sudo pip install`.
 
-The current backend requirements include Django, Django REST Framework, Django REST Framework Spectacular, django-filter, openpyxl, Gunicorn, PyMySQL, pytest, and pytest-django. The declared MySQL driver is PyMySQL; the repository does not declare a `mysqlclient` build dependency.
+The current backend runtime requirements include Django, Django REST Framework, Django REST Framework Spectacular, django-filter, openpyxl, Gunicorn, and PyMySQL. Development-only pytest dependencies are maintained outside the public release source. The declared MySQL driver is PyMySQL; the repository does not declare a `mysqlclient` build dependency.
 
 ### Node.js and npm
 
@@ -168,10 +168,12 @@ The frontend build is generated from source. `frontend/dist` and `frontend/node_
 Release-side validation is separate from server deployment:
 
 ```bash
-./scripts/check-release.sh
+INFRIX_REPO_ROOT=/path/to/infrix-source \
+INFRIX_PRIVATE_ROOT=/path/to/infrix-private \
+/path/to/infrix-private/scripts/check-release.sh
 ```
 
-`check-release.sh` is intended for a clean release/build checkout. It rejects a dirty Git working tree, prints the candidate commit SHA, checks production configuration, runs backend and frontend validation, and verifies the production build. A manual production server does not need to contain `.git` merely because this release-side check exists.
+The private `check-release.sh` is intended for a clean release/build checkout. It rejects a dirty Git working tree, prints the candidate commit SHA, checks production configuration, runs backend and frontend validation, and verifies the production build. A manual production server does not need to contain `.git` or the private development workspace.
 
 ## Production Environment
 
@@ -261,7 +263,7 @@ npm ci --no-audit --no-fund
 npm run build
 ```
 
-The build runs the repository's UI regression and type checks through the current npm scripts. Confirm that the build produced:
+The public build runs the type check and Vite build through the current npm scripts. The private release gate runs the UI regression, i18n, and branding checks before that build. Confirm that the build produced:
 
 ```bash
 test -s /opt/infrix/frontend/dist/index.html
@@ -443,7 +445,9 @@ Database backups are mandatory before an in-place upgrade. Keep multiple restric
 Run release-side checks against the candidate source before installation:
 
 ```bash
-./scripts/check-release.sh
+INFRIX_REPO_ROOT=/path/to/infrix-source \
+INFRIX_PRIVATE_ROOT=/path/to/infrix-private \
+/path/to/infrix-private/scripts/check-release.sh
 ```
 
 The production environment preflight and deployment verification are separate from release-side Git traceability. A production server does not need a clean Git checkout if the release has already been validated elsewhere and the reviewed source has been transferred.

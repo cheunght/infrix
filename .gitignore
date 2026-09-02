@@ -34,6 +34,17 @@ backend/.venv/
 .coverage
 htmlcov/
 
+# Private development and audit materials (kept outside the repository)
+/docs/ui-reference.md
+/pytest.ini
+/backend/pytest.ini
+/backend/**/tests.py
+/backend/**/test_*.py
+/backend/**/*_tests.py
+/frontend/scripts/check-*.mjs
+/scripts/check-branding.mjs
+/scripts/check-release.sh
+
 # Frontend dependencies and build output
 frontend/node_modules/
 frontend/dist/

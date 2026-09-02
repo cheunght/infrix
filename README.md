@@ -77,13 +77,11 @@ The frontend sends API requests to `/api/v1` by default. Set `VITE_API_BASE` whe
 Production checks and build:
 
 ```bash
-npm run check:ui-regressions
-npm run check:branding
 npm run typecheck
 npm run build
 ```
 
-`npm run build` also runs the UI regression contract to protect key interactions such as dictionary tabs, rack pagination, and dashboard resource navigation.
+The UI regression, i18n, branding, and release-gate tools are maintained in the private development workspace and are not included in the public source or user release.
 
 The local API documentation is available at <http://127.0.0.1:8000/api/docs/>.
 
@@ -148,19 +146,15 @@ Replace `<database-password>` with a real password before execution.
 
 On a fresh production install, the installer may generate `DJANGO_SECRET_KEY` after it confirms that the target MySQL database is empty. During an upgrade, `DJANGO_SECRET_KEY` must already exist in the environment file and is never regenerated.
 
-Before installing a release, run the release gate from a clean checkout:
+Before installing a release, the release owner runs the private release gate against a clean public checkout:
 
 ```bash
-RELEASE_ENV_FILE=/etc/infrix/infrix.env ./scripts/check-release.sh
+INFRIX_REPO_ROOT=/path/to/infrix-source \
+INFRIX_PRIVATE_ROOT=/path/to/infrix-private \
+/path/to/infrix-private/scripts/check-release.sh
 ```
 
-The release gate prints the candidate commit SHA and checks the working tree, production configuration, Django checks, migration drift, frontend regressions, type checking, and the production build. It never commits, tags, pushes, or modifies files automatically.
-
-For a traceability-only check:
-
-```bash
-./scripts/check-release.sh --traceability-only
-```
+The private release gate prints the candidate commit SHA and checks the working tree, production configuration, Django checks, migration drift, frontend regressions, type checking, and the production build. The production server only needs the public source and the deployment verification tools.
 
 ## Remote Source Synchronization
 
