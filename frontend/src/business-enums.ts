@@ -178,6 +178,17 @@ export function stockOperationTone(operationType: string): StatusTone {
   return businessOptionTone(STOCK_OPERATION_OPTIONS, operationType);
 }
 
+export const REPAIR_PART_USAGE_SOURCE_OPTIONS = [
+  { value: "internal_stock", label: "内部库存", labelKey: "repair.internalStock", tone: "warning" },
+  { value: "vendor_provided", label: "厂商提供", labelKey: "repair.vendorProvided", tone: "info" },
+] as const satisfies readonly BusinessOption<string>[];
+export type RepairPartUsageSource = (typeof REPAIR_PART_USAGE_SOURCE_OPTIONS)[number]["value"];
+export const REPAIR_PART_USAGE_SOURCE_VALUES = optionValues(REPAIR_PART_USAGE_SOURCE_OPTIONS);
+
+export function repairPartUsageSourceLabel(source: string): string {
+  return businessOptionLabel(REPAIR_PART_USAGE_SOURCE_OPTIONS, source);
+}
+
 export const LICENSE_STATUS_OPTIONS = [
   { value: "normal", label: "正常", labelKey: "status.normal", tone: "success" },
   { value: "expiring", label: "即将到期", labelKey: "status.expiring", tone: "warning" },

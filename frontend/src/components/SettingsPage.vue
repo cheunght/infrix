@@ -6,6 +6,7 @@ import PagedTable from "./PagedTable.vue";
 import SearchField from "./SearchField.vue";
 import CustomFieldSettingsPage from "./CustomFieldSettingsPage.vue";
 import TagSettingsPage from "./TagSettingsPage.vue";
+import DescriptionList from "./DescriptionList.vue";
 import PageContainer from "./page/PageContainer.vue";
 import PageContent from "./page/PageContent.vue";
 import PageTabs, { type PageTabItem } from "./page/PageTabs.vue";
@@ -167,6 +168,34 @@ const hasAuditFilters = computed(() => Boolean(
 const selectedAuditLog = ref<AuditLog | null>(null);
 const auditDetailVisible = ref(false);
 const selectedAuditDetail = computed(() => (selectedAuditLog.value ? auditDetail(selectedAuditLog.value) : null));
+const auditDetailDescriptionItems = computed(() => {
+  const log = selectedAuditLog.value;
+  const detail = selectedAuditDetail.value;
+  if (!log || !detail) return [];
+  const items = [
+    { key: "auditTime", label: t("settings.auditTime"), value: formatAuditDateTime(log.created_at) },
+    {
+      key: "actor",
+      label: t("settings.actor"),
+      value: log.actor_display_name || log.actor_username || "—",
+    },
+    { key: "resource", label: t("settings.resource"), value: detail.resourceLabel },
+    { key: "action", label: t("settings.action"), value: detail.actionLabel },
+    { key: "object", label: t("settings.object"), value: detail.objectLabel },
+  ];
+  if (log.resource_id) {
+    items.push({ key: "resourceId", label: t("settings.resourceId"), value: `#${log.resource_id}` });
+  }
+  return items.map((item) => ({ ...item, className: "audit-detail-descriptions__value" }));
+});
+const auditMetadataDescriptionItems = computed(() =>
+  (selectedAuditDetail.value?.metadata || []).map((item, index) => ({
+    key: `metadata-${index}-${item.label}`,
+    label: item.label,
+    value: item.value,
+    className: "audit-detail-descriptions__value",
+  })),
+);
 let userSearchTimer: ReturnType<typeof setTimeout> | null = null;
 
 function clearUserSearchTimer() {
@@ -642,20 +671,23 @@ function systemSettingOptionLabel(key: string, option: { value: string | number;
           <span>{{ t('settings.recordNumber', { id: selectedAuditLog.id }) }}</span>
         </div>
 
-        <dl class="audit-detail-meta">
-          <div><dt>{{ t('settings.auditTime') }}</dt><dd>{{ formatAuditDateTime(selectedAuditLog.created_at) }}</dd></div>
-          <div><dt>{{ t('settings.actor') }}</dt><dd>{{ selectedAuditLog.actor_display_name || selectedAuditLog.actor_username || "—" }}</dd></div>
-          <div><dt>{{ t('settings.resource') }}</dt><dd>{{ selectedAuditDetail.resourceLabel }}</dd></div>
-          <div><dt>{{ t('settings.action') }}</dt><dd>{{ selectedAuditDetail.actionLabel }}</dd></div>
-          <div><dt>{{ t('settings.object') }}</dt><dd>{{ selectedAuditDetail.objectLabel }}</dd></div>
-          <div v-if="selectedAuditLog.resource_id"><dt>{{ t('settings.resourceId') }}</dt><dd>#{{ selectedAuditLog.resource_id }}</dd></div>
-        </dl>
+        <DescriptionList
+          class="audit-detail-descriptions"
+          :items="auditDetailDescriptionItems"
+          :columns="2"
+          border
+          size="small"
+        />
 
         <section v-if="selectedAuditDetail.metadata.length" class="audit-detail-section">
           <h3>{{ t('settings.eventInfo') }}</h3>
-          <dl class="audit-detail-meta audit-detail-meta--event">
-            <div v-for="item in selectedAuditDetail.metadata" :key="item.label"><dt>{{ item.label }}</dt><dd>{{ item.value }}</dd></div>
-          </dl>
+          <DescriptionList
+            class="audit-detail-descriptions audit-detail-descriptions--event"
+            :items="auditMetadataDescriptionItems"
+            :columns="2"
+            border
+            size="small"
+          />
         </section>
 
         <section class="audit-detail-section">

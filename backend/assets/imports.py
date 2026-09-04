@@ -15,6 +15,7 @@ import csv
 import re
 
 from django.core.exceptions import ValidationError as DjangoValidationError
+from django.core.validators import DecimalValidator
 from django.db import IntegrityError, transaction
 from django.db.models import Q
 from openpyxl import Workbook, load_workbook
@@ -23,9 +24,11 @@ from openpyxl.utils import get_column_letter
 from rest_framework.exceptions import ValidationError as DRFValidationError
 
 from .audit import asset_audit_snapshot, write_audit_log
-from .enum_contracts import ASSET_IMPORT_STATUS_VALUES
+from .custom_fields import validate_custom_field_value
+from .enum_contracts import ASSET_STATUS_LABELS
+from .lifecycle import validate_asset_status_transition
 from .models import Asset, CustomField, DataCenter, DeviceType, Manufacturer, Rack, ServerRoom, Tag
-from .serializers import AssetWriteSerializer
+from .serializers import AssetWriteSerializer, LEGACY_OWNER_NAME_DEPRECATED_MESSAGE
 from .system_settings import get_system_settings
 
 
@@ -42,8 +45,7 @@ IMPORT_COLUMNS = (
     ("manufacturer_model", "厂商/型号", False, "厂商和型号组合显示文本；通常填写型号即可。"),
     ("serial_number", "序列号", False, "留空表示没有序列号；序列号不能与其他资产重复。"),
     ("purpose", "用途", False, "资产用途。"),
-    ("status", "状态", False, "可填 in_stock、in_use、idle、retired；维修中由故障流程维护。"),
-    ("owner_name", "使用人", False, "当前系统为自由文本，不按用户名称反查账号。"),
+    ("status", "状态", False, "可填 in_stock、in_use、idle、retired，或对应显示值在库、在用、闲置、已报废；维修中由故障流程维护。"),
     ("notes", "备注", False, "资产备注。"),
     ("asset_data_center", "未上架所属数据中心", False, "未上架资产的所属数据中心；填写启用中的数据中心名称。"),
     ("data_center", "机柜所属数据中心", False, "上架时与机房、机柜、起止 U 一起填写；使用真实层级名称。"),
@@ -60,7 +62,7 @@ IMPORT_COLUMNS = (
     ("purchase_amount", "采购金额", False, "非负金额；服务端使用 Decimal 校验。"),
     ("depreciation_start_date", "折旧起算日", False, "填写 YYYY-MM-DD；配置折旧时必须显式填写，不能自动使用采购日期。"),
     ("depreciation_years", "折旧年限", False, "填写大于等于 1 的整数，单位为年。"),
-    ("residual_rate", "残值率", False, "填写 0~100 的百分数，例如 5 表示 5%；不要填写 0.05。"),
+    ("residual_rate", "残值率", False, "填写 0~100 的百分数，例如 5 或 5% 表示 5%；不要填写 0.05。"),
     ("maintenance_provider", "维保厂商", False, "维保厂商名称。"),
     ("maintenance_contract_no", "维保合同号", False, "维保合同号。"),
     ("maintenance_start_date", "维保开始日", False, "Excel 日期单元格或 YYYY-MM-DD。"),
@@ -72,8 +74,15 @@ IMPORT_FIELD_LABELS = {key: label for key, label, _required, _description in IMP
 IMPORT_FIELD_LABELS.update({"configuration": "机柜位置", "custom_values": "自定义字段"})
 IMPORT_BASE_HEADERS = {key for key, _label, _required, _description in IMPORT_COLUMNS}
 IMPORT_REQUIRED_HEADERS = {key for key, _label, required, _description in IMPORT_COLUMNS if required}
-IMPORT_STATUS_VALUES = frozenset(ASSET_IMPORT_STATUS_VALUES)
 IMPORT_CUSTOM_HEADER_RE = re.compile(r"custom__[a-z][a-z0-9_]*$")
+ASSET_STATUS_IMPORT_ALIASES = {
+    **{value: value for value in ASSET_STATUS_LABELS},
+    **{label: value for value, label in ASSET_STATUS_LABELS.items()},
+}
+DEPRECATED_IMPORT_HEADERS = {
+    "owner_name": LEGACY_OWNER_NAME_DEPRECATED_MESSAGE,
+    "使用人": LEGACY_OWNER_NAME_DEPRECATED_MESSAGE,
+}
 
 
 class ImportFileError(ValueError):
@@ -152,6 +161,9 @@ def _normalize_headers(values):
         raise ImportFileError("导入文件第一行必须包含完整的字段名")
     if len(headers) != len(set(headers)):
         raise ImportFileError("导入文件包含重复字段名，请保留每个字段一列")
+    deprecated = [header for header in headers if header in DEPRECATED_IMPORT_HEADERS]
+    if deprecated:
+        raise ImportFileError(DEPRECATED_IMPORT_HEADERS[deprecated[0]])
     unknown = [
         header for header in headers
         if header not in IMPORT_BASE_HEADERS and not IMPORT_CUSTOM_HEADER_RE.fullmatch(header)
@@ -279,7 +291,21 @@ def _split_values(value):
     return [item.strip() for item in re.split(r"[;,，；]", value or "") if item.strip()]
 
 
-def _decimal_text(value, field, label, *, non_negative=False, max_decimal_places=None):
+def _normalize_custom_option_value(field, value, header):
+    """Accept an exact, unambiguous active option label as an import alias."""
+    options = list(field.options.all())
+    if value in {option.value for option in options}:
+        return value
+    label_matches = [option for option in options if option.label == value]
+    active_matches = [option for option in label_matches if option.is_active]
+    if len(label_matches) == 1 and len(active_matches) == 1:
+        return active_matches[0].value
+    if len(label_matches) > 1:
+        raise DjangoValidationError({header: f"自定义字段选项标签“{value}”匹配到多个选项，必须填写唯一选项值"})
+    return value
+
+
+def _decimal_text(value, field, label, *, non_negative=False, max_decimal_places=None, max_digits=None):
     if not value:
         return ""
     try:
@@ -292,11 +318,21 @@ def _decimal_text(value, field, label, *, non_negative=False, max_decimal_places
         raise DjangoValidationError({field: f"{label}不能小于 0"})
     if max_decimal_places is not None and max(0, -parsed.as_tuple().exponent) > max_decimal_places:
         raise DjangoValidationError({field: f"{label}最多支持 {max_decimal_places} 位小数"})
-    return format(parsed, "f").rstrip("0").rstrip(".") or "0"
+    if max_digits is not None:
+        try:
+            DecimalValidator(max_digits=max_digits, decimal_places=max_decimal_places or 0)(parsed)
+        except DjangoValidationError as exc:
+            raise DjangoValidationError({field: f"{label}超出数值范围"}) from exc
+    text = format(parsed, "f")
+    if "." in text:
+        text = text.rstrip("0").rstrip(".")
+    return text or "0"
 
 
 def _percentage_rate(value, field, label):
     value = (value or "").strip()
+    if value.endswith("%"):
+        value = value[:-1].strip()
     if not value:
         return ""
     try:
@@ -372,8 +408,8 @@ def _prepare_payload(row, headers):
     asset_data_center = _named_active(DataCenter.objects, asset_data_center_name, "asset_data_center", "数据中心") if asset_data_center_name else None
 
     status = row.get("status", "").strip() or get_system_settings().default_asset_status
-    if status not in IMPORT_STATUS_VALUES:
-        raise DjangoValidationError({"status": "状态只能是 in_stock、in_use、idle 或 retired"})
+    status = ASSET_STATUS_IMPORT_ALIASES.get(status, status)
+    validate_asset_status_transition(None, status)
 
     configuration = dict(row)
     location_values = [row.get(key, "").strip() for key in ("data_center", "server_room", "rack_code", "rack_start_u", "rack_end_u")]
@@ -404,7 +440,12 @@ def _prepare_payload(row, headers):
     configuration["maintenance_start_date"] = _iso_date(row.get("maintenance_start_date"), "maintenance_start_date", "维保开始日")
     configuration["maintenance_expiry_date"] = _iso_date(row.get("maintenance_expiry_date"), "maintenance_expiry_date", "维保到期日")
     configuration["purchase_amount"] = _decimal_text(
-        row.get("purchase_amount", ""), "purchase_amount", "采购金额", non_negative=True, max_decimal_places=2
+        row.get("purchase_amount", ""),
+        "purchase_amount",
+        "采购金额",
+        non_negative=True,
+        max_decimal_places=2,
+        max_digits=14,
     )
 
     depreciation_values = {
@@ -460,11 +501,7 @@ def _prepare_payload(row, headers):
         raw = row.get(header, "").strip()
         if not raw:
             continue
-        if field.field_type == "number":
-            custom_values[field_key] = _decimal_text(raw, header, field.name)
-        elif field.field_type == "date":
-            custom_values[field_key] = _iso_date(raw, header, field.name)
-        elif field.field_type == "boolean":
+        if field.field_type == "boolean":
             if raw.lower() in {"true", "1", "yes", "是"}:
                 custom_values[field_key] = True
             elif raw.lower() in {"false", "0", "no", "否"}:
@@ -472,14 +509,18 @@ def _prepare_payload(row, headers):
             else:
                 raise DjangoValidationError({header: "布尔值只能填写 true/false、是/否"})
         elif field.field_type == "multiselect":
-            custom_values[field_key] = _split_values(raw)
+            custom_values[field_key] = [
+                _normalize_custom_option_value(field, value, header)
+                for value in _split_values(raw)
+            ]
+        elif field.field_type == "select":
+            custom_values[field_key] = _normalize_custom_option_value(field, raw, header)
         else:
             custom_values[field_key] = raw
-        active_options = {option.value for option in field.options.all() if option.is_active}
-        if field.field_type == "select" and custom_values[field_key] not in active_options:
-            raise DjangoValidationError({header: "必须填写启用中的选项值"})
-        if field.field_type == "multiselect" and any(value not in active_options for value in custom_values[field_key]):
-            raise DjangoValidationError({header: "只能填写启用中的选项值"})
+        try:
+            custom_values[field_key] = validate_custom_field_value(field, custom_values[field_key])
+        except ValueError as exc:
+            raise DjangoValidationError({header: str(exc)}) from exc
 
     tag_values = []
     for tag_name in _split_values(row.get("tags", "")):
@@ -504,7 +545,6 @@ def _prepare_payload(row, headers):
         "serial_number": row.get("serial_number", "").strip() or None,
         "purpose": row.get("purpose", "").strip(),
         "status": status,
-        "owner_name": row.get("owner_name", "").strip(),
         "notes": row.get("notes", "").strip(),
         "depreciation_start_date": depreciation_start_date,
         "depreciation_years": depreciation_years,
@@ -639,12 +679,16 @@ def build_import_template():
         guide.append([key, label, "是" if required else "否", description])
     for field in active_fields:
         scope = field.device_type.name if field.device_type_id else "全部设备类型"
-        guide.append([f"custom__{field.key}", field.name, "是" if field.required else "否", f"{scope} · 类型：{field.field_type}。{field.help_text or '按当前自定义字段选项填写。'}"])
+        custom_description = f"{scope} · 类型：{field.field_type}。{field.help_text or '按当前自定义字段选项填写。'}"
+        if field.field_type in {"select", "multiselect"}:
+            custom_description += " 单选/多选可填写启用选项的 value 或唯一显示名称；多选用英文分号、中文分号或逗号分隔，重复或停用选项不接受。"
+        guide.append([f"custom__{field.key}", field.name, "是" if field.required else "否", custom_description])
     guide.append([])
-    guide.append(["状态合法值", "in_stock、in_use、idle、retired"])
+    guide.append(["状态合法值", "可填 in_stock、in_use、idle、retired，或对应显示值：在库、在用、闲置、已报废；维修中仍只能由故障流程设置。"])
     guide.append(["日期格式", "Excel 日期单元格或 YYYY-MM-DD；不接受模糊日期。"])
     guide.append(["机柜位置", "数据中心 + 机房 + 机柜编号 + 起始 U + 结束 U 必须同时填写；位置按真实层级匹配并复用现有 U 位冲突校验。"])
     guide.append(["标签", "多个标签用英文分号、中文分号或逗号分隔；不存在或停用标签会阻止整批导入。"])
+    guide.append(["资产台账导出", "导出文件是阅读型台账，不能直接上传；请使用本模板的标准字段名。引用导出值时，已上架资产的数据中心填入 data_center，未上架资产填入 asset_data_center；资产编号、序列号和网络地址仍需使用新的唯一值。"])
     guide.append(["导入策略", "只新增资产；已存在资产编号、文件内重复编号或任意校验错误都会阻止确认。"])
     guide.freeze_panes = "A5"
     guide.column_dimensions["A"].width = 24

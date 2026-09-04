@@ -31,12 +31,15 @@ def _env_bool(name, default):
     )
 
 
-def _env_int(name, default):
+def _env_int(name, default, *, minimum=None):
     raw_value = os.getenv(name, default)
     try:
-        return int(str(raw_value).strip())
+        value = int(str(raw_value).strip())
     except (TypeError, ValueError) as exc:
         raise ImproperlyConfigured(f"{name} must be an integer.") from exc
+    if minimum is not None and value < minimum:
+        raise ImproperlyConfigured(f"{name} must be an integer >= {minimum}.")
+    return value
 
 
 def _env_list(name, default=()):
@@ -323,9 +326,9 @@ AUTH_PASSWORD_VALIDATORS = [
     {"NAME": "django.contrib.auth.password_validation.CommonPasswordValidator"},
     {"NAME": "django.contrib.auth.password_validation.NumericPasswordValidator"},
 ]
-AUTH_LOGIN_MAX_ATTEMPTS = int(os.getenv("AUTH_LOGIN_MAX_ATTEMPTS", "5"))
-AUTH_LOGIN_WINDOW_SECONDS = int(os.getenv("AUTH_LOGIN_WINDOW_SECONDS", "900"))
-AUTH_LOGIN_LOCK_SECONDS = int(os.getenv("AUTH_LOGIN_LOCK_SECONDS", "900"))
+AUTH_LOGIN_MAX_ATTEMPTS = _env_int("AUTH_LOGIN_MAX_ATTEMPTS", "5", minimum=1)
+AUTH_LOGIN_WINDOW_SECONDS = _env_int("AUTH_LOGIN_WINDOW_SECONDS", "900", minimum=1)
+AUTH_LOGIN_LOCK_SECONDS = _env_int("AUTH_LOGIN_LOCK_SECONDS", "900", minimum=1)
 LANGUAGE_CODE = "zh-hans"
 TIME_ZONE = os.getenv("TZ", "Asia/Shanghai")
 USE_I18N = True
@@ -350,6 +353,11 @@ SPECTACULAR_SETTINGS = {
     "TITLE": "Infrix API",
     "VERSION": "1.0.0",
     "SERVE_INCLUDE_SCHEMA": False,
+    "SERVE_PERMISSIONS": [
+        "rest_framework.permissions.AllowAny"
+        if DEBUG
+        else "rest_framework.permissions.IsAuthenticated"
+    ],
     # Keep generated enum component names stable when several models expose a
     # field named ``status`` with different choice sets.
     "ENUM_NAME_OVERRIDES": {

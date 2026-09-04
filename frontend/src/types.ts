@@ -6,6 +6,7 @@ import type {
   InventoryTaskStatus,
   LicenseStatus,
   RackStatus,
+  RepairPartUsageSource,
   SpareUnit,
   StockOperationType,
 } from "./business-enums";
@@ -18,6 +19,7 @@ export type {
   InventoryTaskStatus,
   LicenseStatus,
   RackStatus,
+  RepairPartUsageSource,
   SpareUnit,
   StockOperationType,
 } from "./business-enums";
@@ -59,6 +61,7 @@ export type DictionaryItem = {
   color?: string;
   is_active: boolean;
   assets_count?: number;
+  custom_fields_count?: number;
   licenses_count?: number;
   spare_parts_count?: number;
   created_at?: string;
@@ -338,11 +341,27 @@ export type DashboardOverview = {
   licenses?: DashboardLicenseSummary;
 };
 
-export type AssetNetwork = { id: number; address: string; role: string; is_primary: boolean; notes?: string };
+export type AssetNetwork = { id: number; address: string; role: string; is_primary: boolean; status?: string; notes?: string };
 export type AssetProcurement = { id: number; purchase_date: string; supplier: string; order_no: string; amount: string | null; notes: string };
 export type AssetMaintenance = { id: number; provider: string; contract_no: string; start_date: string | null; expiry_date: string | null; notes: string };
+export type AssetResponsibilityUser = { id: number; username: string; display_name: string; is_active: boolean };
+export type AssetResponsibilityEvent = {
+  id: number;
+  asset: number;
+  action: "assign" | "return" | "transfer" | string;
+  from_user: number | null;
+  from_user_name: string;
+  to_user: number | null;
+  to_user_name: string;
+  operator: number | null;
+  operator_name: string;
+  reason: string;
+  created_at: string;
+};
 export type Asset = {
   id: number;
+  created_at?: string;
+  updated_at?: string;
   asset_no: string;
   name: string;
   manufacturer?: number | null;
@@ -353,8 +372,13 @@ export type Asset = {
   model_name?: string;
   manufacturer_model?: string;
   status: AssetStatus;
+  allowed_statuses?: AssetStatus[];
   purpose: string;
   serial_number: string | null;
+  department?: number | null;
+  department_name?: string | null;
+  responsible_user?: number | null;
+  responsible_user_name?: string;
   owner_name?: string;
   notes?: string;
   asset_data_center?: number | null;
@@ -386,11 +410,16 @@ export type Asset = {
   custom_fields?: AssetCustomFieldValue[];
 };
 export type AssetDetail = Asset & {
-  network_addresses: Array<{ id: number; address: string; role: string; is_primary: boolean }>;
+  allowed_statuses: AssetStatus[];
+  created_at: string;
+  updated_at: string;
+  department_name: string | null;
+  network_addresses: AssetNetwork[];
   rack_allocation: { rack: number; rack_code: string; data_center: string; data_center_id?: number; server_room: string; server_room_id: number; rack_total_u: number; start_u: number; end_u: number; units: number } | null;
   procurement_records: Array<{ id: number; purchase_date: string; supplier: string; order_no: string; amount: string | null; notes: string }>;
   maintenance_contracts: Array<{ id: number; provider: string; contract_no: string; start_date: string | null; expiry_date: string | null; notes: string }>;
-  inventory_records?: InventoryItem[];
+  inventory_records_count: number;
+  latest_inventory_record: InventoryItem | null;
   tags: Array<{ id: number; name: string; is_active: boolean }>;
   custom_fields: AssetCustomFieldValue[];
   custom_values: Record<string, unknown>;
@@ -583,7 +612,40 @@ export type FacilitySummary = {
   rooms: Array<ServerRoom & { total_u?: number; used_u?: number }>;
   racks: Array<Rack & { room_id: number; device_count?: number }>;
 };
-export type FaultEvent = { id: number; asset: number; asset_no: string; asset_name: string; occurred_at: string; reason: string; description: string; is_closed: boolean; repair: { id: number; fault: number; provider: string; started_at: string | null; finished_at: string | null; notes: string } | null };
+export type FaultEvent = { id: number; asset: number; asset_no: string; asset_name: string; occurred_at: string; reported_at: string | null; resolved_at: string | null; reason: string; description: string; is_closed: boolean; repair: { id: number; fault: number; provider: string; started_at: string | null; finished_at: string | null; notes: string } | null };
+export type RepairPartUsage = {
+  id: number;
+  fault: number;
+  source: RepairPartUsageSource | string;
+  source_label: string;
+  spare_part: number | null;
+  part_code: string;
+  part_name: string;
+  part_model: string;
+  unit: string;
+  unit_label: string;
+  spare_stock: number | null;
+  stock_location: string;
+  stock_data_center_name: string;
+  stock_server_room_name: string;
+  vendor_name: string;
+  quantity: number;
+  notes: string;
+  operator: number | null;
+  operator_name: string;
+  created_at: string;
+};
+export type RepairPartUsageFormState = {
+  source: RepairPartUsageSource;
+  spare_part_id: string;
+  spare_stock_id: string;
+  part_code: string;
+  part_name: string;
+  part_model: string;
+  vendor_name: string;
+  quantity: number | null;
+  notes: string;
+};
 export type Role = { id: number; code: string; name: string; description: string; user_count?: number };
 export type ManagedUser = { id: number; username: string; display_name: string; first_name: string; last_name: string; email: string; is_active: boolean; is_staff: boolean; is_superuser: boolean; groups: number[]; assigned_role_code: string | null; assigned_role_name: string; last_login: string | null; date_joined: string };
 export type AuditLog = { id: number; actor_username: string | null; actor_display_name: string; action: string; resource_type: string; resource_id: string; payload: Record<string, unknown>; created_at: string };

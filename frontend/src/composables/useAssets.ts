@@ -7,6 +7,10 @@ import type {
   Asset,
   AssetBatchDeleteResponse,
   AssetDetail,
+  AssetResponsibilityEvent,
+  AssetResponsibilityUser,
+  AssetStatus,
+  AssetCustomFieldValue,
   AssetCustomFilter,
   AssetSortField,
   AssetSortOrder,
@@ -15,12 +19,14 @@ import type {
   CustomFieldSchema,
   DataCenter,
   DictionaryItem,
+  InventoryItem,
   Rack,
   ServerRoom,
+  SystemSettingDefinition,
   Tag,
 } from "../types";
 import type { AssetFilters, AssetFormState, CapabilityFn, RequestFn } from "../page-context";
-import { isAssetStatus } from "../business-enums";
+import { ASSET_STATUS_OPTIONS, isAssetStatus } from "../business-enums";
 import {
   DEPRECIATION_METHOD_STRAIGHT_LINE,
   depreciationStatusLabel,
@@ -43,10 +49,11 @@ export type StaticAssetColumnKey =
   | "purpose"
   | "status"
   | "serial_number"
-  | "owner_name"
+  | "responsible_user"
   | "data_center"
   | "server_room"
   | "rack_code"
+  | "u_range"
   | "business_ip"
   | "management_ip"
   | "oob_ip"
@@ -168,6 +175,7 @@ export interface AssetsDeps {
   detailError: Ref<string>;
   closeAssetDetail: () => void;
   statusLabel: (status: string) => string;
+  systemSettingsDefinitions: ComputedRef<SystemSettingDefinition[]>;
 }
 
 const defaultColumns: AssetColumnOption[] = [
@@ -176,14 +184,15 @@ const defaultColumns: AssetColumnOption[] = [
   { key: "device_type", label: "设备类型", defaultVisible: true },
   { key: "manufacturer", label: "厂商", defaultVisible: true },
   { key: "status", label: "状态", defaultVisible: true, required: true },
-  { key: "rack_code", label: "位置", defaultVisible: true },
+  { key: "data_center", label: "数据中心" },
+  { key: "server_room", label: "机房" },
+  { key: "rack_code", label: "机柜", defaultVisible: true },
+  { key: "u_range", label: "U 位", defaultVisible: true },
   { key: "manufacturer_model", label: "型号" },
   { key: "maintenance_expiry_date", label: "保修到期" },
   { key: "purpose", label: "用途" },
   { key: "serial_number", label: "序列号" },
-  { key: "owner_name", label: "使用人" },
-  { key: "data_center", label: "数据中心" },
-  { key: "server_room", label: "机房" },
+  { key: "responsible_user", label: "责任人", defaultVisible: true },
   { key: "business_ip", label: "业务 IP" },
   { key: "management_ip", label: "管理 IP" },
   { key: "oob_ip", label: "带外 IP" },
@@ -204,6 +213,11 @@ const supportedColumnKeys = new Set<StaticAssetColumnKey>([
 const requiredColumnKeys = defaultColumns
   .filter((column) => column.required)
   .map((column) => column.key);
+const ASSET_COLUMNS_STORAGE_KEY = "infrix.asset.columns";
+const ASSET_COLUMNS_MIGRATION_KEY = "infrix.asset.columns.migration";
+const ASSET_COLUMNS_MIGRATION_VERSION = "location-split-v3";
+const ASSET_COLUMNS_MIGRATION_REMOVALS: StaticAssetColumnKey[] = ["data_center", "server_room"];
+const ASSET_COLUMNS_AUTO_ADDED_VERSIONS = new Set(["location-split-v1", "location-split-v2"]);
 
 function normalizeVisibleColumns(keys: AssetColumnKey[], dynamicKeys?: Set<string>): AssetColumnKey[] {
   const selected = new Set<AssetColumnKey>(keys);
@@ -227,7 +241,6 @@ function emptyAssetForm(defaultStatus = systemSettingsState.defaultAssetStatus):
     serial_number: "",
     purpose: "",
     status: defaultStatus,
-    owner_name: "",
     notes: "",
     rack_mounted: false,
     asset_data_center: "",
@@ -244,6 +257,7 @@ function emptyAssetForm(defaultStatus = systemSettingsState.defaultAssetStatus):
     supplier: "",
     purchase_order_no: "",
     purchase_amount: "",
+    procurement_notes: "",
     depreciation_enabled: false,
     depreciation_start_date: "",
     depreciation_years: null,
@@ -252,6 +266,7 @@ function emptyAssetForm(defaultStatus = systemSettingsState.defaultAssetStatus):
     maintenance_contract_no: "",
     maintenance_start_date: "",
     maintenance_expiry_date: "",
+    maintenance_notes: "",
     tags: [],
     custom_values: {},
   };
@@ -259,12 +274,21 @@ function emptyAssetForm(defaultStatus = systemSettingsState.defaultAssetStatus):
 
 function loadSavedColumns(): AssetColumnKey[] {
   try {
-    const saved = JSON.parse(localStorage.getItem("infrix.asset.columns") || "null");
+    const saved = JSON.parse(localStorage.getItem(ASSET_COLUMNS_STORAGE_KEY) || "null");
     if (Array.isArray(saved)) {
       const valid = saved.filter((key): key is AssetColumnKey =>
         typeof key === "string" && (supportedColumnKeys.has(key as StaticAssetColumnKey) || isDynamicAssetColumnKey(key)),
       );
-      if (valid.length) return normalizeVisibleColumns(valid);
+      if (valid.length) {
+        const previousMigration = localStorage.getItem(ASSET_COLUMNS_MIGRATION_KEY);
+        const migratedKeys = previousMigration && ASSET_COLUMNS_AUTO_ADDED_VERSIONS.has(previousMigration)
+          ? valid.filter((key) => !ASSET_COLUMNS_MIGRATION_REMOVALS.includes(key as StaticAssetColumnKey))
+          : valid;
+        const normalized = normalizeVisibleColumns(migratedKeys);
+        localStorage.setItem(ASSET_COLUMNS_STORAGE_KEY, JSON.stringify(normalized));
+        localStorage.setItem(ASSET_COLUMNS_MIGRATION_KEY, ASSET_COLUMNS_MIGRATION_VERSION);
+        return normalized;
+      }
     }
   } catch {
     // Fall back to the defaults when local storage is malformed.
@@ -284,7 +308,6 @@ const assetFormFieldNames = new Set([
   "serial_number",
   "purpose",
   "status",
-  "owner_name",
   "notes",
   "asset_data_center",
   "data_center",
@@ -300,6 +323,7 @@ const assetFormFieldNames = new Set([
   "supplier",
   "purchase_order_no",
   "purchase_amount",
+  "procurement_notes",
   "depreciation_enabled",
   "depreciation_start_date",
   "depreciation_years",
@@ -309,6 +333,7 @@ const assetFormFieldNames = new Set([
   "maintenance_contract_no",
   "maintenance_start_date",
   "maintenance_expiry_date",
+  "maintenance_notes",
   "tags",
   "custom_values",
 ]);
@@ -425,7 +450,30 @@ export function useAssets(deps: AssetsDeps) {
   const editingAsset = ref<Asset | null>(null);
   const assetModalMode = ref<"new" | "edit" | "clone">("new");
   const assetForm = ref<AssetFormState>(emptyAssetForm());
+  const initialAssetStatusValues = computed<Set<AssetStatus>>(() => {
+    const definition = deps.systemSettingsDefinitions.value.find(
+      (item) => item.key === "default_asset_status",
+    );
+    const values = (definition?.options || [])
+      .map((option) => String(option.value))
+      .filter((value): value is AssetStatus => isAssetStatus(value) && value !== "repair");
+    return new Set(
+      values.length
+        ? values
+        : ASSET_STATUS_OPTIONS
+            .filter((option) => option.value !== "repair")
+            .map((option) => option.value),
+    );
+  });
+  const assetStatusOptions = computed(() => {
+    const serverAllowed = editingAsset.value?.allowed_statuses;
+    const allowed = serverAllowed
+      ? new Set(serverAllowed.filter(isAssetStatus))
+      : initialAssetStatusValues.value;
+    return ASSET_STATUS_OPTIONS.filter((option) => allowed.has(option.value));
+  });
   const assetCustomFieldSchema = ref<CustomFieldSchema[]>([]);
+  const assetFormExistingCustomFields = ref<AssetCustomFieldValue[]>([]);
   const assetFormLoading = ref(false);
   const assetFormLoadError = ref("");
   const assetFormSaving = ref(false);
@@ -456,6 +504,32 @@ export function useAssets(deps: AssetsDeps) {
   let importController: AbortController | null = null;
   const detailRequestId = ref(0);
   const detailAssetId = ref<number | null>(null);
+  const inventoryHistoryItems = ref<InventoryItem[]>([]);
+  const inventoryHistoryLatest = ref<InventoryItem | null>(null);
+  const inventoryHistoryPage = ref(1);
+  const inventoryHistoryPageSize = ref(systemSettingsState.defaultPageSize);
+  const inventoryHistoryTotal = ref(0);
+  const inventoryHistoryLoading = ref(false);
+  const inventoryHistoryError = ref("");
+  const inventoryHistoryCanView = ref(false);
+  const inventoryHistoryRequestId = ref(0);
+  let inventoryHistoryController: AbortController | null = null;
+  const responsibilityHistoryItems = ref<AssetResponsibilityEvent[]>([]);
+  const responsibilityHistoryPage = ref(1);
+  const responsibilityHistoryPageSize = ref(systemSettingsState.defaultPageSize);
+  const responsibilityHistoryTotal = ref(0);
+  const responsibilityHistoryLoading = ref(false);
+  const responsibilityHistoryError = ref("");
+  const responsibilityHistoryCanView = ref(false);
+  const responsibilityHistoryRequestId = ref(0);
+  let responsibilityHistoryController: AbortController | null = null;
+  const responsibilityUsers = ref<AssetResponsibilityUser[]>([]);
+  const responsibilityUsersLoading = ref(false);
+  const responsibilityUsersError = ref("");
+  const responsibilityUsersRequestId = ref(0);
+  let responsibilityUsersController: AbortController | null = null;
+  const responsibilityActionSaving = ref(false);
+  const responsibilityActionError = ref("");
 
   const assetDynamicColumnOptions = computed<AssetColumnOption[]>(() =>
     assetListCustomFieldSchema.value.map((field) => ({
@@ -501,7 +575,8 @@ export function useAssets(deps: AssetsDeps) {
   });
 
   function saveVisibleColumns() {
-    localStorage.setItem("infrix.asset.columns", JSON.stringify(visibleAssetColumns.value));
+    localStorage.setItem(ASSET_COLUMNS_STORAGE_KEY, JSON.stringify(visibleAssetColumns.value));
+    localStorage.setItem(ASSET_COLUMNS_MIGRATION_KEY, ASSET_COLUMNS_MIGRATION_VERSION);
   }
 
   function selectedAssetCustomColumnKeys(): string[] {
@@ -802,16 +877,24 @@ export function useAssets(deps: AssetsDeps) {
     assetCustomSchemaError.value = "";
     assetCustomFieldDeviceType.value = "";
     assetCustomFieldSchema.value = [];
+    assetFormExistingCustomFields.value = [];
   }
 
   function currentCustomValuesForSubmit(values: Record<string, unknown>) {
     const allowedKeys = new Set(visibleCustomFields(assetCustomFieldSchema.value).map((field) => field.key));
     return Object.fromEntries(
-      Object.entries(values).filter(([key]) => allowedKeys.has(key)),
+      Object.entries(values).filter(([key]) =>
+        allowedKeys.has(key) && (
+          !editingAsset.value || assetCustomFieldUserEditedKeys.has(key)
+        ),
+      ),
     );
   }
 
-  async function loadAssetCustomSchema(deviceTypeId: string | number): Promise<boolean> {
+  async function loadAssetCustomSchema(
+    deviceTypeId: string | number,
+    existingFields: AssetCustomFieldValue[] = [],
+  ): Promise<boolean> {
     const normalizedDeviceType = deviceTypeId ? String(deviceTypeId) : "";
     assetCustomSchemaController?.abort();
     const controller = new AbortController();
@@ -825,8 +908,19 @@ export function useAssets(deps: AssetsDeps) {
     try {
       const result = await deps.request<CustomFieldSchema[]>(`/custom-fields/schema/${query}`, { signal: controller.signal });
       if (!result || requestId !== assetCustomSchemaRequestId.value) return false;
-      assetCustomFieldSchema.value = result;
-      reconcileCustomValuesForSchema(result);
+      const existingByKey = new Map(existingFields.map((field) => [field.key, field]));
+      const schemaWithExistingOptions = result.map((field) => {
+        if (!field.options || !["select", "multiselect"].includes(field.field_type)) return field;
+        const existing = existingByKey.get(field.key);
+        if (!existing?.options?.length) return field;
+        const options = [...field.options];
+        for (const option of existing.options) {
+          if (!options.some((candidate) => candidate.value === option.value)) options.push(option);
+        }
+        return { ...field, options };
+      });
+      assetCustomFieldSchema.value = schemaWithExistingOptions;
+      reconcileCustomValuesForSchema(schemaWithExistingOptions);
       return true;
     } catch (error) {
       if (requestId === assetCustomSchemaRequestId.value && !isAbortError(error)) {
@@ -843,17 +937,253 @@ export function useAssets(deps: AssetsDeps) {
     }
   }
 
+  function resetInventoryHistoryState() {
+    inventoryHistoryController?.abort();
+    inventoryHistoryController = null;
+    inventoryHistoryRequestId.value += 1;
+    inventoryHistoryItems.value = [];
+    inventoryHistoryLatest.value = null;
+    inventoryHistoryPage.value = 1;
+    inventoryHistoryTotal.value = 0;
+    inventoryHistoryLoading.value = false;
+    inventoryHistoryError.value = "";
+    inventoryHistoryCanView.value = false;
+  }
+
+  async function loadInventoryHistory(assetId: number, requestedPage = inventoryHistoryPage.value): Promise<boolean> {
+    if (!deps.can("inventory.view")) {
+      inventoryHistoryCanView.value = false;
+      return true;
+    }
+
+    inventoryHistoryCanView.value = true;
+    inventoryHistoryController?.abort();
+    const controller = new AbortController();
+    inventoryHistoryController = controller;
+    const requestId = ++inventoryHistoryRequestId.value;
+    const pageNumber = Math.max(1, Math.trunc(requestedPage || 1));
+    inventoryHistoryPage.value = pageNumber;
+    inventoryHistoryLoading.value = true;
+    inventoryHistoryError.value = "";
+    const params = new URLSearchParams({
+      page: String(pageNumber),
+      page_size: String(inventoryHistoryPageSize.value),
+    });
+
+    try {
+      const payload = await deps.request<PageResult<InventoryItem>>(
+        `/assets/${assetId}/inventory-records/?${params.toString()}`,
+        { signal: controller.signal },
+      );
+      if (
+        requestId !== inventoryHistoryRequestId.value ||
+        detailAssetId.value !== assetId ||
+        controller.signal.aborted
+      ) return false;
+      inventoryHistoryItems.value = pageItems(payload);
+      inventoryHistoryTotal.value = pageTotal(payload);
+      return true;
+    } catch (error) {
+      if (
+        requestId === inventoryHistoryRequestId.value &&
+        detailAssetId.value === assetId &&
+        !isAbortError(error)
+      ) {
+        inventoryHistoryError.value = error instanceof Error
+          ? error.message
+          : tr("asset.relatedDataLoadFailed");
+      }
+      return false;
+    } finally {
+      if (requestId === inventoryHistoryRequestId.value) {
+        inventoryHistoryLoading.value = false;
+        if (inventoryHistoryController === controller) inventoryHistoryController = null;
+      }
+    }
+  }
+
+  function resetResponsibilityHistoryState() {
+    responsibilityHistoryController?.abort();
+    responsibilityHistoryController = null;
+    responsibilityHistoryRequestId.value += 1;
+    responsibilityHistoryItems.value = [];
+    responsibilityHistoryPage.value = 1;
+    responsibilityHistoryTotal.value = 0;
+    responsibilityHistoryLoading.value = false;
+    responsibilityHistoryError.value = "";
+    responsibilityHistoryCanView.value = false;
+  }
+
+  async function loadResponsibilityHistory(assetId: number, requestedPage = responsibilityHistoryPage.value): Promise<boolean> {
+    if (!deps.can("assets.view")) {
+      responsibilityHistoryCanView.value = false;
+      return true;
+    }
+
+    responsibilityHistoryCanView.value = true;
+    responsibilityHistoryController?.abort();
+    const controller = new AbortController();
+    responsibilityHistoryController = controller;
+    const requestId = ++responsibilityHistoryRequestId.value;
+    const pageNumber = Math.max(1, Math.trunc(requestedPage || 1));
+    responsibilityHistoryPage.value = pageNumber;
+    responsibilityHistoryLoading.value = true;
+    responsibilityHistoryError.value = "";
+    const params = new URLSearchParams({
+      page: String(pageNumber),
+      page_size: String(responsibilityHistoryPageSize.value),
+    });
+
+    try {
+      const payload = await deps.request<PageResult<AssetResponsibilityEvent>>(
+        `/assets/${assetId}/responsibility-history/?${params.toString()}`,
+        { signal: controller.signal },
+      );
+      if (
+        requestId !== responsibilityHistoryRequestId.value ||
+        detailAssetId.value !== assetId ||
+        controller.signal.aborted
+      ) return false;
+      responsibilityHistoryItems.value = pageItems(payload);
+      responsibilityHistoryTotal.value = pageTotal(payload);
+      return true;
+    } catch (error) {
+      if (
+        requestId === responsibilityHistoryRequestId.value &&
+        detailAssetId.value === assetId &&
+        !isAbortError(error)
+      ) {
+        responsibilityHistoryError.value = error instanceof Error
+          ? error.message
+          : tr("asset.responsibilityHistoryLoadFailed");
+      }
+      return false;
+    } finally {
+      if (requestId === responsibilityHistoryRequestId.value) {
+        responsibilityHistoryLoading.value = false;
+        if (responsibilityHistoryController === controller) responsibilityHistoryController = null;
+      }
+    }
+  }
+
+  async function loadResponsibilityUsers(search = ""): Promise<boolean> {
+    if (!deps.can("assets.view")) return false;
+    responsibilityUsersController?.abort();
+    const controller = new AbortController();
+    responsibilityUsersController = controller;
+    const requestId = ++responsibilityUsersRequestId.value;
+    responsibilityUsersLoading.value = true;
+    responsibilityUsersError.value = "";
+    const params = new URLSearchParams({ page: "1", page_size: "50" });
+    if (search.trim()) params.set("search", search.trim());
+    try {
+      const payload = await deps.request<PageResult<AssetResponsibilityUser>>(
+        `/assets/responsibility-users/?${params.toString()}`,
+        { signal: controller.signal },
+      );
+      if (requestId !== responsibilityUsersRequestId.value || controller.signal.aborted) return false;
+      responsibilityUsers.value = pageItems(payload);
+      return true;
+    } catch (error) {
+      if (requestId === responsibilityUsersRequestId.value && !isAbortError(error)) {
+        responsibilityUsersError.value = error instanceof Error
+          ? error.message
+          : tr("asset.responsibilityUsersLoadFailed");
+      }
+      return false;
+    } finally {
+      if (requestId === responsibilityUsersRequestId.value) {
+        responsibilityUsersLoading.value = false;
+        if (responsibilityUsersController === controller) responsibilityUsersController = null;
+      }
+    }
+  }
+
+  async function mutateAssetResponsibility(
+    assetId: number,
+    path: string,
+    body: Record<string, unknown>,
+    successMessage: string,
+  ): Promise<boolean> {
+    if (!deps.can("assets.manage") || responsibilityActionSaving.value) return false;
+    responsibilityActionSaving.value = true;
+    responsibilityActionError.value = "";
+    try {
+      await deps.request<AssetDetail>(path, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+      });
+      const listRefreshed = await loadAssets();
+      let detailRefreshed = true;
+      let historyRefreshed = true;
+      if (deps.showAssetDetail.value && detailAssetId.value === assetId) {
+        await openAssetDetail(assetId);
+        detailRefreshed = !deps.detailError.value;
+        historyRefreshed = !inventoryHistoryError.value && !responsibilityHistoryError.value;
+      }
+      deps.actionMessage.value = listRefreshed && detailRefreshed && historyRefreshed
+        ? successMessage
+        : `${successMessage}；${tr("common.refreshFailed")}，${tr("common.retry")}`;
+      return true;
+    } catch (error) {
+      if (!isAbortError(error)) {
+        responsibilityActionError.value = error instanceof Error
+          ? error.message
+          : tr("asset.responsibilityActionFailed");
+      }
+      return false;
+    } finally {
+      responsibilityActionSaving.value = false;
+    }
+  }
+
+  function assignAsset(assetId: number, targetUserId: number, reason: string): Promise<boolean> {
+    return mutateAssetResponsibility(
+      assetId,
+      `/assets/${assetId}/assign/`,
+      { target_user: targetUserId, reason },
+      tr("asset.assignSuccess"),
+    );
+  }
+
+  function returnAsset(assetId: number, reason: string): Promise<boolean> {
+    return mutateAssetResponsibility(
+      assetId,
+      `/assets/${assetId}/return/`,
+      { reason },
+      tr("asset.returnSuccess"),
+    );
+  }
+
+  function transferAsset(assetId: number, targetUserId: number, reason: string): Promise<boolean> {
+    return mutateAssetResponsibility(
+      assetId,
+      `/assets/${assetId}/transfer/`,
+      { target_user: targetUserId, reason },
+      tr("asset.transferSuccess"),
+    );
+  }
+
   async function openAssetDetail(assetId: number) {
     if (!deps.can("assets.view")) return;
     const requestId = ++detailRequestId.value;
     detailAssetId.value = assetId;
+    resetInventoryHistoryState();
+    resetResponsibilityHistoryState();
     deps.showAssetDetail.value = true;
     deps.detailLoading.value = true;
     deps.detailError.value = "";
     deps.detailAsset.value = null;
+    let detailLoaded = false;
     try {
       const asset = await deps.request<AssetDetail>(`/assets/${assetId}/`);
-      if (requestId === detailRequestId.value) deps.detailAsset.value = asset;
+      if (requestId === detailRequestId.value) {
+        deps.detailAsset.value = asset;
+        inventoryHistoryTotal.value = asset.inventory_records_count || 0;
+        inventoryHistoryLatest.value = asset.latest_inventory_record || null;
+        detailLoaded = true;
+      }
     } catch (error) {
       if (requestId === detailRequestId.value && !isAbortError(error)) {
         deps.detailError.value = error instanceof Error ? error.message : tr("asset.assetDetailLoadFailed");
@@ -861,10 +1191,52 @@ export function useAssets(deps: AssetsDeps) {
     } finally {
       if (requestId === detailRequestId.value) deps.detailLoading.value = false;
     }
+    if (detailLoaded && requestId === detailRequestId.value) {
+      await Promise.all([
+        loadInventoryHistory(assetId),
+        loadResponsibilityHistory(assetId),
+      ]);
+    }
   }
 
   async function retryAssetDetail() {
     if (detailAssetId.value) await openAssetDetail(detailAssetId.value);
+  }
+
+  async function retryInventoryHistory() {
+    if (detailAssetId.value && inventoryHistoryCanView.value) {
+      await loadInventoryHistory(detailAssetId.value, inventoryHistoryPage.value);
+    }
+  }
+
+  async function changeInventoryHistoryPage(pageNumber: number) {
+    if (!detailAssetId.value || !inventoryHistoryCanView.value) return;
+    await loadInventoryHistory(detailAssetId.value, pageNumber);
+  }
+
+  async function changeInventoryHistoryPageSize(size: number) {
+    if (!detailAssetId.value || !inventoryHistoryCanView.value) return;
+    if (![20, 50, 100].includes(size)) return;
+    inventoryHistoryPageSize.value = size;
+    await loadInventoryHistory(detailAssetId.value, 1);
+  }
+
+  async function retryResponsibilityHistory() {
+    if (detailAssetId.value && responsibilityHistoryCanView.value) {
+      await loadResponsibilityHistory(detailAssetId.value, responsibilityHistoryPage.value);
+    }
+  }
+
+  async function changeResponsibilityHistoryPage(pageNumber: number) {
+    if (!detailAssetId.value || !responsibilityHistoryCanView.value) return;
+    await loadResponsibilityHistory(detailAssetId.value, pageNumber);
+  }
+
+  async function changeResponsibilityHistoryPageSize(size: number) {
+    if (!detailAssetId.value || !responsibilityHistoryCanView.value) return;
+    if (![20, 50, 100].includes(size)) return;
+    responsibilityHistoryPageSize.value = size;
+    await loadResponsibilityHistory(detailAssetId.value, 1);
   }
 
   /**
@@ -912,7 +1284,6 @@ export function useAssets(deps: AssetsDeps) {
         serial_number: detail.serial_number || "",
         purpose: detail.purpose || "",
         status: detail.status,
-        owner_name: detail.owner_name || "",
         notes: detail.notes || "",
         rack_mounted: Boolean(rack),
         asset_data_center: detail.asset_data_center ? String(detail.asset_data_center) : "",
@@ -929,6 +1300,7 @@ export function useAssets(deps: AssetsDeps) {
         supplier: procurement?.supplier || "",
         purchase_order_no: procurement?.order_no || "",
         purchase_amount: procurement?.amount || "",
+        procurement_notes: procurement?.notes || "",
         depreciation_enabled: Boolean(
           detail.depreciation_start_date &&
           detail.depreciation_years != null &&
@@ -942,16 +1314,27 @@ export function useAssets(deps: AssetsDeps) {
         maintenance_contract_no: maintenance?.contract_no || "",
         maintenance_start_date: maintenance?.start_date || "",
         maintenance_expiry_date: maintenance?.expiry_date || "",
+        maintenance_notes: maintenance?.notes || "",
         tags: (detail.tags || [])
           .filter((tag) => !clone || tag.is_active)
           .map((tag) => String(tag.id)),
         custom_values: { ...(detail.custom_values || {}) },
       };
+      assetFormExistingCustomFields.value = detail.custom_fields || [];
       depreciationStartTouched.value = Boolean(detail.depreciation_start_date);
-      await loadAssetCustomSchema(detail.device_type ? String(detail.device_type) : "");
+      await loadAssetCustomSchema(
+        detail.device_type ? String(detail.device_type) : "",
+        assetFormExistingCustomFields.value,
+      );
       if (requestId !== assetFormRequestId.value) return;
       editingAsset.value = clone ? null : detail;
       if (clone) {
+        if (!assetStatusOptions.value.some((option) => option.value === assetForm.value.status)) {
+          const defaultStatus = systemSettingsState.defaultAssetStatus;
+          assetForm.value.status = assetStatusOptions.value.some((option) => option.value === defaultStatus)
+            ? defaultStatus
+            : assetStatusOptions.value[0]?.value || "in_stock";
+        }
         assetForm.value.asset_no = "";
         assetForm.value.serial_number = "";
         assetForm.value.rack_mounted = false;
@@ -1033,7 +1416,7 @@ export function useAssets(deps: AssetsDeps) {
 
   async function retryAssetCustomSchema() {
     if (!showAssetModal.value || assetFormLoading.value) return;
-    await loadAssetCustomSchema(assetForm.value.device_type);
+    await loadAssetCustomSchema(assetForm.value.device_type, assetFormExistingCustomFields.value);
   }
 
   async function saveAsset() {
@@ -1070,6 +1453,7 @@ export function useAssets(deps: AssetsDeps) {
         supplier,
         purchase_order_no,
         purchase_amount,
+        procurement_notes,
         depreciation_enabled,
         depreciation_start_date,
         depreciation_years,
@@ -1079,6 +1463,7 @@ export function useAssets(deps: AssetsDeps) {
         maintenance_contract_no,
         maintenance_start_date,
         maintenance_expiry_date,
+        maintenance_notes,
         rack_mounted,
         tags,
         custom_values,
@@ -1136,10 +1521,12 @@ export function useAssets(deps: AssetsDeps) {
             supplier,
             purchase_order_no,
             purchase_amount,
+            procurement_notes,
             maintenance_provider,
             maintenance_contract_no,
             maintenance_start_date,
             maintenance_expiry_date,
+            maintenance_notes,
           },
         }),
       });
@@ -1305,10 +1692,11 @@ export function useAssets(deps: AssetsDeps) {
       purpose: asset.purpose || "—",
       status: deps.statusLabel(asset.status),
       serial_number: asset.serial_number || "—",
-      owner_name: asset.owner_name || "—",
-      data_center: asset.data_center || rack?.data_center || "—",
+      responsible_user: asset.responsible_user_name || "—",
+      data_center: asset.data_center || rack?.data_center || asset.asset_data_center_name || "—",
       server_room: asset.server_room || rack?.server_room || "—",
-      rack_code: rack ? [rack.server_room, rack.rack_code].filter(Boolean).join(" / ") : asset.rack_code || "—",
+      rack_code: asset.rack_code || rack?.rack_code || "—",
+      u_range: asset.u_range || (rack?.start_u != null && rack?.end_u != null ? `U${rack.start_u}–U${rack.end_u}` : "—"),
       business_ip: network("business") || "—",
       management_ip: network("management") || "—",
       oob_ip: network("oob") || "—",
@@ -1618,21 +2006,24 @@ export function useAssets(deps: AssetsDeps) {
     const query = assetLookup.value.trim();
     if (!query || !deps.can("assets.view")) return;
     try {
-      const params = new URLSearchParams({ search: query, page_size: "100", compact: "1" });
+      // Quick lookup only needs to decide between a single hit and the full
+      // ledger search. The ledger itself remains the authoritative paged view.
+      const params = new URLSearchParams({ search: query, page: "1", page_size: "2", compact: "1" });
       const requestedCustomColumns = selectedAssetCustomColumnKeys();
       if (requestedCustomColumns.length) params.set("custom_columns", requestedCustomColumns.join(","));
       const payload = await deps.request<PageResult<Asset> | Asset[]>(`/assets/?${params.toString()}`);
       const matches = pageItems(payload);
-      if (matches.length === 1) {
+      const matchCount = pageTotal(payload);
+      if (matchCount === 1 && matches.length === 1) {
         await openAssetDetail(matches[0].id);
         return;
       }
       assetSearch.value = query;
       assetPage.value = 1;
       assets.value = matches;
-      assetCount.value = matches.length;
+      assetCount.value = matchCount;
       deps.actionMessage.value = matches.length
-        ? tr("asset.quickLookupFound", { count: matches.length })
+        ? tr("asset.quickLookupFound", { count: matchCount })
         : tr("asset.quickLookupNotFound", { query });
       deps.goToLedger();
     } catch (error) {
@@ -1646,6 +2037,7 @@ export function useAssets(deps: AssetsDeps) {
   }
 
   return {
+    can: deps.can,
     assets,
     selectedAssetIds,
     assetBatchDeleteSaving,
@@ -1685,6 +2077,7 @@ export function useAssets(deps: AssetsDeps) {
     editingAsset,
     assetModalMode,
     assetForm,
+    assetStatusOptions,
     assetFormLoading,
     assetFormLoadError,
     assetFormSaving,
@@ -1754,6 +2147,40 @@ export function useAssets(deps: AssetsDeps) {
     changeAssetRack,
     setAssetRackMounted,
     closeAssetDetail: deps.closeAssetDetail,
-    invalidateDetail: () => { detailRequestId.value += 1; },
+    invalidateDetail: () => {
+      detailRequestId.value += 1;
+      resetInventoryHistoryState();
+      resetResponsibilityHistoryState();
+    },
+    inventoryHistoryItems,
+    inventoryHistoryLatest,
+    inventoryHistoryPage,
+    inventoryHistoryPageSize,
+    inventoryHistoryTotal,
+    inventoryHistoryLoading,
+    inventoryHistoryError,
+    inventoryHistoryCanView,
+    retryInventoryHistory,
+    changeInventoryHistoryPage,
+    changeInventoryHistoryPageSize,
+    responsibilityHistoryItems,
+    responsibilityHistoryPage,
+    responsibilityHistoryPageSize,
+    responsibilityHistoryTotal,
+    responsibilityHistoryLoading,
+    responsibilityHistoryError,
+    responsibilityHistoryCanView,
+    retryResponsibilityHistory,
+    changeResponsibilityHistoryPage,
+    changeResponsibilityHistoryPageSize,
+    responsibilityUsers,
+    responsibilityUsersLoading,
+    responsibilityUsersError,
+    loadResponsibilityUsers,
+    responsibilityActionSaving,
+    responsibilityActionError,
+    assignAsset,
+    returnAsset,
+    transferAsset,
   };
 }

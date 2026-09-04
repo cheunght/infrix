@@ -105,6 +105,7 @@ export function useFacilities(deps: FacilitiesDeps) {
   const deletingRackId = ref<number | null>(null);
   const updatingRackId = ref<number | null>(null);
   const updatingRoomId = ref<number | null>(null);
+  const exportingRackLayout = ref(false);
 
   function extractFormErrors(error: unknown, fields: readonly string[]) {
     const details = error && typeof error === "object" && "details" in error
@@ -123,11 +124,12 @@ export function useFacilities(deps: FacilitiesDeps) {
   async function loadDataCenters(version = deps.beginLoad()): Promise<boolean> {
     if (!deps.can("racks.view")) return false;
     try {
-      const result = await deps.request<{ results?: DataCenter[]; count?: number } | DataCenter[]>(
-        "/data-centers/?page_size=100",
+      const result = await loadAllPages<DataCenter>(
+        "/data-centers/?page_size=50&is_active=true",
+        version,
       );
       if (deps.isCurrentLoad(version)) {
-        dataCenters.value = Array.isArray(result) ? result : result?.results || [];
+        dataCenters.value = result || [];
       }
       return deps.isCurrentLoad(version);
     } catch (error) {
@@ -175,8 +177,8 @@ export function useFacilities(deps: FacilitiesDeps) {
       locationManagementError.value = "";
     }
     const [dataCentersResult, roomsResult, summaryResult] = await Promise.allSettled([
-      loadAllPages<DataCenter>("/data-centers/?page_size=100&is_active=all", version),
-      loadAllPages<ServerRoom>("/server-rooms/?page_size=100&is_active=all", version),
+      loadAllPages<DataCenter>("/data-centers/?page_size=50&is_active=all", version),
+      loadAllPages<ServerRoom>("/server-rooms/?page_size=50&is_active=all", version),
       deps.request<FacilitySummary>("/facilities/summary/"),
     ]);
     if (!deps.isCurrentLoad(version) || requestId !== locationManagementRequestId.value) return true;
@@ -205,13 +207,17 @@ export function useFacilities(deps: FacilitiesDeps) {
   async function loadServerRooms(version = deps.beginLoad()) {
     if (!deps.can("racks.view")) return false;
     try {
-      const params = new URLSearchParams({ page_size: "100", is_active: "true" });
-      if (selectedDataCenter.value) params.set("data_center", selectedDataCenter.value);
-      const result = await deps.request<{ results?: ServerRoom[] } | ServerRoom[]>(
+      // Keep the full active room dictionary available to the rack editor so
+      // a correction can move a rack across data centers even when the rack
+      // view itself is filtered to one data center.  Presentation filters are
+      // applied by roomOptions and rackListPath, not by this relation cache.
+      const params = new URLSearchParams({ page_size: "50", is_active: "true" });
+      const result = await loadAllPages<ServerRoom>(
         `/server-rooms/?${params.toString()}`,
+        version,
       );
-      if (deps.isCurrentLoad(version)) {
-        serverRooms.value = Array.isArray(result) ? result : result?.results || [];
+      if (deps.isCurrentLoad(version) && result) {
+        serverRooms.value = result;
       }
     } catch (error) {
       if (!isAbortError(error)) throw error;
@@ -225,7 +231,7 @@ export function useFacilities(deps: FacilitiesDeps) {
     if (!deps.can("racks.view")) return false;
     const [roomsResult, racksResult] = await Promise.allSettled([
       loadServerRooms(version),
-      deps.request<{ results?: Rack[] } | Rack[]>("/racks/?page_size=100&is_active=true"),
+      loadAllPages<Rack>("/racks/?page_size=50&is_active=true", version),
     ]);
     if (!deps.isCurrentLoad(version)) return true;
     if (roomsResult.status === "rejected" && !isAbortError(roomsResult.reason)) {
@@ -235,9 +241,7 @@ export function useFacilities(deps: FacilitiesDeps) {
       if (isAbortError(racksResult.reason)) return false;
       throw racksResult.reason;
     }
-    racks.value = Array.isArray(racksResult.value)
-      ? racksResult.value
-      : racksResult.value?.results || [];
+    racks.value = racksResult.value || [];
     return true;
   }
 
@@ -746,10 +750,19 @@ export function useFacilities(deps: FacilitiesDeps) {
 
   async function exportRackLayout() {
     if (!deps.can("racks.export")) return;
+    if (exportingRackLayout.value) return;
+    exportingRackLayout.value = true;
     try {
-      await deps.download("/reports/racks/export/", "rack-layout.xlsx");
+      const params = new URLSearchParams();
+      if (selectedDataCenter.value) params.set("room__data_center", selectedDataCenter.value);
+      if (selectedRoom.value) params.set("room", selectedRoom.value);
+      const query = params.toString();
+      const exportPath = query ? `/reports/racks/export/?${query}` : "/reports/racks/export/";
+      await deps.download(exportPath, "rack-layout.xlsx");
     } catch (error) {
       deps.actionMessage.value = error instanceof Error ? error.message : tr("facility.rackLayoutExportFailed");
+    } finally {
+      exportingRackLayout.value = false;
     }
   }
 
@@ -972,6 +985,7 @@ export function useFacilities(deps: FacilitiesDeps) {
     deletingRackId,
     updatingRackId,
     updatingRoomId,
+    exportingRackLayout,
     loadDataCenters,
     loadRackManagement,
     loadRackView,

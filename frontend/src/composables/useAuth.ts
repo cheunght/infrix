@@ -7,11 +7,13 @@ import { hasCapability } from "../permissions";
 
 export interface AuthDeps {
   request: RequestFn;
-  loadCsrf: () => Promise<void>;
+  loadCsrf: (signal?: AbortSignal) => Promise<void>;
   routerReplace: (location: string) => Promise<unknown>;
   syncRouteState: () => void;
   ensureRouteAccess: () => boolean;
   bootstrapApplication: () => Promise<void>;
+  bootstrapError: Ref<boolean>;
+  resetBootstrap: () => void;
   authenticated: Ref<boolean>;
   authChecked: Ref<boolean>;
   passwordChangeRequired: Ref<boolean>;
@@ -92,9 +94,12 @@ export function useAuth(deps: AuthDeps) {
     deps.passwordChangeRequired.value = Boolean(user.password_change_required);
   }
 
-  async function checkAuth() {
+  async function checkAuth(signal?: AbortSignal) {
     try {
-      const user = await deps.request<AuthPayload & { username: string }>("/auth/me/");
+      const user = await deps.request<AuthPayload & { username: string }>(
+        "/auth/me/",
+        signal ? { signal } : undefined,
+      );
       applyAuthPayload(user);
       deps.syncRouteState();
       deps.ensureRouteAccess();
@@ -104,6 +109,7 @@ export function useAuth(deps: AuthDeps) {
       }
     } catch (error) {
       if (isAbortError(error)) return;
+      if (!(error instanceof ApiError) || error.status !== 401) throw error;
       deps.authenticated.value = false;
       deps.isAdmin.value = false;
       deps.roleCode.value = "";
@@ -117,6 +123,8 @@ export function useAuth(deps: AuthDeps) {
 
   async function login() {
     deps.loginError.value = "";
+    deps.bootstrapError.value = false;
+    let sessionEstablished = false;
     try {
       const user = await deps.request<AuthPayload>("/auth/login/", {
         method: "POST",
@@ -124,6 +132,7 @@ export function useAuth(deps: AuthDeps) {
         body: JSON.stringify({ username: deps.username.value, password: deps.password.value }),
       });
       applyAuthPayload(user);
+      sessionEstablished = true;
       deps.syncRouteState();
       deps.ensureRouteAccess();
       if (!hasCapability(deps.permissions.value, "organization.manage") && deps.settingsSection.value === "organization") {
@@ -137,6 +146,11 @@ export function useAuth(deps: AuthDeps) {
       }
       await deps.bootstrapApplication();
     } catch (error) {
+      if (isAbortError(error)) return;
+      if (sessionEstablished) {
+        deps.bootstrapError.value = true;
+        return;
+      }
       if (error instanceof ApiError && error.status === 429) {
         const details = error.details as { retry_after?: number } | undefined;
         const retryAfter = Number(details?.retry_after || 0);
@@ -154,6 +168,7 @@ export function useAuth(deps: AuthDeps) {
     try {
       await deps.request("/auth/logout/", { method: "POST" });
     } finally {
+      deps.resetBootstrap();
       deps.authenticated.value = false;
       deps.isAdmin.value = false;
       deps.roleCode.value = "";

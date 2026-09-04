@@ -34,6 +34,7 @@ import { useLicenses } from "./composables/useLicenses";
 import { useRepairs } from "./composables/useRepairs";
 import { useSpareParts } from "./composables/useSpareParts";
 import { useSettings } from "./composables/useSettings";
+import { isAbortError } from "./api";
 import { useRoute, useRouter, type RouteLocationRaw } from "vue-router";
 import ApiErrorAlert from "./components/ApiErrorAlert.vue";
 import SearchField from "./components/SearchField.vue";
@@ -102,6 +103,10 @@ const pageTitle = computed(() => {
 const loading = ref(false);
 const authChecked = ref(false);
 const authenticated = ref(false);
+const bootstrapLoading = ref(false);
+const bootstrapError = ref(false);
+let bootstrapAttemptId = 0;
+let bootstrapController: AbortController | null = null;
 const passwordChangeRequired = ref(false);
 const isAdmin = ref(false);
 const roleCode = ref("");
@@ -246,6 +251,7 @@ const {
   deletingRackId,
   updatingRackId,
   updatingRoomId,
+  exportingRackLayout,
   loadDataCenters,
   loadRackManagement,
   loadRackView,
@@ -318,6 +324,9 @@ const {
   customFieldListError,
   customFieldOptionLoading,
   customFieldOptionError,
+  customFieldOptionPage,
+  customFieldOptionPageSize,
+  customFieldOptionTotal,
   customFieldSaving,
   customFieldOptionSaving,
   customFieldActionId,
@@ -401,6 +410,8 @@ const {
   refreshCustomFieldList,
   changeCustomFieldPage,
   changeCustomFieldPageSize,
+  changeCustomFieldOptionPage,
+  changeCustomFieldOptionPageSize,
   loadCustomFieldOptions,
   retryCustomFieldOptions,
   loadTags,
@@ -470,7 +481,9 @@ const auth = useAuth({
   routerReplace: (location) => router.replace(location),
   syncRouteState,
   ensureRouteAccess,
-  bootstrapApplication,
+  bootstrapApplication: bootstrapAuthenticatedSession,
+  bootstrapError,
+  resetBootstrap: resetBootstrapState,
   authenticated,
   authChecked,
   passwordChangeRequired,
@@ -549,6 +562,7 @@ const assetsApi = useAssets({
   detailError,
   closeAssetDetail,
   statusLabel,
+  systemSettingsDefinitions,
 });
 const {
   assets,
@@ -589,6 +603,7 @@ const {
   editingAsset,
   assetModalMode,
   assetForm,
+  assetStatusOptions,
   assetFormLoading,
   assetFormLoadError,
   assetFormSaving,
@@ -612,6 +627,36 @@ const {
   loadAssets,
   openAssetEditor,
   retryAssetDetail,
+  inventoryHistoryItems,
+  inventoryHistoryLatest,
+  inventoryHistoryPage,
+  inventoryHistoryPageSize,
+  inventoryHistoryTotal,
+  inventoryHistoryLoading,
+  inventoryHistoryError,
+  inventoryHistoryCanView,
+  retryInventoryHistory,
+  changeInventoryHistoryPage,
+  changeInventoryHistoryPageSize,
+  responsibilityHistoryItems,
+  responsibilityHistoryPage,
+  responsibilityHistoryPageSize,
+  responsibilityHistoryTotal,
+  responsibilityHistoryLoading,
+  responsibilityHistoryError,
+  responsibilityHistoryCanView,
+  retryResponsibilityHistory,
+  changeResponsibilityHistoryPage,
+  changeResponsibilityHistoryPageSize,
+  responsibilityUsers,
+  responsibilityUsersLoading,
+  responsibilityUsersError,
+  loadResponsibilityUsers,
+  responsibilityActionSaving,
+  responsibilityActionError,
+  assignAsset,
+  returnAsset,
+  transferAsset,
   refreshOpenAssetDetail,
   openAssetClone,
   openNewAssetModal,
@@ -687,6 +732,7 @@ const repairs = useRepairs({
   download,
   beginLoad,
   isCurrentLoad,
+  confirmAction,
   assets,
   selectedAssetIds,
   actionMessage,
@@ -722,9 +768,36 @@ const {
   retryRepairList,
   createFault,
   saveRepair,
+  reopenRepair,
   exportRepairs,
   changeRepairPage,
   changeRepairPageSize,
+  showRepairPartUsageModal,
+  repairPartUsageForm,
+  repairPartUsageItems,
+  repairPartUsagePage,
+  repairPartUsagePageSize,
+  repairPartUsageTotal,
+  repairPartUsageLoading,
+  repairPartUsageError,
+  repairPartUsageSaving,
+  repairPartUsageOptions,
+  repairPartUsageOptionsLoading,
+  repairPartUsageOptionsError,
+  repairPartUsageStocks,
+  repairPartUsageStocksLoading,
+  repairPartUsageStocksError,
+  repairPartUsageSourceOptions,
+  openRepairPartUsageModal,
+  loadRepairPartUsageHistory,
+  loadRepairPartUsageOptions,
+  scheduleRepairPartUsagePartSearch,
+  loadRepairPartUsageStocks,
+  changeRepairPartUsageSource,
+  changeRepairPartUsagePart,
+  saveRepairPartUsage,
+  retryRepairPartUsageHistory,
+  changeRepairPartUsagePage,
 } = repairs;
 const spares = useSpareParts({
   request,
@@ -1121,14 +1194,14 @@ function openActiveSidebarSubmenu() {
     page.value === "settings"
       ? ["settings"]
       : page.value === "asset-config"
-        ? ["asset-menu", "spares-menu", "asset-config-menu"]
+        ? ["asset-menu", "asset-config-menu"]
         : page.value === "ledger"
           ? ["asset-menu"]
           : page.value === "spares"
-            ? ["asset-menu", "spares-menu"]
-          : page.value === "racks"
-            ? ["racks-menu"]
-            : [];
+            ? ["asset-menu"]
+            : page.value === "racks"
+              ? ["racks-menu"]
+              : [];
   if (submenuIndexes.length) {
     nextTick(() => submenuIndexes.forEach((index) => sidebarMenu.value?.open(index)));
   }
@@ -1228,6 +1301,75 @@ async function bootstrapApplication() {
   await loadTags();
   await load();
 }
+function beginBootstrapAttempt() {
+  bootstrapController?.abort();
+  const controller = new AbortController();
+  bootstrapController = controller;
+  const id = ++bootstrapAttemptId;
+  bootstrapLoading.value = true;
+  bootstrapError.value = false;
+  return { id, controller };
+}
+function isCurrentBootstrapAttempt(id: number, controller: AbortController) {
+  return id === bootstrapAttemptId && bootstrapController === controller && !controller.signal.aborted;
+}
+function recordBootstrapFailure(id: number, controller: AbortController, error: unknown) {
+  if (isCurrentBootstrapAttempt(id, controller) && !isAbortError(error)) {
+    bootstrapError.value = true;
+  }
+}
+function finishBootstrapAttempt(id: number, controller: AbortController) {
+  if (id !== bootstrapAttemptId || bootstrapController !== controller) return;
+  bootstrapLoading.value = false;
+  bootstrapController = null;
+}
+function resetBootstrapState() {
+  bootstrapController?.abort();
+  bootstrapController = null;
+  bootstrapAttemptId += 1;
+  bootstrapLoading.value = false;
+  bootstrapError.value = false;
+}
+async function loadAuthenticatedApplication(id: number, controller: AbortController) {
+  try {
+    await bootstrapApplication();
+  } catch (error) {
+    recordBootstrapFailure(id, controller, error);
+  }
+}
+async function bootstrapAuthenticatedSession() {
+  const attempt = beginBootstrapAttempt();
+  try {
+    await loadAuthenticatedApplication(attempt.id, attempt.controller);
+  } finally {
+    finishBootstrapAttempt(attempt.id, attempt.controller);
+  }
+}
+async function runInitialBootstrap() {
+  const attempt = beginBootstrapAttempt();
+  authChecked.value = false;
+  try {
+    await loadCsrf(attempt.controller.signal);
+    if (!isCurrentBootstrapAttempt(attempt.id, attempt.controller)) return;
+    await checkAuth(attempt.controller.signal);
+    if (!isCurrentBootstrapAttempt(attempt.id, attempt.controller)) return;
+    if (authenticated.value && !passwordChangeRequired.value) {
+      resetMainScroll();
+      await loadAuthenticatedApplication(attempt.id, attempt.controller);
+    }
+  } catch (error) {
+    recordBootstrapFailure(attempt.id, attempt.controller, error);
+  } finally {
+    if (isCurrentBootstrapAttempt(attempt.id, attempt.controller)) {
+      authChecked.value = true;
+      finishBootstrapAttempt(attempt.id, attempt.controller);
+    }
+  }
+}
+function retryBootstrap() {
+  if (bootstrapLoading.value) return;
+  void runInitialBootstrap();
+}
 function openRackAssetDetail(assetId: number, rackId: number) {
   if (!can("assets.view")) return;
   focusedRackId.value = rackId;
@@ -1296,12 +1438,7 @@ function navigate(item: (typeof navItems)[number]) {
   if (item.page === "repairs") repairPage.value = 1;
   if (item.page === "licenses") licensePage.value = 1;
   if (item.page === "spares") sparePage.value = 1;
-  if (item.page === "spares") {
-    nextTick(() => {
-      sidebarMenu.value?.open("asset-menu");
-      sidebarMenu.value?.open("spares-menu");
-    });
-  }
+  if (item.page === "spares") nextTick(() => sidebarMenu.value?.open("asset-menu"));
   if (item.page === "racks") {
     rackPage.value = 1;
     openRackSection("locations");
@@ -1379,10 +1516,7 @@ function handleMenuSelect(index: string) {
   if (index === "spares") {
     const spareItem = navItems.find((entry) => entry.page === "spares");
     if (spareItem) navigate(spareItem);
-    nextTick(() => {
-      sidebarMenu.value?.open("asset-menu");
-      sidebarMenu.value?.open("spares-menu");
-    });
+    nextTick(() => sidebarMenu.value?.open("asset-menu"));
     return;
   }
   if (index === "racks-menu" || index === "racks") {
@@ -1483,16 +1617,12 @@ watch(
 );
 onMounted(async () => {
   window.addEventListener("resize", updateViewportHeight);
-  await loadCsrf();
-  await checkAuth();
-  if (authenticated.value && !passwordChangeRequired.value) {
-    resetMainScroll();
-    await bootstrapApplication();
-  }
+  await runInitialBootstrap();
 });
 onBeforeUnmount(() => {
   window.removeEventListener("resize", updateViewportHeight);
   apiClient.dispose();
+  resetBootstrapState();
 });
 
 // Page components receive refs and handlers through this stable context. The
@@ -1527,6 +1657,14 @@ const pageContext = {
   exportRepairs, exportingRepairs, openFaultModal, repairRows, openRepairModal, formatDateTime,
   repairPage, repairPageSize, repairCount, changeRepairPage,
   changeRepairPageSize,
+  showRepairPartUsageModal, repairPartUsageForm, repairPartUsageItems, repairPartUsagePage,
+  repairPartUsagePageSize, repairPartUsageTotal, repairPartUsageLoading, repairPartUsageError,
+  repairPartUsageSaving, repairPartUsageOptions, repairPartUsageOptionsLoading, repairPartUsageOptionsError,
+  repairPartUsageStocks, repairPartUsageStocksLoading, repairPartUsageStocksError,
+  repairPartUsageSourceOptions, openRepairPartUsageModal, loadRepairPartUsageHistory,
+  loadRepairPartUsageOptions, scheduleRepairPartUsagePartSearch, loadRepairPartUsageStocks,
+  changeRepairPartUsageSource, changeRepairPartUsagePart, saveRepairPartUsage,
+  retryRepairPartUsageHistory, changeRepairPartUsagePage,
   licenseKeyword, searchLicenses, licenseStatus, licenseManufacturer, licenseManufacturerOptions, licenseManufacturerFilterOptions, licenseListLoading, licenseListError, exportingLicenses,
   resetLicenseFilters, retryLicenseList, deletingLicenseId, exportLicenses,
   openLicenseModal, deleteLicense, licenses, licensePage,
@@ -1551,7 +1689,7 @@ const pageContext = {
   loadLocationManagement, retryLocationManagement,
   changeLocationSearch, changeLocationType, changeLocationStatus, changeLocationDataCenter, resetLocationFilters,
   updateDataCenterStatus, deleteDataCenter,
-  showRackModal, editingRack, rackForm, rackFormFieldErrors, rackSaving, deletingRackId, updatingRackId, updatingRoomId,
+  showRackModal, editingRack, rackForm, rackFormFieldErrors, rackSaving, deletingRackId, updatingRackId, updatingRoomId, exportingRackLayout,
   openRackModal, saveRack, deleteRack, updateRackStatus, clearRackFormErrors,
   dataCenters, selectedDataCenter, changeDataCenter,
   rackListLoading, rackCanvasLoading, rackListError, rackCanvasError,
@@ -1562,6 +1700,14 @@ const pageContext = {
   rackBodyStyle,
   rackAllocationStyle, rackGapUnavailable, openRackAssetDetail,
   rackDetailOpen, detailAsset, detailLoading, detailError, retryAssetDetail, closeAssetDetail,
+  inventoryHistoryItems, inventoryHistoryLatest, inventoryHistoryPage, inventoryHistoryPageSize,
+  inventoryHistoryTotal, inventoryHistoryLoading, inventoryHistoryError, inventoryHistoryCanView,
+  retryInventoryHistory, changeInventoryHistoryPage, changeInventoryHistoryPageSize,
+  responsibilityHistoryItems, responsibilityHistoryPage, responsibilityHistoryPageSize,
+  responsibilityHistoryTotal, responsibilityHistoryLoading, responsibilityHistoryError, responsibilityHistoryCanView,
+  retryResponsibilityHistory, changeResponsibilityHistoryPage, changeResponsibilityHistoryPageSize,
+  responsibilityUsers, responsibilityUsersLoading, responsibilityUsersError, loadResponsibilityUsers,
+  responsibilityActionSaving, responsibilityActionError, assignAsset, returnAsset, transferAsset,
   rackCount, rackPage, rackPageSize, changeRackPage,
   settingsSection, systemSettings, systemSettingsForm, systemSettingsDefinitions, systemSettingsLoading,
   systemSettingsSaving, systemSettingsError, systemSettingsFormErrors, systemSettingsDirty,
@@ -1585,7 +1731,8 @@ const pageContext = {
   loadAuditLogs, retryAuditLogs, searchAuditLogs, auditLogs, auditPage, auditPageSize, auditCount,
   changeAuditPage, changeAuditPageSize,
   customFieldDeviceType, customFieldActive, customFieldTableItems, customFieldPage, customFieldPageSize, customFieldCount, customFieldListLoading, customFieldListError,
-  customFieldOptionLoading, customFieldOptionError, customFieldSaving, customFieldOptionSaving,
+  customFieldOptionLoading, customFieldOptionError, customFieldOptionPage, customFieldOptionPageSize, customFieldOptionTotal,
+  customFieldSaving, customFieldOptionSaving, changeCustomFieldOptionPage, changeCustomFieldOptionPageSize,
   customFieldActionId, customFieldOptionActionId, loadCustomFields, retryCustomFieldList, refreshCustomFieldList, changeCustomFieldPage, changeCustomFieldPageSize, loadCustomFieldOptions, retryCustomFieldOptions, customFields,
   openCustomFieldModal, saveCustomField, toggleCustomField, deleteCustomField,
   openCustomFieldOptionModal, saveCustomFieldOption, deleteCustomFieldOption,
@@ -1594,7 +1741,7 @@ const pageContext = {
   showCustomFieldOptionModal, editingCustomFieldOption, tagSearch, tagActive, tagTableItems, tagPage, tagPageSize, tagCount, tagListLoading, tagListError, tagSaving, tagActionId,
   loadTags, retryTagList, refreshTagList, changeTagPage, changeTagPageSize, openTagModal, saveTag, toggleTag, deleteTag, tagForm, tagFormErrors, showTagModal, editingTag,
   manufacturers,
-  showAssetModal, assetModalMode, editingAsset, assetForm, activeDeviceTypes,
+  showAssetModal, assetModalMode, editingAsset, assetForm, assetStatusOptions, activeDeviceTypes,
   assetFormLoading, assetFormLoadError, assetFormSaving, assetFormFieldErrors,
   retryAssetFormLoad, clearAssetFormErrors,
   assetCustomFieldSchema,
@@ -1610,6 +1757,31 @@ const overlayAssetDetail = {
   detailAsset,
   detailLoading,
   detailError,
+  inventoryHistory: {
+    inventoryHistoryItems,
+    inventoryHistoryLatest,
+    inventoryHistoryPage,
+    inventoryHistoryPageSize,
+    inventoryHistoryTotal,
+    inventoryHistoryLoading,
+    inventoryHistoryError,
+    inventoryHistoryCanView,
+      retryInventoryHistory,
+      changeInventoryHistoryPage,
+      changeInventoryHistoryPageSize,
+  },
+  responsibilityHistory: {
+    responsibilityHistoryItems,
+    responsibilityHistoryPage,
+    responsibilityHistoryPageSize,
+    responsibilityHistoryTotal,
+    responsibilityHistoryLoading,
+    responsibilityHistoryError,
+    responsibilityHistoryCanView,
+    retryResponsibilityHistory,
+    changeResponsibilityHistoryPage,
+    changeResponsibilityHistoryPageSize,
+  },
 };
 const globalOverlayLoaded = ref(false);
 const hasOpenGlobalOverlay = computed(() => Boolean(
@@ -1634,7 +1806,16 @@ watch(hasOpenGlobalOverlay, (isOpen) => {
 
 <template>
   <el-config-provider :locale="elementPlusLocale">
-  <div v-if="!authChecked" class="loading-screen">{{ t("common.checkingLogin") }}</div>
+  <div v-if="bootstrapError" class="loading-screen bootstrap-error-screen" role="alert">
+    <el-result icon="error" :title="t('auth.bootstrapFailed')" :sub-title="t('auth.bootstrapFailedDescription')">
+      <template #extra>
+        <el-button type="primary" :loading="bootstrapLoading" :disabled="bootstrapLoading" @click="retryBootstrap">
+          {{ t('common.retry') }}
+        </el-button>
+      </template>
+    </el-result>
+  </div>
+  <div v-else-if="!authChecked" class="loading-screen">{{ t("common.checkingLogin") }}</div>
   <div v-else-if="!authenticated" class="login-screen">
     <div class="login-card">
       <div class="login-language-switcher"><LanguageSwitcher /></div>
@@ -1719,27 +1900,20 @@ watch(hasOpenGlobalOverlay, (isOpen) => {
           index="asset-menu"
           ><template #title><el-icon><Monitor /></el-icon><span>{{ t('nav.assets') }}</span></template
           ><el-menu-item v-if="can('assets.view')" index="asset-list">{{ t('nav.assetList') }}</el-menu-item
+          ><el-menu-item v-if="can('spares.view')" index="spares">{{ t('nav.spareParts') }}</el-menu-item
           ><el-sub-menu
-            v-if="can('spares.view') || can('custom_fields.view') || can('tags.view')"
-            index="spares-menu"
+            v-if="can('custom_fields.view') || can('tags.view')"
+            index="asset-config-menu"
           >
-            <template #title>{{ t('nav.spareParts') }}</template>
-            <el-menu-item v-if="can('spares.view')" index="spares">{{ t('nav.spareList') }}</el-menu-item>
-            <el-sub-menu
-              v-if="can('custom_fields.view') || can('tags.view')"
-              index="asset-config-menu"
+            <template #title>{{ t('nav.assetConfiguration') }}</template>
+            <el-menu-item v-if="can('custom_fields.view')" index="asset-config-custom-fields"
+              >{{ t('nav.customFields') }}</el-menu-item
             >
-              <template #title>{{ t('nav.assetConfiguration') }}</template>
-              <el-menu-item v-if="can('custom_fields.view')" index="asset-config-custom-fields"
-                >{{ t('nav.customFields') }}</el-menu-item
-              >
-              <el-menu-item v-if="can('tags.view')" index="asset-config-tags"
-                >{{ t('nav.tags') }}</el-menu-item
-              >
-            </el-sub-menu>
+            <el-menu-item v-if="can('tags.view')" index="asset-config-tags"
+              >{{ t('nav.tags') }}</el-menu-item
+            >
           </el-sub-menu>
-        ></el-sub-menu
-        >
+        </el-sub-menu>
         <el-sub-menu v-if="can('racks.view')" index="racks-menu">
           <template #title>
             <el-icon><OfficeBuilding /></el-icon>

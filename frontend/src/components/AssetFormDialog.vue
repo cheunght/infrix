@@ -10,7 +10,7 @@ import DynamicFieldRenderer from "./fields/DynamicFieldRenderer.vue";
 import FieldHelp from "./FieldHelp.vue";
 import FormDialogShell from "./FormDialogShell.vue";
 import MoneyInput from "./MoneyInput.vue";
-import { ASSET_STATUS_OPTIONS, businessOptionLabel } from "../business-enums";
+import { businessOptionLabel } from "../business-enums";
 
 const props = defineProps<{ context: AssetFormContext }>();
 const { t } = useI18n();
@@ -20,6 +20,7 @@ const {
   assetModalMode,
   editingAsset,
   assetForm,
+  assetStatusOptions,
   assetFormLoading,
   assetFormLoadError,
   assetFormSaving,
@@ -224,6 +225,21 @@ function finiteConfigNumber(value: unknown): number | undefined {
   return Number.isFinite(parsed) ? parsed : undefined;
 }
 
+function existingInactiveOptionValues(field: CustomFieldSchema): Set<string> {
+  const existing = editingAsset.value?.custom_fields?.find((candidate) => candidate.key === field.key);
+  if (!existing) return new Set();
+  const selected = new Set<string>();
+  if (field.field_type === "select" && typeof existing.value === "string") selected.add(existing.value);
+  if (field.field_type === "multiselect" && Array.isArray(existing.value)) {
+    for (const value of existing.value) if (typeof value === "string") selected.add(value);
+  }
+  return new Set(
+    (existing.options || [])
+      .filter((option) => !option.is_active && selected.has(option.value))
+      .map((option) => option.value),
+  );
+}
+
 function customFieldRule(field: CustomFieldSchema) {
   return {
     validator: (_rule: unknown, value: unknown, callback: (error?: Error) => void) => {
@@ -276,6 +292,7 @@ function customFieldRule(field: CustomFieldSchema) {
 
       if (field.field_type === "select" || field.field_type === "multiselect") {
         const activeValues = new Set((field.options || []).filter((option) => option.is_active).map((option) => option.value));
+        for (const value of existingInactiveOptionValues(field)) activeValues.add(value);
         const submittedValues = field.field_type === "select" ? [value] : (Array.isArray(value) ? value : []);
         if (submittedValues.some((item) => typeof item !== "string" || !activeValues.has(item))) {
           return callback(new Error(t("assetForm.fieldInvalidOptions", { field: field.name })));
@@ -403,13 +420,12 @@ watch(() => assetForm.value.purchase_date, () => {
         </el-form-item>
         <el-form-item :label="t('asset.status')" prop="status" required :error="fieldError('status')">
           <el-select v-model="assetForm.status">
-            <el-option v-for="option in ASSET_STATUS_OPTIONS" :key="option.value" :label="businessOptionLabel(ASSET_STATUS_OPTIONS, option.value)" :value="option.value" />
+            <el-option v-for="option in assetStatusOptions" :key="option.value" :label="businessOptionLabel(assetStatusOptions, option.value)" :value="option.value" />
           </el-select>
         </el-form-item>
         <el-form-item :label="t('asset.model')" :error="fieldError('model')"><el-input v-model="assetForm.model" :placeholder="t('assetForm.modelPlaceholder')" /></el-form-item>
         <el-form-item :label="t('asset.serialNumber')" :error="fieldError('serial_number')"><el-input v-model="assetForm.serial_number" /></el-form-item>
         <el-form-item :label="t('asset.purpose')" :error="fieldError('purpose')"><el-input v-model="assetForm.purpose" /></el-form-item>
-        <el-form-item :label="t('asset.owner')" :error="fieldError('owner_name')"><el-input v-model="assetForm.owner_name" /></el-form-item>
         </div>
       </section>
 
@@ -474,10 +490,12 @@ watch(() => assetForm.value.purchase_date, () => {
         <el-form-item :label="t('asset.purchaseAmount')" prop="purchase_amount" :error="fieldError('purchase_amount')">
           <MoneyInput v-model="purchaseAmountValue" currency="CNY" :placeholder="t('assetForm.purchaseAmountPlaceholder')" />
         </el-form-item>
+        <el-form-item :label="t('asset.procurementNotes')" :error="fieldError('procurement_notes')"><el-input v-model="assetForm.procurement_notes" type="textarea" :rows="2" /></el-form-item>
         <el-form-item :label="t('asset.maintenanceProvider')" :error="fieldError('maintenance_provider')"><el-input v-model="assetForm.maintenance_provider" /></el-form-item>
         <el-form-item :label="t('asset.maintenanceContract')" :error="fieldError('maintenance_contract_no')"><el-input v-model="assetForm.maintenance_contract_no" /></el-form-item>
         <el-form-item :label="t('asset.maintenanceStart')" prop="maintenance_start_date" :error="fieldError('maintenance_start_date')"><el-date-picker v-model="assetForm.maintenance_start_date" type="date" value-format="YYYY-MM-DD" /></el-form-item>
         <el-form-item :label="t('asset.maintenanceExpiry')" prop="maintenance_expiry_date" :error="fieldError('maintenance_expiry_date')"><el-date-picker v-model="assetForm.maintenance_expiry_date" type="date" value-format="YYYY-MM-DD" /></el-form-item>
+        <el-form-item :label="t('asset.maintenanceNotes')" :error="fieldError('maintenance_notes')"><el-input v-model="assetForm.maintenance_notes" type="textarea" :rows="2" /></el-form-item>
         <el-form-item :label="t('common.notes')" :error="fieldError('notes')"><el-input v-model="assetForm.notes" type="textarea" :rows="2" /></el-form-item>
         </div>
         <div class="form-dialog__subsection">

@@ -6,6 +6,11 @@ import { Edit, Grid } from "@element-plus/icons-vue";
 import AssetDetailContent from "./AssetDetailContent.vue";
 import AssetQrDialog from "./AssetQrDialog.vue";
 import type { AssetDetail } from "../types";
+import type {
+  AssetInventoryHistoryContext,
+  AssetResponsibilityContext,
+  AssetResponsibilityHistoryContext,
+} from "../page-context";
 import { statusLabel, statusTone } from "../status";
 import StatusTag from "./StatusTag.vue";
 
@@ -16,6 +21,9 @@ const props = defineProps<{
   error: string;
   canEdit?: boolean;
   retry?: () => void | Promise<void>;
+  responsibilityContext?: AssetResponsibilityContext | null;
+  responsibilityHistoryContext?: AssetResponsibilityHistoryContext | null;
+  inventoryHistoryContext?: AssetInventoryHistoryContext | null;
 }>();
 const { t } = useI18n();
 const showQrDialog = ref(false);
@@ -88,6 +96,9 @@ const assetIdentityMeta = computed(() => {
       :error="error"
       :retry="retry"
       :show-summary="false"
+      :responsibility-context="responsibilityContext"
+      :responsibility-history-context="responsibilityHistoryContext"
+      :inventory-history-context="inventoryHistoryContext"
     />
   </el-drawer>
   <AssetQrDialog v-if="asset" v-model="showQrDialog" :assets="[asset]" />

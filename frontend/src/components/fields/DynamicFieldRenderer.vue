@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed } from "vue";
 import { useI18n } from "vue-i18n";
-import type { CustomFieldSchema } from "../../types";
+import type { CustomFieldOption, CustomFieldSchema } from "../../types";
 
 const props = withDefaults(
   defineProps<{
@@ -47,7 +47,21 @@ const multiselectValue = computed(() =>
 
 const inputPlaceholder = computed(() => props.field.placeholder || `${t('common.enter')}${props.field.name}`);
 const selectPlaceholder = computed(() => props.field.placeholder || `${t('common.select')}${props.field.name}`);
-const activeOptions = computed(() => (props.field.options || []).filter((option) => option.is_active));
+const selectedValues = computed(() =>
+  props.field.field_type === "multiselect"
+    ? multiselectValue.value
+    : selectValue.value
+      ? [selectValue.value]
+      : [],
+);
+const selectableOptions = computed(() => {
+  const selected = new Set(selectedValues.value);
+  return (props.field.options || []).filter((option) => option.is_active || selected.has(option.value));
+});
+
+function optionLabel(option: CustomFieldOption) {
+  return option.is_active ? option.label : `${option.label} (${t("status.inactive")})`;
+}
 
 function update(value: unknown) {
   emit("update:modelValue", value);
@@ -108,10 +122,11 @@ function updateNumber(value: number | null | undefined) {
     @update:model-value="update"
   >
     <el-option
-      v-for="option in activeOptions"
+      v-for="option in selectableOptions"
       :key="option.id"
-      :label="option.label"
+      :label="optionLabel(option)"
       :value="option.value"
+      :disabled="!option.is_active"
     />
   </el-select>
   <el-select
@@ -124,10 +139,11 @@ function updateNumber(value: number | null | undefined) {
     @update:model-value="update"
   >
     <el-option
-      v-for="option in activeOptions"
+      v-for="option in selectableOptions"
       :key="option.id"
-      :label="option.label"
+      :label="optionLabel(option)"
       :value="option.value"
+      :disabled="!option.is_active"
     />
   </el-select>
 </template>

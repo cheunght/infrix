@@ -55,6 +55,7 @@ for model in [
     MaintenanceContract,
     FaultEvent,
     RepairRecord,
+    RepairPartUsage,
     AssetRelation,
     InventoryTask,
     InventoryItem,

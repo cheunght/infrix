@@ -65,7 +65,11 @@ export function useSettings(deps: SettingsDeps) {
   const manufacturers = ref<DictionaryItem[]>([]);
   const deviceTypes = ref<DictionaryItem[]>([]);
   const spareCategories = ref<SparePartCategory[]>([]);
+  const dictionaryRows = ref<Array<DictionaryItem | SparePartCategory>>([]);
+  const dictionaryTotal = ref(0);
+  const dictionaryReferencesLoaded = ref(false);
   const customFields = ref<CustomField[]>([]);
+  const customFieldTotal = ref(0);
   const customFieldPage = ref(1);
   const customFieldPageSize = ref(50);
   const customFieldDeviceType = ref("");
@@ -102,6 +106,9 @@ export function useSettings(deps: SettingsDeps) {
   const customFieldListError = ref("");
   const customFieldOptionLoading = ref(false);
   const customFieldOptionError = ref("");
+  const customFieldOptionPage = ref(1);
+  const customFieldOptionPageSize = ref(20);
+  const customFieldOptionTotal = ref(0);
   const customFieldRequestId = ref(0);
   const customFieldOptionRequestId = ref(0);
   const customFieldSaving = ref(false);
@@ -112,6 +119,9 @@ export function useSettings(deps: SettingsDeps) {
   const customFieldOptionFormErrors = ref<FormErrors>({});
 
   const tags = ref<Tag[]>([]);
+  const tagRows = ref<Tag[]>([]);
+  const tagTotal = ref(0);
+  const tagReferencesLoaded = ref(false);
   const tagPage = ref(1);
   const tagPageSize = ref(50);
   const tagSearch = ref("");
@@ -122,6 +132,7 @@ export function useSettings(deps: SettingsDeps) {
   const tagListLoading = ref(false);
   const tagListError = ref("");
   const tagRequestId = ref(0);
+  let tagController: AbortController | null = null;
   const tagSaving = ref(false);
   const tagActionId = ref<number | null>(null);
   const tagFormErrors = ref<FormErrors>({});
@@ -224,6 +235,7 @@ export function useSettings(deps: SettingsDeps) {
   const dictionaryLoading = ref(false);
   const dictionaryError = ref("");
   const dictionaryRequestId = ref(0);
+  let dictionaryController: AbortController | null = null;
   const dictionarySaving = ref(false);
   const dictionaryActionId = ref<number | null>(null);
   const dictionaryFormErrors = ref<FormErrors>({});
@@ -283,14 +295,116 @@ export function useSettings(deps: SettingsDeps) {
     return deps.can(dictionaryCapability(kind));
   }
 
+  function canViewDictionarySection(kind = dictionarySection.value) {
+    if (kind === "manufacturers") {
+      return (
+        deps.can("settings.view") ||
+        deps.can("settings.manage") ||
+        deps.can("assets.view") ||
+        deps.can("assets.manage") ||
+        deps.can("licenses.view") ||
+        deps.can("licenses.manage") ||
+        deps.can("spares.view") ||
+        deps.can("spares.manage")
+      );
+    }
+    if (kind === "device-types") return deps.can("settings.view");
+    return deps.can("spares.view") || deps.can("spares.manage") || deps.can("settings.manage");
+  }
+
+  function invalidateDictionaryReferences() {
+    dictionaryReferencesLoaded.value = false;
+  }
+
+  function invalidateTagReferences() {
+    tagReferencesLoaded.value = false;
+  }
+
   function totalPages(total: number, pageSize: number) {
     return Math.max(1, Math.ceil(total / pageSize));
   }
 
-  function pageSlice<T>(items: T[], page: number, pageSize: number): T[] {
-    const size = Math.max(1, pageSize);
-    const start = (Math.max(1, page) - 1) * size;
-    return items.slice(start, start + size);
+  type PagedPayload<T> = PageResult<T> | T[];
+  const referencePageSize = 50;
+
+  async function loadAllPages<T>(
+    basePath: string,
+    version: number,
+    isCurrentRequest: () => boolean,
+    signal: AbortSignal,
+  ): Promise<T[] | null> {
+    const rows: T[] = [];
+    let page = 1;
+    while (deps.isCurrentLoad(version) && isCurrentRequest() && !signal.aborted) {
+      const separator = basePath.includes("?") ? "&" : "?";
+      const result = await deps.request<PagedPayload<T>>(
+        `${basePath}${separator}page=${page}`,
+        { signal },
+      );
+      if (!deps.isCurrentLoad(version) || !isCurrentRequest() || signal.aborted) return null;
+      if (Array.isArray(result)) {
+        rows.push(...result);
+        return rows;
+      }
+      const pageRows = result.results || [];
+      rows.push(...pageRows);
+      const hasMore = result.next !== undefined
+        ? Boolean(result.next)
+        : typeof result.count === "number"
+          ? rows.length < result.count
+          : pageRows.length >= referencePageSize;
+      if (!pageRows.length || !hasMore) return rows;
+      page += 1;
+    }
+    return null;
+  }
+
+  async function loadDictionaryReferences(
+    version: number,
+    requestId: number,
+    signal: AbortSignal,
+  ): Promise<boolean> {
+    if (dictionaryReferencesLoaded.value) return true;
+    const isCurrentRequest = () => requestId === dictionaryRequestId.value;
+    const [manufacturerResult, deviceTypeResult, spareCategoryResult] = await Promise.all([
+      canViewDictionarySection("manufacturers")
+        ? loadAllPages<DictionaryItem>(
+            `/manufacturers/?page_size=${referencePageSize}&is_active=all`,
+            version,
+            isCurrentRequest,
+            signal,
+          )
+        : Promise.resolve<DictionaryItem[]>([]),
+      deps.can("settings.view")
+        ? loadAllPages<DictionaryItem>(
+            `/device-types/?page_size=${referencePageSize}&is_active=all`,
+            version,
+            isCurrentRequest,
+            signal,
+          )
+        : Promise.resolve<DictionaryItem[]>([]),
+      deps.can("spares.view") || deps.can("spares.manage") || deps.can("settings.manage")
+        ? loadAllPages<SparePartCategory>(
+            `/spare-part-categories/?page_size=${referencePageSize}&is_active=all`,
+            version,
+            isCurrentRequest,
+            signal,
+          )
+        : Promise.resolve<SparePartCategory[]>([]),
+    ]);
+    if (
+      manufacturerResult == null ||
+      deviceTypeResult == null ||
+      spareCategoryResult == null ||
+      !deps.isCurrentLoad(version) ||
+      !isCurrentRequest() ||
+      signal.aborted
+    ) return false;
+    manufacturers.value = manufacturerResult;
+    deviceTypes.value = deviceTypeResult;
+    spareCategories.value = spareCategoryResult;
+    dictionaryReferencesLoaded.value = true;
+    return true;
   }
 
   function syncSystemSettingsForm(value: SystemSettings): void {
@@ -322,41 +436,57 @@ export function useSettings(deps: SettingsDeps) {
     }
   }
 
-  async function loadDictionaries(version = deps.beginLoad()): Promise<boolean> {
+  async function loadDictionaries(version = deps.beginLoad(), allowPageClamp = true): Promise<boolean> {
     if (!(
-      deps.can("settings.view") ||
-      deps.can("assets.view") ||
-      deps.can("licenses.view") ||
-      deps.can("spares.view")
+      canViewDictionarySection("manufacturers") ||
+      canViewDictionarySection("device-types") ||
+      canViewDictionarySection("spare-categories")
     )) return false;
     const requestId = ++dictionaryRequestId.value;
-    const params = new URLSearchParams({ page_size: "100", is_active: "all" });
+    dictionaryController?.abort();
+    const controller = new AbortController();
+    dictionaryController = controller;
+    const base = dictionarySection.value === "manufacturers"
+      ? "manufacturers"
+      : dictionarySection.value === "device-types"
+        ? "device-types"
+        : "spare-part-categories";
+    if (!canViewDictionarySection(dictionarySection.value)) {
+      dictionaryRows.value = [];
+      dictionaryTotal.value = 0;
+      return false;
+    }
+    const params = new URLSearchParams({
+      page: String(dictionaryPage.value),
+      page_size: String(dictionaryPageSize.value),
+      is_active: "all",
+    });
     if (dictionarySearch.value.trim()) params.set("search", dictionarySearch.value.trim());
     dictionaryLoading.value = true;
     dictionaryError.value = "";
     try {
-      const spareCategoryRequest = deps.can("spares.view") || deps.can("spares.manage") || deps.can("settings.manage")
-        ? deps.request<PageResult<SparePartCategory> | SparePartCategory[]>(`/spare-part-categories/?${params.toString()}`)
-        : Promise.resolve<SparePartCategory[]>([]);
-      const manufacturerRequest = (
-        deps.can("settings.view") || deps.can("assets.view") || deps.can("licenses.view") || deps.can("spares.view")
-      )
-        ? deps.request<PageResult<DictionaryItem> | DictionaryItem[]>(`/manufacturers/?${params.toString()}`)
-        : Promise.resolve<DictionaryItem[]>([]);
-      const deviceTypeRequest = deps.can("settings.view")
-        ? deps.request<PageResult<DictionaryItem> | DictionaryItem[]>(`/device-types/?${params.toString()}`)
-        : Promise.resolve<DictionaryItem[]>([]);
-      const [manufacturerResult, deviceTypeResult, spareCategoryResult] = await Promise.all([
-        manufacturerRequest,
-        deviceTypeRequest,
-        spareCategoryRequest,
+      const [result, referencesLoaded] = await Promise.all([
+        deps.request<PageResult<DictionaryItem | SparePartCategory> | Array<DictionaryItem | SparePartCategory>>(
+          `/${base}/?${params.toString()}`,
+          { signal: controller.signal },
+        ),
+        loadDictionaryReferences(version, requestId, controller.signal),
       ]);
-      if (manufacturerResult == null || deviceTypeResult == null || spareCategoryResult == null) return false;
-      if (requestId !== dictionaryRequestId.value || !deps.isCurrentLoad(version)) return false;
-      manufacturers.value = pageItems(manufacturerResult);
-      deviceTypes.value = pageItems(deviceTypeResult);
-      spareCategories.value = pageItems(spareCategoryResult);
-      dictionaryPage.value = Math.min(dictionaryPage.value, totalPages(currentDictionaryAllItems().length, dictionaryPageSize.value));
+      if (
+        result == null ||
+        !referencesLoaded ||
+        requestId !== dictionaryRequestId.value ||
+        !deps.isCurrentLoad(version) ||
+        controller.signal.aborted
+      ) return false;
+      const nextTotal = pageTotal(result);
+      const maxPage = totalPages(nextTotal, dictionaryPageSize.value);
+      if (dictionaryPage.value > maxPage && allowPageClamp) {
+        dictionaryPage.value = maxPage;
+        return await loadDictionaries(version, false);
+      }
+      dictionaryRows.value = pageItems(result);
+      dictionaryTotal.value = nextTotal;
       return true;
     } catch (error) {
       if (requestId === dictionaryRequestId.value && deps.isCurrentLoad(version) && !isAbortError(error)) {
@@ -364,22 +494,35 @@ export function useSettings(deps: SettingsDeps) {
       }
       return false;
     } finally {
-      if (requestId === dictionaryRequestId.value) dictionaryLoading.value = false;
+      if (requestId === dictionaryRequestId.value) {
+        dictionaryLoading.value = false;
+        if (dictionaryController === controller) dictionaryController = null;
+      }
     }
   }
 
-  async function loadCustomFields(version = deps.beginLoad()): Promise<boolean> {
+  async function loadCustomFields(version = deps.beginLoad(), allowPageClamp = true): Promise<boolean> {
     if (!deps.can("custom_fields.view")) return false;
     const requestId = ++customFieldRequestId.value;
-    const params = new URLSearchParams({ page_size: "100", is_active: customFieldActive.value || "all" });
+    const params = new URLSearchParams({
+      page: String(customFieldPage.value),
+      page_size: String(customFieldPageSize.value),
+      is_active: customFieldActive.value || "all",
+    });
     if (customFieldDeviceType.value) params.set("device_type", customFieldDeviceType.value);
     customFieldListLoading.value = true;
     customFieldListError.value = "";
     try {
       const result = await deps.request<PageResult<CustomField> | CustomField[]>(`/custom-fields/?${params.toString()}`);
       if (result == null || requestId !== customFieldRequestId.value || !deps.isCurrentLoad(version)) return false;
+      const nextTotal = pageTotal(result);
+      const maxPage = totalPages(nextTotal, customFieldPageSize.value);
+      if (customFieldPage.value > maxPage && allowPageClamp) {
+        customFieldPage.value = maxPage;
+        return await loadCustomFields(version, false);
+      }
       customFields.value = pageItems(result);
-      customFieldPage.value = Math.min(customFieldPage.value, totalPages(customFields.value.length, customFieldPageSize.value));
+      customFieldTotal.value = nextTotal;
       return true;
     } catch (error) {
       if (requestId === customFieldRequestId.value && deps.isCurrentLoad(version) && !isAbortError(error)) {
@@ -396,12 +539,22 @@ export function useSettings(deps: SettingsDeps) {
     const requestId = ++customFieldOptionRequestId.value;
     customFieldOptionLoading.value = true;
     customFieldOptionError.value = "";
-    field.options = [];
     try {
-      const params = new URLSearchParams({ page_size: "100", field: String(field.id) });
+      const params = new URLSearchParams({
+        page: String(customFieldOptionPage.value),
+        page_size: String(customFieldOptionPageSize.value),
+        field: String(field.id),
+      });
       const result = await deps.request<PageResult<CustomFieldOption> | CustomFieldOption[]>(`/custom-field-options/?${params.toString()}`);
       if (result == null || requestId !== customFieldOptionRequestId.value || !deps.isCurrentLoad(version)) return false;
+      const nextTotal = pageTotal(result);
+      const maxPage = totalPages(nextTotal, customFieldOptionPageSize.value);
+      if (customFieldOptionPage.value > maxPage) {
+        customFieldOptionPage.value = maxPage;
+        return await loadCustomFieldOptions(field, version);
+      }
       field.options = pageItems(result);
+      customFieldOptionTotal.value = nextTotal;
       return true;
     } catch (error) {
       if (requestId === customFieldOptionRequestId.value && deps.isCurrentLoad(version) && !isAbortError(error)) {
@@ -413,18 +566,52 @@ export function useSettings(deps: SettingsDeps) {
     }
   }
 
-  async function loadTags(version = deps.beginLoad()): Promise<boolean> {
-    if (!deps.can("tags.view")) return false;
+  async function loadTagReferences(
+    version: number,
+    requestId: number,
+    signal: AbortSignal,
+  ): Promise<boolean> {
+    if (tagReferencesLoaded.value) return true;
+    const rows = await loadAllPages<Tag>(
+      `/tags/?page_size=${referencePageSize}&is_active=all`,
+      version,
+      () => requestId === tagRequestId.value,
+      signal,
+    );
+    if (rows == null || requestId !== tagRequestId.value || !deps.isCurrentLoad(version) || signal.aborted) return false;
+    tags.value = rows;
+    tagReferencesLoaded.value = true;
+    return true;
+  }
+
+  async function loadTags(version = deps.beginLoad(), allowPageClamp = true): Promise<boolean> {
+    if (!(deps.can("tags.view") || deps.can("assets.view") || deps.can("assets.manage"))) return false;
     const requestId = ++tagRequestId.value;
-    const params = new URLSearchParams({ page_size: "100", is_active: tagActive.value || "all" });
+    tagController?.abort();
+    const controller = new AbortController();
+    tagController = controller;
+    const params = new URLSearchParams({
+      page: String(tagPage.value),
+      page_size: String(tagPageSize.value),
+      is_active: tagActive.value || "all",
+    });
     if (tagSearch.value.trim()) params.set("search", tagSearch.value.trim());
     tagListLoading.value = true;
     tagListError.value = "";
     try {
-      const result = await deps.request<PageResult<Tag> | Tag[]>(`/tags/?${params.toString()}`);
-      if (result == null || requestId !== tagRequestId.value || !deps.isCurrentLoad(version)) return false;
-      tags.value = pageItems(result);
-      tagPage.value = Math.min(tagPage.value, totalPages(tags.value.length, tagPageSize.value));
+      const [result, referencesLoaded] = await Promise.all([
+        deps.request<PageResult<Tag> | Tag[]>(`/tags/?${params.toString()}`, { signal: controller.signal }),
+        loadTagReferences(version, requestId, controller.signal),
+      ]);
+      if (result == null || !referencesLoaded || requestId !== tagRequestId.value || !deps.isCurrentLoad(version) || controller.signal.aborted) return false;
+      const nextTotal = pageTotal(result);
+      const maxPage = totalPages(nextTotal, tagPageSize.value);
+      if (tagPage.value > maxPage && allowPageClamp) {
+        tagPage.value = maxPage;
+        return await loadTags(version, false);
+      }
+      tagRows.value = pageItems(result);
+      tagTotal.value = nextTotal;
       return true;
     } catch (error) {
       if (requestId === tagRequestId.value && deps.isCurrentLoad(version) && !isAbortError(error)) {
@@ -432,7 +619,10 @@ export function useSettings(deps: SettingsDeps) {
       }
       return false;
     } finally {
-      if (requestId === tagRequestId.value) tagListLoading.value = false;
+      if (requestId === tagRequestId.value) {
+        tagListLoading.value = false;
+        if (tagController === controller) tagController = null;
+      }
     }
   }
 
@@ -950,6 +1140,11 @@ export function useSettings(deps: SettingsDeps) {
   }
   function openCustomFieldOptionModal(field?: CustomField | null, option?: CustomFieldOption) {
     if (!field || !deps.can("custom_fields.manage")) return;
+    const sameField = editingCustomField.value?.id === field.id;
+    if (!sameField) {
+      customFieldOptionPage.value = 1;
+      customFieldOptionTotal.value = 0;
+    }
     editingCustomField.value = field || null;
     editingCustomFieldOption.value = option || null;
     customFieldOptionFormErrors.value = {};
@@ -1045,6 +1240,7 @@ export function useSettings(deps: SettingsDeps) {
     if (!saved) return;
     showTagModal.value = false;
     deps.actionMessage.value = tr("tag.saved");
+    invalidateTagReferences();
     const refreshed = await loadTags();
     if (!refreshed && tagListError.value) deps.actionMessage.value = tr("tag.savedRefreshFailed");
   }
@@ -1059,6 +1255,7 @@ export function useSettings(deps: SettingsDeps) {
         body: JSON.stringify({ is_active: !tag.is_active }),
       });
       deps.actionMessage.value = tag.is_active ? tr("tag.disabled") : tr("tag.enabled");
+      invalidateTagReferences();
       const refreshed = await loadTags();
       if (!refreshed && tagListError.value) deps.actionMessage.value = tr("tag.statusRefreshFailed");
     } catch (error) {
@@ -1079,6 +1276,7 @@ export function useSettings(deps: SettingsDeps) {
       if (!(await deps.confirmAction(tr("tag.deleteConfirm", { name: tag.name })))) return;
       await deps.request(`/tags/${tag.id}/`, { method: "DELETE" });
       deps.actionMessage.value = tr("tag.deleted");
+      invalidateTagReferences();
       const refreshed = await loadTags();
       if (!refreshed && tagListError.value) deps.actionMessage.value = tr("tag.deletedRefreshFailed");
     } catch (error) {
@@ -1088,24 +1286,12 @@ export function useSettings(deps: SettingsDeps) {
     }
   }
 
-  function currentDictionaryAllItems(): Array<DictionaryItem | SparePartCategory> {
-    return dictionarySection.value === "manufacturers"
-      ? manufacturers.value
-      : dictionarySection.value === "device-types"
-        ? deviceTypes.value
-        : spareCategories.value;
-  }
-
-  const currentDictionaryItems = computed<Array<DictionaryItem | SparePartCategory>>(() =>
-    pageSlice(currentDictionaryAllItems(), dictionaryPage.value, dictionaryPageSize.value),
-  );
-  const dictionaryCount = computed(() => currentDictionaryAllItems().length);
-  const customFieldTableItems = computed(() =>
-    pageSlice(customFields.value, customFieldPage.value, customFieldPageSize.value),
-  );
-  const customFieldCount = computed(() => customFields.value.length);
-  const tagTableItems = computed(() => pageSlice(tags.value, tagPage.value, tagPageSize.value));
-  const tagCount = computed(() => tags.value.length);
+  const currentDictionaryItems = computed<Array<DictionaryItem | SparePartCategory>>(() => dictionaryRows.value);
+  const dictionaryCount = computed(() => dictionaryTotal.value);
+  const customFieldTableItems = computed(() => customFields.value);
+  const customFieldCount = computed(() => customFieldTotal.value);
+  const tagTableItems = computed(() => tagRows.value);
+  const tagCount = computed(() => tagTotal.value);
   const currentDictionaryLabel = computed(() =>
     dictionarySection.value === "manufacturers"
       ? tr("settings.manufacturers")
@@ -1120,6 +1306,7 @@ export function useSettings(deps: SettingsDeps) {
         ((item as DictionaryItem).licenses_count || 0) > 0 ||
         ((item as DictionaryItem).spare_parts_count || 0) > 0
       )) ||
+      (dictionarySection.value === "device-types" && ((item as DictionaryItem).custom_fields_count || 0) > 0) ||
       (dictionarySection.value === "spare-categories" && ((item as SparePartCategory).spare_parts_count || 0) > 0)
     );
   }
@@ -1151,17 +1338,19 @@ export function useSettings(deps: SettingsDeps) {
     await loadDictionaries();
   }
 
-  function changeDictionaryPage(page: number) {
+  async function changeDictionaryPage(page: number) {
     dictionaryPage.value = Math.min(
       Math.max(page, 1),
       totalPages(dictionaryCount.value, dictionaryPageSize.value),
     );
+    await loadDictionaries();
   }
 
-  function changeDictionaryPageSize(size: number) {
+  async function changeDictionaryPageSize(size: number) {
     if (![20, 50, 100].includes(size)) return;
     dictionaryPageSize.value = size;
     dictionaryPage.value = 1;
+    await loadDictionaries();
   }
   async function saveDictionary() {
     if (dictionarySaving.value) return;
@@ -1205,6 +1394,7 @@ export function useSettings(deps: SettingsDeps) {
     if (!saved) return;
     showDictionaryModal.value = false;
     deps.actionMessage.value = tr("settings.dictionarySaved", { item: label });
+    invalidateDictionaryReferences();
     const refreshed = await loadDictionaries();
     if (!refreshed && dictionaryError.value) deps.actionMessage.value = tr("settings.dictionarySavedRefreshFailed", { item: label });
   }
@@ -1227,6 +1417,7 @@ export function useSettings(deps: SettingsDeps) {
       deps.actionMessage.value = item.is_active
         ? tr("settings.dictionaryDisabled", { item: label })
         : tr("settings.dictionaryEnabled", { item: label });
+      invalidateDictionaryReferences();
       const refreshed = await loadDictionaries();
       if (!refreshed && dictionaryError.value) deps.actionMessage.value = tr("settings.dictionaryStatusRefreshFailed", { item: label });
     } catch (error) {
@@ -1239,6 +1430,8 @@ export function useSettings(deps: SettingsDeps) {
     if (dictionaryItemUsed(item)) {
       deps.actionMessage.value = dictionarySection.value === "manufacturers"
         ? tr("settings.manufacturerInUse")
+        : dictionarySection.value === "device-types"
+          ? tr("settings.deviceTypeInUse")
         : dictionarySection.value === "spare-categories"
           ? tr("settings.spareCategoryInUse")
           : tr("settings.dictionaryItemInUse");
@@ -1261,6 +1454,7 @@ export function useSettings(deps: SettingsDeps) {
           : "spare-part-categories";
       await deps.request(`/${base}/${item.id}/`, { method: "DELETE" });
       deps.actionMessage.value = tr("settings.dictionaryDeleted", { item: label });
+      invalidateDictionaryReferences();
       const refreshed = await loadDictionaries();
       if (!refreshed && dictionaryError.value) deps.actionMessage.value = tr("settings.dictionaryDeletedRefreshFailed", { item: label });
     } catch (error) {
@@ -1309,17 +1503,34 @@ export function useSettings(deps: SettingsDeps) {
     await loadCustomFields();
   }
 
-  function changeCustomFieldPage(page: number) {
+  async function changeCustomFieldPage(page: number) {
     customFieldPage.value = Math.min(
       Math.max(page, 1),
       totalPages(customFieldCount.value, customFieldPageSize.value),
     );
+    await loadCustomFields();
   }
 
-  function changeCustomFieldPageSize(size: number) {
+  async function changeCustomFieldPageSize(size: number) {
     if (![20, 50, 100].includes(size)) return;
     customFieldPageSize.value = size;
     customFieldPage.value = 1;
+    await loadCustomFields();
+  }
+
+  async function changeCustomFieldOptionPage(page: number) {
+    customFieldOptionPage.value = Math.min(
+      Math.max(page, 1),
+      totalPages(customFieldOptionTotal.value, customFieldOptionPageSize.value),
+    );
+    await loadCustomFieldOptions(editingCustomField.value);
+  }
+
+  async function changeCustomFieldOptionPageSize(size: number) {
+    if (![20, 50, 100].includes(size)) return;
+    customFieldOptionPageSize.value = size;
+    customFieldOptionPage.value = 1;
+    await loadCustomFieldOptions(editingCustomField.value);
   }
 
   function retryTagList() {
@@ -1331,17 +1542,19 @@ export function useSettings(deps: SettingsDeps) {
     await loadTags();
   }
 
-  function changeTagPage(page: number) {
+  async function changeTagPage(page: number) {
     tagPage.value = Math.min(
       Math.max(page, 1),
       totalPages(tagCount.value, tagPageSize.value),
     );
+    await loadTags();
   }
 
-  function changeTagPageSize(size: number) {
+  async function changeTagPageSize(size: number) {
     if (![20, 50, 100].includes(size)) return;
     tagPageSize.value = size;
     tagPage.value = 1;
+    await loadTags();
   }
 
   function retryAuditLogs() {
@@ -1472,6 +1685,9 @@ export function useSettings(deps: SettingsDeps) {
     customFieldListError,
     customFieldOptionLoading,
     customFieldOptionError,
+    customFieldOptionPage,
+    customFieldOptionPageSize,
+    customFieldOptionTotal,
     customFieldSaving,
     customFieldOptionSaving,
     customFieldActionId,
@@ -1551,6 +1767,8 @@ export function useSettings(deps: SettingsDeps) {
     refreshCustomFieldList,
     changeCustomFieldPage,
     changeCustomFieldPageSize,
+    changeCustomFieldOptionPage,
+    changeCustomFieldOptionPageSize,
     loadCustomFieldOptions,
     retryCustomFieldOptions,
     loadTags,

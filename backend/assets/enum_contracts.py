@@ -5,7 +5,7 @@ stable value and display maps for services, serializers, exports and reports so
 those consumers do not maintain independent copies of the same contract.
 """
 
-from .models import Asset, InventoryItem, InventoryTask, Rack, SparePart, SpareStockTransaction
+from .models import Asset, InventoryItem, InventoryTask, Rack, RepairPartUsage, SparePart, SpareStockTransaction
 
 
 def _choice_labels(choices):
@@ -50,3 +50,6 @@ STOCK_OUTBOUND_OPERATION_TYPES = frozenset({"outbound", "scrap"})
 
 SPARE_UNIT_LABELS = _choice_labels(SparePart.Unit.choices)
 SPARE_UNIT_VALUES = tuple(SPARE_UNIT_LABELS)
+
+REPAIR_PART_USAGE_SOURCE_LABELS = _choice_labels(RepairPartUsage.SOURCE_CHOICES)
+REPAIR_PART_USAGE_SOURCE_VALUES = tuple(REPAIR_PART_USAGE_SOURCE_LABELS)

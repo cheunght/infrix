@@ -58,6 +58,16 @@ const currentRoom = computed(() => {
   const roomId = Number(rackForm.value.room);
   return serverRooms.value.find((room) => room.id === roomId) || null;
 });
+const availableRooms = computed(() => {
+  const currentRoomId = Number(rackForm.value.room);
+  return serverRooms.value
+    .filter((room) => room.is_active || room.id === currentRoomId)
+    .sort((left, right) => {
+      const leftLabel = `${left.data_center_name} / ${left.name}`;
+      const rightLabel = `${right.data_center_name} / ${right.name}`;
+      return leftLabel.localeCompare(rightLabel);
+    });
+});
 const currentRoomLabel = computed(() => {
   if (currentRoom.value) return `${currentRoom.value.data_center_name} / ${currentRoom.value.name}`;
   if (editingRack.value?.server_room_name) {
@@ -123,9 +133,11 @@ watch(showRackModal, (open) => {
         <h3 class="form-dialog__section-title">{{ t('rackForm.basicInfo') }}</h3>
         <div class="horizontal-form__rows">
           <el-form-item :label="t('rackForm.room')" prop="room" :error="fieldError('room')">
-            <el-select v-model="rackForm.room" disabled :placeholder="currentRoomLabel">
-              <el-option v-if="currentRoom" :label="currentRoomLabel" :value="String(currentRoom.id)" />
+            <el-select v-model="rackForm.room" filterable :placeholder="currentRoomLabel">
+              <el-option v-if="editingRack && !currentRoom" :label="currentRoomLabel" :value="rackForm.room" />
+              <el-option v-for="room in availableRooms" :key="room.id" :label="`${room.data_center_name} / ${room.name}`" :value="String(room.id)" />
             </el-select>
+            <FieldHelp v-if="editingRack?.allocations?.length" :text="t('rackForm.locationCorrectionHelp')" />
           </el-form-item>
           <el-form-item :label="t('rack.rackCode')" prop="code" :error="fieldError('code')">
             <el-input v-model="rackForm.code" :validate-event="false" :placeholder="t('rackForm.codePlaceholder')" autocomplete="off" />

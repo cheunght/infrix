@@ -101,6 +101,39 @@ export function useSpareParts(deps: SparePartsDeps) {
     return Math.max(1, Math.ceil(total / Math.max(1, pageSize)));
   }
 
+  async function loadAllPages<T>(
+    basePath: string,
+    signal: AbortSignal,
+    shouldContinue: () => boolean,
+  ): Promise<{ rows: T[]; total: number } | null> {
+    const rows: T[] = [];
+    let page = 1;
+    let total: number | null = null;
+    while (shouldContinue() && !signal.aborted) {
+      const separator = basePath.includes("?") ? "&" : "?";
+      const result = await deps.request<PageResult<T> | T[]>(
+        `${basePath}${separator}page=${page}`,
+        { signal },
+      );
+      if (!shouldContinue() || signal.aborted) return null;
+      if (Array.isArray(result)) {
+        rows.push(...result);
+        return { rows, total: rows.length };
+      }
+      const pageRows = result.results || [];
+      rows.push(...pageRows);
+      total = typeof result.count === "number" ? result.count : total;
+      const hasMore = result.next !== undefined
+        ? Boolean(result.next)
+        : total !== null
+          ? rows.length < total
+          : pageRows.length >= 50;
+      if (!pageRows.length || !hasMore) return { rows, total: total ?? rows.length };
+      page += 1;
+    }
+    return null;
+  }
+
   function listParams(includePagination = true) {
     const params = new URLSearchParams();
     if (includePagination) {
@@ -128,8 +161,16 @@ export function useSpareParts(deps: SparePartsDeps) {
     try {
       const [partResult, roomResult, categoryResult] = await Promise.all([
         deps.request<PageResult<SparePart> | SparePart[]>(`/spare-parts/?${listParams().toString()}`, { signal: controller.signal }),
-        deps.request<PageResult<ServerRoom> | ServerRoom[]>("/server-rooms/?page_size=100&is_active=true", { signal: controller.signal }),
-        deps.request<PageResult<SparePartCategory> | SparePartCategory[]>(`/spare-part-categories/?page_size=100&is_active=${deps.can("spares.manage") ? "all" : "true"}`, { signal: controller.signal }),
+        loadAllPages<ServerRoom>(
+          "/server-rooms/?page_size=50&is_active=true",
+          controller.signal,
+          () => requestId === spareListRequestId.value && deps.isCurrentLoad(version),
+        ),
+        loadAllPages<SparePartCategory>(
+          `/spare-part-categories/?page_size=50&is_active=${deps.can("spares.manage") ? "all" : "true"}`,
+          controller.signal,
+          () => requestId === spareListRequestId.value && deps.isCurrentLoad(version),
+        ),
       ]);
       if (partResult == null || roomResult == null || categoryResult == null) return false;
       if (requestId !== spareListRequestId.value || !deps.isCurrentLoad(version)) return false;
@@ -145,8 +186,8 @@ export function useSpareParts(deps: SparePartsDeps) {
 
       spareParts.value = pageItems(partResult);
       sparePartCount.value = nextCount;
-      spareRooms.value = pageItems(roomResult);
-      deps.spareCategories.value = pageItems(categoryResult);
+      spareRooms.value = roomResult.rows;
+      deps.spareCategories.value = categoryResult.rows;
       return true;
     } catch (error) {
       if (requestId === spareListRequestId.value && deps.isCurrentLoad(version) && !isAbortError(error)) {
@@ -232,14 +273,14 @@ export function useSpareParts(deps: SparePartsDeps) {
     stockLocationLoadingByPart.value = { ...stockLocationLoadingByPart.value, [partId]: true };
     stockLocationErrorByPart.value = { ...stockLocationErrorByPart.value, [partId]: "" };
     try {
-      const result = await deps.request<PageResult<SpareStock> | SpareStock[]>(
-        `/spare-stocks/?part=${partId}&page_size=100`,
-        { signal: controller.signal },
+      const result = await loadAllPages<SpareStock>(
+        `/spare-stocks/?part=${partId}&page_size=50`,
+        controller.signal,
+        () => stockLocationRequestIds.get(partId) === serial,
       );
       if (result == null || stockLocationRequestIds.get(partId) !== serial) return;
-      const items = pageItems(result);
-      stockLocations.value = { ...stockLocations.value, [partId]: items };
-      stockLocationTotalsByPart.value = { ...stockLocationTotalsByPart.value, [partId]: pageTotal(result) };
+      stockLocations.value = { ...stockLocations.value, [partId]: result.rows };
+      stockLocationTotalsByPart.value = { ...stockLocationTotalsByPart.value, [partId]: result.total };
       stockLocationLoadedByPart.value = { ...stockLocationLoadedByPart.value, [partId]: true };
     } catch (error) {
       if (stockLocationRequestIds.get(partId) === serial && !isAbortError(error)) {

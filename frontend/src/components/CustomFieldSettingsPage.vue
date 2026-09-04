@@ -430,30 +430,39 @@ async function submitCustomFieldOption() {
           <el-button link type="danger" :loading="c.customFieldOptionLoading" @click="c.retryCustomFieldOptions">{{ t('customField.retry') }}</el-button>
         </template>
       </el-alert>
-      <el-table v-else v-loading="c.customFieldOptionLoading" :data="c.editingCustomField?.options || []" size="small">
-        <template #empty><el-empty :image-size="48" :description="t('customField.noOptions')" /></template>
-        <el-table-column prop="value" :label="t('customField.stableValue')" /><el-table-column prop="label" :label="t('customField.displayName')" /><el-table-column prop="sort_order" :label="t('customField.order')" width="70" /><el-table-column :label="t('common.status')" width="80"><template #default="{ row }"><StatusTag size="small" :tone="row.is_active ? 'success' : 'info'" :label="row.is_active ? t('status.active') : t('status.inactive')" /></template></el-table-column>
-        <el-table-column :label="t('common.operation')" width="132">
-          <template #default="{ row }">
-            <div class="ep-table-actions">
-              <TableIconButton
-                :icon="Edit"
-                :label="t('common.edit')"
-                type="primary"
-                :disabled="c.customFieldOptionActionId === row.id || c.customFieldOptionSaving"
-                @click="c.openCustomFieldOptionModal(c.editingCustomField, row)"
-              />
-              <TableIconButton
-                :icon="Delete"
-                :label="t('common.delete')"
-                type="danger"
-                :disabled="c.customFieldOptionActionId === row.id || c.customFieldOptionSaving"
-                @click="c.deleteCustomFieldOption(row)"
-              />
-            </div>
-          </template>
-        </el-table-column>
-      </el-table>
+      <PagedTable
+        v-else
+        v-model:current-page="c.customFieldOptionPage"
+        v-model:page-size="c.customFieldOptionPageSize"
+        :total="c.customFieldOptionTotal"
+        @update:current-page="c.changeCustomFieldOptionPage"
+        @update:page-size="c.changeCustomFieldOptionPageSize"
+      >
+        <el-table v-loading="c.customFieldOptionLoading" :data="c.editingCustomField?.options || []" size="small">
+          <template #empty><el-empty :image-size="48" :description="t('customField.noOptions')" /></template>
+          <el-table-column prop="value" :label="t('customField.stableValue')" /><el-table-column prop="label" :label="t('customField.displayName')" /><el-table-column prop="sort_order" :label="t('customField.order')" width="70" /><el-table-column :label="t('common.status')" width="80"><template #default="{ row }"><StatusTag size="small" :tone="row.is_active ? 'success' : 'info'" :label="row.is_active ? t('status.active') : t('status.inactive')" /></template></el-table-column>
+          <el-table-column :label="t('common.operation')" width="132">
+            <template #default="{ row }">
+              <div class="ep-table-actions">
+                <TableIconButton
+                  :icon="Edit"
+                  :label="t('common.edit')"
+                  type="primary"
+                  :disabled="c.customFieldOptionActionId === row.id || c.customFieldOptionSaving"
+                  @click="c.openCustomFieldOptionModal(c.editingCustomField, row)"
+                />
+                <TableIconButton
+                  :icon="Delete"
+                  :label="t('common.delete')"
+                  type="danger"
+                  :disabled="c.customFieldOptionActionId === row.id || c.customFieldOptionSaving"
+                  @click="c.deleteCustomFieldOption(row)"
+                />
+              </div>
+            </template>
+          </el-table-column>
+        </el-table>
+      </PagedTable>
     </section>
     <section class="form-dialog__section custom-field-option-form-section">
       <h3 class="form-dialog__section-title">{{ t('customField.optionInfo') }}</h3>

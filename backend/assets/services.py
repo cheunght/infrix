@@ -3,8 +3,10 @@ from decimal import Decimal, InvalidOperation
 from ipaddress import ip_address
 
 from django.core.exceptions import ValidationError
-from django.db import transaction
+from django.core.validators import DecimalValidator
+from django.db import IntegrityError, transaction
 from django.db.models import Q
+from django.contrib.auth.models import User
 from rest_framework.exceptions import PermissionDenied, ValidationError as DRFValidationError
 from django.utils import timezone
 
@@ -12,6 +14,7 @@ from .models import (
     Asset,
     AssetCustomValue,
     AssetNetworkAddress,
+    AssetResponsibilityEvent,
     AssetTag,
     CustomField,
     DataCenter,
@@ -19,9 +22,12 @@ from .models import (
     InventoryItem,
     InventoryTask,
     MaintenanceContract,
+    normalize_network_address,
     ProcurementRecord,
     Rack,
     RackUnitAllocation,
+    RepairPartUsage,
+    RepairRecord,
     ServerRoom,
     SparePart,
     SpareStock,
@@ -38,12 +44,125 @@ from .enum_contracts import (
     STOCK_SOURCE_OPERATION_TYPES,
     STOCK_TARGET_OPERATION_TYPES,
 )
+from .custom_fields import (
+    custom_field_storage_payload,
+    custom_field_value_is_empty,
+    validate_custom_field_value,
+)
+from .lifecycle import (
+    ASSET_REPAIR_RESTORE_STATUS_VALUES,
+    transition_asset_status,
+)
 from .roles import user_has_capability
 
 
 def _value(data, key):
     value = data.get(key)
     return str(value).strip() if value is not None else ""
+
+
+NETWORK_CONFIGURATION_FIELDS = (
+    ("business", "business_ip"),
+    ("management", "management_ip"),
+    ("oob", "oob_ip"),
+)
+
+
+def _network_address_kind(address):
+    return "IPv4" if ip_address(address).version == 4 else "IPv6"
+
+
+def _network_address_duplicate_message(address, *, same_asset=False):
+    kind = _network_address_kind(address)
+    if same_asset:
+        return f"{kind} 地址不能在同一资产的多个网络角色中重复"
+    return f"{kind} 地址已被其他资产使用"
+
+
+def _validated_network_configuration(asset, data):
+    """Normalize all submitted IPs and reject duplicate current addresses."""
+    entries = []
+    seen = {}
+    for role, key in NETWORK_CONFIGURATION_FIELDS:
+        raw_address = _value(data, key)
+        if not raw_address:
+            continue
+        try:
+            address = normalize_network_address(raw_address)
+        except ValidationError as exc:
+            raise ValidationError({key: "IP 地址格式不正确"}) from exc
+
+        previous_key = seen.get(address)
+        if previous_key:
+            raise ValidationError({
+                key: _network_address_duplicate_message(address, same_asset=True),
+            })
+
+        current_id = (
+            AssetNetworkAddress.objects.filter(asset_id=asset.pk, role=role)
+            .values_list("pk", flat=True)
+            .first()
+        )
+        conflicts = AssetNetworkAddress.objects.filter(address=address)
+        if current_id is not None:
+            conflicts = conflicts.exclude(pk=current_id)
+        conflict = conflicts.select_related("asset").first()
+        if conflict:
+            raise ValidationError({
+                key: _network_address_duplicate_message(
+                    address,
+                    same_asset=conflict.asset_id == asset.pk,
+                ),
+            })
+
+        seen[address] = key
+        entries.append((role, key, address))
+    return entries
+
+
+def _merge_current_supporting_configuration(asset, data):
+    """Preserve omitted supporting fields during a non-empty partial update.
+
+    ``configuration`` is a JSON object nested inside an Asset PATCH/PUT.  A
+    caller may update just one supporting field, so only keys that are
+    actually present can express a replacement or clear operation.  The
+    frontend still sends a complete snapshot, which keeps its explicit blank
+    values as clear instructions.
+    """
+    if not isinstance(data, dict) or not data:
+        return data
+
+    merged = dict(data)
+    current_network = {
+        item.role: item.address
+        for item in AssetNetworkAddress.objects.filter(asset_id=asset.pk)
+    }
+    for role, key in NETWORK_CONFIGURATION_FIELDS:
+        if role in current_network:
+            merged.setdefault(key, current_network[role])
+
+    procurement = asset.procurement_records.order_by("-purchase_date", "-id").first()
+    if procurement is not None:
+        for key, value in (
+            ("purchase_date", procurement.purchase_date),
+            ("supplier", procurement.supplier),
+            ("purchase_order_no", procurement.order_no),
+            ("purchase_amount", procurement.amount),
+            ("procurement_notes", procurement.notes),
+        ):
+            merged.setdefault(key, value)
+
+    maintenance = asset.maintenance_contracts.order_by("-updated_at", "-id").first()
+    if maintenance is not None:
+        for key, value in (
+            ("maintenance_provider", maintenance.provider),
+            ("maintenance_contract_no", maintenance.contract_no),
+            ("maintenance_start_date", maintenance.start_date),
+            ("maintenance_expiry_date", maintenance.expiry_date),
+            ("maintenance_notes", maintenance.notes),
+        ):
+            merged.setdefault(key, value)
+    return merged
 
 
 def _optional_date(data, key):
@@ -345,6 +464,25 @@ def resolve_inventory_item(*, item_id, action, note, actor, request):
 
 def update_asset_placement(asset: Asset, *, rack: Rack, start_u: int, end_u: int) -> bool:
     """Update only an asset's rack placement using the canonical placement rules."""
+    # A retired asset may still contain a legacy allocation that needs a
+    # corrective unmount through ``configure_asset``.  It must not be mounted
+    # or moved, however.  Check this before taking the rack lock so a retired
+    # placement request cannot deadlock with the normal rack -> allocation ->
+    # asset lock order used below.
+    current_status = Asset.objects.filter(pk=asset.pk).values_list("status", flat=True).first()
+    if current_status == "retired":
+        locked_asset = Asset.objects.select_for_update().get(pk=asset.pk)
+        allocation = RackUnitAllocation.objects.filter(asset_id=locked_asset.pk).first()
+        if allocation and (
+            allocation.rack_id == rack.pk
+            and allocation.start_u == start_u
+            and allocation.end_u == end_u
+        ):
+            return False
+        raise ValidationError({
+            "configuration": "已报废资产不能新增或调整机柜位置，请先保持下架",
+        })
+
     rack = Rack.objects.select_related("room__data_center").select_for_update().get(pk=rack.pk)
     if (
         not rack.is_active
@@ -362,7 +500,11 @@ def update_asset_placement(asset: Asset, *, rack: Rack, start_u: int, end_u: int
 
     # Lock all allocations in the target rack before checking for overlap.
     list(RackUnitAllocation.objects.select_for_update().filter(rack=rack))
-    conflicts = RackUnitAllocation.objects.select_related("asset").filter(
+    # Keep this as a locking read as well as locking the parent rack.  On
+    # MySQL's default REPEATABLE READ isolation, a plain SELECT could reuse a
+    # snapshot taken before another placement committed while this transaction
+    # was waiting for the rack row lock.
+    conflicts = RackUnitAllocation.objects.select_for_update().select_related("asset").filter(
         rack=rack,
         start_u__lte=end_u,
         end_u__gte=start_u,
@@ -376,32 +518,238 @@ def update_asset_placement(asset: Asset, *, rack: Rack, start_u: int, end_u: int
             )
         })
 
-    allocation = RackUnitAllocation.objects.select_for_update().filter(asset=asset).first()
+    locked_asset = Asset.objects.select_for_update().get(pk=asset.pk)
+    if locked_asset.status == "retired":
+        allocation = RackUnitAllocation.objects.select_for_update().filter(asset=locked_asset).first()
+        if allocation and (
+            allocation.rack_id == rack.pk
+            and allocation.start_u == start_u
+            and allocation.end_u == end_u
+        ):
+            return False
+        raise ValidationError({
+            "configuration": "已报废资产不能新增或调整机柜位置，请先保持下架",
+        })
+
+    allocation = RackUnitAllocation.objects.select_for_update().filter(asset=locked_asset).first()
     changed = not (
         allocation
         and allocation.rack_id == rack.pk
         and allocation.start_u == start_u
         and allocation.end_u == end_u
-        and asset.asset_data_center_id == rack.room.data_center_id
+        and locked_asset.asset_data_center_id == rack.room.data_center_id
     )
     if allocation is None:
-        allocation = RackUnitAllocation(asset=asset)
+        allocation = RackUnitAllocation(asset=locked_asset)
     allocation.rack = rack
     allocation.start_u = start_u
     allocation.end_u = end_u
     if changed:
         allocation.full_clean()
         allocation.save()
-    if asset.asset_data_center_id != rack.room.data_center_id:
-        asset.asset_data_center_id = rack.room.data_center_id
-        asset.save(update_fields=["asset_data_center", "updated_at"])
+    if locked_asset.asset_data_center_id != rack.room.data_center_id:
+        locked_asset.asset_data_center_id = rack.room.data_center_id
+        locked_asset.save(update_fields=["asset_data_center", "updated_at"])
+        asset.asset_data_center_id = locked_asset.asset_data_center_id
         changed = True
     return changed
 
 
+@transaction.atomic
+def synchronize_asset_location_hierarchy(*, rack_ids, data_center_id) -> int:
+    """Keep the persisted data-center copy aligned with mounted rack ancestry.
+
+    Rack/room edits are correction operations, not asset moves.  The rack and
+    allocation rows are locked by their caller (and locked again here for
+    direct service use) before the affected assets are updated.  This follows
+    the rack -> allocation -> asset lock order used by placement writes.
+    """
+    rack_ids = tuple(rack_ids)
+    if not rack_ids:
+        return 0
+
+    list(
+        RackUnitAllocation.objects.select_for_update()
+        .filter(rack_id__in=rack_ids)
+        .order_by("asset_id")
+    )
+    assets = (
+        Asset.objects.select_for_update()
+        .filter(rack_allocation__rack_id__in=rack_ids)
+        .order_by("pk")
+    )
+    changed = 0
+    for asset in assets:
+        if asset.asset_data_center_id == data_center_id:
+            continue
+        asset.asset_data_center_id = data_center_id
+        asset.save(update_fields=["asset_data_center", "updated_at"])
+        changed += 1
+    return changed
+
+
+def _responsibility_error(code, message):
+    raise DRFValidationError({"code": code, "detail": message})
+
+
+def _user_display_name(user):
+    if user is None:
+        return ""
+    return user.get_full_name().strip() or user.username
+
+
+def _locked_responsibility_user(user_id):
+    if user_id in (None, ""):
+        _responsibility_error("assignment_target_required", "必须选择责任人")
+    try:
+        user = User.objects.select_for_update().get(pk=user_id)
+    except (User.DoesNotExist, TypeError, ValueError) as exc:
+        raise DRFValidationError({"code": "assignment_target_not_found", "detail": "责任人不存在"}) from exc
+    if not user.is_active:
+        _responsibility_error("assignment_target_inactive", "停用用户不能成为资产责任人")
+    return user
+
+
+def _apply_responsibility_status(asset, target_status):
+    if target_status is None or asset.status == target_status:
+        return False
+    try:
+        return transition_asset_status(asset, target_status, source="direct")
+    except ValidationError as exc:
+        message_dict = getattr(exc, "message_dict", None)
+        message = "；".join(
+            str(value)
+            for values in (message_dict or {"status": exc.messages}).values()
+            for value in (values if isinstance(values, (list, tuple)) else [values])
+        )
+        raise DRFValidationError({
+            "code": "asset_status_transition_blocked",
+            "detail": message or "资产状态不允许随责任动作变更",
+        }) from exc
+
+
+@transaction.atomic
+def _change_asset_responsibility(*, asset_id, action, target_user_id=None, actor, request, reason=""):
+    from .audit import asset_audit_snapshot, write_audit_log
+
+    asset = Asset.objects.select_for_update().select_related("responsible_user").get(pk=asset_id)
+    if asset.status == "retired" and action in {"assign", "transfer"}:
+        _responsibility_error("asset_retired", "已报废资产不能执行责任人操作")
+    if asset.status == "repair":
+        _responsibility_error("asset_in_repair", "维修中资产由故障维修流程维护，不能执行责任人操作")
+    if FaultEvent.objects.filter(asset_id=asset.pk, is_closed=False).exists():
+        _responsibility_error("asset_has_open_fault", "存在未关闭故障时，资产责任关系由维修流程维护")
+
+    current_user = asset.responsible_user
+    target_user = None
+    target_status = None
+    if action == "assign":
+        if current_user is not None:
+            _responsibility_error("asset_already_assigned", "资产已有责任人，请使用调拨操作")
+        target_user = _locked_responsibility_user(target_user_id)
+        target_status = "in_use" if asset.status != "in_use" else None
+    elif action == "return":
+        if current_user is None:
+            _responsibility_error("asset_not_assigned", "资产当前没有责任人，不能归还")
+        # Keep retired terminal while allowing legacy inconsistent data to be
+        # corrected by clearing its current assignee and recording the return.
+        target_status = None if asset.status == "retired" else "in_stock"
+    elif action == "transfer":
+        if current_user is None:
+            _responsibility_error("asset_not_assigned", "资产当前没有责任人，不能调拨")
+        target_user = _locked_responsibility_user(target_user_id)
+        if target_user.pk == current_user.pk:
+            _responsibility_error("same_assignee", "调拨目标不能与当前责任人相同")
+        target_status = "in_use" if asset.status != "in_use" else None
+    else:
+        raise ValueError(f"unsupported responsibility action: {action}")
+
+    before = asset_audit_snapshot(asset.pk)
+    status_changed = _apply_responsibility_status(asset, target_status)
+    from_user = current_user if action in {"return", "transfer"} else None
+    to_user = target_user if action in {"assign", "transfer"} else None
+    asset.responsible_user = to_user
+    update_fields = ["responsible_user", "updated_at"]
+    if status_changed:
+        update_fields.append("status")
+    asset.save(update_fields=update_fields)
+
+    event = AssetResponsibilityEvent.objects.create(
+        asset=asset,
+        action=action,
+        from_user=from_user,
+        from_user_name=_user_display_name(from_user),
+        to_user=to_user,
+        to_user_name=_user_display_name(to_user),
+        operator=actor,
+        operator_name=_user_display_name(actor),
+        reason=str(reason or "").strip(),
+    )
+    after = asset_audit_snapshot(asset.pk)
+    write_audit_log(
+        request,
+        action=action,
+        resource_type="asset",
+        resource_id=asset.pk,
+        before=before,
+        after=after,
+        extra={
+            "source": "asset_responsibility",
+            "responsibility_event_id": event.pk,
+            "from_user": from_user.pk if from_user else None,
+            "to_user": to_user.pk if to_user else None,
+            "operator": actor.pk,
+            "reason": event.reason,
+            "occurred_at": event.created_at,
+        },
+    )
+    return asset, event
+
+
+def assign_asset(*, asset_id, target_user_id, actor, request, reason=""):
+    return _change_asset_responsibility(
+        asset_id=asset_id,
+        action="assign",
+        target_user_id=target_user_id,
+        actor=actor,
+        request=request,
+        reason=reason,
+    )
+
+
+def return_asset(*, asset_id, actor, request, reason=""):
+    return _change_asset_responsibility(
+        asset_id=asset_id,
+        action="return",
+        actor=actor,
+        request=request,
+        reason=reason,
+    )
+
+
+def transfer_asset(*, asset_id, target_user_id, actor, request, reason=""):
+    return _change_asset_responsibility(
+        asset_id=asset_id,
+        action="transfer",
+        target_user_id=target_user_id,
+        actor=actor,
+        request=request,
+        reason=reason,
+    )
+
+
+@transaction.atomic
 def configure_asset(asset: Asset, data):
-    """Replace rack, IP, procurement and maintenance details for an asset."""
-    data = data or {}
+    """Apply rack, IP, procurement and maintenance details for an asset.
+
+    A non-empty configuration is partial-update safe: omitted supporting
+    fields are filled from the current snapshot, while submitted blank values
+    remain explicit clear instructions.  An empty configuration intentionally
+    clears the non-placement supporting records; placement keeps its existing
+    partial-configuration compatibility rule in the serializer.
+    """
+    data = _merge_current_supporting_configuration(asset, data or {})
+    network_entries = _validated_network_configuration(asset, data)
     data_center_value = _value(data, "data_center")
     room_id = _value(data, "server_room_id")
     rack_id = _value(data, "rack_id")
@@ -460,16 +808,23 @@ def configure_asset(asset: Asset, data):
     else:
         RackUnitAllocation.objects.filter(asset=asset).delete()
 
-    for role, key in (("business", "business_ip"), ("management", "management_ip"), ("oob", "oob_ip")):
-        address = _value(data, key)
-        if not address:
+    submitted_network_roles = {role for role, _key, _address in network_entries}
+    for role, _key in NETWORK_CONFIGURATION_FIELDS:
+        if role not in submitted_network_roles:
             AssetNetworkAddress.objects.filter(asset=asset, role=role).delete()
-            continue
+
+    for role, key, address in network_entries:
         try:
-            ip_address(address)
-        except ValueError as exc:
-            raise ValidationError({key: "IP 地址格式不正确"}) from exc
-        AssetNetworkAddress.objects.update_or_create(asset=asset, role=role, defaults={"address": address, "is_primary": True})
+            with transaction.atomic():
+                AssetNetworkAddress.objects.update_or_create(
+                    asset=asset,
+                    role=role,
+                    defaults={"address": address, "is_primary": True},
+                )
+        except IntegrityError as exc:
+            raise ValidationError({
+                key: _network_address_duplicate_message(address),
+            }) from exc
 
     purchase_fields = ("purchase_date", "supplier", "purchase_order_no", "purchase_amount", "procurement_notes")
     if any(_value(data, key) for key in purchase_fields):
@@ -481,10 +836,16 @@ def configure_asset(asset: Asset, data):
         if amount_value:
             try:
                 amount = Decimal(amount_value)
-            except InvalidOperation as exc:
+            except (InvalidOperation, TypeError, ValueError) as exc:
                 raise ValidationError({"purchase_amount": "采购金额格式不正确"}) from exc
+            if not amount.is_finite():
+                raise ValidationError({"purchase_amount": "采购金额必须是有限数字"})
             if amount < 0:
                 raise ValidationError({"purchase_amount": "采购金额不能小于 0"})
+            try:
+                DecimalValidator(max_digits=14, decimal_places=2)(amount)
+            except ValidationError as exc:
+                raise ValidationError({"purchase_amount": "采购金额最多支持 2 位小数，且总位数不能超过 14 位"}) from exc
         ProcurementRecord.objects.update_or_create(asset=asset, defaults={"purchase_date": purchase_date, "supplier": _value(data, "supplier"), "order_no": _value(data, "purchase_order_no"), "amount": amount, "notes": _value(data, "procurement_notes")})
     else:
         ProcurementRecord.objects.filter(asset=asset).delete()
@@ -500,27 +861,6 @@ def configure_asset(asset: Asset, data):
         MaintenanceContract.objects.filter(asset=asset).delete()
 
 
-def _custom_field_value_is_empty(value, field_type):
-    if field_type in {"text", "textarea", "date", "select"}:
-        return value is None or (isinstance(value, str) and value.strip() == "")
-    if field_type == "number":
-        return value is None or (isinstance(value, str) and value.strip() == "")
-    if field_type == "boolean":
-        return value is None
-    if field_type == "multiselect":
-        return value is None or value == []
-    return value is None
-
-
-def _custom_date(value):
-    if isinstance(value, date):
-        return value
-    try:
-        return date.fromisoformat(str(value))
-    except (TypeError, ValueError) as exc:
-        raise ValidationError("日期格式应为 YYYY-MM-DD") from exc
-
-
 def _stored_custom_value(value):
     field_type = value.field.field_type
     if field_type in {"text", "textarea", "select"}:
@@ -534,46 +874,29 @@ def _stored_custom_value(value):
     return value.json_value
 
 
-def _custom_value_payload(field, raw):
-    payload = {
-        "text_value": "",
-        "number_value": None,
-        "date_value": None,
-        "boolean_value": None,
-        "json_value": None,
+def _existing_inactive_option_values(field, value):
+    """Return disabled option values already stored on this asset.
+
+    A disabled option remains readable and may be retained by an edit, but it
+    must not become a way to add that option to a different asset or replace
+    an asset's current value with a new disabled value.
+    """
+    if field.field_type == "select":
+        candidates = {value} if isinstance(value, str) and value else set()
+    elif field.field_type == "multiselect":
+        candidates = {
+            item for item in value
+            if isinstance(item, str)
+        } if isinstance(value, list) else set()
+    else:
+        return set()
+    if not candidates:
+        return set()
+    return {
+        option.value
+        for option in field.options.all()
+        if not option.is_active and option.value in candidates
     }
-    if field.field_type in {"text", "textarea"}:
-        if not isinstance(raw, str):
-            raise ValueError("必须是文本")
-        payload["text_value"] = raw
-    elif field.field_type == "number":
-        number = Decimal(str(raw))
-        if not number.is_finite():
-            raise ValueError("必须是有效数字")
-        payload["number_value"] = number
-    elif field.field_type == "date":
-        payload["date_value"] = _custom_date(raw)
-    elif field.field_type == "boolean":
-        if not isinstance(raw, bool):
-            raise ValueError("必须是 true 或 false")
-        payload["boolean_value"] = raw
-    elif field.field_type in {"select", "multiselect"}:
-        options = {option.value for option in field.options.all() if option.is_active}
-        if field.field_type == "select":
-            if not isinstance(raw, str):
-                raise ValueError("必须是选项值")
-            submitted_values = [raw]
-        else:
-            if not isinstance(raw, list):
-                raise ValueError("必须是选项数组")
-            submitted_values = raw
-        if any(not isinstance(item, str) or item not in options for item in submitted_values):
-            raise ValueError("包含无效或已停用选项")
-        if field.field_type == "select":
-            payload["text_value"] = raw
-        else:
-            payload["json_value"] = submitted_values
-    return payload
 
 
 def apply_asset_custom_values(asset: Asset, values, *, submitted=True):
@@ -615,7 +938,7 @@ def apply_asset_custom_values(asset: Asset, values, *, submitted=True):
             candidate = values[field.key]
         else:
             candidate = existing_values.get(field.id)
-        if _custom_field_value_is_empty(candidate, field.field_type):
+        if custom_field_value_is_empty(candidate, field.field_type):
             missing.append(field.name)
     if missing:
         raise ValidationError({"custom_values": f"必填自定义字段未填写：{'、'.join(missing)}"})
@@ -625,12 +948,20 @@ def apply_asset_custom_values(asset: Asset, values, *, submitted=True):
         field = by_key[key]
         if not field.is_active:
             raise ValidationError({f"custom_values.{key}": "该字段已停用，不能修改"})
-        if _custom_field_value_is_empty(raw, field.field_type):
+        if custom_field_value_is_empty(raw, field.field_type):
             operations.append((field, None))
             continue
 
         try:
-            payload = _custom_value_payload(field, raw)
+            normalized = validate_custom_field_value(
+                field,
+                raw,
+                allowed_inactive_options=_existing_inactive_option_values(
+                    field,
+                    existing_values.get(field.id),
+                ),
+            )
+            payload = custom_field_storage_payload(field, normalized)
         except (InvalidOperation, ValueError, TypeError) as exc:
             raise ValidationError({f"custom_values.{key}": str(exc)}) from exc
         operations.append((field, payload))
@@ -655,9 +986,7 @@ def apply_asset_tags(asset: Asset, tags, *, submitted=True):
     AssetTag.objects.bulk_create([AssetTag(asset=asset, tag=tag) for tag in tag_objects])
 
 
-REPAIR_RESTORE_STATUSES = frozenset(
-    status for status in ASSET_STATUS_VALUES if status in {"in_stock", "in_use", "idle"}
-)
+REPAIR_RESTORE_STATUSES = ASSET_REPAIR_RESTORE_STATUS_VALUES
 
 
 def _write_fault_status_audit(
@@ -716,18 +1045,22 @@ def sync_asset_fault_status(asset_id: int, *, request=None, fault_id=None, repai
     update_fields = []
 
     if has_open_fault:
-        if asset.status != "retired":
-            if asset.status != "repair":
-                if not other_open_fault and asset.status_before_repair is None and asset.status in REPAIR_RESTORE_STATUSES:
-                    asset.status_before_repair = asset.status
-                    update_fields.append("status_before_repair")
-                asset.status = "repair"
+        if asset.status == "retired":
+            raise DRFValidationError({
+                "code": "asset_retired",
+                "detail": "已报废资产不能新建或重开未关闭故障",
+            })
+        if asset.status != "repair":
+            if not other_open_fault and asset.status_before_repair is None and asset.status in REPAIR_RESTORE_STATUSES:
+                asset.status_before_repair = asset.status
+                update_fields.append("status_before_repair")
+            if transition_asset_status(asset, "repair", source="fault"):
                 update_fields.append("status")
     elif asset.status == "repair":
         if asset.status_before_repair in REPAIR_RESTORE_STATUSES:
-            asset.status = asset.status_before_repair
-            asset.status_before_repair = None
-            update_fields.extend(["status", "status_before_repair"])
+            if transition_asset_status(asset, asset.status_before_repair, source="fault"):
+                asset.status_before_repair = None
+                update_fields.extend(["status", "status_before_repair"])
     elif asset.status_before_repair is not None:
         # Clear only a stale internal snapshot; never infer a replacement status.
         asset.status_before_repair = None
@@ -798,6 +1131,202 @@ def sync_repair_completion(repair, *, request=None):
     )
 
 
+@transaction.atomic
+def reopen_repair(*, repair_id: int, request=None):
+    """Reopen one finished repair without deleting its historical record."""
+    from .audit import model_snapshot, write_audit_log
+
+    repair = RepairRecord.objects.select_for_update().get(pk=repair_id)
+    if repair.finished_at is None:
+        raise DRFValidationError({
+            "detail": "未完成的维修不能重新打开。",
+            "code": "repair_not_finished",
+        })
+
+    before = model_snapshot(repair)
+    repair.finished_at = None
+    repair.save(update_fields=["finished_at", "updated_at"])
+    after = model_snapshot(repair)
+    if request is not None:
+        write_audit_log(
+            request,
+            action="reopen",
+            resource_type="repair_record",
+            resource_id=repair.pk,
+            before=before,
+            after=after,
+            extra={"source": "repair_record_action", "fault_id": repair.fault_id},
+        )
+
+    # Keep the existing completion service as the single Fault/Asset lifecycle
+    # writer. It also enforces the retired-asset and multiple-open-fault rules.
+    sync_repair_completion(repair, request=request)
+    return repair
+
+
+@transaction.atomic
+def create_repair_part_usage(*, fault_id, validated_data, operator, request):
+    """Record one immutable repair part usage and, when applicable, consume stock.
+
+    Permission is checked before any row lock. The repair row is then locked
+    before the fault row so completion and usage paths share one lock order;
+    the completion timestamp is checked directly while both lifecycle rows are
+    protected. Internal stock uses the same part -> location -> balance lock
+    order as the stock movement service.
+    """
+    from .audit import repair_part_usage_audit_snapshot, spare_stock_transaction_audit_snapshot, write_audit_log
+    from .serializers import RepairPartUsageSerializer
+
+    source = validated_data["source"]
+    if source not in dict(RepairPartUsage.SOURCE_CHOICES):
+        raise DRFValidationError({"source": "不支持的维修用件来源"})
+    if not user_has_capability(operator, "faults.manage"):
+        raise PermissionDenied("记录维修用件需要 faults.manage 权限")
+    if source == RepairPartUsage.INTERNAL_STOCK and not user_has_capability(operator, "spares.manage"):
+        raise PermissionDenied("记录内部库存用件需要 spares.manage 权限")
+    quantity = int(validated_data["quantity"])
+    if quantity <= 0:
+        raise DRFValidationError({"quantity": "数量必须大于 0"})
+
+    repair = RepairRecord.objects.select_for_update().filter(fault_id=fault_id).first()
+    fault = FaultEvent.objects.select_for_update().get(pk=fault_id)
+    if (repair is not None and repair.finished_at is not None) or fault.is_closed:
+        raise DRFValidationError({"detail": "已完成的故障不能新增维修用件"})
+    asset = Asset.objects.select_for_update().get(pk=fault.asset_id)
+    if asset.status == "retired":
+        raise DRFValidationError({"detail": "已报废资产不能新增维修用件"})
+
+    part = None
+    if validated_data.get("spare_part") is not None:
+        part_id = validated_data["spare_part"].pk
+        part = SparePart.objects.select_for_update().filter(pk=part_id).first()
+        if part is None:
+            raise DRFValidationError({"spare_part_id": "备件不存在"})
+
+    stock = None
+    stock_transaction = None
+    before_quantity = None
+    after_quantity = None
+    if source == RepairPartUsage.INTERNAL_STOCK:
+        if part is None:
+            raise DRFValidationError({"spare_part_id": "内部库存用件必须选择系统备件"})
+        selected_stock = validated_data.get("spare_stock")
+        if selected_stock is None:
+            raise DRFValidationError({"spare_stock_id": "内部库存用件必须选择明确的库存位置"})
+        if selected_stock.part_id != part.pk:
+            raise DRFValidationError({"spare_stock_id": "所选库存备件与部件不一致"})
+
+        locked_stock_meta = SpareStock.objects.filter(pk=selected_stock.pk).values(
+            "part_id", "data_center_id", "server_room_id"
+        ).first()
+        if locked_stock_meta is None:
+            raise DRFValidationError({"spare_stock_id": "库存记录不存在"})
+        data_center = DataCenter.objects.select_for_update().filter(
+            pk=locked_stock_meta["data_center_id"]
+        ).first()
+        if data_center is None or not data_center.is_active:
+            raise DRFValidationError({"spare_stock_id": "库存所在数据中心不存在或已停用"})
+        server_room = None
+        if locked_stock_meta["server_room_id"] is not None:
+            server_room = ServerRoom.objects.select_for_update().filter(
+                pk=locked_stock_meta["server_room_id"],
+                data_center_id=data_center.pk,
+            ).first()
+            if server_room is None or not server_room.is_active:
+                raise DRFValidationError({"spare_stock_id": "库存所在机房不存在或已停用"})
+
+        stock = SpareStock.objects.select_for_update().select_related(
+            "part", "data_center", "server_room"
+        ).filter(pk=selected_stock.pk).first()
+        if stock is None:
+            raise DRFValidationError({"spare_stock_id": "库存记录不存在"})
+        if stock.part_id != part.pk:
+            raise DRFValidationError({"spare_stock_id": "所选库存备件与部件不一致"})
+        if stock.quantity < quantity:
+            raise DRFValidationError({
+                "quantity": f"备件“{part.name}”库存不足，当前仅有 {stock.quantity}，最多可用 {stock.quantity}",
+            })
+
+        before_quantity = stock.quantity
+        stock.quantity -= quantity
+        stock.save(update_fields=["quantity", "updated_at"])
+        after_quantity = stock.quantity
+        stock_transaction = SpareStockTransaction.objects.create(
+            part=part,
+            operation_type="outbound",
+            quantity=quantity,
+            quantity_delta=-quantity,
+            source_data_center=stock.data_center,
+            source_server_room=stock.server_room,
+            before_quantity=before_quantity,
+            after_quantity=after_quantity,
+            operator=operator,
+            reference=f"fault:{fault.pk}",
+            notes=str(validated_data.get("notes") or "").strip(),
+        )
+    elif validated_data.get("spare_stock") is not None:
+        raise DRFValidationError({"spare_stock_id": "厂商提供的用件不能关联内部库存"})
+
+    if source == RepairPartUsage.VENDOR_PROVIDED:
+        part_name = str(validated_data.get("part_name") or "").strip()
+        if not part_name:
+            raise DRFValidationError({"part_name": "厂商提供的用件必须填写部件名称"})
+        part_code = str(validated_data.get("part_code") or "").strip()
+        part_model = str(validated_data.get("part_model") or "").strip()
+        part_unit = part.unit if part is not None else ""
+    else:
+        part_code = part.code
+        part_name = part.name
+        part_model = part.model
+        part_unit = part.unit
+
+    usage = RepairPartUsage.objects.create(
+        fault=fault,
+        source=source,
+        spare_part=part,
+        spare_stock=stock,
+        part_code=part_code,
+        part_name=part_name,
+        part_model=part_model,
+        part_unit=part_unit,
+        vendor_name=str(validated_data.get("vendor_name") or "").strip(),
+        stock_data_center_name=stock.data_center.name if stock else "",
+        stock_server_room_name=stock.server_room.name if stock and stock.server_room else "",
+        quantity=quantity,
+        operator=operator,
+        operator_name=_user_display_name(operator),
+        notes=str(validated_data.get("notes") or "").strip(),
+    )
+
+    if stock_transaction is not None:
+        write_audit_log(
+            request,
+            action="create",
+            resource_type="spare_stock_transaction",
+            resource_id=stock_transaction.pk,
+            after=spare_stock_transaction_audit_snapshot(stock_transaction),
+            extra={
+                "source": "repair_part_usage",
+                "fault_id": fault.pk,
+                "repair_part_usage_id": usage.pk,
+            },
+        )
+    write_audit_log(
+        request,
+        action="create",
+        resource_type="repair_part_usage",
+        resource_id=usage.pk,
+        after=repair_part_usage_audit_snapshot(usage),
+        extra={
+            "source": "repair_part_usage",
+            "fault_id": fault.pk,
+            "stock_before_quantity": before_quantity,
+            "stock_after_quantity": after_quantity,
+        },
+    )
+    return usage
+
+
 def _spare_location(data_center_id, server_room_id, *, role):
     """Validate and return one active data-center/optional-room pair."""
     if not data_center_id:
@@ -848,11 +1377,13 @@ def _validate_locked_spare_location(data_center, room, *, role):
 
 
 @transaction.atomic
-def apply_spare_stock_transaction(validated_data, operator):
+def apply_spare_stock_transaction(validated_data, operator, *, audit_context=None):
     """Apply one immutable stock movement and return its ledger row.
 
     Data-center rows are locked in a stable order before balances are read so
-    concurrent transfers cannot create negative or lost inventory.
+    concurrent transfers cannot create negative or lost inventory. When the
+    caller supplies ``audit_context``, transfer-side quantities are populated
+    from the locked balances before the transaction returns.
     """
     operation_type = validated_data["operation_type"]
     part = SparePart.objects.select_for_update().filter(pk=validated_data["part"].pk).first()
@@ -933,6 +1464,7 @@ def apply_spare_stock_transaction(validated_data, operator):
     before_quantity = 0
     after_quantity = 0
     quantity_delta = 0
+    transfer_audit_context = None
     if operation_type in STOCK_INBOUND_OPERATION_TYPES:
         before_quantity = target_stock.quantity
         target_stock.quantity += quantity
@@ -947,12 +1479,20 @@ def apply_spare_stock_transaction(validated_data, operator):
         quantity_delta = -quantity
     elif operation_type == "transfer":
         before_quantity = source_stock.quantity
+        target_before_quantity = target_stock.quantity
         source_stock.quantity -= quantity
         target_stock.quantity += quantity
         source_stock.save(update_fields=["quantity", "updated_at"])
         target_stock.save(update_fields=["quantity", "updated_at"])
         after_quantity = source_stock.quantity
         quantity_delta = -quantity
+        transfer_audit_context = {
+            "transfer_quantity": quantity,
+            "source_before_quantity": before_quantity,
+            "source_after_quantity": after_quantity,
+            "target_before_quantity": target_before_quantity,
+            "target_after_quantity": target_stock.quantity,
+        }
     else:
         before_quantity = target_stock.quantity
         after_quantity = before_quantity + int(adjustment_quantity)
@@ -963,7 +1503,7 @@ def apply_spare_stock_transaction(validated_data, operator):
         quantity = abs(int(adjustment_quantity))
         quantity_delta = int(adjustment_quantity)
 
-    return SpareStockTransaction.objects.create(
+    transaction_row = SpareStockTransaction.objects.create(
         part=part,
         operation_type=operation_type,
         quantity=quantity,
@@ -978,3 +1518,6 @@ def apply_spare_stock_transaction(validated_data, operator):
         reference=str(validated_data.get("reference") or "").strip(),
         notes=str(validated_data.get("notes") or "").strip(),
     )
+    if audit_context is not None and transfer_audit_context is not None:
+        audit_context.update(transfer_audit_context)
+    return transaction_row

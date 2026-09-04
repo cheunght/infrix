@@ -84,6 +84,7 @@ const {
   taskStatusOptions, itemStatusOptions, itemResultOptions, itemResolutionStatusOptions, taskStatusLabel,
   formatDateTime, locationText, statusTagType, isExceptionStatus, resolutionStatusLabel,
   resolutionStatusTagType, resolutionActionLabel, hasCompleteActualLocation, resolutionActionOptions,
+  canRecordInventory, canResolveInventoryAnomaly,
   selectedBatchItems, batchSelectionMode, isBatchSelectable, onBatchSelectionChange, batchSelectionModeFor,
   isBatchSelectableForMode, batchResolutionActionOptions, clearBatchSelection,
   taskScope, loadInitialData, loadTasks, loadItems, retryActiveTask, openTask, closeTask,
@@ -133,8 +134,7 @@ const actualEndUValue = computed<number | null>({
 
 const itemCanSave = computed(
   () => Boolean(
-    activeTask.value?.status === "in_progress" &&
-      can("inventory.manage") &&
+    canRecordInventory(editingItem.value) &&
       itemForm.value.status &&
       !itemSaving.value,
   ),
@@ -149,10 +149,13 @@ const resolutionLocationIncomplete = computed(() => Boolean(
 ));
 const resolutionCanSave = computed(() => Boolean(
   resolutionItem.value?.resolution_status === "pending" &&
-    activeTask.value?.status === "in_progress" &&
-    can("inventory.manage") &&
+    canResolveInventoryAnomaly(resolutionItem.value) &&
     resolutionForm.value.action &&
     !resolutionSaving.value,
+));
+const showBatchSelectionColumn = computed(() => Boolean(
+  can("inventory.manage") &&
+  (canRecordInventory() || items.value.some((item) => canResolveInventoryAnomaly(item))),
 ));
 const resolutionRules = computed<FormRules>(() => ({
   action: [{ required: true, message: t("validation.selectRequired", { field: t("inventory.processMethod") }), trigger: "change" }],
@@ -193,12 +196,13 @@ function handleActiveTaskAction(command: string) {
 }
 
 function itemPrimaryAction(item: InventoryItem) {
-  if (activeTask.value?.status === "in_progress" && can("inventory.manage")) {
+  if (canRecordInventory(item)) {
     if (item.status === "pending") return "confirm";
     if (isExceptionStatus(item.status) && item.resolution_status === "pending") return "resolve";
     if (isExceptionStatus(item.status) && item.resolution_status === "resolved" && can("inventory.view")) return "view";
     return "edit";
   }
+  if (canResolveInventoryAnomaly(item)) return "resolve";
   if (isExceptionStatus(item.status) && item.resolution_status === "resolved" && can("inventory.view")) {
     return "view";
   }
@@ -207,8 +211,7 @@ function itemPrimaryAction(item: InventoryItem) {
 
 function itemCanEditException(item: InventoryItem) {
   return Boolean(
-    activeTask.value?.status === "in_progress" &&
-    can("inventory.manage") &&
+    canRecordInventory(item) &&
     isExceptionStatus(item.status) &&
     item.resolution_status === "pending",
   );
@@ -580,7 +583,7 @@ onMounted(async () => {
               </div>
             </template>
             <template #actions>
-              <el-popover v-model:visible="scanPopoverVisible" placement="bottom-end" :width="380" trigger="click" @show="focusAssetScanner">
+              <el-popover v-if="activeTask.status === 'in_progress'" v-model:visible="scanPopoverVisible" placement="bottom-end" :width="380" trigger="click" @show="focusAssetScanner">
                 <template #reference>
                   <el-button :icon="Grid">{{ t('inventory.scanAsset') }}</el-button>
                 </template>
@@ -602,7 +605,7 @@ onMounted(async () => {
                       </div>
                       <div class="inventory-scan-actions__buttons">
                         <el-button
-                          v-if="activeTask?.status === 'in_progress' && can('inventory.manage') && scannedItem.status === 'pending'"
+                          v-if="canRecordInventory(scannedItem) && scannedItem.status === 'pending'"
                           type="primary"
                           :loading="scannedNormalSaving"
                           :disabled="scannedNormalSaving"
@@ -611,7 +614,7 @@ onMounted(async () => {
                           {{ t('inventory.confirmScannedNormal') }}
                         </el-button>
                         <el-button
-                          v-if="activeTask?.status === 'in_progress' && can('inventory.manage') && scannedItem.status === 'pending'"
+                          v-if="canRecordInventory(scannedItem) && scannedItem.status === 'pending'"
                           :disabled="scannedNormalSaving"
                           @click="openScannedItemResult"
                         >
@@ -693,7 +696,7 @@ onMounted(async () => {
                 <el-button v-if="itemHasFilters" link type="primary" @click="resetItemFilters">{{ t('common.clearFilters') }}</el-button>
             </el-empty>
             </template>
-          <el-table-column v-if="can('inventory.manage') && activeTask.status === 'in_progress'" type="selection" width="48" :selectable="isBatchSelectable" />
+          <el-table-column v-if="showBatchSelectionColumn" type="selection" width="48" :selectable="isBatchSelectable" />
           <el-table-column :label="t('asset.title')" min-width="240">
             <template #default="{ row }">
               <el-button link type="primary" class="inventory-asset-cell" @click.stop="openAssetDetail(row.asset)">

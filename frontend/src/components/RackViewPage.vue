@@ -9,6 +9,7 @@ import RackLayoutCanvas from "./RackLayoutCanvas.vue";
 import RackListPanel from "./RackListPanel.vue";
 import LocationManagementPage from "./LocationManagementPage.vue";
 import SearchField from "./SearchField.vue";
+import DescriptionList from "./DescriptionList.vue";
 import PageContainer from "./page/PageContainer.vue";
 import PageContent from "./page/PageContent.vue";
 import PageToolbar from "./page/PageToolbar.vue";
@@ -37,6 +38,7 @@ const rackListError = context.rackListError;
 const rackDetailOpen = context.rackDetailOpen;
 const deletingRackId = context.deletingRackId;
 const updatingRackId = context.updatingRackId;
+const exportingRackLayout = context.exportingRackLayout;
 const rackUsedU = context.rackUsedU;
 const rackUtilization = context.rackUtilization;
 const rackUtilizationColor = context.rackUtilizationColor;
@@ -55,6 +57,23 @@ const currentRack = context.focusedRack;
 const currentRackHasAssets = computed(() => Boolean(
   currentRack.value?.assets_count || currentRack.value?.allocations?.length,
 ));
+const rackInfoItems = computed(() => {
+  const rack = currentRack.value;
+  if (!rack) return [];
+  return [
+    { key: "rackCode", label: t("rack.rackCode"), value: rack.code },
+    { key: "location", label: t("rack.belongsToLocation"), value: rackLocationLabel(rack) },
+    { key: "deviceType", label: t("rack.deviceType"), value: rack.rack_type },
+    { key: "owner", label: t("rack.owner"), value: rack.owner_name },
+    { key: "createdAt", label: t("rack.createdAt"), value: formatRackDate(rack.created_at) },
+    {
+      key: "notes",
+      label: t("common.notes"),
+      value: rack.notes,
+      className: "rack-info-description__notes",
+    },
+  ];
+});
 
 const rackDeleteHint = computed(() => t("rack.rackOccupiedDeleteHint"));
 
@@ -258,10 +277,14 @@ function handleCurrentRackCommand(command: string) {
                   >{{ t('common.edit') }}</el-button>
                   <el-dropdown
                     trigger="click"
-                    :disabled="deletingRackId === currentRack.id || updatingRackId === currentRack.id"
+                    :disabled="deletingRackId === currentRack.id || updatingRackId === currentRack.id || exportingRackLayout"
                     @command="handleCurrentRackCommand"
                   >
-                    <el-button link :disabled="deletingRackId === currentRack.id || updatingRackId === currentRack.id">
+                    <el-button
+                      link
+                      :loading="exportingRackLayout"
+                      :disabled="deletingRackId === currentRack.id || updatingRackId === currentRack.id || exportingRackLayout"
+                    >
                       {{ t('common.more') }}<el-icon><MoreFilled /></el-icon>
                     </el-button>
                     <template #dropdown>
@@ -274,7 +297,7 @@ function handleCurrentRackCommand(command: string) {
                           <el-dropdown-item v-if="rackStatusCode(currentRack) !== 'reserved'" command="reserved">{{ t('rack.setReserved') }}</el-dropdown-item>
                           <el-dropdown-item v-else command="in_use">{{ t('rack.setInUse') }}</el-dropdown-item>
                         </template>
-                        <el-dropdown-item v-if="can('racks.export')" divided command="export">{{ t('rack.exportLayout') }}</el-dropdown-item>
+                        <el-dropdown-item v-if="can('racks.export')" divided command="export" :disabled="exportingRackLayout">{{ t('rack.exportLayout') }}</el-dropdown-item>
                         <el-dropdown-item
                           v-if="can('racks.manage')"
                           divided
@@ -327,14 +350,13 @@ function handleCurrentRackCommand(command: string) {
     </PageContainer>
 
     <el-drawer v-model="showRackInfo" :title="t('rack.rackInfo')" size="360px">
-      <dl v-if="currentRack" class="rack-info-list">
-        <div><dt>{{ t('rack.rackCode') }}</dt><dd>{{ currentRack.code }}</dd></div>
-        <div><dt>{{ t('rack.belongsToLocation') }}</dt><dd>{{ rackLocationLabel(currentRack) }}</dd></div>
-        <div><dt>{{ t('rack.deviceType') }}</dt><dd>{{ currentRack.rack_type || t('common.notAvailable') }}</dd></div>
-        <div><dt>{{ t('rack.owner') }}</dt><dd>{{ currentRack.owner_name || t('common.notAvailable') }}</dd></div>
-        <div><dt>{{ t('rack.createdAt') }}</dt><dd>{{ formatRackDate(currentRack.created_at) }}</dd></div>
-        <div class="rack-info-list-wide"><dt>{{ t('common.notes') }}</dt><dd>{{ currentRack.notes || t('common.notAvailable') }}</dd></div>
-      </dl>
+      <DescriptionList
+        v-if="currentRack"
+        class="rack-info-descriptions"
+        :items="rackInfoItems"
+        :columns="1"
+        size="small"
+      />
     </el-drawer>
 
     <RackFormDialog :context="context" />

@@ -82,12 +82,39 @@ def spare_part_audit_snapshot(instance):
     return json_value(snapshot)
 
 
+def spare_stock_transaction_audit_snapshot(instance, *, transfer_context=None):
+    """Keep transfer audits reconstructable without changing the ledger API."""
+    from .serializers import SpareStockTransactionSerializer
+
+    snapshot = SpareStockTransactionSerializer(instance).data
+    if instance.operation_type != "transfer":
+        return json_value(snapshot)
+    if transfer_context is None:
+        raise ValueError("transfer audit context is required")
+    snapshot.update({
+        "transfer_quantity": transfer_context["transfer_quantity"],
+        "source_before_quantity": transfer_context["source_before_quantity"],
+        "source_after_quantity": transfer_context["source_after_quantity"],
+        "target_before_quantity": transfer_context["target_before_quantity"],
+        "target_after_quantity": transfer_context["target_after_quantity"],
+    })
+    return json_value(snapshot)
+
+
+def repair_part_usage_audit_snapshot(instance):
+    """Keep repair part usage audits readable from immutable snapshots."""
+    from .serializers import RepairPartUsageSerializer
+
+    return json_value(RepairPartUsageSerializer(instance).data)
+
+
 def asset_audit_snapshot(asset_id):
     """Build the same rich asset snapshot used by asset write audits."""
     from .serializers import AssetDetailSerializer
 
     asset = Asset.objects.select_related(
         "department",
+        "responsible_user",
         "manufacturer",
         "device_type",
         "asset_data_center",
@@ -100,6 +127,7 @@ def asset_audit_snapshot(asset_id):
         "custom_values__field__options",
     ).get(pk=asset_id)
     snapshot = AssetDetailSerializer(asset).data
+    snapshot.pop("allowed_statuses", None)
     # Depreciation values are derived from today's date and must not create
     # date-dependent audit diffs.  The four configuration fields remain in the
     # AssetDetailSerializer payload and are intentionally retained here.

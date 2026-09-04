@@ -1,12 +1,13 @@
 from django.conf import settings
 from django.db.models import BooleanField, Count, Exists, F, OuterRef, Q, Prefetch, Sum
 from django.db.models.functions import Coalesce
-from django.db import DatabaseError, connection, transaction
+from django.db import DatabaseError, IntegrityError, connection, transaction
 from django.db.models.expressions import RawSQL
 from django.db.models.deletion import ProtectedError
 from uuid import uuid4
 import re
 from decimal import Decimal, InvalidOperation
+from types import SimpleNamespace
 from django.contrib.auth import authenticate, login, logout, update_session_auth_hash
 from django.contrib.auth.password_validation import validate_password
 from django.core.exceptions import ValidationError as DjangoValidationError
@@ -22,7 +23,7 @@ from rest_framework.response import Response
 from rest_framework.exceptions import MethodNotAllowed, PermissionDenied, ValidationError as DRFValidationError
 from drf_spectacular.types import OpenApiTypes
 from drf_spectacular.utils import OpenApiParameter, extend_schema
-from django.http import HttpResponse
+from django.http import HttpResponse, QueryDict
 from django.shortcuts import get_object_or_404
 from django.utils import timezone
 from datetime import date, datetime, timedelta
@@ -30,7 +31,7 @@ from openpyxl import Workbook
 from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
 from openpyxl.utils import get_column_letter
 from urllib.parse import quote
-from .models import AuthThrottleState, AuditLog, Asset, AssetCustomValue, AssetNetworkAddress, AssetTag, CustomField, CustomFieldOption, DataCenter, DeviceType, FaultEvent, InventoryItem, InventoryTask, MaintenanceContract, Manufacturer, ProcurementRecord, Rack, RackUnitAllocation, RepairRecord, ServerRoom, SoftwareLicense, SparePart, SparePartCategory, SpareStock, SpareStockTransaction, SystemSetting, Tag, UserSecurityProfile
+from .models import AuthThrottleState, AuditLog, Asset, AssetCustomValue, AssetNetworkAddress, AssetResponsibilityEvent, AssetTag, CustomField, CustomFieldOption, DataCenter, DeviceType, FaultEvent, InventoryItem, InventoryTask, MaintenanceContract, Manufacturer, ProcurementRecord, Rack, RackUnitAllocation, RepairPartUsage, RepairRecord, ServerRoom, SoftwareLicense, SparePart, SparePartCategory, SpareStock, SpareStockTransaction, SystemSetting, Tag, UserSecurityProfile
 from .enum_contracts import (
     ASSET_STATUS_LABELS,
     ASSET_STATUS_VALUES,
@@ -44,25 +45,30 @@ from .enum_contracts import (
     STOCK_OPERATION_TYPE_LABELS,
     STOCK_OPERATION_TYPE_VALUES,
 )
-from .serializers import AdminPasswordResetSerializer, AssetBatchDeleteResponseSerializer, AssetBatchDeleteSerializer, AuditLogSerializer, AssetDetailSerializer, AssetListSerializer, AssetSerializer, AssetWriteSerializer, CurrentUserProfileSerializer, CustomFieldOptionSerializer, CustomFieldRuntimeSchemaSerializer, CustomFieldSerializer, DataCenterSerializer, DeviceTypeSerializer, FaultEventSerializer, GroupSerializer, InventoryBulkNormalResponseSerializer, InventoryBulkNormalSerializer, InventoryBulkResolutionResponseSerializer, InventoryBulkResolutionSerializer, InventoryInspectorSerializer, InventoryItemSerializer, InventoryResolutionSerializer, InventoryScopePreviewQuerySerializer, InventoryScopePreviewSerializer, InventoryTaskSerializer, ManufacturerSerializer, RackSerializer, RepairRecordSerializer, ServerRoomSerializer, SoftwareLicenseSerializer, SparePartCategorySerializer, SparePartDetailSerializer, SparePartSerializer, SpareStockSerializer, SpareStockTransactionSerializer, SystemResetSerializer, SystemSettingsSerializer, TagSerializer, UserBatchStatusResponseSerializer, UserBatchStatusSerializer, UserSerializer, _default_references_option
+from .serializers import AdminPasswordResetSerializer, AssetBatchDeleteResponseSerializer, AssetBatchDeleteSerializer, AssetDetailSerializer, AssetListSerializer, AssetResponsibilityEventSerializer, AssetResponsibilityReturnSerializer, AssetResponsibilityTargetSerializer, AssetResponsibilityUserSerializer, AssetSerializer, AssetWriteSerializer, AuditLogSerializer, CurrentUserProfileSerializer, CustomFieldOptionSerializer, CustomFieldRuntimeSchemaSerializer, CustomFieldSerializer, DataCenterSerializer, DeviceTypeSerializer, FaultEventSerializer, GroupSerializer, InventoryBulkNormalResponseSerializer, InventoryBulkNormalSerializer, InventoryBulkResolutionResponseSerializer, InventoryBulkResolutionSerializer, InventoryInspectorSerializer, InventoryItemPageSerializer, InventoryItemSerializer, InventoryResolutionSerializer, InventoryScopePreviewQuerySerializer, InventoryScopePreviewSerializer, InventoryTaskSerializer, ManufacturerSerializer, RackSerializer, RepairPartUsageCreateSerializer, RepairPartUsageSerializer, RepairRecordSerializer, ServerRoomSerializer, SoftwareLicenseSerializer, SparePartCategorySerializer, SparePartDetailSerializer, SparePartSerializer, SpareStockSerializer, SpareStockTransactionSerializer, SystemResetSerializer, SystemSettingsSerializer, TagSerializer, UserBatchStatusResponseSerializer, UserBatchStatusSerializer, UserSerializer, _default_references_option, _responsibility_user_name
 from .services import (
     apply_spare_stock_transaction,
     confirm_inventory_item_normal,
+    create_repair_part_usage,
     inventory_task_delete_block_reason,
+    reopen_repair,
     reset_inventory_resolution,
     resolve_inventory_item,
     sync_asset_fault_status,
     sync_fault_completion,
     sync_repair_completion,
     update_asset_placement,
+    assign_asset,
+    return_asset,
+    transfer_asset,
 )
 from .inventory import get_inventory_scope_assets
 from .depreciation import calculate_asset_depreciation
 from .license_status import LICENSE_STATUS_KEYS, LICENSE_STATUS_LABELS, filter_licenses_by_status, license_status_counts, license_status_value
-from .audit import asset_audit_snapshot, asset_custom_value_changes, model_snapshot, software_license_audit_snapshot, spare_part_audit_snapshot, write_audit_log
+from .audit import asset_audit_snapshot, asset_custom_value_changes, model_snapshot, software_license_audit_snapshot, spare_part_audit_snapshot, spare_stock_transaction_audit_snapshot, write_audit_log
 from .imports import AssetImportService, ImportFileError, ImportValidationError, build_import_template
 from .permissions import BusinessRolePermission, CanExportAssets, CanExportFaults, CanExportInventory, CanExportLicenses, CanExportRacks, CanExportSpares, CanImportAssets, CanManageInventory, CanManageSystemSettings, CanResetSystem, CanViewAssetCustomFieldSchema, CanViewAssetTagsRuntime, CanViewAuditLog, CanViewDashboard, CanViewInventory, CanViewLicenses, CanViewManufacturerRuntime, CanViewSparePartCategoryRuntime, IsSystemAdministrator
-from .roles import ROLE_DEFINITIONS, ROLE_NAME_TO_CODE, user_capabilities, user_has_capability, user_role_code
+from .roles import ROLE_DEFINITIONS, ROLE_NAME_TO_CODE, user_capabilities, user_has_capability, user_role_code, user_role_codes
 from .reporting import (
     DashboardScopeError,
     build_dashboard_payload,
@@ -71,6 +77,8 @@ from .reporting import (
     rack_effective_used_u,
     resolve_dashboard_scope,
 )
+from .reporting.constants import RACK_LAYOUT_EXPORT_MAX_RACKS, RACK_LAYOUT_EXPORT_MAX_U_POSITIONS
+from .pagination import StandardPagination
 from .system_reset import reset_system
 from .system_settings import get_system_settings, system_settings_snapshot
 
@@ -121,6 +129,24 @@ def _xlsx_response(book, filename):
     )
     book.save(response)
     return response
+
+
+def _server_room_location_snapshot(room_id):
+    room = ServerRoom.objects.select_related("data_center").get(pk=room_id)
+    return {
+        "data_center_id": room.data_center_id,
+        "data_center": room.data_center.name,
+        "server_room_id": room.pk,
+        "server_room": room.name,
+    }
+
+
+def _data_center_location_snapshot(data_center_id):
+    data_center = DataCenter.objects.get(pk=data_center_id)
+    return {
+        "data_center_id": data_center.pk,
+        "data_center": data_center.name,
+    }
 
 
 def _export_limit_response(queryset, label):
@@ -289,6 +315,8 @@ def _delete_asset_with_audit(instance, request, *, batch_operation_id=None):
             raise DRFValidationError("资产存在历史盘点记录，不能删除") from exc
         if any(isinstance(item, FaultEvent) for item in protected):
             raise DRFValidationError("资产存在关联故障记录，不能删除") from exc
+        if any(isinstance(item, AssetResponsibilityEvent) for item in protected):
+            raise DRFValidationError("资产存在责任变化历史，不能删除") from exc
         raise DRFValidationError("资产存在关联数据，不能删除") from exc
     extra = {"batch_operation_id": str(batch_operation_id)} if batch_operation_id else None
     write_audit_log(
@@ -303,7 +331,7 @@ def _delete_asset_with_audit(instance, request, *, batch_operation_id=None):
 
 class AssetViewSet(AuditedModelViewSetMixin, viewsets.ModelViewSet):
     max_custom_columns = 12
-    queryset = Asset.objects.select_related("department", "manufacturer", "device_type", "asset_data_center", "rack_allocation__rack__room__data_center").prefetch_related("network_addresses", "procurement_records", "maintenance_contracts", "asset_tags__tag", "custom_values__field__options").order_by("asset_no", "id")
+    queryset = Asset.objects.select_related("department", "responsible_user", "manufacturer", "device_type", "asset_data_center", "rack_allocation__rack__room__data_center").prefetch_related("network_addresses", "procurement_records", "maintenance_contracts", "asset_tags__tag", "custom_values__field__options").order_by("asset_no", "id")
     serializer_class = AssetSerializer
     permission_classes = [BusinessRolePermission]
     permission_resource = "assets"
@@ -313,8 +341,9 @@ class AssetViewSet(AuditedModelViewSetMixin, viewsets.ModelViewSet):
     ordering_fields = ["asset_no", "name", "manufacturer_model", "serial_number"]
     ordering = ["asset_no", "id"]
     search_fields = [
-        "asset_no", "name", "manufacturer_model", "serial_number", "purpose", "owner_name", "notes", "status",
+        "asset_no", "name", "manufacturer_model", "serial_number", "purpose", "notes", "status",
         "manufacturer__name", "device_type__name", "device_type__color", "model", "department__name", "department__code",
+        "responsible_user__username", "responsible_user__first_name", "responsible_user__last_name", "responsible_user__email",
         "network_addresses__address", "network_addresses__role", "network_addresses__status", "network_addresses__notes",
         "rack_allocation__rack__code", "rack_allocation__rack__room__name", "rack_allocation__rack__room__data_center__name",
         "rack_allocation__start_u", "rack_allocation__end_u",
@@ -386,7 +415,7 @@ class AssetViewSet(AuditedModelViewSetMixin, viewsets.ModelViewSet):
         if self.action == "list" and self.request.query_params.get("compact", "").lower() in {"1", "true", "yes"}:
             requested_custom_columns = self._requested_custom_columns()
             queryset = queryset.select_related(
-                "manufacturer", "device_type", "asset_data_center", "rack_allocation__rack__room__data_center"
+                "responsible_user", "manufacturer", "device_type", "asset_data_center", "rack_allocation__rack__room__data_center"
             ).prefetch_related(None).prefetch_related(
                 Prefetch(
                     "network_addresses",
@@ -617,6 +646,105 @@ class AssetViewSet(AuditedModelViewSetMixin, viewsets.ModelViewSet):
             return AssetListSerializer
         return AssetSerializer
 
+    @extend_schema(
+        responses=AssetResponsibilityUserSerializer(many=True),
+        parameters=[
+            OpenApiParameter(
+                name="search",
+                type=OpenApiTypes.STR,
+                required=False,
+                description="按用户名、姓名或邮箱搜索可作为资产责任人的启用用户。",
+            ),
+        ],
+        description="返回资产责任动作可选择的启用用户，使用标准分页。",
+    )
+    @action(detail=False, methods=["get"], url_path="responsibility-users")
+    def responsibility_users(self, request):
+        queryset = User.objects.filter(is_active=True)
+        search = request.query_params.get("search", "").strip()
+        if search:
+            queryset = queryset.filter(
+                Q(username__icontains=search)
+                | Q(first_name__icontains=search)
+                | Q(last_name__icontains=search)
+                | Q(email__icontains=search)
+            )
+        queryset = queryset.order_by("username", "id")
+        page = self.paginate_queryset(queryset)
+        serializer = AssetResponsibilityUserSerializer(page if page is not None else queryset, many=True)
+        if page is not None:
+            return self.get_paginated_response(serializer.data)
+        return Response(serializer.data)
+
+    @extend_schema(
+        responses=AssetResponsibilityEventSerializer(many=True),
+        description="按时间倒序分页返回资产责任人变化历史。历史记录只读。",
+    )
+    @action(detail=True, methods=["get"], url_path="responsibility-history")
+    def responsibility_history(self, request, pk=None):
+        asset = self.get_object()
+        queryset = AssetResponsibilityEvent.objects.filter(asset_id=asset.pk).select_related(
+            "from_user", "to_user", "operator"
+        ).order_by("-created_at", "-id")
+        page = self.paginate_queryset(queryset)
+        serializer = AssetResponsibilityEventSerializer(page if page is not None else queryset, many=True)
+        if page is not None:
+            return self.get_paginated_response(serializer.data)
+        return Response(serializer.data)
+
+    @extend_schema(
+        request=AssetResponsibilityTargetSerializer,
+        responses=AssetDetailSerializer,
+        description="将当前未分配责任人的资产领用给一个启用用户。",
+    )
+    @action(detail=True, methods=["post"], url_path="assign")
+    def assign(self, request, pk=None):
+        serializer = AssetResponsibilityTargetSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        asset, _event = assign_asset(
+            asset_id=pk,
+            target_user_id=serializer.validated_data["target_user"].pk,
+            actor=request.user,
+            request=request,
+            reason=serializer.validated_data.get("reason", ""),
+        )
+        return Response(AssetDetailSerializer(asset, context=self.get_serializer_context()).data)
+
+    @extend_schema(
+        request=AssetResponsibilityReturnSerializer,
+        responses=AssetDetailSerializer,
+        description="归还当前有责任人的资产并清空当前责任人。",
+    )
+    @action(detail=True, methods=["post"], url_path="return")
+    def return_asset(self, request, pk=None):
+        serializer = AssetResponsibilityReturnSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        asset, _event = return_asset(
+            asset_id=pk,
+            actor=request.user,
+            request=request,
+            reason=serializer.validated_data.get("reason", ""),
+        )
+        return Response(AssetDetailSerializer(asset, context=self.get_serializer_context()).data)
+
+    @extend_schema(
+        request=AssetResponsibilityTargetSerializer,
+        responses=AssetDetailSerializer,
+        description="将资产责任人从当前用户调拨给另一个启用用户。",
+    )
+    @action(detail=True, methods=["post"], url_path="transfer")
+    def transfer(self, request, pk=None):
+        serializer = AssetResponsibilityTargetSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        asset, _event = transfer_asset(
+            asset_id=pk,
+            target_user_id=serializer.validated_data["target_user"].pk,
+            actor=request.user,
+            request=request,
+            reason=serializer.validated_data.get("reason", ""),
+        )
+        return Response(AssetDetailSerializer(asset, context=self.get_serializer_context()).data)
+
     def audit_snapshot(self, instance):
         return asset_audit_snapshot(instance.pk)
 
@@ -629,9 +757,21 @@ class AssetViewSet(AuditedModelViewSetMixin, viewsets.ModelViewSet):
         )
         return {"custom_changes": changes} if changes else None
 
-    @transaction.atomic
     def perform_destroy(self, instance):
-        _delete_asset_with_audit(instance, self.request)
+        try:
+            # Serialize the single-delete path with history writers that lock
+            # the asset before appending an immutable business record.  Keep
+            # the atomic block inside the try so a deferred FK violation at
+            # transaction exit is translated into the same 4xx contract as a
+            # Django ProtectedError.
+            with transaction.atomic():
+                locked_instance = get_object_or_404(
+                    Asset.objects.select_for_update(),
+                    pk=instance.pk,
+                )
+                _delete_asset_with_audit(locked_instance, self.request)
+        except IntegrityError as exc:
+            raise DRFValidationError("资产存在关联数据，不能删除") from exc
 
     @extend_schema(
         request=AssetBatchDeleteSerializer,
@@ -745,12 +885,26 @@ class RackViewSet(AuditedModelViewSetMixin, viewsets.ModelViewSet):
             queryset = queryset.filter(status=status)
         return queryset.order_by("room__data_center__name", "room__name", "code")
 
+    def audit_extra(self, before, after, *, action):
+        if action != "update" or before.get("room") == after.get("room"):
+            return None
+        return {
+            "source": "rack_location_correction",
+            "old_location": _server_room_location_snapshot(before["room"]),
+            "new_location": _server_room_location_snapshot(after["room"]),
+            "affected_assets": RackUnitAllocation.objects.filter(rack_id=after["id"]).count(),
+        }
+
     @transaction.atomic
     def perform_update(self, serializer):
         # Match the rack -> allocations lock order used by asset placement and
         # repeat validation after acquiring the locks. Otherwise a concurrent
         # placement can make an earlier capacity check stale before save.
         locked_rack = Rack.objects.select_for_update().get(pk=serializer.instance.pk)
+        target_room = serializer.validated_data.get("room")
+        target_room_id = target_room.pk if target_room is not None else locked_rack.room_id
+        locked_target_room = ServerRoom.objects.select_for_update().get(pk=target_room_id)
+        DataCenter.objects.select_for_update().get(pk=locked_target_room.data_center_id)
         list(
             RackUnitAllocation.objects.select_for_update()
             .filter(rack_id=locked_rack.pk)
@@ -801,10 +955,70 @@ class ServerRoomViewSet(AuditedModelViewSetMixin, viewsets.ModelViewSet):
             queryset = queryset.filter(is_active=active == "true")
         return queryset
 
+    def audit_extra(self, before, after, *, action):
+        if action != "update" or before.get("data_center") == after.get("data_center"):
+            return None
+        room_id = after["id"]
+        return {
+            "source": "server_room_location_correction",
+            "old_location": {
+                **_data_center_location_snapshot(before["data_center"]),
+                "server_room_id": room_id,
+                "server_room": before.get("name", ""),
+            },
+            "new_location": {
+                **_data_center_location_snapshot(after["data_center"]),
+                "server_room_id": room_id,
+                "server_room": after.get("name", ""),
+            },
+            "affected_racks": Rack.objects.filter(room_id=room_id).count(),
+            "affected_assets": RackUnitAllocation.objects.filter(rack__room_id=room_id).count(),
+        }
+
     @transaction.atomic
     def perform_update(self, serializer):
-        if serializer.validated_data.get("is_active") is False:
+        needs_location_lock = "data_center" in self.request.data
+        locked_room = None
+        if needs_location_lock:
+            # A room reparenting changes the effective data center of every
+            # rack below it. Lock the same rack -> allocation hierarchy used
+            # by asset placement, then validate again against the locked rows.
             locked_room = ServerRoom.objects.select_for_update().get(pk=serializer.instance.pk)
+            target_data_center = serializer.validated_data.get("data_center")
+            target_data_center_id = (
+                target_data_center.pk
+                if target_data_center is not None
+                else locked_room.data_center_id
+            )
+            DataCenter.objects.select_for_update().get(pk=target_data_center_id)
+            list(
+                Rack.objects.select_for_update()
+                .filter(room_id=locked_room.pk)
+                .order_by("pk")
+            )
+            list(
+                RackUnitAllocation.objects.select_for_update()
+                .filter(rack__room_id=locked_room.pk)
+                .order_by("pk")
+            )
+            locked_serializer = self.get_serializer(
+                locked_room,
+                data=self.request.data,
+                partial=self.request.method == "PATCH",
+            )
+            locked_serializer.is_valid(raise_exception=True)
+            if locked_serializer.validated_data.get("is_active") is False:
+                if locked_room.is_active and locked_room.spare_stocks.filter(quantity__gt=0).exists():
+                    from rest_framework.exceptions import ValidationError as DRFValidationError
+                    raise DRFValidationError("机房仍有备件库存，无法停用，请先调出、出库或报废库存")
+            super().perform_update(locked_serializer)
+            serializer.instance = locked_serializer.instance
+            return
+        elif serializer.validated_data.get("is_active") is False:
+            locked_room = ServerRoom.objects.select_for_update().get(pk=serializer.instance.pk)
+        if serializer.validated_data.get("is_active") is False:
+            if locked_room is None:
+                locked_room = ServerRoom.objects.select_for_update().get(pk=serializer.instance.pk)
             if locked_room.is_active and locked_room.spare_stocks.filter(quantity__gt=0).exists():
                 from rest_framework.exceptions import ValidationError as DRFValidationError
                 raise DRFValidationError("机房仍有备件库存，无法停用，请先调出、出库或报废库存")
@@ -812,22 +1026,22 @@ class ServerRoomViewSet(AuditedModelViewSetMixin, viewsets.ModelViewSet):
 
     def perform_destroy(self, instance):
         if instance.racks.exists():
-            from rest_framework.exceptions import ValidationError as DRFValidationError
             racks = list(instance.racks.values_list("code", flat=True)[:5])
             raise DRFValidationError(
                 f"机房仍包含机柜（{', '.join(racks)}），不能删除，请先迁移或删除机柜后再操作"
             )
+        if instance.inventory_tasks.exists():
+            raise DRFValidationError("机房存在盘点任务记录，不能删除")
         try:
             super().perform_destroy(instance)
-        except Exception as exc:
-            from django.db.models.deletion import ProtectedError
-            from rest_framework.exceptions import ValidationError as DRFValidationError
-            if isinstance(exc, ProtectedError):
-                if instance.spare_stocks.exists():
-                    raise DRFValidationError("机房仍有备件库存，不能删除，请先调整库存地点") from exc
-                if instance.spare_source_transactions.exists() or instance.spare_target_transactions.exists():
-                    raise DRFValidationError("机房存在备件库存流水，不能删除") from exc
-            raise
+        except ProtectedError as exc:
+            if instance.inventory_tasks.exists():
+                raise DRFValidationError("机房存在盘点任务记录，不能删除") from exc
+            if instance.spare_stocks.exists():
+                raise DRFValidationError("机房仍有备件库存，不能删除，请先调整库存地点") from exc
+            if instance.spare_source_transactions.exists() or instance.spare_target_transactions.exists():
+                raise DRFValidationError("机房存在备件库存流水，不能删除") from exc
+            raise DRFValidationError("机房仍被其他业务数据引用，不能删除") from exc
 
 
 class DataCenterViewSet(AuditedModelViewSetMixin, viewsets.ModelViewSet):
@@ -999,6 +1213,29 @@ class DeviceTypeViewSet(DictionaryViewSet):
     queryset = DeviceType.objects.all()
     serializer_class = DeviceTypeSerializer
     audit_resource = "device_type"
+
+    def get_queryset(self):
+        return super().get_queryset().annotate(
+            custom_fields_count=Count("custom_fields", distinct=True),
+        )
+
+    def perform_create(self, serializer):
+        super().perform_create(serializer)
+        serializer.instance.custom_fields_count = 0
+
+    def perform_update(self, serializer):
+        super().perform_update(serializer)
+        serializer.instance.custom_fields_count = serializer.instance.custom_fields.count()
+
+    def perform_destroy(self, instance):
+        if instance.assets.exists():
+            raise DRFValidationError("设备类型正在被资产使用，不能删除，请先停用")
+        if instance.custom_fields.exists():
+            raise DRFValidationError("设备类型仍被自定义字段使用，不能删除，请先停用或解除字段绑定")
+        try:
+            super().perform_destroy(instance)
+        except ProtectedError as exc:
+            raise DRFValidationError("设备类型仍被业务数据使用，不能删除，请先停用") from exc
 
 
 class SparePartCategoryViewSet(AuditedModelViewSetMixin, viewsets.ModelViewSet):
@@ -1277,6 +1514,8 @@ class SparePartViewSet(AuditedModelViewSetMixin, viewsets.ModelViewSet):
             raise DRFValidationError("备件不存在") from exc
         if locked_part.transactions.exists():
             raise DRFValidationError("该备件已有库存流水，无法删除。")
+        if locked_part.repair_part_usages.exists():
+            raise DRFValidationError("该备件已有维修用件记录，无法删除。")
         # Stock balances without a movement are not historical records. They
         # must be removed before the part because their FK is also PROTECT;
         # deletion eligibility is determined only by transaction history.
@@ -1335,8 +1574,13 @@ class SpareStockTransactionViewSet(viewsets.ModelViewSet):
     @transaction.atomic
     def perform_create(self, serializer):
         from rest_framework.exceptions import ValidationError as DRFValidationError
+        audit_context = {}
         try:
-            transaction_row = apply_spare_stock_transaction(serializer.validated_data, self.request.user)
+            transaction_row = apply_spare_stock_transaction(
+                serializer.validated_data,
+                self.request.user,
+                audit_context=audit_context,
+            )
         except DjangoValidationError as exc:
             detail = getattr(exc, "message_dict", None) or {"detail": "; ".join(exc.messages)}
             raise DRFValidationError(detail) from exc
@@ -1346,7 +1590,10 @@ class SpareStockTransactionViewSet(viewsets.ModelViewSet):
             action="create",
             resource_type="spare_stock_transaction",
             resource_id=transaction_row.pk,
-            after=SpareStockTransactionSerializer(transaction_row).data,
+            after=spare_stock_transaction_audit_snapshot(
+                transaction_row,
+                transfer_context=audit_context,
+            ),
         )
 
 
@@ -1546,14 +1793,19 @@ class UserViewSet(viewsets.ModelViewSet):
     @transaction.atomic
     def perform_destroy(self, instance):
         if instance.pk == self.request.user.pk:
-            from rest_framework.exceptions import ValidationError as DRFValidationError
             raise DRFValidationError("不能删除当前登录账号")
         if instance.is_superuser:
-            from rest_framework.exceptions import ValidationError as DRFValidationError
             raise DRFValidationError("不能通过业务接口删除超级管理员")
+        if Asset.objects.filter(responsible_user_id=instance.pk).exists():
+            raise DRFValidationError("用户仍是资产责任人，归还或调拨资产后才能删除")
+        if InventoryTask.objects.filter(inspector_id=instance.pk).exists():
+            raise DRFValidationError("用户仍被盘点任务引用，不能删除")
         before = _user_audit_snapshot(instance)
         resource_id = instance.pk
-        instance.delete()
+        try:
+            instance.delete()
+        except ProtectedError as exc:
+            raise DRFValidationError("用户仍被其他业务数据引用，不能删除") from exc
         write_audit_log(
             self.request,
             action="delete",
@@ -1591,6 +1843,36 @@ class FaultEventViewSet(AuditedModelViewSetMixin, viewsets.ModelViewSet):
             return Response(errors, status=400)
         return super().list(request, *args, **kwargs)
 
+    @extend_schema(
+        request=RepairPartUsageCreateSerializer,
+        responses=RepairPartUsageSerializer,
+        description="读取或记录一条故障维修用件；用件记录只允许创建和读取。",
+    )
+    @action(detail=True, methods=["get", "post"], url_path="part-usages")
+    def part_usages(self, request, pk=None):
+        fault = self.get_object()
+        if request.method == "GET":
+            queryset = fault.part_usages.select_related(
+                "spare_part",
+                "spare_stock__data_center",
+                "spare_stock__server_room",
+                "operator",
+            ).order_by("-created_at", "-id")
+            page = self.paginate_queryset(queryset)
+            if page is not None:
+                return self.get_paginated_response(RepairPartUsageSerializer(page, many=True).data)
+            return Response(RepairPartUsageSerializer(queryset, many=True).data)
+
+        input_serializer = RepairPartUsageCreateSerializer(data=request.data)
+        input_serializer.is_valid(raise_exception=True)
+        usage = create_repair_part_usage(
+            fault_id=fault.pk,
+            validated_data=input_serializer.validated_data,
+            operator=request.user,
+            request=request,
+        )
+        return Response(RepairPartUsageSerializer(usage).data, status=201)
+
     @transaction.atomic
     def perform_create(self, serializer):
         super().perform_create(serializer)
@@ -1599,17 +1881,36 @@ class FaultEventViewSet(AuditedModelViewSetMixin, viewsets.ModelViewSet):
 
     @transaction.atomic
     def perform_update(self, serializer):
-        previous_asset_id = serializer.instance.asset_id
-        super().perform_update(serializer)
-        fault = serializer.instance
+        # Validation initially happens before perform_update. Re-lock and
+        # validate again so a concurrent completion cannot turn this into a
+        # historical write after the first validation pass.
+        locked_fault = FaultEvent.objects.select_for_update().get(pk=serializer.instance.pk)
+        locked_serializer = self.get_serializer(
+            locked_fault,
+            data=self.request.data,
+            partial=self.request.method == "PATCH",
+        )
+        locked_serializer.is_valid(raise_exception=True)
+        previous_asset_id = locked_fault.asset_id
+        super().perform_update(locked_serializer)
+        serializer.instance = locked_serializer.instance
+        fault = locked_serializer.instance
         sync_asset_fault_status(previous_asset_id, request=self.request)
         if fault.asset_id != previous_asset_id:
             sync_asset_fault_status(fault.asset_id, request=self.request, fault_id=fault.pk)
 
     @transaction.atomic
     def perform_destroy(self, instance):
-        asset_id = instance.asset_id
-        super().perform_destroy(instance)
+        locked_fault = FaultEvent.objects.select_for_update().get(pk=instance.pk)
+        if locked_fault.is_closed:
+            raise DRFValidationError({
+                "detail": "已关闭故障不可删除。",
+                "code": "closed_fault_immutable",
+            })
+        if locked_fault.part_usages.exists():
+            raise DRFValidationError("故障存在维修用件记录，不能删除。")
+        asset_id = locked_fault.asset_id
+        super().perform_destroy(locked_fault)
         sync_asset_fault_status(asset_id, request=self.request)
 
 
@@ -1632,20 +1933,46 @@ class RepairRecordViewSet(AuditedModelViewSetMixin, viewsets.ModelViewSet):
 
     @transaction.atomic
     def perform_update(self, serializer):
-        super().perform_update(serializer)
-        repair = serializer.instance
+        # Revalidate after locking so a concurrent finish cannot be followed
+        # by an ordinary update to completed historical facts.
+        locked_repair = RepairRecord.objects.select_for_update().get(pk=serializer.instance.pk)
+        locked_serializer = self.get_serializer(
+            locked_repair,
+            data=self.request.data,
+            partial=self.request.method == "PATCH",
+        )
+        locked_serializer.is_valid(raise_exception=True)
+        super().perform_update(locked_serializer)
+        serializer.instance = locked_serializer.instance
+        repair = locked_serializer.instance
         sync_repair_completion(repair, request=self.request)
 
     @transaction.atomic
     def perform_destroy(self, instance):
-        fault = instance.fault
-        super().perform_destroy(instance)
+        locked_repair = RepairRecord.objects.select_for_update().get(pk=instance.pk)
+        if locked_repair.finished_at is not None:
+            raise DRFValidationError({
+                "detail": "已完成维修不可删除，请使用重新打开操作。",
+                "code": "finished_repair_immutable",
+            })
+        fault_id = locked_repair.fault_id
+        repair_id = locked_repair.pk
+        super().perform_destroy(locked_repair)
         sync_fault_completion(
-            fault_id=fault.pk,
+            fault_id=fault_id,
             finished_at=None,
             request=self.request,
-            repair_id=instance.pk,
+            repair_id=repair_id,
         )
+
+    @extend_schema(
+        responses=RepairRecordSerializer,
+        description="重新打开已完成维修；保留维修记录和用件历史，并按现有生命周期规则重开故障。",
+    )
+    @action(detail=True, methods=["post"], url_path="reopen")
+    def reopen(self, request, pk=None):
+        repair = reopen_repair(repair_id=self.get_object().pk, request=request)
+        return Response(RepairRecordSerializer(repair).data)
 
 
 def _inventory_snapshot(asset):
@@ -2186,17 +2513,32 @@ class InventoryItemViewSet(viewsets.ModelViewSet):
         return Response(InventoryBulkNormalResponseSerializer(response_data).data)
 
 
-@extend_schema(responses=InventoryItemSerializer(many=True))
+@extend_schema(
+    parameters=[
+        OpenApiParameter(name="page", type=OpenApiTypes.INT, required=False),
+        OpenApiParameter(name="page_size", type=OpenApiTypes.INT, required=False, description="每页数量，最大 100。"),
+    ],
+    responses=InventoryItemPageSerializer,
+)
 @api_view(["GET"])
 @permission_classes([CanViewInventory])
 def asset_inventory_records(request, pk):
-    records = InventoryItem.objects.filter(asset_id=pk).select_related(
-        "task", "task__data_center", "task__server_room", "checked_by", "resolved_by", "actual_rack__room__data_center"
-    )
     if not Asset.objects.filter(pk=pk).exists():
         from rest_framework.exceptions import NotFound
         raise NotFound("资产不存在")
-    return Response(InventoryItemSerializer(records, many=True).data)
+    records = InventoryItem.objects.filter(asset_id=pk).select_related(
+        "asset",
+        "asset__device_type",
+        "task",
+        "task__data_center",
+        "task__server_room",
+        "checked_by",
+        "resolved_by",
+        "actual_rack__room__data_center",
+    ).order_by("asset__asset_no", "id")
+    paginator = StandardPagination()
+    page = paginator.paginate_queryset(records, request)
+    return paginator.get_paginated_response(InventoryItemSerializer(page, many=True).data)
 
 
 @extend_schema(responses=InventoryInspectorSerializer(many=True))
@@ -2343,7 +2685,8 @@ def _clear_login_throttle(username, ip):
 
 
 def _auth_response(user):
-    role_code = user_role_code(user)
+    role_codes = user_role_codes(user)
+    role_code = role_codes[0] if role_codes else None
     security_profile = _security_profile(user)
     return {
         "username": user.username,
@@ -2353,9 +2696,14 @@ def _auth_response(user):
         "email": user.email,
         "is_active": user.is_active,
         "is_staff": user.is_staff,
+        "is_superuser": user.is_superuser,
         "is_admin": user_has_capability(user, "organization.manage"),
         "role_code": role_code,
         "role_name": ROLE_DEFINITIONS.get(role_code, {}).get("name", ""),
+        "roles": [
+            {"code": code, "name": ROLE_DEFINITIONS[code]["name"]}
+            for code in role_codes
+        ],
         "permissions": user_capabilities(user),
         "password_change_required": security_profile.must_change_password,
         "locale": security_profile.locale,
@@ -2615,7 +2963,7 @@ def asset_export(request):
         ).distinct().prefetch_related("options").order_by("device_type__name", "sort_order", "id")
     ) if assets else []
     headers = [
-        "资产编号", "资产名称", "设备类型", "厂商", "型号", "厂商/型号", "序列号", "用途", "状态", "使用人", "部门",
+        "资产编号", "资产名称", "设备类型", "厂商", "型号", "厂商/型号", "序列号", "用途", "状态", "当前责任人", "部门",
         "数据中心", "机房", "机柜", "起始 U", "结束 U", "业务 IP", "管理 IP", "带外 IP", "采购日期",
         "供应商", "采购单号", "采购金额", "折旧方法", "折旧起算日", "折旧年限", "残值率", "资产原值", "预计残值", "月折旧额", "累计折旧", "当前净值", "折旧状态",
         "维保厂商", "维保合同号", "维保开始日", "维保到期日", "维保备注", "备注", "标签",
@@ -2654,7 +3002,7 @@ def asset_export(request):
         tag_text = ", ".join(item.tag.name for item in asset.asset_tags.all())
         row_values = [
             asset.asset_no, asset.name, asset.device_type.name if asset.device_type_id else "",
-            asset.manufacturer.name if asset.manufacturer_id else "", asset.model or "", asset.manufacturer_model, asset.serial_number or "", asset.purpose, status_labels.get(asset.status, asset.status), asset.owner_name,
+            asset.manufacturer.name if asset.manufacturer_id else "", asset.model or "", asset.manufacturer_model, asset.serial_number or "", asset.purpose, status_labels.get(asset.status, asset.status), _responsibility_user_name(asset.responsible_user),
             asset.department.name if asset.department_id else "",
             rack.rack.room.data_center.name if rack else (asset.asset_data_center.name if asset.asset_data_center_id else ""), rack.rack.room.name if rack else "", rack.rack.code if rack else "",
             rack.start_u if rack else "", rack.end_u if rack else "", networks.get("business", ""), networks.get("management", ""), networks.get("oob", ""),
@@ -3027,11 +3375,66 @@ def _rack_sort_key(rack):
     return (int(match.group(1)) if match else 0, rack.code or "")
 
 
-@extend_schema(responses=OpenApiTypes.BINARY)
+def _rack_layout_export_limit_response(rack_count, total_u):
+    if rack_count <= RACK_LAYOUT_EXPORT_MAX_RACKS and total_u <= RACK_LAYOUT_EXPORT_MAX_U_POSITIONS:
+        return None
+
+    return Response(
+        {
+            "code": "rack_layout_export_too_large",
+            "detail": (
+                f"机柜布局导出范围过大：包含 {rack_count} 个机柜、{total_u} 个 U 位；"
+                f"当前同步导出最多支持 {RACK_LAYOUT_EXPORT_MAX_RACKS} 个机柜、"
+                f"{RACK_LAYOUT_EXPORT_MAX_U_POSITIONS} 个 U 位，请缩小范围后重试。"
+            ),
+            "requested": {"racks": rack_count, "u_positions": total_u},
+            "limits": {
+                "racks": RACK_LAYOUT_EXPORT_MAX_RACKS,
+                "u_positions": RACK_LAYOUT_EXPORT_MAX_U_POSITIONS,
+            },
+        },
+        status=400,
+    )
+
+
+@extend_schema(
+    parameters=[
+        OpenApiParameter(
+            name="room__data_center",
+            type=OpenApiTypes.INT,
+            required=False,
+            description="按现有 Rack 列表 API 的数据中心 ID 筛选导出范围。",
+        ),
+        OpenApiParameter(
+            name="room",
+            type=OpenApiTypes.INT,
+            required=False,
+            description="按现有 Rack 列表 API 的机房 ID 筛选导出范围。",
+        ),
+    ],
+    responses=OpenApiTypes.BINARY,
+)
 @api_view(["GET"])
 @permission_classes([CanExportRacks])
 def rack_layout_export(request):
-    racks = list(Rack.objects.select_related("room__data_center").prefetch_related("allocations__asset__device_type").order_by("room__data_center__name", "code"))
+    rack_queryset = Rack.objects.select_related("room__data_center").prefetch_related("allocations__asset__device_type").order_by("room__data_center__name", "code")
+    spatial_params = QueryDict("", mutable=True)
+    for parameter_name in ("room__data_center", "room"):
+        values = request.query_params.getlist(parameter_name)
+        if values:
+            spatial_params.setlist(parameter_name, values)
+    rack_queryset = DjangoFilterBackend().filter_queryset(
+        SimpleNamespace(query_params=spatial_params),
+        rack_queryset,
+        RackViewSet(),
+    )
+    rack_count = rack_queryset.count()
+    total_u = rack_queryset.aggregate(total_u=Coalesce(Sum("total_u"), 0))["total_u"] or 0
+    limit_response = _rack_layout_export_limit_response(rack_count, total_u)
+    if limit_response:
+        return limit_response
+
+    racks = list(rack_queryset)
     book = Workbook()
     book.remove(book.active)
     used_sheet_names = set()

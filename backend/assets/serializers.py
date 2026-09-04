@@ -13,7 +13,7 @@ from decimal import Decimal, InvalidOperation
 from typing import Any
 import json
 import re
-from .models import AuditLog, Asset, AssetCustomValue, AssetNetworkAddress, AssetTag, CustomField, CustomFieldOption, DataCenter, DeviceType, FaultEvent, InventoryItem, InventoryTask, MaintenanceContract, Manufacturer, ProcurementRecord, Rack, RackUnitAllocation, RepairRecord, ServerRoom, SoftwareLicense, SparePart, SparePartCategory, SpareStock, SpareStockTransaction, SystemSetting, Tag, UserSecurityProfile
+from .models import AuditLog, Asset, AssetCustomValue, AssetNetworkAddress, AssetResponsibilityEvent, AssetTag, CustomField, CustomFieldOption, DataCenter, DeviceType, FaultEvent, InventoryItem, InventoryTask, MaintenanceContract, Manufacturer, ProcurementRecord, Rack, RackUnitAllocation, RepairPartUsage, RepairRecord, ServerRoom, SoftwareLicense, SparePart, SparePartCategory, SpareStock, SpareStockTransaction, SystemSetting, Tag, UserSecurityProfile
 from .depreciation import DepreciationValidationError, calculate_asset_depreciation, validate_depreciation_configuration
 from .enum_contracts import (
     INVENTORY_ITEM_STATUS_LABELS,
@@ -21,6 +21,9 @@ from .enum_contracts import (
     INVENTORY_RESOLUTION_STATUS_LABELS,
     RACK_STATUS_LABELS,
     RACK_STATUS_VALUES,
+    REPAIR_PART_USAGE_SOURCE_LABELS,
+    REPAIR_PART_USAGE_SOURCE_VALUES,
+    SPARE_UNIT_LABELS,
     STOCK_SOURCE_OPERATION_TYPES,
     STOCK_TARGET_OPERATION_TYPES,
     STOCK_OPERATION_TYPE_LABELS,
@@ -28,7 +31,9 @@ from .enum_contracts import (
 )
 from .license_status import LICENSE_STATUS_LABELS, license_status_value
 from .reporting.capacity import rack_effective_used_u
-from .services import apply_asset_custom_values, apply_asset_tags, apply_spare_stock_transaction, configure_asset, inventory_snapshot_location, inventory_task_can_delete, validate_inventory_resolution_request
+from .services import apply_asset_custom_values, apply_asset_tags, apply_spare_stock_transaction, configure_asset, inventory_snapshot_location, inventory_task_can_delete, synchronize_asset_location_hierarchy, validate_inventory_resolution_request
+from .custom_fields import normalize_validation_config as _normalize_validation_config, normalize_validation_date as _validation_date
+from .lifecycle import allowed_asset_status_values, transition_asset_status, validate_asset_status_transition
 from .roles import ROLE_AUDITOR, ROLE_DEFINITIONS, ROLE_NAME_TO_CODE, preset_group_for_code, user_role_code
 from .system_reset import SYSTEM_RESET_CONFIRMATION
 from .system_settings import get_system_settings, system_setting_definitions
@@ -323,6 +328,8 @@ class ManufacturerReferenceSerializer(serializers.ModelSerializer):
 
 
 class DeviceTypeSerializer(BaseDictionarySerializer):
+    custom_fields_count = serializers.IntegerField(read_only=True, default=0)
+
     def validate_color(self, value):
         if not re.fullmatch(r"#[0-9A-Fa-f]{6}", value or ""):
             raise serializers.ValidationError("颜色必须是六位十六进制值，例如 #1677EF")
@@ -330,78 +337,10 @@ class DeviceTypeSerializer(BaseDictionarySerializer):
 
     class Meta(BaseDictionarySerializer.Meta):
         model = DeviceType
-        fields = ["id", "name", "color", "is_active", "assets_count", "created_at", "updated_at"]
-
-
-_VALIDATION_CONFIG_KEYS = {
-    "text": {"min_length", "max_length"},
-    "textarea": {"min_length", "max_length"},
-    "number": {"min", "max", "precision"},
-    "date": {"min_date", "max_date"},
-    "multiselect": {"min_items", "max_items"},
-    "select": set(),
-    "boolean": set(),
-}
-
-
-def _validation_integer(value, label, *, maximum=None):
-    if isinstance(value, bool) or not isinstance(value, int) or value < 0:
-        raise ValueError(f"{label}必须是非负整数")
-    if maximum is not None and value > maximum:
-        raise ValueError(f"{label}不能大于 {maximum}")
-    return value
-
-
-def _validation_decimal(value, label):
-    if isinstance(value, bool):
-        raise ValueError(f"{label}必须是数字")
-    try:
-        parsed = Decimal(str(value))
-    except (InvalidOperation, TypeError, ValueError) as exc:
-        raise ValueError(f"{label}必须是数字") from exc
-    if not parsed.is_finite():
-        raise ValueError(f"{label}必须是有限数字")
-    return str(parsed)
-
-
-def _validation_date(value, label):
-    if not isinstance(value, str) or not re.fullmatch(r"\d{4}-\d{2}-\d{2}", value):
-        raise ValueError(f"{label}必须是 YYYY-MM-DD 日期")
-    try:
-        date.fromisoformat(value)
-    except ValueError as exc:
-        raise ValueError(f"{label}必须是 YYYY-MM-DD 日期") from exc
-    return value
-
-
-def _normalize_validation_config(field_type, value):
-    if not isinstance(value, dict):
-        raise ValueError("校验配置必须是 JSON 对象")
-    allowed = _VALIDATION_CONFIG_KEYS.get(field_type, set())
-    unknown = sorted(set(value) - allowed)
-    if unknown:
-        raise ValueError(f"不支持的校验配置项：{'、'.join(unknown)}")
-
-    normalized = {}
-    for key, raw in value.items():
-        if key in {"min_length", "max_length", "min_items", "max_items"}:
-            normalized[key] = _validation_integer(raw, key)
-        elif key == "precision":
-            normalized[key] = _validation_integer(raw, key, maximum=6)
-        elif key in {"min", "max"}:
-            normalized[key] = _validation_decimal(raw, key)
-        elif key in {"min_date", "max_date"}:
-            normalized[key] = _validation_date(raw, key)
-
-    if {"min_length", "max_length"}.issubset(normalized) and normalized["min_length"] > normalized["max_length"]:
-        raise ValueError("min_length 不能大于 max_length")
-    if {"min_items", "max_items"}.issubset(normalized) and normalized["min_items"] > normalized["max_items"]:
-        raise ValueError("min_items 不能大于 max_items")
-    if {"min", "max"}.issubset(normalized) and Decimal(normalized["min"]) > Decimal(normalized["max"]):
-        raise ValueError("min 不能大于 max")
-    if {"min_date", "max_date"}.issubset(normalized) and normalized["min_date"] > normalized["max_date"]:
-        raise ValueError("min_date 不能晚于 max_date")
-    return normalized
+        fields = [
+            "id", "name", "color", "is_active", "assets_count", "custom_fields_count",
+            "created_at", "updated_at",
+        ]
 
 
 def _validate_default_value(field_type, value, active_options):
@@ -531,7 +470,12 @@ class CustomFieldSerializer(serializers.ModelSerializer):
             if device_type_id != self.instance.device_type_id:
                 raise serializers.ValidationError({"device_type": "字段创建后不能修改绑定设备类型"})
         device_type = attrs.get("device_type", self.instance.device_type if self.instance else None)
-        if device_type is not None and not device_type.is_active:
+        binding_is_new = not self.instance or (
+            "device_type" in attrs
+            and attrs["device_type"] is not None
+            and attrs["device_type"].pk != self.instance.device_type_id
+        )
+        if device_type is not None and not device_type.is_active and binding_is_new:
             raise serializers.ValidationError({"device_type": "停用的设备类型不能绑定自定义字段"})
         required = attrs.get("required", self.instance.required if self.instance else False)
         form_visible = attrs.get("form_visible", self.instance.form_visible if self.instance else True)
@@ -998,6 +942,19 @@ class ServerRoomSerializer(serializers.ModelSerializer):
             raise serializers.ValidationError({"data_center": "停用的数据中心不能新增或接收机房"})
         return attrs
 
+    def update(self, instance, validated_data):
+        data_center = validated_data.get("data_center")
+        location_submitted = "data_center" in self.initial_data
+        with transaction.atomic():
+            instance = super().update(instance, validated_data)
+            if location_submitted and data_center is not None:
+                rack_ids = Rack.objects.filter(room_id=instance.pk).values_list("pk", flat=True)
+                synchronize_asset_location_hierarchy(
+                    rack_ids=rack_ids,
+                    data_center_id=data_center.pk,
+                )
+        return instance
+
 
 class RackUnitAllocationSerializer(serializers.ModelSerializer):
     units = serializers.IntegerField(read_only=True)
@@ -1101,11 +1058,65 @@ def _asset_custom_values(obj):
     return {field["key"]: field["value"] for field in _asset_custom_fields(obj) if field["value"] is not None}
 
 
+def _responsibility_user_name(user) -> str:
+    if user is None:
+        return ""
+    return user.get_full_name().strip() or user.username
+
+
+LEGACY_OWNER_NAME_DEPRECATED_MESSAGE = "旧版 owner_name（使用人）字段已停用，请使用资产领用、归还或调拨操作维护正式责任人"
+
+
+class AssetResponsibilityUserSerializer(serializers.ModelSerializer):
+    display_name = serializers.SerializerMethodField()
+
+    def get_display_name(self, obj) -> str:
+        return _responsibility_user_name(obj)
+
+    class Meta:
+        model = User
+        fields = ["id", "username", "display_name", "is_active"]
+        read_only_fields = fields
+
+
+class AssetResponsibilityTargetSerializer(serializers.Serializer):
+    target_user = serializers.PrimaryKeyRelatedField(
+        queryset=User.objects.all(),
+        required=True,
+    )
+    reason = serializers.CharField(required=False, allow_blank=True, max_length=2000)
+
+
+class AssetResponsibilityReturnSerializer(serializers.Serializer):
+    reason = serializers.CharField(required=False, allow_blank=True, max_length=2000)
+
+
+class AssetResponsibilityEventSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = AssetResponsibilityEvent
+        fields = [
+            "id",
+            "asset",
+            "action",
+            "from_user",
+            "from_user_name",
+            "to_user",
+            "to_user_name",
+            "operator",
+            "operator_name",
+            "reason",
+            "created_at",
+        ]
+        read_only_fields = fields
+
+
 class AssetSerializer(serializers.ModelSerializer):
     manufacturer_name = serializers.CharField(source="manufacturer.name", read_only=True, allow_null=True)
     device_type_name = serializers.CharField(source="device_type.name", read_only=True, allow_null=True)
     asset_data_center_name = serializers.CharField(source="asset_data_center.name", read_only=True, allow_null=True)
     model_name = serializers.CharField(source="model", read_only=True)
+    responsible_user = serializers.PrimaryKeyRelatedField(read_only=True, allow_null=True)
+    responsible_user_name = serializers.SerializerMethodField()
     network_addresses = AssetNetworkAddressSerializer(many=True, read_only=True)
     rack_allocation = RackUnitAllocationSerializer(read_only=True)
     procurement_records = ProcurementRecordSerializer(many=True, read_only=True)
@@ -1114,6 +1125,9 @@ class AssetSerializer(serializers.ModelSerializer):
 
     def get_tag_names(self, obj) -> list[str]:
         return [item.tag.name for item in obj.asset_tags.select_related("tag").all()]
+
+    def get_responsible_user_name(self, obj) -> str:
+        return _responsibility_user_name(getattr(obj, "responsible_user", None))
 
     class Meta:
         model = Asset
@@ -1142,6 +1156,8 @@ class AssetListSerializer(serializers.ModelSerializer):
     device_type_name = serializers.CharField(source="device_type.name", read_only=True, allow_null=True)
     asset_data_center_name = serializers.CharField(source="asset_data_center.name", read_only=True, allow_null=True)
     model_name = serializers.CharField(source="model", read_only=True)
+    responsible_user = serializers.PrimaryKeyRelatedField(read_only=True, allow_null=True)
+    responsible_user_name = serializers.SerializerMethodField()
     business_ip = serializers.SerializerMethodField()
     management_ip = serializers.SerializerMethodField()
     oob_ip = serializers.SerializerMethodField()
@@ -1244,6 +1260,9 @@ class AssetListSerializer(serializers.ModelSerializer):
     def get_tag_names(self, obj) -> list[str]:
         return [item.tag.name for item in obj.asset_tags.select_related("tag").all()]
 
+    def get_responsible_user_name(self, obj) -> str:
+        return _responsibility_user_name(getattr(obj, "responsible_user", None))
+
     def get_custom_values(self, obj) -> dict[str, object]:
         values = {}
         for item in getattr(obj, "list_custom_values", ()):
@@ -1259,7 +1278,7 @@ class AssetListSerializer(serializers.ModelSerializer):
             "id", "created_at", "updated_at", "asset_no", "name",
             "manufacturer", "manufacturer_name", "device_type",
             "device_type_name", "asset_data_center", "asset_data_center_name", "model", "model_name", "manufacturer_model",
-            "serial_number", "purpose", "status", "department", "owner_name", "notes",
+            "serial_number", "purpose", "status", "department", "responsible_user", "responsible_user_name", "owner_name", "notes",
             "business_ip", "management_ip", "oob_ip", "data_center", "server_room",
             "rack_code", "u_range", "purchase_date", "supplier", "purchase_order_no",
             "maintenance_provider", "maintenance_expiry_date", "depreciation",
@@ -1290,22 +1309,45 @@ class AssetDetailSerializer(serializers.ModelSerializer):
     manufacturer_name = serializers.CharField(source="manufacturer.name", read_only=True, allow_null=True)
     device_type_name = serializers.CharField(source="device_type.name", read_only=True, allow_null=True)
     asset_data_center_name = serializers.CharField(source="asset_data_center.name", read_only=True, allow_null=True)
+    department_name = serializers.CharField(source="department.name", read_only=True, allow_null=True)
     model_name = serializers.CharField(source="model", read_only=True)
+    responsible_user = serializers.PrimaryKeyRelatedField(read_only=True, allow_null=True)
+    responsible_user_name = serializers.SerializerMethodField()
     network_addresses = AssetNetworkAddressSerializer(many=True, read_only=True)
     rack_allocation = RackUnitAllocationDetailSerializer(read_only=True)
     procurement_records = ProcurementRecordSerializer(many=True, read_only=True)
     maintenance_contracts = MaintenanceContractSerializer(many=True, read_only=True)
-    inventory_records = serializers.SerializerMethodField()
+    inventory_records_count = serializers.SerializerMethodField()
+    latest_inventory_record = serializers.SerializerMethodField()
     tags = serializers.SerializerMethodField()
     custom_fields = serializers.SerializerMethodField()
     custom_values = serializers.SerializerMethodField()
     depreciation = serializers.SerializerMethodField()
+    allowed_statuses = serializers.SerializerMethodField()
 
-    def get_inventory_records(self, obj) -> list[dict[str, Any]]:
-        return InventoryItemSerializer(
-            obj.inventory_items.select_related("asset", "task", "task__data_center", "task__server_room", "checked_by", "resolved_by", "actual_rack__room__data_center"),
-            many=True,
-        ).data
+    def get_inventory_records_count(self, obj) -> int:
+        return obj.inventory_items.count()
+
+    def get_responsible_user_name(self, obj) -> str:
+        return _responsibility_user_name(getattr(obj, "responsible_user", None))
+
+    def get_latest_inventory_record(self, obj) -> dict[str, Any] | None:
+        record = (
+            obj.inventory_items.filter(checked_at__isnull=False)
+            .select_related(
+                "asset",
+                "asset__device_type",
+                "task",
+                "task__data_center",
+                "task__server_room",
+                "checked_by",
+                "resolved_by",
+                "actual_rack__room__data_center",
+            )
+            .order_by("-checked_at", "-id")
+            .first()
+        )
+        return InventoryItemSerializer(record).data if record else None
 
     def get_tags(self, obj) -> list[dict[str, Any]]:
         return [{"id": item.tag_id, "name": item.tag.name, "is_active": item.tag.is_active} for item in obj.asset_tags.select_related("tag").all()]
@@ -1320,17 +1362,29 @@ class AssetDetailSerializer(serializers.ModelSerializer):
     def get_depreciation(self, obj) -> dict[str, object]:
         return calculate_asset_depreciation(obj)
 
+    def get_allowed_statuses(self, obj) -> list[str]:
+        return list(allowed_asset_status_values(obj))
+
     class Meta:
         model = Asset
         fields = [
             "id", "created_at", "updated_at", "asset_no", "name", "manufacturer", "manufacturer_name", "device_type", "device_type_name", "asset_data_center", "asset_data_center_name", "model", "model_name", "manufacturer_model",
-            "serial_number", "purpose", "status", "department", "owner_name", "notes", "depreciation_start_date", "depreciation_years", "residual_rate", "depreciation_method",
-            "network_addresses", "rack_allocation", "procurement_records", "maintenance_contracts", "inventory_records", "tags", "custom_fields", "custom_values",
+            "serial_number", "purpose", "status", "department", "department_name", "responsible_user", "responsible_user_name", "owner_name", "notes", "depreciation_start_date", "depreciation_years", "residual_rate", "depreciation_method",
+            "network_addresses", "rack_allocation", "procurement_records", "maintenance_contracts", "inventory_records_count", "latest_inventory_record", "tags", "custom_fields", "custom_values", "allowed_statuses",
             "depreciation",
         ]
 
 
 class AssetWriteSerializer(serializers.ModelSerializer):
+    PLACEMENT_CONFIGURATION_KEYS = (
+        "data_center",
+        "server_room_id",
+        "rack_id",
+        "rack_start_u",
+        "rack_end_u",
+        "rack_total_u",
+    )
+    REQUIRED_PLACEMENT_CONFIGURATION_KEYS = frozenset(PLACEMENT_CONFIGURATION_KEYS[:5])
     DERIVED_DEPRECIATION_FIELDS = {
         "depreciation",
         "original_value",
@@ -1349,6 +1403,7 @@ class AssetWriteSerializer(serializers.ModelSerializer):
     tags = serializers.PrimaryKeyRelatedField(many=True, queryset=Tag.objects.all(), required=False, write_only=True)
     custom_values = serializers.JSONField(required=False, write_only=True)
     manufacturer = serializers.PrimaryKeyRelatedField(read_only=True)
+    owner_name = serializers.CharField(read_only=True, allow_blank=True)
     manufacturer_id = serializers.PrimaryKeyRelatedField(
         source="manufacturer",
         queryset=Manufacturer.objects.all(),
@@ -1391,7 +1446,11 @@ class AssetWriteSerializer(serializers.ModelSerializer):
 
     def _prospective_procurement_amount(self, attrs):
         if "configuration" in attrs:
-            return self._submitted_procurement_amount(attrs.get("configuration"))
+            configuration = attrs.get("configuration")
+            if isinstance(configuration, dict) and configuration:
+                if "purchase_amount" not in configuration:
+                    return self._stored_procurement_amount()
+            return self._submitted_procurement_amount(configuration)
         return self._stored_procurement_amount()
 
     def _validate_depreciation(self, attrs):
@@ -1444,6 +1503,45 @@ class AssetWriteSerializer(serializers.ModelSerializer):
             )
         )
 
+    @classmethod
+    def _current_placement_configuration(cls, instance):
+        allocation = (
+            RackUnitAllocation.objects.select_related("rack__room__data_center")
+            .filter(asset=instance)
+            .first()
+        )
+        if allocation is None:
+            return {}
+        return {
+            "data_center": allocation.rack.room.data_center_id,
+            "server_room_id": allocation.rack.room_id,
+            "rack_id": allocation.rack_id,
+            "rack_total_u": allocation.rack.total_u,
+            "rack_start_u": allocation.start_u,
+            "rack_end_u": allocation.end_u,
+        }
+
+    @classmethod
+    def _merge_partial_placement_configuration(cls, instance, configuration):
+        if not isinstance(configuration, dict):
+            return configuration
+        current = cls._current_placement_configuration(instance)
+        if not current:
+            return configuration
+
+        submitted_required = set(configuration).intersection(
+            cls.REQUIRED_PLACEMENT_CONFIGURATION_KEYS
+        )
+        if submitted_required == cls.REQUIRED_PLACEMENT_CONFIGURATION_KEYS and all(
+            not str(configuration.get(key) or "").strip()
+            for key in cls.REQUIRED_PLACEMENT_CONFIGURATION_KEYS
+        ):
+            # The form sends all five empty values to explicitly unmount an
+            # asset.  Preserve that intent instead of restoring the current
+            # allocation below.
+            return configuration
+        return {**current, **configuration}
+
     def _validate_direct_asset_data_center(self, instance, requested_data_center) -> None:
         allocation = RackUnitAllocation.objects.select_related(
             "rack__room__data_center"
@@ -1454,12 +1552,21 @@ class AssetWriteSerializer(serializers.ModelSerializer):
             })
 
     def validate(self, attrs):
+        responsibility_fields = {"responsible_user", "responsible_user_id", "assigned_to", "assignee"}
+        submitted_responsibility_fields = responsibility_fields.intersection(self.initial_data)
+        if submitted_responsibility_fields:
+            field = sorted(submitted_responsibility_fields)[0]
+            raise serializers.ValidationError({field: "请使用资产领用、归还或调拨操作维护责任人"})
+        if "owner_name" in self.initial_data:
+            raise serializers.ValidationError({"owner_name": LEGACY_OWNER_NAME_DEPRECATED_MESSAGE})
         derived_fields = self.DERIVED_DEPRECIATION_FIELDS & set(self.initial_data)
         if derived_fields:
             field = sorted(derived_fields)[0]
             raise serializers.ValidationError({field: "折旧派生值只读，不能提交"})
         if "status_before_repair" in self.initial_data:
             raise serializers.ValidationError({"status_before_repair": "该字段由维修流程维护"})
+        if "configuration" in attrs and not isinstance(attrs["configuration"], dict):
+            raise serializers.ValidationError({"configuration": "配置必须是 JSON 对象"})
         manufacturer = attrs.get("manufacturer")
         if manufacturer and not manufacturer.is_active and (not self.instance or self.instance.manufacturer_id != manufacturer.pk):
             raise serializers.ValidationError({"manufacturer_id": "停用的厂商不能用于新资产或修改资产"})
@@ -1476,14 +1583,12 @@ class AssetWriteSerializer(serializers.ModelSerializer):
         if "serial_number" in attrs and not attrs["serial_number"]:
             attrs["serial_number"] = None
         if "status" in attrs:
-            requested_status = attrs["status"]
-            if requested_status == "repair" and (not self.instance or self.instance.status != "repair"):
-                raise serializers.ValidationError({"status": "维修中状态由故障维修流程维护，不能手工设置"})
-            if self.instance and requested_status != "repair" and FaultEvent.objects.filter(
-                asset_id=self.instance.pk,
-                is_closed=False,
-            ).exists():
-                raise serializers.ValidationError({"status": "存在未关闭故障时，资产状态由维修流程维护"})
+            try:
+                validate_asset_status_transition(self.instance, attrs["status"])
+            except DjangoValidationError as exc:
+                raise serializers.ValidationError(
+                    getattr(exc, "message_dict", {"status": exc.messages})
+                ) from exc
         self._validate_depreciation(attrs)
         return attrs
 
@@ -1493,6 +1598,12 @@ class AssetWriteSerializer(serializers.ModelSerializer):
         custom_values = validated_data.pop("custom_values", {})
         if "status" not in validated_data:
             validated_data["status"] = get_system_settings().default_asset_status
+        try:
+            validate_asset_status_transition(None, validated_data["status"])
+        except DjangoValidationError as exc:
+            raise serializers.ValidationError(
+                getattr(exc, "message_dict", {"status": exc.messages})
+            ) from exc
         try:
             with transaction.atomic():
                 asset = Asset.objects.create(**validated_data)
@@ -1511,17 +1622,25 @@ class AssetWriteSerializer(serializers.ModelSerializer):
         custom_values = validated_data.pop("custom_values", None)
         missing = object()
         requested_asset_data_center = validated_data.get("asset_data_center", missing)
+        requested_status = validated_data.pop("status", missing)
         try:
             with transaction.atomic():
+                # Re-read and lock the asset before applying lifecycle checks;
+                # serializer validation runs before the view transaction and
+                # must not be the final authority for retirement races.
+                instance = Asset.objects.select_for_update().get(pk=instance.pk)
                 if (
                     requested_asset_data_center is not missing
                     and not self._configuration_includes_placement(configuration)
                 ):
                     self._validate_direct_asset_data_center(instance, requested_asset_data_center)
+                if requested_status is not missing:
+                    transition_asset_status(instance, requested_status)
                 for key, value in validated_data.items():
                     setattr(instance, key, value)
                 instance.save()
                 if configuration is not None:
+                    configuration = self._merge_partial_placement_configuration(instance, configuration)
                     configure_asset(instance, configuration)
                 apply_asset_custom_values(
                     instance,
@@ -1789,6 +1908,13 @@ class InventoryItemSerializer(serializers.ModelSerializer):
         ]
 
 
+class InventoryItemPageSerializer(serializers.Serializer):
+    count = serializers.IntegerField()
+    next = serializers.URLField(allow_null=True, required=False)
+    previous = serializers.URLField(allow_null=True, required=False)
+    results = InventoryItemSerializer(many=True)
+
+
 class InventoryTaskSerializer(serializers.ModelSerializer):
     inspector = serializers.PrimaryKeyRelatedField(queryset=User.objects.filter(is_active=True), required=False)
     data_center_name = serializers.CharField(source="data_center.name", read_only=True)
@@ -1916,12 +2042,18 @@ class RackSerializer(serializers.ModelSerializer):
             highest_u = self.instance.allocations.order_by("-end_u").values_list("end_u", flat=True).first() or 0
             if total_u < highest_u:
                 raise serializers.ValidationError({"total_u": f"机柜已有设备占用到 U{highest_u}，容量不能小于该位置"})
+        if total_u < 1:
+            raise serializers.ValidationError({"total_u": "机柜总 U 位数必须大于等于 1"})
         if queryset.exists():
             raise serializers.ValidationError({"code": "该机房下已存在同编号机柜"})
         if room and not room.is_active and (
             self.instance is None or room.id != self.instance.room_id
         ):
             raise serializers.ValidationError({"room": "停用的机房不能新增或接收机柜"})
+        if room and not room.data_center.is_active and (
+            self.instance is None or room.id != self.instance.room_id
+        ):
+            raise serializers.ValidationError({"room": "停用的数据中心不能新增或接收机柜"})
         status = attrs.get("status", self.instance.status if self.instance else "in_use")
         if "is_active" in attrs and "status" not in attrs:
             status = "in_use" if attrs["is_active"] else "disabled"
@@ -1930,6 +2062,18 @@ class RackSerializer(serializers.ModelSerializer):
         if status not in RACK_STATUS_VALUES:
             raise serializers.ValidationError({"status": "机柜状态不正确"})
         return attrs
+
+    def update(self, instance, validated_data):
+        room = validated_data.get("room")
+        location_submitted = "room" in self.initial_data
+        with transaction.atomic():
+            instance = super().update(instance, validated_data)
+            if location_submitted and room is not None:
+                synchronize_asset_location_hierarchy(
+                    rack_ids=(instance.pk,),
+                    data_center_id=room.data_center_id,
+                )
+        return instance
 
 
 class AuditLogSerializer(serializers.ModelSerializer):
@@ -1962,6 +2106,17 @@ class FaultEventSerializer(serializers.ModelSerializer):
             raise serializers.ValidationError({"is_closed": "故障关闭状态由维修完成时间维护"})
         if "resolved_at" in self.initial_data:
             raise serializers.ValidationError({"resolved_at": "故障解决时间由维修完成时间维护"})
+        if self.instance is not None and self.instance.is_closed and attrs:
+            raise serializers.ValidationError({
+                "detail": "已关闭故障不可修改。",
+                "code": "closed_fault_immutable",
+            })
+        if (
+            self.instance is not None
+            and "asset" in attrs
+            and attrs["asset"].pk != self.instance.asset_id
+        ):
+            raise serializers.ValidationError({"asset": "故障关联资产创建后不能修改"})
         return attrs
 
     class Meta:
@@ -1976,6 +2131,19 @@ class RepairRecordSerializer(serializers.ModelSerializer):
         if unsupported:
             raise serializers.ValidationError({key: "维修费用暂不支持通过当前维修记录接口维护" for key in sorted(unsupported)})
 
+        if self.instance is not None and self.instance.finished_at is not None and attrs:
+            raise serializers.ValidationError({
+                "detail": "已完成维修不可直接修改，请先重新打开。",
+                "code": "finished_repair_immutable",
+            })
+
+        if (
+            self.instance is not None
+            and "fault" in attrs
+            and attrs["fault"].pk != self.instance.fault_id
+        ):
+            raise serializers.ValidationError({"fault": "维修记录关联故障创建后不能修改"})
+
         started_at = attrs.get("started_at", self.instance.started_at if self.instance else None)
         finished_at = attrs.get("finished_at", self.instance.finished_at if self.instance else None)
         if started_at and finished_at and started_at > finished_at:
@@ -1989,3 +2157,84 @@ class RepairRecordSerializer(serializers.ModelSerializer):
         model = RepairRecord
         fields = ["id", "fault", "provider", "started_at", "finished_at", "notes", "created_at", "updated_at"]
         read_only_fields = ["id", "created_at", "updated_at"]
+
+
+class RepairPartUsageSerializer(serializers.ModelSerializer):
+    source_label = serializers.SerializerMethodField()
+    unit = serializers.CharField(source="part_unit", read_only=True)
+    unit_label = serializers.SerializerMethodField()
+    stock_location = serializers.SerializerMethodField()
+
+    def get_source_label(self, obj) -> str:
+        return REPAIR_PART_USAGE_SOURCE_LABELS.get(obj.source, obj.source)
+
+    def get_unit_label(self, obj) -> str:
+        return SPARE_UNIT_LABELS.get(obj.part_unit, obj.part_unit)
+
+    def get_stock_location(self, obj) -> str:
+        if obj.source != RepairPartUsage.INTERNAL_STOCK:
+            return ""
+        names = [item for item in (obj.stock_data_center_name, obj.stock_server_room_name) if item]
+        return " / ".join(names)
+
+    class Meta:
+        model = RepairPartUsage
+        fields = [
+            "id", "fault", "source", "source_label", "spare_part", "part_code", "part_name",
+            "part_model", "unit", "unit_label", "spare_stock", "stock_location",
+            "stock_data_center_name", "stock_server_room_name", "vendor_name", "quantity", "notes",
+            "operator", "operator_name", "created_at",
+        ]
+        read_only_fields = fields
+
+
+class RepairPartUsageCreateSerializer(serializers.Serializer):
+    source = serializers.ChoiceField(choices=REPAIR_PART_USAGE_SOURCE_VALUES)
+    spare_part_id = serializers.PrimaryKeyRelatedField(
+        source="spare_part",
+        queryset=SparePart.objects.all(),
+        required=False,
+        allow_null=True,
+    )
+    spare_stock_id = serializers.PrimaryKeyRelatedField(
+        source="spare_stock",
+        queryset=SpareStock.objects.select_related("part", "data_center", "server_room"),
+        required=False,
+        allow_null=True,
+    )
+    part_code = serializers.CharField(required=False, allow_blank=True, max_length=80)
+    part_name = serializers.CharField(required=False, allow_blank=True, max_length=160)
+    part_model = serializers.CharField(required=False, allow_blank=True, max_length=160)
+    vendor_name = serializers.CharField(required=False, allow_blank=True, max_length=160)
+    quantity = serializers.IntegerField(min_value=1)
+    notes = serializers.CharField(required=False, allow_blank=True)
+
+    def validate(self, attrs):
+        source = attrs["source"]
+        stock = attrs.get("spare_stock")
+        attrs["part_code"] = str(attrs.get("part_code") or "").strip()
+        attrs["part_name"] = str(attrs.get("part_name") or "").strip()
+        attrs["part_model"] = str(attrs.get("part_model") or "").strip()
+        vendor_name = str(attrs.get("vendor_name") or "").strip()
+        attrs["vendor_name"] = vendor_name
+        attrs["notes"] = str(attrs.get("notes") or "").strip()
+
+        if source == RepairPartUsage.INTERNAL_STOCK:
+            if stock is None:
+                raise serializers.ValidationError({"spare_stock_id": "内部库存用件必须选择明确的库存位置"})
+            if vendor_name:
+                raise serializers.ValidationError({"vendor_name": "内部库存用件不能填写厂商名称"})
+            if attrs.get("spare_part") is not None and stock.part_id != attrs["spare_part"].pk:
+                raise serializers.ValidationError({"spare_stock_id": "所选库存备件与部件不一致"})
+            attrs["spare_part"] = stock.part
+            if (
+                not stock.data_center.is_active
+                or (stock.server_room is not None and not stock.server_room.is_active)
+            ):
+                raise serializers.ValidationError({"spare_stock_id": "停用的数据中心或机房不能作为用件库存位置"})
+        else:
+            if stock is not None:
+                raise serializers.ValidationError({"spare_stock_id": "厂商提供的用件不能关联内部库存"})
+            if not attrs["part_name"]:
+                raise serializers.ValidationError({"part_name": "厂商提供的用件必须填写部件名称"})
+        return attrs

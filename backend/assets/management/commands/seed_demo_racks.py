@@ -1,7 +1,9 @@
-from django.core.management.base import BaseCommand
+from django.core.management.base import BaseCommand, CommandError
 from django.db import transaction
 
-from assets.models import Asset, DataCenter, DeviceType, Manufacturer, Rack, RackUnitAllocation, ServerRoom
+from assets.lifecycle import transition_asset_status
+from assets.models import Asset, DataCenter, DeviceType, Manufacturer, Rack, ServerRoom
+from assets.services import update_asset_placement
 
 
 DEMO_CENTERS = (
@@ -109,6 +111,11 @@ class Command(BaseCommand):
                         "notes": "本地可视化演示机柜",
                     },
                 )
+                highest_u = rack.allocations.order_by("-end_u").values_list("end_u", flat=True).first() or 0
+                if highest_u > 45:
+                    raise CommandError(
+                        f"演示机柜 {rack.code} 已有资产占用到 U{highest_u}，不能缩小到 45U"
+                    )
                 rack.name = f"{center_name} {rack_code}"
                 rack.rack_type = "标准 45U 机柜"
                 rack.total_u = 45
@@ -125,21 +132,21 @@ class Command(BaseCommand):
                     ]
                     device_type, model = device_types[device_name]
                     asset_no = f"DEMO-{center_code}-R{rack_index:02d}-{asset_index:02d}"
-                    asset, _ = Asset.objects.get_or_create(
+                    asset, created = Asset.objects.get_or_create(
                         asset_no=asset_no,
                         defaults={
                             "name": f"{device_name} {center_code}-R{rack_index:02d}-{asset_index:02d}",
                             "manufacturer_model": model,
                             "serial_number": f"DEMO-SN-{center_code}-{rack_index:02d}-{asset_index:02d}",
                             "purpose": "Rack U 位可视化演示资产",
-                            "status": "in_use",
                             "manufacturer": manufacturers["演示设备制造商"],
                             "device_type": device_type,
                         },
                     )
+                    if created:
+                        transition_asset_status(asset, "in_use")
                     asset.name = f"{device_name} {center_code}-R{rack_index:02d}-{asset_index:02d}"
                     asset.manufacturer_model = model
-                    asset.status = "in_use"
                     asset.manufacturer = manufacturers[
                         "演示网络设备厂商" if device_name in {"交换机", "网络设备"} else "演示设备制造商"
                     ]
@@ -148,14 +155,12 @@ class Command(BaseCommand):
                     asset.save()
                     asset_count += 1
 
-                    allocation, _ = RackUnitAllocation.objects.get_or_create(
-                        asset=asset,
-                        defaults={"rack": rack, "start_u": start_u, "end_u": end_u},
+                    update_asset_placement(
+                        asset,
+                        rack=rack,
+                        start_u=start_u,
+                        end_u=end_u,
                     )
-                    allocation.rack = rack
-                    allocation.start_u = start_u
-                    allocation.end_u = end_u
-                    allocation.save()
                     allocation_count += 1
 
                 utilization = round(occupied_u / rack.total_u * 100)

@@ -15,13 +15,19 @@ import FieldHelp from "../FieldHelp.vue";
 import FormDialogShell from "../FormDialogShell.vue";
 import AssetSelect from "../AssetSelect.vue";
 import AssetSummary from "../AssetSummary.vue";
+import PagedTable from "../PagedTable.vue";
 import StatusTag from "../StatusTag.vue";
 import type { Asset, AssetDetail, Page } from "../../types";
 import type { AssetFormContext, PageContext, RequestFn } from "../../page-context";
 import { statusTone } from "../../status";
 import { currentLocale, type Locale } from "../../i18n";
 import { useI18n } from "vue-i18n";
-import { roleLabel } from "../../business-enums";
+import {
+  businessOptionLabel,
+  businessOptionTone,
+  roleLabel,
+  spareUnitLabel,
+} from "../../business-enums";
 
 type AssetsState = ReturnType<typeof useAssets>;
 type FacilitiesState = ReturnType<typeof useFacilities>;
@@ -72,6 +78,7 @@ const { t } = useI18n();
 
 const request = props.request;
 const assetContext: AssetFormContext = props.assetContext;
+const assetResponsibilityContext = props.assets;
 const {
   page,
   showAssetDetail,
@@ -161,7 +168,37 @@ const {
   repairSaving,
   repairError,
   saveRepair,
+  reopenRepair,
+  showRepairPartUsageModal,
+  repairPartUsageForm,
+  repairPartUsageItems,
+  repairPartUsagePage,
+  repairPartUsagePageSize,
+  repairPartUsageTotal,
+  repairPartUsageLoading,
+  repairPartUsageError,
+  repairPartUsageSaving,
+  repairPartUsageOptions,
+  repairPartUsageOptionsLoading,
+  repairPartUsageOptionsError,
+  repairPartUsageStocks,
+  repairPartUsageStocksLoading,
+  repairPartUsageStocksError,
+  repairPartUsageSourceOptions,
+  openRepairPartUsageModal,
+  loadRepairPartUsageOptions,
+  scheduleRepairPartUsagePartSearch,
+  loadRepairPartUsageStocks,
+  changeRepairPartUsageSource,
+  changeRepairPartUsagePart,
+  saveRepairPartUsage,
+  retryRepairPartUsageHistory,
+  changeRepairPartUsagePage,
 } = props.repairs;
+
+const repairPartUsageAvailableSourceOptions = computed(() => repairPartUsageSourceOptions.filter(
+  (option) => option.value !== "internal_stock" || props.assetContext.can("spares.manage"),
+));
 
 const faultSelectedAsset = computed<Asset | null>(() => {
   const assetId = Number(faultForm.value.asset);
@@ -195,6 +232,36 @@ const repairFaultStatusLabel = computed(() => selectedFault.value?.is_closed ? t
 const repairCanManage = computed(() => props.assetContext.can("faults.manage"));
 const repairReadOnly = computed(() => Boolean(selectedFault.value?.is_closed) || !repairCanManage.value);
 const repairCanSubmit = computed(() => Boolean(selectedFault.value && !repairReadOnly.value));
+const repairCanReopen = computed(() => Boolean(
+  selectedFault.value?.is_closed && selectedFault.value.repair && repairCanManage.value,
+));
+const repairPartUsageCanManage = computed(() => Boolean(
+  selectedFault.value && !selectedFault.value.is_closed && repairCanManage.value,
+));
+const repairPartUsageSelectedPart = computed(() => {
+  const partId = Number(repairPartUsageForm.value.spare_part_id);
+  return repairPartUsageOptions.value.find((part) => part.id === partId) || null;
+});
+const repairPartUsageSelectedStock = computed(() => {
+  const stockId = Number(repairPartUsageForm.value.spare_stock_id);
+  return repairPartUsageStocks.value.find((stock) => stock.id === stockId) || null;
+});
+const repairPartUsageQuantity = computed<number | null>({
+  get: () => repairPartUsageForm.value.quantity,
+  set: (value) => {
+    repairPartUsageForm.value.quantity = value == null ? null : Number(value);
+  },
+});
+const repairPartUsageStockImpact = computed(() => {
+  const stock = repairPartUsageSelectedStock.value;
+  const quantity = Number(repairPartUsageForm.value.quantity || 0);
+  if (!stock || !quantity) return "";
+  return t("repair.partUsageStockImpact", {
+    current: stock.quantity,
+    remaining: Math.max(stock.quantity - quantity, 0),
+    unit: spareUnitLabel(repairPartUsageSelectedPart.value?.unit || "piece"),
+  });
+});
 const repairDialogTitle = computed(() => {
   if (!selectedFault.value) return t("overlay.repairRecord");
   if (selectedFault.value.is_closed) return t("repair.viewResult");
@@ -208,6 +275,7 @@ const repairDialogDescription = computed(() => {
 
 const faultFormRef = ref<FormInstance>();
 const repairFormRef = ref<FormInstance>();
+const repairPartUsageFormRef = ref<FormInstance>();
 const faultFormRules = computed<FormRules>(() => ({
   asset: [{ required: true, message: t("overlay.selectRelatedAsset"), trigger: "change" }],
   occurred_at: [{ required: true, message: t("overlay.selectFaultTime"), trigger: "change" }],
@@ -226,6 +294,63 @@ const repairTimeRule = {
 const repairFormRules = computed<FormRules>(() => ({
   started_at: [repairTimeRule],
   finished_at: [repairTimeRule],
+}));
+const repairPartUsageFormRules = computed<FormRules>(() => ({
+  source: [{ required: true, message: t("repair.partUsageSourceRequired"), trigger: "change" }],
+  spare_part_id: [
+    {
+      validator: (_rule: unknown, value: unknown, callback: (error?: Error) => void) => {
+        if (repairPartUsageForm.value.source === "internal_stock" && !String(value || "").trim()) {
+          callback(new Error(t("repair.partUsagePartRequired")));
+          return;
+        }
+        callback();
+      },
+      trigger: "change",
+    },
+  ],
+  part_name: [
+    {
+      validator: (_rule: unknown, value: unknown, callback: (error?: Error) => void) => {
+        if (repairPartUsageForm.value.source === "vendor_provided" && !String(value || "").trim()) {
+          callback(new Error(t("repair.partUsageNameRequired")));
+          return;
+        }
+        callback();
+      },
+      trigger: ["change", "blur"],
+    },
+  ],
+  spare_stock_id: [
+    {
+      validator: (_rule: unknown, value: unknown, callback: (error?: Error) => void) => {
+        if (repairPartUsageForm.value.source === "internal_stock" && !String(value || "").trim()) {
+          callback(new Error(t("repair.partUsageStockRequired")));
+          return;
+        }
+        callback();
+      },
+      trigger: "change",
+    },
+  ],
+  quantity: [
+    {
+      validator: (_rule: unknown, value: unknown, callback: (error?: Error) => void) => {
+        const quantity = Number(value);
+        if (!Number.isInteger(quantity) || quantity < 1) {
+          callback(new Error(t("repair.partUsageQuantityInvalid")));
+          return;
+        }
+        const stock = repairPartUsageSelectedStock.value;
+        if (repairPartUsageForm.value.source === "internal_stock" && stock && quantity > stock.quantity) {
+          callback(new Error(t("repair.partUsageQuantityExceedsStock")));
+          return;
+        }
+        callback();
+      },
+      trigger: ["change", "blur"],
+    },
+  ],
 }));
 const repairSubmitLabel = computed(() => {
   if (!selectedFault.value?.repair) return t("repair.start");
@@ -290,6 +415,45 @@ async function submitRepair() {
   const valid = await repairFormRef.value?.validate().catch(() => false);
   if (valid !== true) return;
   await saveRepair();
+}
+
+async function submitRepairPartUsage() {
+  const valid = await repairPartUsageFormRef.value?.validate().catch(() => false);
+  if (valid !== true) return;
+  await saveRepairPartUsage();
+}
+
+function repairPartUsageOptionLabel(part: { code: string; name: string; model?: string }) {
+  return [part.code, part.name, part.model].filter(Boolean).join(" · ");
+}
+
+function repairPartUsageStockLabel(stock: {
+  data_center_name: string;
+  server_room_name: string | null;
+  quantity: number;
+  part: number;
+}) {
+  const location = [stock.data_center_name, stock.server_room_name || t("spare.centerStock")].filter(Boolean).join(" / ");
+  const unit = repairPartUsageSelectedPart.value?.unit || "piece";
+  return `${location} · ${stock.quantity} ${spareUnitLabel(unit)}`;
+}
+
+function repairPartUsageOrigin(row: {
+  source: string;
+  stock_data_center_name: string;
+  stock_server_room_name: string;
+  vendor_name: string;
+}) {
+  if (row.source === "internal_stock") {
+    return [row.stock_data_center_name, row.stock_server_room_name || t("spare.centerStock")].filter(Boolean).join(" / ") || t("common.notAvailable");
+  }
+  return row.vendor_name || t("common.notAvailable");
+}
+
+function formatRepairPartUsageDateTime(value: string | null | undefined): string {
+  if (!value) return t("common.notAvailable");
+  const date = new Date(value);
+  return Number.isNaN(date.getTime()) ? t("common.notAvailable") : date.toLocaleString(currentLocale.value);
 }
 
 function formatRepairDateTime(value: string | null | undefined): string {
@@ -890,6 +1054,75 @@ function importRowErrorText(row: { errors: Array<{ label: string; message: strin
         <p v-if="repairFaultDescription" class="repair-action-context__description">{{ repairFaultDescription }}</p>
       </div>
       <AssetSummary v-if="repairAssetSummary" :asset="repairAssetSummary" compact :show-status="true" :show-location="true" />
+      <section class="repair-part-usage-panel" :aria-labelledby="'repair-part-usage-title'">
+        <div class="repair-part-usage-panel__header">
+          <div>
+            <h3 id="repair-part-usage-title" class="repair-part-usage-panel__title">{{ t('repair.partUsageHistory') }}</h3>
+            <p class="repair-part-usage-panel__hint">{{ t('repair.partUsageHistoryHint') }}</p>
+          </div>
+          <el-button v-if="repairPartUsageCanManage" type="primary" plain size="small" @click="openRepairPartUsageModal">
+            {{ t('repair.recordPartUsage') }}
+          </el-button>
+        </div>
+        <el-alert v-if="repairPartUsageError" type="error" :closable="false" show-icon>
+          <template #default>
+            <div class="repair-part-usage-panel__error">
+              <span>{{ repairPartUsageError }}</span>
+              <el-button link type="danger" @click="retryRepairPartUsageHistory">{{ t('common.retry') }}</el-button>
+            </div>
+          </template>
+        </el-alert>
+        <div v-if="repairPartUsageLoading" class="repair-part-usage-panel__loading">{{ t('common.loading') }}</div>
+        <PagedTable
+          v-if="repairPartUsageItems.length || repairPartUsageLoading"
+          class="repair-part-usage-paged-table"
+          :current-page="repairPartUsagePage"
+          :page-size="repairPartUsagePageSize"
+          :total="repairPartUsageTotal"
+          :disabled="repairPartUsageLoading"
+          hide-on-single-page
+          layout="prev, pager, next"
+          @update:current-page="changeRepairPartUsagePage"
+        >
+          <el-table
+            v-if="!repairPartUsageLoading"
+            :data="repairPartUsageItems"
+            size="small"
+            class="repair-part-usage-table"
+            row-key="id"
+          >
+            <el-table-column :label="t('repair.partUsageTime')" min-width="154">
+              <template #default="{ row }">{{ formatRepairPartUsageDateTime(row.created_at) }}</template>
+            </el-table-column>
+            <el-table-column :label="t('repair.partUsageSource')" min-width="92">
+              <template #default="{ row }">
+                <StatusTag :tone="businessOptionTone(repairPartUsageSourceOptions, row.source)" :label="businessOptionLabel(repairPartUsageSourceOptions, row.source)" />
+              </template>
+            </el-table-column>
+            <el-table-column :label="t('repair.partUsagePart')" min-width="180">
+              <template #default="{ row }">
+                <div class="repair-part-usage-table__part" :title="repairPartUsageOptionLabel({ code: row.part_code, name: row.part_name, model: row.part_model })">
+                  <strong>{{ row.part_code }}</strong>
+                  <span>{{ row.part_name }}<template v-if="row.part_model"> · {{ row.part_model }}</template></span>
+                </div>
+              </template>
+            </el-table-column>
+            <el-table-column :label="t('repair.partUsageQuantity')" width="92" align="right">
+              <template #default="{ row }">{{ row.quantity }} {{ spareUnitLabel(row.unit) }}</template>
+            </el-table-column>
+            <el-table-column :label="t('repair.partUsageOrigin')" min-width="150">
+              <template #default="{ row }"><span :title="repairPartUsageOrigin(row)">{{ repairPartUsageOrigin(row) }}</span></template>
+            </el-table-column>
+            <el-table-column :label="t('repair.partUsageOperator')" min-width="110">
+              <template #default="{ row }">{{ row.operator_name || t('common.notAvailable') }}</template>
+            </el-table-column>
+            <el-table-column :label="t('common.notes')" min-width="180">
+              <template #default="{ row }"><span class="repair-part-usage-table__notes">{{ row.notes || t('common.notAvailable') }}</span></template>
+            </el-table-column>
+          </el-table>
+        </PagedTable>
+        <el-empty v-else-if="!repairPartUsageError" :description="t('repair.noPartUsage')" :image-size="56" />
+      </section>
       <el-form-item :label="t('overlay.repairProvider')"><el-input v-model="repairForm.provider" :readonly="repairReadOnly" :placeholder="t('overlay.repairProviderPlaceholder')" /></el-form-item>
       <el-form-item :label="t('overlay.repairStartedAt')" prop="started_at"><el-date-picker v-model="repairForm.started_at" type="datetime" value-format="YYYY-MM-DDTHH:mm" :disabled="repairReadOnly" /></el-form-item>
       <el-form-item :label="t('overlay.repairFinishedAt')" prop="finished_at">
@@ -900,7 +1133,130 @@ function importRowErrorText(row: { errors: Array<{ label: string; message: strin
     </el-form>
     <template #footer>
       <el-button :disabled="repairSaving" @click="showRepairModal = false">{{ repairReadOnly ? t('common.close') : t('common.cancel') }}</el-button>
+      <el-button v-if="repairCanReopen" type="primary" :loading="repairSaving" :disabled="repairSaving" @click="reopenRepair">{{ t('repair.reopen') }}</el-button>
       <el-button v-if="repairCanSubmit" type="primary" :loading="repairSaving" :disabled="repairSaving" @click="submitRepair">{{ repairSubmitLabel }}</el-button>
+    </template>
+  </ActionDialogShell>
+
+  <ActionDialogShell
+    v-model="showRepairPartUsageModal"
+    :title="t('repair.recordPartUsage')"
+    :description="t('repair.partUsageDialogDescription')"
+    size="medium"
+    :pending="repairPartUsageSaving"
+    :error="repairPartUsageError"
+    :show-close="!repairPartUsageSaving"
+    :close-on-click-modal="!repairPartUsageSaving"
+    :close-on-press-escape="!repairPartUsageSaving"
+    :close-disabled="repairPartUsageSaving"
+  >
+    <el-form
+      ref="repairPartUsageFormRef"
+      class="repair-part-usage-form"
+      :model="repairPartUsageForm"
+      :rules="repairPartUsageFormRules"
+      label-position="top"
+      :validate-on-rule-change="false"
+      @submit.prevent="submitRepairPartUsage"
+    >
+      <el-alert :title="t('repair.partUsageImmutableHint')" type="info" :closable="false" show-icon />
+      <el-alert
+        :title="t(repairPartUsageForm.source === 'internal_stock' ? 'repair.partUsageInternalImpact' : 'repair.partUsageVendorImpact')"
+        :type="repairPartUsageForm.source === 'internal_stock' ? 'warning' : 'info'"
+        :closable="false"
+        show-icon
+      />
+      <el-form-item :label="t('repair.partUsageSource')" prop="source" required>
+        <el-select v-model="repairPartUsageForm.source" class="repair-part-usage-form__wide" @change="changeRepairPartUsageSource">
+          <el-option
+            v-for="option in repairPartUsageAvailableSourceOptions"
+            :key="option.value"
+            :label="businessOptionLabel(repairPartUsageAvailableSourceOptions, option.value)"
+            :value="option.value"
+          />
+        </el-select>
+      </el-form-item>
+      <template v-if="repairPartUsageForm.source === 'internal_stock'">
+        <el-form-item :label="t('repair.partUsagePart')" prop="spare_part_id" required>
+          <el-select
+            v-model="repairPartUsageForm.spare_part_id"
+            class="repair-part-usage-form__wide"
+            filterable
+            remote
+            clearable
+            reserve-keyword
+            :loading="repairPartUsageOptionsLoading"
+            :remote-method="scheduleRepairPartUsagePartSearch"
+            :placeholder="t('repair.partUsagePartPlaceholder')"
+            @change="changeRepairPartUsagePart"
+          >
+            <el-option
+              v-for="part in repairPartUsageOptions"
+              :key="part.id"
+              :label="repairPartUsageOptionLabel(part)"
+              :value="String(part.id)"
+            />
+          </el-select>
+          <div v-if="repairPartUsageOptionsError" class="repair-part-usage-form__inline-error">
+            <span>{{ repairPartUsageOptionsError }}</span>
+            <el-button link type="danger" @click="loadRepairPartUsageOptions()">{{ t('common.retry') }}</el-button>
+          </div>
+        </el-form-item>
+        <el-form-item :label="t('repair.partUsageStock')" prop="spare_stock_id" required>
+          <el-select
+            v-model="repairPartUsageForm.spare_stock_id"
+            class="repair-part-usage-form__wide"
+            clearable
+            :disabled="!repairPartUsageForm.spare_part_id || repairPartUsageStocksLoading"
+            :loading="repairPartUsageStocksLoading"
+            :placeholder="repairPartUsageForm.spare_part_id ? t('repair.partUsageStockPlaceholder') : t('repair.partUsageSelectPartFirst')"
+          >
+            <el-option
+              v-for="stock in repairPartUsageStocks"
+              :key="stock.id"
+              :label="repairPartUsageStockLabel(stock)"
+              :value="String(stock.id)"
+            />
+          </el-select>
+          <div v-if="repairPartUsageStocksError" class="repair-part-usage-form__inline-error">
+            <span>{{ repairPartUsageStocksError }}</span>
+            <el-button link type="danger" @click="loadRepairPartUsageStocks()">{{ t('common.retry') }}</el-button>
+          </div>
+        </el-form-item>
+      </template>
+      <template v-else>
+        <el-form-item :label="t('repair.partUsageName')" prop="part_name" required>
+          <el-input v-model="repairPartUsageForm.part_name" maxlength="160" :placeholder="t('repair.partUsageNamePlaceholder')" />
+        </el-form-item>
+        <el-form-item :label="t('repair.partUsageModel')" prop="part_model">
+          <el-input v-model="repairPartUsageForm.part_model" maxlength="160" :placeholder="t('repair.partUsageModelPlaceholder')" />
+        </el-form-item>
+        <el-form-item :label="t('repair.partUsageCode')" prop="part_code">
+          <el-input v-model="repairPartUsageForm.part_code" maxlength="80" :placeholder="t('repair.partUsageCodePlaceholder')" />
+        </el-form-item>
+        <el-form-item :label="t('repair.partUsageVendor')" prop="vendor_name">
+          <el-input v-model="repairPartUsageForm.vendor_name" maxlength="160" :placeholder="t('repair.partUsageVendorPlaceholder')" />
+        </el-form-item>
+      </template>
+      <el-form-item :label="t('repair.partUsageQuantity')" prop="quantity" required>
+        <el-input-number
+          v-model="repairPartUsageQuantity"
+          :min="1"
+          :max="repairPartUsageForm.source === 'internal_stock' && repairPartUsageSelectedStock ? repairPartUsageSelectedStock.quantity : undefined"
+          :step="1"
+          :precision="0"
+          :value-on-clear="null"
+          :disabled="repairPartUsageForm.source === 'internal_stock' && !repairPartUsageSelectedStock"
+        />
+      </el-form-item>
+      <el-alert v-if="repairPartUsageStockImpact" :title="repairPartUsageStockImpact" type="warning" :closable="false" show-icon />
+      <el-form-item :label="t('common.notes')" prop="notes">
+        <el-input v-model="repairPartUsageForm.notes" type="textarea" :rows="3" maxlength="2000" :placeholder="t('repair.partUsageNotesPlaceholder')" />
+      </el-form-item>
+    </el-form>
+    <template #footer>
+      <el-button :disabled="repairPartUsageSaving" @click="showRepairPartUsageModal = false">{{ t('common.cancel') }}</el-button>
+      <el-button type="primary" :loading="repairPartUsageSaving" :disabled="repairPartUsageSaving" @click="submitRepairPartUsage">{{ t('repair.savePartUsage') }}</el-button>
     </template>
   </ActionDialogShell>
 
@@ -1106,6 +1462,9 @@ function importRowErrorText(row: { errors: Array<{ label: string; message: strin
     :error="detailError"
     :can-edit="canEditAsset"
     :retry="retryAssetDetail"
+    :responsibility-context="assetResponsibilityContext"
+    :responsibility-history-context="assetResponsibilityContext"
+    :inventory-history-context="assetResponsibilityContext"
     @edit="editCurrentAsset"
     @closed="detailAsset = null"
   />

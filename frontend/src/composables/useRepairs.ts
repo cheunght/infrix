@@ -1,8 +1,16 @@
 import { ref, type Ref } from "vue";
 import type { LocationQuery } from "vue-router";
 import { buildExportQuery, isAbortError, pageItems, pageTotal, type PageResult } from "../api";
-import type { Asset, FaultEvent } from "../types";
+import type {
+  Asset,
+  FaultEvent,
+  RepairPartUsage,
+  RepairPartUsageFormState,
+  SparePart,
+  SpareStock,
+} from "../types";
 import type { CapabilityFn, RequestFn } from "../page-context";
+import { REPAIR_PART_USAGE_SOURCE_OPTIONS, type RepairPartUsageSource } from "../business-enums";
 import { i18n } from "../i18n";
 
 const tr = (key: string, params?: Record<string, unknown>): string =>
@@ -34,6 +42,20 @@ function toDateTimeLocal(value: string | null) {
   return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}T${pad(date.getHours())}:${pad(date.getMinutes())}`;
 }
 
+function emptyRepairPartUsageForm(): RepairPartUsageFormState {
+  return {
+    source: "internal_stock",
+    spare_part_id: "",
+    spare_stock_id: "",
+    part_code: "",
+    part_name: "",
+    part_model: "",
+    vendor_name: "",
+    quantity: null,
+    notes: "",
+  };
+}
+
 export function useRepairs(deps: RepairsDeps) {
   const repairRows = ref<FaultEvent[]>([]);
   const repairCount = ref(0);
@@ -49,6 +71,38 @@ export function useRepairs(deps: RepairsDeps) {
   const selectedFault = ref<FaultEvent | null>(null);
   const faultForm = ref({ asset: "", occurred_at: "", reason: "", description: "" });
   const repairForm = ref({ provider: "", started_at: "", finished_at: "", notes: "" });
+  const showRepairPartUsageModal = ref(false);
+  const repairPartUsageForm = ref<RepairPartUsageFormState>({
+    source: "internal_stock",
+    spare_part_id: "",
+    spare_stock_id: "",
+    part_code: "",
+    part_name: "",
+    part_model: "",
+    vendor_name: "",
+    quantity: null,
+    notes: "",
+  });
+  const repairPartUsageItems = ref<RepairPartUsage[]>([]);
+  const repairPartUsagePage = ref(1);
+  const repairPartUsagePageSize = ref(20);
+  const repairPartUsageTotal = ref(0);
+  const repairPartUsageLoading = ref(false);
+  const repairPartUsageError = ref("");
+  const repairPartUsageSaving = ref(false);
+  const repairPartUsageOptions = ref<SparePart[]>([]);
+  const repairPartUsageOptionsLoading = ref(false);
+  const repairPartUsageOptionsError = ref("");
+  const repairPartUsageStocks = ref<SpareStock[]>([]);
+  const repairPartUsageStocksLoading = ref(false);
+  const repairPartUsageStocksError = ref("");
+  const repairPartUsageHistoryRequestId = ref(0);
+  const repairPartUsageOptionsRequestId = ref(0);
+  const repairPartUsageStocksRequestId = ref(0);
+  let repairPartUsageHistoryController: AbortController | null = null;
+  let repairPartUsageOptionsController: AbortController | null = null;
+  let repairPartUsageStocksController: AbortController | null = null;
+  let repairPartUsageSearchTimer: ReturnType<typeof setTimeout> | null = null;
   const repairListLoading = ref(false);
   const repairListError = ref("");
   const exportingRepairs = ref(false);
@@ -98,7 +152,12 @@ export function useRepairs(deps: RepairsDeps) {
       finished_at: toDateTimeLocal(fault.repair?.finished_at || null),
       notes: fault.repair?.notes || "",
     };
+    repairPartUsageItems.value = [];
+    repairPartUsageTotal.value = 0;
+    repairPartUsagePage.value = 1;
+    repairPartUsageError.value = "";
     showRepairModal.value = true;
+    void loadRepairPartUsageHistory(fault.id, 1);
   }
 
   function repairTimeError() {
@@ -132,6 +191,304 @@ export function useRepairs(deps: RepairsDeps) {
 
   function errorMessage(error: unknown, fallback: string) {
     return error instanceof Error && error.message ? error.message : fallback;
+  }
+
+  async function loadAllPages<T>(
+    basePath: string,
+    signal: AbortSignal,
+    shouldContinue: () => boolean,
+  ): Promise<T[] | null> {
+    const rows: T[] = [];
+    let page = 1;
+    while (shouldContinue() && !signal.aborted) {
+      const separator = basePath.includes("?") ? "&" : "?";
+      const result = await deps.request<PageResult<T> | T[]>(
+        `${basePath}${separator}page=${page}`,
+        { signal },
+      );
+      if (!shouldContinue() || signal.aborted) return null;
+      if (Array.isArray(result)) return [...rows, ...result];
+      rows.push(...(result.results || []));
+      if (!result.next || !result.results.length) return rows;
+      page += 1;
+    }
+    return null;
+  }
+
+  async function loadRepairPartUsageHistory(faultId: number, page = repairPartUsagePage.value): Promise<boolean> {
+    const requestId = ++repairPartUsageHistoryRequestId.value;
+    repairPartUsageHistoryController?.abort();
+    const controller = new AbortController();
+    repairPartUsageHistoryController = controller;
+    const requestedPage = Math.max(1, page);
+    repairPartUsagePage.value = requestedPage;
+    repairPartUsageLoading.value = true;
+    repairPartUsageError.value = "";
+    try {
+      const params = new URLSearchParams({
+        page: String(requestedPage),
+        page_size: String(repairPartUsagePageSize.value),
+      });
+      const payload = await deps.request<PageResult<RepairPartUsage> | RepairPartUsage[]>(
+        `/fault-events/${faultId}/part-usages/?${params.toString()}`,
+        { signal: controller.signal },
+      );
+      if (
+        requestId !== repairPartUsageHistoryRequestId.value
+        || selectedFault.value?.id !== faultId
+      ) return false;
+      const nextCount = pageTotal(payload);
+      const maxPage = totalPages(nextCount, repairPartUsagePageSize.value);
+      if (requestedPage > maxPage) {
+        repairPartUsagePage.value = maxPage;
+        return await loadRepairPartUsageHistory(faultId, maxPage);
+      }
+      repairPartUsageItems.value = pageItems(payload);
+      repairPartUsageTotal.value = nextCount;
+      return true;
+    } catch (error) {
+      if (
+        requestId === repairPartUsageHistoryRequestId.value
+        && selectedFault.value?.id === faultId
+        && !isAbortError(error)
+      ) {
+        repairPartUsageError.value = errorMessage(error, tr("repair.partUsageHistoryLoadFailed"));
+      }
+      return false;
+    } finally {
+      if (requestId === repairPartUsageHistoryRequestId.value) {
+        repairPartUsageLoading.value = false;
+        if (repairPartUsageHistoryController === controller) repairPartUsageHistoryController = null;
+      }
+    }
+  }
+
+  async function loadRepairPartUsageOptions(search = ""): Promise<boolean> {
+    if (
+      repairPartUsageForm.value.source !== "internal_stock"
+      || !deps.can("spares.view")
+      || !deps.can("spares.manage")
+    ) return false;
+    const requestId = ++repairPartUsageOptionsRequestId.value;
+    repairPartUsageOptionsController?.abort();
+    const controller = new AbortController();
+    repairPartUsageOptionsController = controller;
+    repairPartUsageOptionsLoading.value = true;
+    repairPartUsageOptionsError.value = "";
+    try {
+      const params = new URLSearchParams({ page: "1", page_size: "20" });
+      if (search.trim()) params.set("search", search.trim());
+      const payload = await deps.request<PageResult<SparePart> | SparePart[]>(
+        `/spare-parts/?${params.toString()}`,
+        { signal: controller.signal },
+      );
+      if (requestId !== repairPartUsageOptionsRequestId.value) return false;
+      const options = pageItems(payload);
+      const selectedPartId = Number(repairPartUsageForm.value.spare_part_id);
+      const previousSelected = repairPartUsageOptions.value.find((part) => part.id === selectedPartId);
+      if (previousSelected && !options.some((part) => part.id === previousSelected.id)) {
+        options.unshift(previousSelected);
+      }
+      repairPartUsageOptions.value = options;
+      return true;
+    } catch (error) {
+      if (requestId === repairPartUsageOptionsRequestId.value && !isAbortError(error)) {
+        repairPartUsageOptionsError.value = errorMessage(error, tr("repair.partUsageOptionsLoadFailed"));
+      }
+      return false;
+    } finally {
+      if (requestId === repairPartUsageOptionsRequestId.value) {
+        repairPartUsageOptionsLoading.value = false;
+        if (repairPartUsageOptionsController === controller) repairPartUsageOptionsController = null;
+      }
+    }
+  }
+
+  function scheduleRepairPartUsagePartSearch(search: string) {
+    if (repairPartUsageForm.value.source !== "internal_stock") return;
+    if (repairPartUsageSearchTimer) clearTimeout(repairPartUsageSearchTimer);
+    repairPartUsageSearchTimer = setTimeout(() => {
+      repairPartUsageSearchTimer = null;
+      void loadRepairPartUsageOptions(search);
+    }, search.trim() ? 250 : 0);
+  }
+
+  async function loadRepairPartUsageStocks(partId = repairPartUsageForm.value.spare_part_id): Promise<boolean> {
+    if (repairPartUsageForm.value.source !== "internal_stock") {
+      repairPartUsageStocksRequestId.value += 1;
+      repairPartUsageStocksController?.abort();
+      repairPartUsageStocksController = null;
+      repairPartUsageStocks.value = [];
+      repairPartUsageStocksError.value = "";
+      repairPartUsageStocksLoading.value = false;
+      return true;
+    }
+    if (!deps.can("spares.view") || !deps.can("spares.manage")) return false;
+    const requestId = ++repairPartUsageStocksRequestId.value;
+    repairPartUsageStocksController?.abort();
+    if (!partId) {
+      repairPartUsageStocks.value = [];
+      repairPartUsageStocksError.value = "";
+      repairPartUsageStocksLoading.value = false;
+      return true;
+    }
+    const controller = new AbortController();
+    repairPartUsageStocksController = controller;
+    repairPartUsageStocksLoading.value = true;
+    repairPartUsageStocksError.value = "";
+    try {
+      const rows = await loadAllPages<SpareStock>(
+        `/spare-stocks/?part=${encodeURIComponent(partId)}&page_size=50`,
+        controller.signal,
+        () => requestId === repairPartUsageStocksRequestId.value,
+      );
+      if (rows == null || requestId !== repairPartUsageStocksRequestId.value) return false;
+      repairPartUsageStocks.value = rows;
+      return true;
+    } catch (error) {
+      if (requestId === repairPartUsageStocksRequestId.value && !isAbortError(error)) {
+        repairPartUsageStocksError.value = errorMessage(error, tr("repair.partUsageStocksLoadFailed"));
+      }
+      return false;
+    } finally {
+      if (requestId === repairPartUsageStocksRequestId.value) {
+        repairPartUsageStocksLoading.value = false;
+        if (repairPartUsageStocksController === controller) repairPartUsageStocksController = null;
+      }
+    }
+  }
+
+  function openRepairPartUsageModal() {
+    if (!deps.can("faults.manage") || !selectedFault.value || selectedFault.value.is_closed) return;
+    repairPartUsageForm.value = emptyRepairPartUsageForm();
+    if (!deps.can("spares.manage")) repairPartUsageForm.value.source = "vendor_provided";
+    repairPartUsageError.value = "";
+    repairPartUsageOptionsError.value = "";
+    repairPartUsageStocksError.value = "";
+    showRepairPartUsageModal.value = true;
+    if (repairPartUsageForm.value.source === "internal_stock") {
+      void loadRepairPartUsageStocks("");
+      void loadRepairPartUsageOptions();
+    }
+  }
+
+  function changeRepairPartUsageSource(source: RepairPartUsageSource) {
+    const nextSource = source === "internal_stock" && !deps.can("spares.manage")
+      ? "vendor_provided"
+      : source;
+    repairPartUsageForm.value.source = nextSource;
+    repairPartUsageForm.value.spare_part_id = "";
+    repairPartUsageForm.value.spare_stock_id = "";
+    repairPartUsageForm.value.part_code = "";
+    repairPartUsageForm.value.part_name = "";
+    repairPartUsageForm.value.part_model = "";
+    repairPartUsageForm.value.vendor_name = "";
+    repairPartUsageStocks.value = [];
+    repairPartUsageStocksError.value = "";
+    void loadRepairPartUsageStocks("");
+    if (nextSource === "internal_stock") {
+      void loadRepairPartUsageOptions();
+    } else {
+      repairPartUsageOptionsRequestId.value += 1;
+      repairPartUsageOptionsController?.abort();
+      repairPartUsageOptionsController = null;
+      repairPartUsageOptions.value = [];
+      repairPartUsageOptionsLoading.value = false;
+      repairPartUsageOptionsError.value = "";
+    }
+  }
+
+  function changeRepairPartUsagePart(partId: string | number | null | undefined) {
+    const normalizedPartId = partId == null ? "" : String(partId);
+    repairPartUsageForm.value.spare_part_id = normalizedPartId;
+    repairPartUsageForm.value.spare_stock_id = "";
+    repairPartUsageStocks.value = [];
+    repairPartUsageStocksError.value = "";
+    if (repairPartUsageForm.value.source === "internal_stock") {
+      void loadRepairPartUsageStocks(normalizedPartId);
+    } else {
+      void loadRepairPartUsageStocks("");
+    }
+  }
+
+  async function saveRepairPartUsage(): Promise<boolean> {
+    if (!deps.can("faults.manage") || !selectedFault.value || repairPartUsageSaving.value) return false;
+    if (selectedFault.value.is_closed) {
+      deps.actionMessage.value = tr("repair.completedViewOnly");
+      return false;
+    }
+    const form = repairPartUsageForm.value;
+    const internalStock = form.source === "internal_stock";
+    const partId = Number(form.spare_part_id);
+    const quantity = Number(form.quantity);
+    if (
+      (internalStock && (!Number.isInteger(partId) || partId <= 0))
+      || (!internalStock && !form.part_name.trim())
+      || !Number.isInteger(quantity)
+      || quantity <= 0
+    ) {
+      repairPartUsageError.value = tr("repair.partUsageFormIncomplete");
+      return false;
+    }
+    if (internalStock && !form.spare_stock_id) {
+      repairPartUsageError.value = tr("repair.partUsageStockRequired");
+      return false;
+    }
+    repairPartUsageSaving.value = true;
+    repairPartUsageError.value = "";
+    const faultId = selectedFault.value.id;
+    const requestedPartId = internalStock ? form.spare_part_id : "";
+    try {
+      const payload: Record<string, unknown> = {
+        source: form.source,
+        quantity,
+        notes: form.notes.trim(),
+      };
+      if (internalStock) {
+        payload.spare_part_id = partId;
+        payload.spare_stock_id = Number(form.spare_stock_id);
+      } else {
+        payload.part_name = form.part_name.trim();
+        if (form.part_code.trim()) payload.part_code = form.part_code.trim();
+        if (form.part_model.trim()) payload.part_model = form.part_model.trim();
+        payload.vendor_name = form.vendor_name.trim();
+      }
+      await deps.request(`/fault-events/${faultId}/part-usages/`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+      });
+    } catch (error) {
+      repairPartUsageError.value = errorMessage(error, tr("repair.partUsageSaveFailed"));
+      deps.actionMessage.value = repairPartUsageError.value;
+      return false;
+    } finally {
+      repairPartUsageSaving.value = false;
+    }
+
+    showRepairPartUsageModal.value = false;
+    repairPartUsageForm.value = emptyRepairPartUsageForm();
+    const historyRefreshed = await loadRepairPartUsageHistory(faultId, 1);
+    const stockRefreshed = form.source === "internal_stock"
+      ? await loadRepairPartUsageStocks(requestedPartId)
+      : true;
+    const refreshErrors: string[] = [];
+    if (!historyRefreshed) refreshErrors.push(tr("repair.partUsageHistoryRefreshFailed"));
+    if (!stockRefreshed) refreshErrors.push(tr("repair.partUsageStocksRefreshFailed"));
+    deps.actionMessage.value = refreshErrors.length
+      ? `${tr("repair.partUsageSaved")}，${refreshErrors.join("；")}`
+      : tr("repair.partUsageSaved");
+    return true;
+  }
+
+  function retryRepairPartUsageHistory() {
+    if (selectedFault.value) void loadRepairPartUsageHistory(selectedFault.value.id, repairPartUsagePage.value);
+  }
+
+  function changeRepairPartUsagePage(page: number) {
+    if (!selectedFault.value) return;
+    repairPartUsagePage.value = Math.max(1, page);
+    void loadRepairPartUsageHistory(selectedFault.value.id, repairPartUsagePage.value);
   }
 
   async function loadRepairs(version = deps.beginLoad()): Promise<boolean> {
@@ -307,6 +664,44 @@ export function useRepairs(deps: RepairsDeps) {
       : successMessage;
     return true;
   }
+  async function reopenRepair(): Promise<boolean> {
+    if (
+      !deps.can("faults.manage")
+      || !selectedFault.value?.is_closed
+      || !selectedFault.value.repair
+      || repairSaving.value
+    ) return false;
+    repairError.value = "";
+    repairSaving.value = true;
+    const repairedAssetId = selectedFault.value.asset;
+    const repairId = selectedFault.value.repair.id;
+    try {
+      if (!deps.confirmAction || !(await deps.confirmAction(tr("repair.reopenConfirm")))) return false;
+      await deps.request(`/repair-records/${repairId}/reopen/`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+      });
+    } catch (error) {
+      repairError.value = errorMessage(error, tr("repair.reopenFailed"));
+      deps.actionMessage.value = repairError.value;
+      return false;
+    } finally {
+      repairSaving.value = false;
+    }
+
+    showRepairModal.value = false;
+    const listRefreshed = await loadRepairs();
+    const detailRefresh = deps.refreshOpenAssetDetail
+      ? await deps.refreshOpenAssetDetail(repairedAssetId)
+      : null;
+    const followUpMessages: string[] = [];
+    if (!listRefreshed) followUpMessages.push(tr("repair.reopenedRefreshFailed"));
+    if (detailRefresh === false) followUpMessages.push(tr("asset.assetDetailLoadFailed"));
+    deps.actionMessage.value = followUpMessages.length
+      ? `${tr("repair.reopened")}，${followUpMessages.join("；")}`
+      : tr("repair.reopened");
+    return true;
+  }
   async function exportRepairs() {
     if (!deps.can("faults.export")) return;
     if (exportingRepairs.value) return;
@@ -342,6 +737,14 @@ export function useRepairs(deps: RepairsDeps) {
     repairForm, repairTimeError, openFaultModal, registerFaultFromSelection, openRepairModal, loadRepairs,
     searchRepairs, onRepairStatusChange, onRepairDateChange, resetRepairFilters, retryRepairList,
     syncFiltersFromQuery,
-    createFault, saveRepair, exportRepairs, changeRepairPage, changeRepairPageSize,
+    createFault, saveRepair, reopenRepair, exportRepairs, changeRepairPage, changeRepairPageSize,
+    showRepairPartUsageModal, repairPartUsageForm, repairPartUsageItems, repairPartUsagePage,
+    repairPartUsagePageSize, repairPartUsageTotal, repairPartUsageLoading, repairPartUsageError,
+    repairPartUsageSaving, repairPartUsageOptions, repairPartUsageOptionsLoading, repairPartUsageOptionsError,
+    repairPartUsageStocks, repairPartUsageStocksLoading, repairPartUsageStocksError,
+    repairPartUsageSourceOptions: REPAIR_PART_USAGE_SOURCE_OPTIONS,
+    openRepairPartUsageModal, loadRepairPartUsageHistory, loadRepairPartUsageOptions,
+    scheduleRepairPartUsagePartSearch, loadRepairPartUsageStocks, changeRepairPartUsageSource,
+    changeRepairPartUsagePart, saveRepairPartUsage, retryRepairPartUsageHistory, changeRepairPartUsagePage,
   };
 }

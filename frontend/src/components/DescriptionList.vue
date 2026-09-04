@@ -5,19 +5,25 @@ import { useI18n } from "vue-i18n";
 type DescriptionListItem = {
   key: string;
   label: string;
+  raw?: unknown;
   value?: unknown;
+  empty?: boolean;
   wide?: boolean;
   className?: string;
   title?: string;
 };
+type DescriptionListSize = "large" | "default" | "small";
 
 const props = withDefaults(
   defineProps<{
     items: DescriptionListItem[];
     columns?: 1 | 2;
+    border?: boolean;
     emptyValue?: string;
+    size?: DescriptionListSize;
   }>(),
   {
+    border: false,
     columns: 2,
   },
 );
@@ -60,7 +66,13 @@ function displayValue(value: unknown): string {
 </script>
 
 <template>
-  <el-descriptions class="description-list" :column="descriptionColumns" direction="horizontal">
+  <el-descriptions
+    class="description-list"
+    :border="border"
+    :column="descriptionColumns"
+    direction="horizontal"
+    :size="size"
+  >
     <el-descriptions-item
       v-for="item in items"
       :key="item.key"
@@ -74,7 +86,7 @@ function displayValue(value: unknown): string {
         :title="item.title || displayValue(item.value)"
       >
         <slot :name="`value-${item.key}`" :item="item">
-          <span :class="{ 'description-list__empty': !hasContent(item.value) }">
+          <span :class="{ 'description-list__empty': item.empty || !hasContent(item.value) }">
             {{ displayValue(item.value) }}
           </span>
         </slot>

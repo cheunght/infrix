@@ -572,7 +572,7 @@ body {
 
 .asset-detail-summary {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
   align-items: center;
   gap: 14px;
   margin: 16px 18px 0;
@@ -652,6 +652,40 @@ body {
   overflow: visible;
   overflow-wrap: anywhere;
   text-overflow: clip;
+  white-space: normal;
+  word-break: break-word;
+}
+
+.asset-detail-empty-value {
+  color: var(--el-text-color-secondary);
+}
+
+.asset-detail-record-list {
+  display: grid;
+  gap: 14px;
+}
+
+.asset-detail-record-card {
+  min-width: 0;
+  padding: 10px 12px 2px;
+  border: 1px solid var(--el-border-color-lighter);
+  border-radius: 6px;
+  background: var(--el-fill-color-blank);
+}
+
+.asset-detail-record-card__title {
+  margin: 0 0 8px;
+  color: var(--el-text-color-regular);
+  font-size: var(--el-font-size-base);
+  font-weight: 600;
+}
+
+.asset-detail-record-table {
+  width: 100%;
+}
+
+.asset-detail-record-table .cell {
+  overflow-wrap: anywhere;
   white-space: normal;
   word-break: break-word;
 }
@@ -1005,6 +1039,129 @@ body {
 .repair-action-form--readonly .el-input__wrapper,
 .repair-action-form--readonly .el-textarea__inner {
   background-color: var(--el-fill-color-lighter);
+}
+
+.repair-part-usage-panel {
+  display: grid;
+  gap: 10px;
+  min-width: 0;
+  margin: 18px 0;
+  padding: 14px;
+  border: 1px solid var(--el-border-color-lighter);
+  border-radius: var(--el-border-radius-base);
+  background: var(--el-fill-color-lighter);
+}
+
+.repair-part-usage-panel__header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+  min-width: 0;
+}
+
+.repair-part-usage-panel__title {
+  margin: 0;
+  color: var(--el-text-color-primary);
+  font-size: 14px;
+  font-weight: 600;
+  line-height: 20px;
+}
+
+.repair-part-usage-panel__hint {
+  margin: 3px 0 0;
+  color: var(--el-text-color-secondary);
+  font-size: 12px;
+  line-height: 18px;
+}
+
+.repair-part-usage-panel__loading {
+  padding: 14px 0;
+  color: var(--el-text-color-secondary);
+  font-size: 13px;
+  text-align: center;
+}
+
+.repair-part-usage-panel__error,
+.repair-part-usage-form__inline-error {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  min-width: 0;
+}
+
+.repair-part-usage-panel__error > span,
+.repair-part-usage-form__inline-error > span {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.repair-part-usage-table {
+  min-width: 0;
+}
+
+.repair-part-usage-table .cell {
+  line-height: 18px;
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+
+.repair-part-usage-table__part {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+}
+
+.repair-part-usage-table__part strong,
+.repair-part-usage-table__part span,
+.repair-part-usage-table__notes {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.repair-part-usage-table__part strong,
+.repair-part-usage-table__part span {
+  white-space: nowrap;
+}
+
+.repair-part-usage-table__part span,
+.repair-part-usage-table__notes {
+  color: var(--el-text-color-secondary);
+}
+
+.repair-part-usage-table__notes {
+  display: block;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.repair-part-usage-form {
+  min-width: 0;
+}
+
+.repair-part-usage-form__wide {
+  width: 100%;
+}
+
+.repair-part-usage-form__inline-error {
+  margin-top: 6px;
+  color: var(--el-color-danger);
+  font-size: 12px;
+  line-height: 18px;
+}
+
+@media (max-width: 560px) {
+  .repair-part-usage-panel__header {
+    align-items: stretch;
+    flex-direction: column;
+    gap: 10px;
+  }
+
+  .repair-part-usage-panel__header .el-button {
+    align-self: flex-start;
+  }
 }
 .inventory-summary-strip {
   display: grid;
@@ -1838,8 +1995,7 @@ body,
   visibility: visible;
 }
 
-.asset-identity-cell,
-.asset-location-cell {
+.asset-identity-cell {
   display: block;
   min-width: 0;
   overflow: hidden;

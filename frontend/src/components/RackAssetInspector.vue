@@ -45,6 +45,8 @@ watch(rackDetailOpen, (open) => {
       :error="detailError"
       :retry="retryAssetDetail"
       :description-columns="1"
+      :responsibility-history-context="props.context"
+      :inventory-history-context="props.context"
     />
   </el-card>
 </template>

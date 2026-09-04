@@ -33,11 +33,18 @@ export function useApiClient({ csrfToken, authenticated }: ApiClientOptions) {
     return version === loadVersion.value;
   }
 
-  async function loadCsrf() {
+  async function loadCsrf(signal?: AbortSignal) {
     const response = await fetch(`${apiBase}/auth/csrf/`, {
       credentials: "include",
+      signal,
     });
-    const data = await response.json();
+    if (!response.ok) {
+      throw new Error(`CSRF bootstrap failed with status ${response.status}`);
+    }
+    const data = await response.json() as { csrfToken?: unknown };
+    if (typeof data.csrfToken !== "string" || !data.csrfToken) {
+      throw new Error("CSRF bootstrap did not return a token");
+    }
     csrfToken.value = data.csrfToken;
   }
 

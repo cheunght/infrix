@@ -44,3 +44,9 @@ DASHBOARD_LIMITS = {
     "recent_audit_rows": 40,
     "recent_changes": 8,
 }
+
+# The synchronous rack workbook writes a five-column cell grid for every U
+# position and keeps the complete workbook in the request. Keep the guard
+# aligned with those two dimensions instead of treating it as a row export.
+RACK_LAYOUT_EXPORT_MAX_RACKS = 100
+RACK_LAYOUT_EXPORT_MAX_U_POSITIONS = 10_000

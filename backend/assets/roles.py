@@ -79,28 +79,42 @@ def ensure_preset_groups():
     }
 
 
-def user_role_code(user):
+def user_role_codes(user):
+    """Return recognized preset role codes in stable definition order."""
     if not user or not user.is_authenticated:
-        return None
+        return []
     if user.is_superuser:
-        return ROLE_SYSTEM_ADMIN
+        return [ROLE_SYSTEM_ADMIN]
     names = set(user.groups.values_list("name", flat=True))
-    for code, definition in ROLE_DEFINITIONS.items():
-        if definition["name"] in names:
-            return code
-    return None
+    return [
+        code
+        for code, definition in ROLE_DEFINITIONS.items()
+        if definition["name"] in names
+    ]
+
+
+def user_role_code(user):
+    """Return the stable primary role for legacy display contracts."""
+    return next(iter(user_role_codes(user)), None)
+
+
+def _user_role_capabilities(user):
+    return {
+        capability
+        for code in user_role_codes(user)
+        for capability in ROLE_CAPABILITIES.get(code, set())
+    }
 
 
 def user_capabilities(user):
-    code = user_role_code(user)
-    capabilities = ROLE_CAPABILITIES.get(code, set())
+    capabilities = _user_role_capabilities(user)
     if "*" in capabilities:
-        return sorted({
+        capabilities = {
             capability
             for values in ROLE_CAPABILITIES.values()
             for capability in values
             if capability != "*"
-        } | {"organization.manage", "audit.view", SYSTEM_RESET_CAPABILITY})
+        } | {"organization.manage", "audit.view", SYSTEM_RESET_CAPABILITY}
     return sorted(capabilities)
 
 
@@ -109,7 +123,7 @@ def user_has_capability(user, capability):
         return False
     if user.is_superuser:
         return True
-    capabilities = ROLE_CAPABILITIES.get(user_role_code(user), set())
+    capabilities = _user_role_capabilities(user)
     return "*" in capabilities or capability in capabilities
 
 

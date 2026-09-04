@@ -112,7 +112,10 @@ const assetColumnMinWidths: Record<string, number> = {
   device_type: 120,
   manufacturer: 150,
   status: 105,
-  rack_code: 200,
+  data_center: 160,
+  server_room: 140,
+  rack_code: 110,
+  u_range: 100,
   manufacturer_model: 150,
   maintenance_expiry_date: 130,
 };
@@ -136,25 +139,6 @@ function dynamicColumnDisabled(columnKey: string): boolean {
     visibleAssetColumns.value.filter((key) => key.startsWith("custom:")).length >= MAX_DYNAMIC_ASSET_COLUMNS;
 }
 
-function assetLocation(asset: Asset) {
-  const rack = asset.rack_allocation;
-  const dataCenter = asset.data_center || rack?.data_center || asset.asset_data_center_name || "";
-  const room = asset.server_room || rack?.server_room || "";
-  const rackCode = rack?.rack_code || asset.rack_code || "";
-  const uRange = asset.u_range || (rack ? `U${rack.start_u}–U${rack.end_u}` : "");
-  const fullParts = [dataCenter, room, rackCode, uRange].filter(Boolean);
-  if (!fullParts.length) {
-    return { primary: "—", secondary: "" };
-  }
-  const primary = (room ? [room, rackCode, uRange] : [dataCenter, rackCode, uRange])
-    .filter(Boolean)
-    .join(" · ");
-  return {
-    primary,
-    secondary: "",
-  };
-}
-
 function assetName(asset: Asset): string {
   const name = assetValue(asset, "name").trim();
   return name && name !== "—" ? name : asset.asset_no || t("asset.unlisted");
@@ -169,10 +153,11 @@ const staticAssetColumnLabelKeys: Record<string, string> = {
   purpose: "asset.purpose",
   status: "asset.status",
   serial_number: "asset.serialNumber",
-  owner_name: "asset.owner",
+  responsible_user: "asset.responsibleUser",
   data_center: "location.dataCenter",
   server_room: "location.room",
-  rack_code: "asset.location",
+  rack_code: "asset.rack",
+  u_range: "asset.uPosition",
   business_ip: "asset.businessIp",
   management_ip: "asset.managementIp",
   oob_ip: "asset.oobIp",
@@ -301,6 +286,7 @@ function openSelectedQrDialog() {
             <el-popover placement="bottom" :width="300" trigger="click">
               <template #reference><el-button :icon="Operation">{{ t('asset.showColumns') }}</el-button></template>
               <div class="ep-column-list">
+                <el-button link type="primary" @click="resetAssetColumns">{{ t('asset.restoreColumns') }}</el-button>
                 <div class="asset-column-section">
                   <div class="asset-column-section__title">{{ t('asset.basicFields') }}</div>
                   <el-checkbox v-for="column in assetColumnOptions" :key="column.key" :model-value="visibleAssetColumns.includes(column.key)" :disabled="column.required" :title="column.required ? t('asset.coreFieldFixed') : undefined" @change="toggleAssetColumn(column.key)">{{ assetColumnLabel(column) }}<span v-if="column.required" class="asset-ledger-column-fixed">{{ t('asset.coreFieldFixed') }}</span></el-checkbox>
@@ -320,7 +306,6 @@ function openSelectedQrDialog() {
                     <div v-if="!assetDynamicColumnOptions.length" class="asset-column-section__state">{{ t('asset.noExtendedColumns') }}</div>
                   </template>
                 </div>
-                <el-button link type="primary" @click="resetAssetColumns">{{ t('asset.restoreColumns') }}</el-button>
               </div>
             </el-popover>
             <el-button v-if="can('assets.manage')" :icon="Upload" @click="openImportDialog">{{ t('asset.importAssets') }}</el-button>
@@ -362,6 +347,7 @@ function openSelectedQrDialog() {
               :label="assetColumnLabel(column)"
               :prop="column.key"
               :min-width="assetColumnMinWidth(column)"
+              :show-overflow-tooltip="['data_center', 'server_room', 'rack_code', 'u_range'].includes(column.key)"
               :sortable="assetSortFieldForColumn(column.key) ? 'custom' : false"
             >
               <template #header>
@@ -405,11 +391,9 @@ function openSelectedQrDialog() {
                   </el-button>
                 </template>
                 <StatusTag v-else-if="column.key === 'status'" size="small" :tone="statusTone(row.status)" :label="String(assetValue(row, column.key))" />
-                <template v-else-if="column.key === 'rack_code'">
-                  <span class="asset-location-cell">{{ assetLocation(row).primary }}</span>
-                </template>
                 <DynamicFieldDisplay v-else-if="column.dynamic && column.field" class="asset-ledger-dynamic-cell" :field="column.field" :value="dynamicAssetValue(row, column.key)" />
                 <span v-else-if="column.key === 'asset_no'" class="asset-number-cell">{{ assetValue(row, column.key) }}</span>
+                <span v-else-if="column.key === 'u_range'" class="asset-number-cell">{{ assetValue(row, column.key) }}</span>
                 <span v-else>{{ assetValue(row, column.key) }}</span>
               </template>
             </el-table-column>

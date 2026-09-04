@@ -1,4 +1,5 @@
 import type { ComputedRef, Ref } from "vue";
+import type { BusinessOption } from "./business-enums";
 import type {
   LocationStatusFilter,
   LocationTypeFilter,
@@ -12,6 +13,8 @@ import type {
   AssetSortField,
   AssetSortOrder,
   AssetDetail,
+  AssetResponsibilityEvent,
+  AssetResponsibilityUser,
   CustomField,
   CustomFieldForm,
   CustomFieldOption,
@@ -21,10 +24,14 @@ import type {
   DictionaryItem,
   FacilitySummary,
   FaultEvent,
+  InventoryItem,
   ManagedUser,
   Rack,
   RackFormState,
   RackStatus,
+  RepairPartUsage,
+  RepairPartUsageFormState,
+  RepairPartUsageSource,
   Role,
   ServerRoom,
   SoftwareLicense,
@@ -54,7 +61,6 @@ export interface AssetFormState {
   serial_number: string;
   purpose: string;
   status: AssetStatus;
-  owner_name: string;
   notes: string;
   rack_mounted: boolean;
   asset_data_center: string;
@@ -71,6 +77,7 @@ export interface AssetFormState {
   supplier: string;
   purchase_order_no: string;
   purchase_amount: string;
+  procurement_notes: string;
   depreciation_enabled: boolean;
   depreciation_start_date: string;
   depreciation_years: number | null;
@@ -79,6 +86,7 @@ export interface AssetFormState {
   maintenance_contract_no: string;
   maintenance_start_date: string;
   maintenance_expiry_date: string;
+  maintenance_notes: string;
   tags: string[];
   custom_values: Record<string, unknown>;
 }
@@ -191,6 +199,7 @@ export interface AssetFormContext {
   assetModalMode: Ref<string>;
   editingAsset: Ref<Asset | null>;
   assetForm: Ref<AssetFormState>;
+  assetStatusOptions: ComputedRef<readonly BusinessOption<AssetStatus>[]>;
   assetFormLoading: Ref<boolean>;
   assetFormLoadError: Ref<string>;
   assetFormSaving: Ref<boolean>;
@@ -221,6 +230,32 @@ export interface AssetFormContext {
   tagListError: Ref<string>;
   retryTagList: () => void | Promise<boolean>;
   saveAsset: () => void | Promise<void>;
+}
+
+export interface AssetResponsibilityHistoryContext {
+  responsibilityHistoryItems: Ref<AssetResponsibilityEvent[]>;
+  responsibilityHistoryPage: Ref<number>;
+  responsibilityHistoryPageSize: Ref<number>;
+  responsibilityHistoryTotal: Ref<number>;
+  responsibilityHistoryLoading: Ref<boolean>;
+  responsibilityHistoryError: Ref<string>;
+  responsibilityHistoryCanView: Ref<boolean>;
+  retryResponsibilityHistory: () => void | Promise<void>;
+  changeResponsibilityHistoryPage: (page: number) => void | Promise<void>;
+  changeResponsibilityHistoryPageSize: (size: number) => void | Promise<void>;
+}
+
+export interface AssetResponsibilityContext extends AssetResponsibilityHistoryContext {
+  can: CapabilityFn;
+  responsibilityUsers: Ref<AssetResponsibilityUser[]>;
+  responsibilityUsersLoading: Ref<boolean>;
+  responsibilityUsersError: Ref<string>;
+  loadResponsibilityUsers: (search?: string) => void | Promise<boolean>;
+  responsibilityActionSaving: Ref<boolean>;
+  responsibilityActionError: Ref<string>;
+  assignAsset: (assetId: number, targetUserId: number, reason: string) => void | Promise<boolean>;
+  returnAsset: (assetId: number, reason: string) => void | Promise<boolean>;
+  transferAsset: (assetId: number, targetUserId: number, reason: string) => void | Promise<boolean>;
 }
 
 export interface RackManagementContext {
@@ -281,6 +316,7 @@ export interface RackFiltersContext {
   deviceTypes: Ref<DictionaryItem[]>;
   resetRackFilters: () => void | Promise<void>;
   exportRackLayout: () => void | Promise<void>;
+  exportingRackLayout: Ref<boolean>;
 }
 
 export interface RackListContext {
@@ -319,7 +355,21 @@ export interface RackCanvasContext {
   retryRackView: () => void | Promise<void>;
 }
 
-export interface RackInspectorContext {
+export interface AssetInventoryHistoryContext {
+  inventoryHistoryItems: Ref<InventoryItem[]>;
+  inventoryHistoryLatest: Ref<InventoryItem | null>;
+  inventoryHistoryPage: Ref<number>;
+  inventoryHistoryPageSize: Ref<number>;
+  inventoryHistoryTotal: Ref<number>;
+  inventoryHistoryLoading: Ref<boolean>;
+  inventoryHistoryError: Ref<string>;
+  inventoryHistoryCanView: Ref<boolean>;
+  retryInventoryHistory: () => void | Promise<void>;
+  changeInventoryHistoryPage: (page: number) => void | Promise<void>;
+  changeInventoryHistoryPageSize: (size: number) => void | Promise<void>;
+}
+
+export interface RackInspectorContext extends AssetInventoryHistoryContext, AssetResponsibilityHistoryContext {
   rackDetailOpen: Ref<boolean>;
   detailAsset: Ref<AssetDetail | null>;
   detailLoading: Ref<boolean>;
@@ -378,6 +428,32 @@ export interface RepairContext {
   repairCount: Ref<number>;
   changeRepairPage: (page: number) => void | Promise<void>;
   changeRepairPageSize: (size: number) => void | Promise<void>;
+  showRepairPartUsageModal: Ref<boolean>;
+  repairPartUsageForm: Ref<RepairPartUsageFormState>;
+  repairPartUsageItems: Ref<RepairPartUsage[]>;
+  repairPartUsagePage: Ref<number>;
+  repairPartUsagePageSize: Ref<number>;
+  repairPartUsageTotal: Ref<number>;
+  repairPartUsageLoading: Ref<boolean>;
+  repairPartUsageError: Ref<string>;
+  repairPartUsageSaving: Ref<boolean>;
+  repairPartUsageOptions: Ref<SparePart[]>;
+  repairPartUsageOptionsLoading: Ref<boolean>;
+  repairPartUsageOptionsError: Ref<string>;
+  repairPartUsageStocks: Ref<SpareStock[]>;
+  repairPartUsageStocksLoading: Ref<boolean>;
+  repairPartUsageStocksError: Ref<string>;
+  repairPartUsageSourceOptions: readonly BusinessOption<RepairPartUsageSource>[];
+  openRepairPartUsageModal: () => void | Promise<void>;
+  loadRepairPartUsageHistory: (faultId: number, page?: number) => void | Promise<boolean>;
+  loadRepairPartUsageOptions: (search?: string) => void | Promise<boolean>;
+  scheduleRepairPartUsagePartSearch: (search: string) => void;
+  loadRepairPartUsageStocks: (partId?: string) => void | Promise<boolean>;
+  changeRepairPartUsageSource: (source: RepairPartUsageSource) => void;
+  changeRepairPartUsagePart: (partId: string | number | null | undefined) => void;
+  saveRepairPartUsage: () => void | Promise<boolean>;
+  retryRepairPartUsageHistory: () => void | Promise<void>;
+  changeRepairPartUsagePage: (page: number) => void | Promise<void>;
 }
 
 export interface SpareContext {
@@ -589,10 +665,15 @@ export interface CustomFieldContext {
   customFieldOptionFormErrors: Ref<Record<string, string>>;
   customFieldOptionLoading: Ref<boolean>;
   customFieldOptionError: Ref<string>;
+  customFieldOptionPage: Ref<number>;
+  customFieldOptionPageSize: Ref<number>;
+  customFieldOptionTotal: Ref<number>;
   showCustomFieldOptionModal: Ref<boolean>;
   editingCustomFieldOption: Ref<CustomFieldOption | null>;
   openCustomFieldOptionModal: (field?: CustomField | null, option?: CustomFieldOption) => void;
   loadCustomFieldOptions: (field?: CustomField | null) => void | Promise<boolean>;
+  changeCustomFieldOptionPage: (page: number) => void | Promise<void>;
+  changeCustomFieldOptionPageSize: (size: number) => void | Promise<void>;
   retryCustomFieldOptions: () => void | Promise<boolean>;
   saveCustomFieldOption: () => void | Promise<void>;
   customFieldOptionSaving: Ref<boolean>;
@@ -629,7 +710,7 @@ export interface TagContext {
   tagActionId: Ref<number | null>;
 }
 
-export interface AppPageContext extends DashboardContext, AssetLedgerContext, AssetFormContext, RackSharedContext, LicenseContext, RepairContext, SpareContext, InventoryContext, SettingsContext, CustomFieldContext, TagContext {
+export interface AppPageContext extends DashboardContext, AssetLedgerContext, AssetFormContext, AssetResponsibilityContext, RackSharedContext, LicenseContext, RepairContext, SpareContext, InventoryContext, SettingsContext, CustomFieldContext, TagContext {
 }
 
 /** Public name used by the shell when injecting page context. */

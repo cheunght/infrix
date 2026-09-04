@@ -2,7 +2,12 @@
 import { computed, toRefs } from "vue";
 import { useI18n } from "vue-i18n";
 import { currentLocale } from "../i18n";
-import type { AssetDetail, InventoryItem } from "../types";
+import type {
+  AssetInventoryHistoryContext,
+  AssetResponsibilityContext,
+  AssetResponsibilityHistoryContext,
+} from "../page-context";
+import type { AssetDetail, AssetNetwork, InventoryItem } from "../types";
 import { statusLabel, statusTone } from "../status";
 import {
   businessOptionLabel,
@@ -13,10 +18,14 @@ import {
 import {
   depreciationMethodLabel,
   depreciationStatusLabel,
+  formatDepreciationProgress,
   formatMoneyDecimalString,
   formatResidualRate,
 } from "../depreciation";
 import StatusTag, { type StatusTagType } from "./StatusTag.vue";
+import AssetInventoryHistory from "./AssetInventoryHistory.vue";
+import AssetResponsibilityActions from "./AssetResponsibilityActions.vue";
+import AssetResponsibilityHistory from "./AssetResponsibilityHistory.vue";
 import DynamicFieldDisplay from "./fields/DynamicFieldDisplay.vue";
 import DetailSection from "./DetailSection.vue";
 import DescriptionList from "./DescriptionList.vue";
@@ -28,22 +37,45 @@ const props = withDefaults(defineProps<{
   showSummary?: boolean;
   descriptionColumns?: 1 | 2;
   retry?: () => void | Promise<void>;
+  responsibilityContext?: AssetResponsibilityContext | null;
+  responsibilityHistoryContext?: AssetResponsibilityHistoryContext | null;
+  inventoryHistoryContext?: AssetInventoryHistoryContext | null;
 }>(), {
   descriptionColumns: 2,
 });
 
 const { asset, loading, error, showSummary, descriptionColumns } = toRefs(props);
 const { t } = useI18n();
+const responsibilityActionContext = computed<AssetResponsibilityContext | null>(
+  () => props.responsibilityContext || null,
+);
+const responsibilityHistoryContext = computed<AssetResponsibilityHistoryContext | null>(
+  () => props.responsibilityHistoryContext || null,
+);
+const inventoryHistoryContext = computed<AssetInventoryHistoryContext | null>(
+  () => props.inventoryHistoryContext || null,
+);
+const showResponsibilityHistory = computed(
+  () => responsibilityHistoryContext.value?.responsibilityHistoryCanView.value === true,
+);
+const showInventoryHistory = computed(
+  () => inventoryHistoryContext.value?.inventoryHistoryCanView.value === true,
+);
 
 type DetailField = {
   key: string;
   label: string;
   raw: unknown;
   value: string;
+  empty?: boolean;
   wide?: boolean;
   className?: string;
   title?: string;
 };
+
+type ProcurementRecord = NonNullable<AssetDetail["procurement_records"]>[number];
+type MaintenanceRecord = NonNullable<AssetDetail["maintenance_contracts"]>[number];
+type MaintenanceState = { label: string; status: string; type: StatusTagType };
 
 function hasContent(value: unknown): boolean {
   if (Array.isArray(value)) return value.length > 0;
@@ -65,16 +97,16 @@ function makeField(
   raw: unknown,
   formatter: (value: unknown) => string = displayValue,
 ): DetailField {
+  const empty = !hasContent(raw);
+  const value = empty ? t("common.notAvailable") : formatter(raw);
   return {
     key,
     label,
     raw,
-    value: hasContent(raw) ? formatter(raw) : t("common.notAvailable"),
+    value,
+    empty,
+    title: value,
   };
-}
-
-function fieldsWithContent(fields: DetailField[]): DetailField[] {
-  return fields.filter((field) => hasContent(field.raw));
 }
 
 function formatDate(value: unknown): string {
@@ -88,6 +120,7 @@ function formatDateTime(value: unknown): string {
   const date = new Date(String(value));
   if (Number.isNaN(date.getTime())) return String(value);
   return date.toLocaleString(currentLocale.value, {
+    year: "numeric",
     month: "2-digit",
     day: "2-digit",
     hour: "2-digit",
@@ -95,44 +128,53 @@ function formatDateTime(value: unknown): string {
   });
 }
 
+function formatU(value: unknown): string {
+  return hasContent(value) ? `U${value}` : t("common.notAvailable");
+}
+
+function formatUnits(value: unknown): string {
+  return hasContent(value) ? `${value}U` : t("common.notAvailable");
+}
+
 function inventoryStatusType(status: string): StatusTagType {
   return businessOptionTone(INVENTORY_ITEM_STATUS_OPTIONS, status, "info");
 }
 
 function inventoryRecordLabel(record: InventoryItem): string {
-  const statusLabel = businessOptionLabel(INVENTORY_ITEM_STATUS_OPTIONS, record.status);
+  const itemStatusLabel = businessOptionLabel(INVENTORY_ITEM_STATUS_OPTIONS, record.status);
   const resolution = record.resolution_status === "not_required"
     ? ""
     : businessOptionLabel(INVENTORY_RESOLUTION_STATUS_OPTIONS, record.resolution_status);
-  return [statusLabel, resolution].filter(Boolean).join(" · ");
-}
-
-function networkValue(role: string): string {
-  const current = asset.value;
-  if (!current) return "";
-  const compact = role === "business"
-    ? current.business_ip
-    : role === "management"
-      ? current.management_ip
-      : current.oob_ip;
-  return compact || current.network_addresses?.find((item) => item.role === role)?.address || "";
+  return [itemStatusLabel, resolution].filter(Boolean).join(" · ");
 }
 
 function roleLabel(role: string): string {
   return ({ business: t("asset.businessIp"), management: t("asset.managementIp"), oob: t("asset.oobIp") } as Record<string, string>)[role] || role;
 }
 
+function networkStatusLabel(value: unknown): string {
+  if (!hasContent(value)) return t("common.notAvailable");
+  if (value === "active") return t("status.active");
+  if (value === "inactive") return t("status.inactive");
+  return String(value);
+}
+
 const basicFields = computed<DetailField[]>(() => {
   const current = asset.value;
   if (!current) return [];
-  return [
+  const fields = [
     makeField("device-type", t("asset.deviceType"), current.device_type_name),
     makeField("manufacturer", t("asset.manufacturer"), current.manufacturer_name),
-    makeField("model", t("asset.model"), current.model_name || current.model || current.manufacturer_model),
+    makeField("model", t("asset.model"), current.model_name || current.model),
+    makeField("manufacturer-model", t("asset.manufacturerModel"), current.manufacturer_model),
     makeField("serial-number", t("asset.serialNumber"), current.serial_number),
     makeField("purpose", t("asset.purpose"), current.purpose),
-    makeField("owner", t("asset.owner"), current.owner_name),
+    makeField("department", t("asset.department"), current.department_name),
   ];
+  if (!props.responsibilityContext) {
+    fields.push(makeField("responsible-user", t("asset.responsibleUser"), current.responsible_user_name));
+  }
+  return fields;
 });
 
 const locationFields = computed<DetailField[]>(() => {
@@ -140,59 +182,65 @@ const locationFields = computed<DetailField[]>(() => {
   if (!current) return [];
   const rack = current.rack_allocation;
   const dataCenter = rack?.data_center || current.asset_data_center_name || current.data_center;
-
-  if (!rack) {
-    return [
-      makeField("placement-status", t("asset.locationStatus"), t("inventory.unmounted")),
-      ...(hasContent(dataCenter) ? [makeField("data-center", t("common.dataCenter"), dataCenter)] : []),
-    ];
-  }
-
-  const uRange = rack.start_u != null && rack.end_u != null
-    ? `U${rack.start_u}–U${rack.end_u} (${rack.units}U)`
-    : null;
   return [
+    makeField("location-status", t("asset.locationStatus"), rack ? t("asset.mounted") : t("asset.unmounted")),
     makeField("data-center", t("common.dataCenter"), dataCenter),
-    makeField("server-room", t("asset.room"), rack.server_room),
-    makeField("rack", t("asset.rack"), rack.rack_code),
-    makeField("u-position", t("asset.uPosition"), uRange),
+    makeField("server-room", t("asset.room"), rack?.server_room),
+    makeField("rack", t("asset.rack"), rack?.rack_code),
+    makeField("start-u", t("asset.startU"), rack?.start_u, formatU),
+    makeField("end-u", t("asset.endU"), rack?.end_u, formatU),
+    makeField("occupied-u", t("asset.occupiedU"), rack?.units, formatUnits),
+    makeField("rack-total-u", t("asset.rackTotalU"), rack?.rack_total_u, formatUnits),
   ];
 });
 
-const networkFields = computed<DetailField[]>(() => [
-  "business",
-  "management",
-  "oob",
-].map((role) => ({
-  ...makeField(role, roleLabel(role), networkValue(role)),
-  className: "asset-detail-technical",
-})));
+const networkRows = computed<AssetNetwork[]>(() => asset.value?.network_addresses || []);
+const emptyNetworkFields = computed<DetailField[]>(() => [
+  makeField("network-address", t("asset.networkAddress"), null),
+]);
 
-const procurementFields = computed<DetailField[]>(() => {
+const procurementRecords = computed(() => asset.value?.procurement_records || []);
+const maintenanceRecords = computed(() => asset.value?.maintenance_contracts || []);
+
+function procurementRecordFields(record: ProcurementRecord | null): DetailField[] {
   const current = asset.value;
-  if (!current) return [];
-  const procurement = current.procurement_records?.[0];
-  const maintenance = current.maintenance_contracts?.[0];
   return [
-    makeField("purchase-date", t("asset.purchaseDate"), procurement?.purchase_date || current.purchase_date, formatDate),
-    makeField("supplier", t("asset.supplier"), procurement?.supplier || current.supplier),
-    makeField("purchase-order", t("asset.purchaseOrder"), procurement?.order_no || current.purchase_order_no),
-    makeField("purchase-amount", t("asset.purchaseAmount"), procurement?.amount, formatMoneyDecimalString),
-    makeField("maintenance-provider", t("asset.maintenanceProvider"), maintenance?.provider || current.maintenance_provider),
-    makeField("maintenance-contract", t("asset.maintenanceContract"), maintenance?.contract_no),
-    makeField("maintenance-start", t("asset.maintenanceStart"), maintenance?.start_date, formatDate),
-    makeField("maintenance-expiry", t("asset.maintenanceExpiry"), maintenance?.expiry_date || current.maintenance_expiry_date, formatDate),
+    makeField("purchase-date", t("asset.purchaseDate"), record?.purchase_date || current?.purchase_date, formatDate),
+    makeField("supplier", t("asset.supplier"), record?.supplier || current?.supplier),
+    makeField("purchase-order", t("asset.purchaseOrder"), record?.order_no || current?.purchase_order_no),
+    makeField("purchase-amount", t("asset.purchaseAmount"), record?.amount, formatMoneyDecimalString),
+    { ...makeField("procurement-notes", t("asset.procurementNotes"), record?.notes), wide: true },
   ];
-});
+}
 
-const visibleBasicFields = computed(() => fieldsWithContent(basicFields.value));
-const visibleLocationFields = computed(() => fieldsWithContent(locationFields.value));
-const visibleNetworkFields = computed(() => fieldsWithContent(networkFields.value));
-const visibleProcurementFields = computed(() => fieldsWithContent(procurementFields.value));
-const hasBasicFields = computed(() => visibleBasicFields.value.length > 0);
-const hasLocationFields = computed(() => visibleLocationFields.value.length > 0);
-const hasNetworkFields = computed(() => visibleNetworkFields.value.length > 0);
-const hasNotes = computed(() => hasContent(asset.value?.notes));
+function maintenanceStateFor(expiry: unknown): MaintenanceState | null {
+  if (!hasContent(expiry)) return null;
+  const dateText = String(expiry).slice(0, 10);
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(dateText)) return null;
+  const expiryDate = new Date(`${dateText}T00:00:00`);
+  if (Number.isNaN(expiryDate.getTime())) return null;
+  const today = new Date();
+  const todayStart = new Date(today.getFullYear(), today.getMonth(), today.getDate());
+  const daysRemaining = Math.ceil((expiryDate.getTime() - todayStart.getTime()) / 86400000);
+  if (daysRemaining < 0) return { label: t("status.expired"), status: "expired", type: "danger" };
+  if (daysRemaining <= 30) return { label: t("status.expiring"), status: "expiring", type: "warning" };
+  return { label: t("status.normal"), status: "normal", type: "success" };
+}
+
+function maintenanceStatusText(value: unknown): string {
+  return maintenanceStateFor(value)?.label || displayValue(value);
+}
+
+function maintenanceRecordFields(record: MaintenanceRecord | null): DetailField[] {
+  return [
+    makeField("maintenance-provider", t("asset.maintenanceProvider"), record?.provider),
+    makeField("maintenance-contract", t("asset.maintenanceContract"), record?.contract_no),
+    makeField("maintenance-start", t("asset.maintenanceStart"), record?.start_date, formatDate),
+    makeField("maintenance-expiry", t("asset.maintenanceExpiry"), record?.expiry_date, formatDate),
+    makeField("maintenance-status", t("asset.maintenanceStatus"), record?.expiry_date, maintenanceStatusText),
+    { ...makeField("maintenance-notes", t("asset.maintenanceNotes"), record?.notes), wide: true },
+  ];
+}
 
 const depreciation = computed(() => asset.value?.depreciation || null);
 const depreciationStatus = computed(() => depreciation.value?.status || "unconfigured");
@@ -204,54 +252,23 @@ function depreciationStatusTone(status: string): StatusTagType {
   return "neutral";
 }
 
-const depreciationConfigFields = computed<DetailField[]>(() => {
+const depreciationFields = computed<DetailField[]>(() => {
   const current = depreciation.value;
-  if (!current || current.status === "unconfigured") return [];
   return [
-    makeField("depreciation-status", t("common.status"), current.status, (value) => depreciationStatusLabel(String(value))),
-    makeField("depreciation-method", t("asset.depreciationMethod"), current.method, (value) => depreciationMethodLabel(String(value))),
-    makeField("depreciation-start", t("asset.depreciationStart"), current.start_date, formatDate),
-    makeField("depreciation-years", t("asset.depreciationYears"), current.years, (value) => `${value} ${t("common.years")}`),
-    makeField("depreciation-rate", t("asset.residualRate"), current.residual_rate, formatResidualRate),
-    makeField("depreciation-residual-value", t("asset.estimatedResidual"), current.residual_value, formatMoneyDecimalString),
+    makeField("depreciation-status", t("asset.depreciationStatus"), depreciationStatus.value, (value) => depreciationStatusLabel(String(value))),
+    makeField("depreciation-method", t("asset.depreciationMethod"), current?.method, (value) => depreciationMethodLabel(String(value))),
+    makeField("depreciation-start", t("asset.depreciationStart"), current?.start_date, formatDate),
+    makeField("depreciation-years", t("asset.depreciationYears"), current?.years, (value) => `${value} ${t("common.years")}`),
+    makeField("depreciation-rate", t("asset.residualRate"), current?.residual_rate, formatResidualRate),
+    makeField("depreciation-original", t("asset.originalValue"), current?.original_value, formatMoneyDecimalString),
+    makeField("depreciation-residual-value", t("asset.estimatedResidual"), current?.residual_value, formatMoneyDecimalString),
+    makeField("depreciation-monthly", t("asset.monthlyDepreciation"), current?.monthly_depreciation, formatMoneyDecimalString),
+    makeField("depreciation-accumulated", t("asset.accumulatedDepreciation"), current?.accumulated_depreciation, formatMoneyDecimalString),
+    makeField("depreciation-net", t("asset.netBookValue"), current?.net_book_value, formatMoneyDecimalString),
+    makeField("depreciation-elapsed-months", t("asset.elapsedMonths"), current?.elapsed_months, (value) => `${value} ${t("common.months")}`),
+    makeField("depreciation-total-months", t("asset.totalMonths"), current?.total_months, (value) => `${value} ${t("common.months")}`),
+    makeField("depreciation-progress", t("asset.depreciationProgress"), current?.progress, (value) => formatDepreciationProgress(value, current?.elapsed_months, current?.total_months)),
   ];
-});
-const visibleDepreciationConfigFields = computed(() => fieldsWithContent(depreciationConfigFields.value));
-const depreciationMetricFields = computed<DetailField[]>(() => {
-  const current = depreciation.value;
-  if (!current || current.status === "unconfigured") return [];
-  return [
-    makeField("depreciation-original", t("asset.originalValue"), current.original_value, formatMoneyDecimalString),
-    makeField("depreciation-accumulated", t("asset.accumulatedDepreciation"), current.accumulated_depreciation, formatMoneyDecimalString),
-    makeField("depreciation-net", t("asset.netBookValue"), current.net_book_value, formatMoneyDecimalString),
-  ];
-});
-
-const maintenanceExpiry = computed(() => {
-  const current = asset.value;
-  const maintenance = current?.maintenance_contracts?.[0];
-  return maintenance?.expiry_date || current?.maintenance_expiry_date || null;
-});
-
-const maintenanceState = computed<{ label: string; status: string; type: StatusTagType } | null>(() => {
-  const expiry = maintenanceExpiry.value;
-  const dateText = expiry ? String(expiry).slice(0, 10) : "";
-  if (!/^\d{4}-\d{2}-\d{2}$/.test(dateText)) return null;
-  const expiryDate = new Date(`${dateText}T00:00:00`);
-  if (Number.isNaN(expiryDate.getTime())) return null;
-  const today = new Date();
-  const todayStart = new Date(today.getFullYear(), today.getMonth(), today.getDate());
-  const daysRemaining = Math.ceil((expiryDate.getTime() - todayStart.getTime()) / 86400000);
-  if (daysRemaining < 0) return { label: t("status.expired"), status: "expired", type: "danger" };
-  if (daysRemaining <= 30) return { label: t("status.expiring"), status: "expiring", type: "warning" };
-  return { label: t("status.normal"), status: "normal", type: "success" };
-});
-
-const procurementDetailFields = computed<DetailField[]>(() => {
-  const state = maintenanceState.value;
-  return state
-    ? [...visibleProcurementFields.value, makeField("maintenance-status", t("asset.maintenanceStatus"), state.status, () => state.label)]
-    : visibleProcurementFields.value;
 });
 
 type AssetCustomField = NonNullable<AssetDetail["custom_fields"]>[number];
@@ -265,25 +282,21 @@ function isCurrentScope(field: AssetCustomField): boolean {
 function groupCurrentFields(fields: AssetCustomField[]): DynamicFieldGroup[] {
   const groups = new Map<string, AssetCustomField[]>();
   for (const field of fields) {
-    if (!hasContent(field.value)) continue;
     const name = field.group?.trim() || t("asset.otherInfo");
     const group = groups.get(name) || [];
     group.push(field);
     groups.set(name, group);
   }
-  return Array.from(groups, ([name, groupFields]) => ({ name, fields: groupFields }))
-    .filter((group) => group.fields.some((field) => hasContent(field.value)));
+  return Array.from(groups, ([name, groupFields]) => ({ name, fields: groupFields }));
 }
 
 const currentFieldGroups = computed<DynamicFieldGroup[]>(() => {
-  const fields = (asset.value?.custom_fields || []).filter((field) =>
-    isCurrentScope(field) && field.is_active !== false && field.detail_visible === true,
-  );
+  const fields = (asset.value?.custom_fields || []).filter(isCurrentScope);
   return groupCurrentFields(fields);
 });
 
 function fieldLabel(field: AssetCustomField): string {
-  return `${field.name || field.key}${field.is_active ? "" : ` (${t("status.inactive")})`}`;
+  return `${field.name || field.key}${field.is_active === false ? ` (${t("status.inactive")})` : ""}`;
 }
 
 function dynamicFieldItems(fields: AssetCustomField[]): DetailField[] {
@@ -292,26 +305,31 @@ function dynamicFieldItems(fields: AssetCustomField[]): DetailField[] {
     label: fieldLabel(field),
     raw: field.value,
     value: displayValue(field.value),
+    empty: !hasContent(field.value),
     wide: field.field_type === "textarea" || field.field_type === "multiselect",
   }));
 }
 
-const inventoryRecords = computed(() => asset.value?.inventory_records || []);
-const recentInventoryRecords = computed(() => [...inventoryRecords.value]
-  .filter((record) => Boolean(record.checked_at))
-  .sort((a, b) => {
-    const timeDifference = new Date(b.checked_at || 0).getTime() - new Date(a.checked_at || 0).getTime();
-    return timeDifference || b.id - a.id;
-  }));
-const latestInventoryRecord = computed(() => recentInventoryRecords.value[0] || null);
-const relatedRecordFields = computed<DetailField[]>(() => {
-  if (!inventoryRecords.value.length) return [];
-  const latest = latestInventoryRecord.value;
-  return [
-    makeField("inventory-count", t("asset.inventoryRecords"), inventoryRecords.value.length, (value) => t("units.item", Number(value))),
-    ...(latest ? [makeField("latest-inventory", t("asset.recentInventory"), latest.checked_at, formatDateTime)] : []),
-  ];
-});
+const tags = computed(() => asset.value?.tags || []);
+const emptyTagsFields = computed<DetailField[]>(() => [
+  makeField("tags", t("asset.tags"), null),
+]);
+
+const systemFields = computed<DetailField[]>(() => [
+  makeField("created-at", t("asset.createdAt"), asset.value?.created_at, formatDateTime),
+  makeField("updated-at", t("asset.updatedAt"), asset.value?.updated_at, formatDateTime),
+]);
+
+const inventoryRecordCount = computed(() => asset.value?.inventory_records_count ?? 0);
+const latestInventoryRecord = computed(() => asset.value?.latest_inventory_record || null);
+const relatedRecordFields = computed<DetailField[]>(() => [
+  makeField("inventory-count", t("asset.inventoryRecords"), inventoryRecordCount.value, (value) => t("units.item", Number(value))),
+  makeField("latest-inventory", t("asset.recentInventory"), latestInventoryRecord.value?.checked_at, formatDateTime),
+]);
+
+function recordTitle(label: string, index: number, total: number): string {
+  return total > 1 ? `${label} ${index + 1}` : label;
+}
 
 function retryDetail() {
   void props.retry?.();
@@ -331,8 +349,12 @@ function retryDetail() {
     <template v-else-if="asset">
       <div v-if="showSummary !== false" class="asset-detail-summary">
         <div>
+          <span>{{ t('asset.name') }}</span>
+          <strong :title="displayValue(asset.name)">{{ displayValue(asset.name) }}</strong>
+        </div>
+        <div>
           <span>{{ t('asset.code') }}</span>
-          <strong>{{ asset.asset_no }}</strong>
+          <strong :title="displayValue(asset.asset_no)">{{ displayValue(asset.asset_no) }}</strong>
         </div>
         <div>
           <span>{{ t('asset.status') }}</span>
@@ -340,108 +362,211 @@ function retryDetail() {
         </div>
       </div>
 
-      <DetailSection v-if="hasBasicFields" :title="t('asset.basicInfo')">
+      <DetailSection :title="t('asset.basicInfo')">
         <DescriptionList
           class="asset-detail-description-list"
-          :items="visibleBasicFields"
+          :items="basicFields"
           :columns="descriptionColumns"
         />
       </DetailSection>
 
-      <DetailSection v-if="hasLocationFields" :title="t('asset.locationOwnership')">
+      <DetailSection :title="t('asset.locationOwnership')">
         <DescriptionList
           class="asset-detail-description-list"
-          :items="visibleLocationFields"
+          :items="locationFields"
           :columns="descriptionColumns"
         />
       </DetailSection>
 
-      <DetailSection v-if="hasNetworkFields" :title="t('asset.network')">
+      <DetailSection v-if="responsibilityActionContext" :title="t('asset.responsibility')">
+        <AssetResponsibilityActions
+          :asset="asset"
+          :context="responsibilityActionContext"
+        />
+      </DetailSection>
+
+      <AssetResponsibilityHistory
+        v-if="responsibilityHistoryContext && showResponsibilityHistory"
+        :context="responsibilityHistoryContext"
+      />
+
+      <DetailSection :title="t('asset.network')">
+        <el-table
+          v-if="networkRows.length"
+          :data="networkRows"
+          class="asset-detail-record-table"
+          size="small"
+          border
+          row-key="id"
+        >
+          <el-table-column prop="role" :label="t('asset.networkRole')" min-width="116">
+            <template #default="{ row }">{{ roleLabel(row.role) }}</template>
+          </el-table-column>
+          <el-table-column prop="address" :label="t('asset.networkAddress')" min-width="150" show-overflow-tooltip />
+          <el-table-column prop="is_primary" :label="t('asset.networkPrimary')" width="90">
+            <template #default="{ row }">
+              <el-tag v-if="row.is_primary" type="success" size="small">{{ t('common.yes') }}</el-tag>
+              <span v-else>{{ t('common.no') }}</span>
+            </template>
+          </el-table-column>
+          <el-table-column prop="status" :label="t('asset.networkStatus')" width="90">
+            <template #default="{ row }">{{ networkStatusLabel(row.status) }}</template>
+          </el-table-column>
+          <el-table-column prop="notes" :label="t('asset.networkNotes')" min-width="160" show-overflow-tooltip />
+        </el-table>
         <DescriptionList
+          v-else
           class="asset-detail-description-list"
-          :items="visibleNetworkFields"
+          :items="emptyNetworkFields"
           :columns="descriptionColumns"
         />
       </DetailSection>
 
-      <DetailSection v-if="procurementDetailFields.length" :title="t('asset.procurement')">
+      <DetailSection :title="t('asset.procurementInfo')">
+        <div v-if="procurementRecords.length" class="asset-detail-record-list">
+          <article
+            v-for="(record, index) in procurementRecords"
+            :key="record.id"
+            class="asset-detail-record-card"
+          >
+            <h4 class="asset-detail-record-card__title">
+              {{ recordTitle(t('asset.procurementInfo'), index, procurementRecords.length) }}
+            </h4>
+            <DescriptionList
+              class="asset-detail-description-list"
+              :items="procurementRecordFields(record)"
+              :columns="descriptionColumns"
+            />
+          </article>
+        </div>
         <DescriptionList
+          v-else
           class="asset-detail-description-list"
-          :items="procurementDetailFields"
+          :items="procurementRecordFields(null)"
+          :columns="descriptionColumns"
+        />
+      </DetailSection>
+
+      <DetailSection :title="t('asset.maintenanceInfo')">
+        <div v-if="maintenanceRecords.length" class="asset-detail-record-list">
+          <article
+            v-for="(record, index) in maintenanceRecords"
+            :key="record.id"
+            class="asset-detail-record-card"
+          >
+            <h4 class="asset-detail-record-card__title">
+              {{ recordTitle(t('asset.maintenanceInfo'), index, maintenanceRecords.length) }}
+            </h4>
+            <DescriptionList
+              class="asset-detail-description-list"
+              :items="maintenanceRecordFields(record)"
+              :columns="descriptionColumns"
+            >
+              <template #value-maintenance-status="{ item }">
+                <StatusTag
+                  v-if="maintenanceStateFor(item.raw)"
+                  :tone="maintenanceStateFor(item.raw)!.type"
+                  :label="maintenanceStateFor(item.raw)!.label"
+                />
+                <span v-else class="asset-detail-empty-value">{{ item.value }}</span>
+              </template>
+            </DescriptionList>
+          </article>
+        </div>
+        <DescriptionList
+          v-else
+          class="asset-detail-description-list"
+          :items="maintenanceRecordFields(null)"
           :columns="descriptionColumns"
         >
-          <template #value-maintenance-status>
+          <template #value-maintenance-status="{ item }">
             <StatusTag
-              v-if="maintenanceState"
-              :tone="maintenanceState.type"
-              :label="maintenanceState.label"
+              v-if="maintenanceStateFor(item.raw)"
+              :tone="maintenanceStateFor(item.raw)!.type"
+              :label="maintenanceStateFor(item.raw)!.label"
             />
+            <span v-else class="asset-detail-empty-value">{{ item.value }}</span>
           </template>
         </DescriptionList>
       </DetailSection>
 
       <DetailSection :title="t('asset.depreciation')">
-        <p v-if="depreciationStatus === 'unconfigured'" class="asset-depreciation-empty">
-          {{ t('asset.unconfiguredDepreciation') }}
-        </p>
-        <template v-else>
-          <div class="asset-depreciation-metrics">
-            <div v-for="field in depreciationMetricFields" :key="field.key" class="asset-depreciation-metric">
-              <span>{{ field.label }}</span>
-              <strong>{{ field.value }}</strong>
-            </div>
-          </div>
-          <DescriptionList
-            class="asset-detail-description-list asset-depreciation-config"
-            v-if="visibleDepreciationConfigFields.length"
-            :items="visibleDepreciationConfigFields"
-            :columns="descriptionColumns"
-          >
-            <template #value-depreciation-status>
-              <StatusTag
-                :tone="depreciationStatusTone(depreciationStatus)"
-                :label="depreciationStatusLabel(depreciationStatus)"
-              />
-            </template>
-          </DescriptionList>
-        </template>
+        <DescriptionList
+          class="asset-detail-description-list"
+          :items="depreciationFields"
+          :columns="descriptionColumns"
+        >
+          <template #value-depreciation-status>
+            <StatusTag
+              :tone="depreciationStatusTone(depreciationStatus)"
+              :label="depreciationStatusLabel(depreciationStatus)"
+            />
+          </template>
+        </DescriptionList>
       </DetailSection>
 
-      <DetailSection v-if="asset.tags?.length" :title="t('nav.tags')">
-        <div class="asset-detail-tags">
+      <DetailSection :title="t('asset.tags')">
+        <div v-if="tags.length" class="asset-detail-tags">
           <el-tag
-            v-for="tag in asset.tags"
+            v-for="tag in tags"
             :key="tag.id"
             :type="tag.is_active ? undefined : 'info'"
           >
             {{ tag.name }}<template v-if="!tag.is_active"> ({{ t('status.inactive') }})</template>
           </el-tag>
         </div>
+        <DescriptionList
+          v-else
+          class="asset-detail-description-list"
+          :items="emptyTagsFields"
+          :columns="descriptionColumns"
+        />
       </DetailSection>
 
-      <DetailSection v-for="group in currentFieldGroups" :key="group.name" :title="group.name">
+      <DetailSection :title="t('asset.customFields')">
+        <div v-if="currentFieldGroups.length" class="asset-detail-custom-groups">
+          <section v-for="group in currentFieldGroups" :key="group.name" class="asset-detail-custom-group">
+            <h4>{{ group.name }}</h4>
+            <DescriptionList
+              class="asset-detail-description-list"
+              :items="dynamicFieldItems(group.fields)"
+              :columns="descriptionColumns"
+            >
+              <template v-for="field in group.fields" #[`value-field-${field.id}`]>
+                <DynamicFieldDisplay :field="field" :value="field.value" />
+              </template>
+            </DescriptionList>
+          </section>
+        </div>
+        <DescriptionList
+          v-else
+          class="asset-detail-description-list"
+          :items="[makeField('custom-fields-empty', t('asset.customFields'), null)]"
+          :columns="descriptionColumns"
+        />
+      </DetailSection>
+
+      <DetailSection :title="t('common.notes')">
+        <p :class="['detail-notes', { 'asset-detail-empty-value': !hasContent(asset.notes) }]">
+          {{ displayValue(asset.notes) }}
+        </p>
+      </DetailSection>
+
+      <DetailSection :title="t('asset.systemInfo')">
         <DescriptionList
           class="asset-detail-description-list"
-          :items="dynamicFieldItems(group.fields)"
+          :items="systemFields"
           :columns="descriptionColumns"
-        >
-          <template v-for="field in group.fields" #[`value-field-${field.id}`]>
-            <DynamicFieldDisplay :field="field" :value="field.value" />
-          </template>
-        </DescriptionList>
+        />
       </DetailSection>
 
-      <DetailSection v-if="hasNotes" :title="t('common.notes')">
-        <p class="detail-notes">{{ asset.notes }}</p>
-      </DetailSection>
-
-      <DetailSection v-if="relatedRecordFields.length" :title="t('asset.relatedRecords')">
+      <DetailSection :title="t('asset.relatedRecords')">
         <DescriptionList
           class="asset-detail-description-list"
           :items="relatedRecordFields"
           :columns="descriptionColumns"
         >
-          <template #value-latest-inventory>
+          <template #value-latest-inventory="{ item }">
             <span class="asset-detail-inline-value">
               <StatusTag
                 v-if="latestInventoryRecord"
@@ -449,10 +574,16 @@ function retryDetail() {
                 :label="inventoryRecordLabel(latestInventoryRecord)"
               />
               <span v-if="latestInventoryRecord">{{ formatDateTime(latestInventoryRecord.checked_at) }}</span>
+              <span v-else class="asset-detail-empty-value">{{ item.value }}</span>
             </span>
           </template>
         </DescriptionList>
       </DetailSection>
+
+      <AssetInventoryHistory
+        v-if="inventoryHistoryContext && showInventoryHistory"
+        :context="inventoryHistoryContext"
+      />
     </template>
   </div>
 </template>

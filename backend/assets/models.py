@@ -1,6 +1,22 @@
+from ipaddress import ip_address as parse_ip_address
+
 from django.conf import settings
 from django.db import models
 from django.core.exceptions import ValidationError
+from django.db.models.functions import Coalesce
+
+
+def normalize_network_address(value, *, allow_blank=False):
+    """Return the canonical textual form used for an asset IP address."""
+    text = "" if value is None else str(value).strip()
+    if not text:
+        if allow_blank:
+            return None
+        raise ValidationError("网络地址不能为空")
+    try:
+        return parse_ip_address(text).compressed
+    except ValueError as exc:
+        raise ValidationError("IP 地址格式不正确") from exc
 
 
 class Timestamped(models.Model):
@@ -209,13 +225,21 @@ class SpareStock(Timestamped):
         related_name="spare_stocks",
     )
     quantity = models.PositiveIntegerField(default=0)
+    # SQL UNIQUE constraints treat NULL values as distinct. A persisted,
+    # database-generated sentinel makes the central bucket participate in the
+    # same key without relying on application callers to normalize it.
+    normalized_server_room_id = models.GeneratedField(
+        expression=Coalesce("server_room_id", models.Value(0), output_field=models.BigIntegerField()),
+        output_field=models.BigIntegerField(),
+        db_persist=True,
+    )
 
     class Meta:
         ordering = ["part__name", "data_center__name", "server_room__name", "id"]
         constraints = [
             models.UniqueConstraint(
-                fields=["part", "data_center", "server_room"],
-                name="uniq_spare_stock_location",
+                fields=["part", "data_center", "normalized_server_room_id"],
+                name="uniq_spare_stock_location_key",
             ),
             models.CheckConstraint(
                 condition=models.Q(quantity__gte=0),
@@ -355,11 +379,64 @@ class Asset(Timestamped):
     )
     model = models.CharField(max_length=160, blank=True)
     department = models.ForeignKey(Department, null=True, blank=True, on_delete=models.PROTECT, related_name="assets")
+    responsible_user = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        null=True,
+        blank=True,
+        on_delete=models.PROTECT,
+        related_name="responsible_assets",
+        help_text="当前正式责任人；领用、归还和调拨通过资产责任动作维护",
+    )
     owner_name = models.CharField(max_length=100, blank=True)
     notes = models.TextField(blank=True)
 
     def __str__(self):
         return f"{self.asset_no} {self.name}"
+
+
+class AssetResponsibilityEvent(models.Model):
+    ACTIONS = [
+        ("assign", "领用"),
+        ("return", "归还"),
+        ("transfer", "调拨"),
+    ]
+
+    asset = models.ForeignKey(
+        Asset,
+        on_delete=models.PROTECT,
+        related_name="responsibility_events",
+    )
+    action = models.CharField(max_length=20, choices=ACTIONS)
+    from_user = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+        related_name="asset_responsibility_from_events",
+    )
+    from_user_name = models.CharField(max_length=150, blank=True)
+    to_user = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+        related_name="asset_responsibility_to_events",
+    )
+    to_user_name = models.CharField(max_length=150, blank=True)
+    operator = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+        related_name="asset_responsibility_events",
+    )
+    operator_name = models.CharField(max_length=150, blank=True)
+    reason = models.TextField(blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ["-created_at", "-id"]
+        indexes = [models.Index(fields=["asset", "-created_at", "-id"])]
 
 
 DEFAULT_ASSET_STATUS_CHOICES = tuple(
@@ -409,6 +486,21 @@ class AssetCustomValue(Timestamped):
     class Meta:
         constraints = [
             models.UniqueConstraint(fields=["asset", "field"], name="uniq_asset_custom_value"),
+            models.CheckConstraint(
+                condition=(
+                    (models.Q(text_value="") | models.Q(number_value__isnull=True))
+                    & (models.Q(text_value="") | models.Q(date_value__isnull=True))
+                    & (models.Q(text_value="") | models.Q(boolean_value__isnull=True))
+                    & (models.Q(text_value="") | models.Q(json_value__isnull=True))
+                    & (models.Q(number_value__isnull=True) | models.Q(date_value__isnull=True))
+                    & (models.Q(number_value__isnull=True) | models.Q(boolean_value__isnull=True))
+                    & (models.Q(number_value__isnull=True) | models.Q(json_value__isnull=True))
+                    & (models.Q(date_value__isnull=True) | models.Q(boolean_value__isnull=True))
+                    & (models.Q(date_value__isnull=True) | models.Q(json_value__isnull=True))
+                    & (models.Q(boolean_value__isnull=True) | models.Q(json_value__isnull=True))
+                ),
+                name="asset_custom_value_one_storage",
+            ),
         ]
 
 
@@ -431,9 +523,20 @@ class AssetNetworkAddress(Timestamped):
     status = models.CharField(max_length=20, default="active")
     notes = models.CharField(max_length=255, blank=True)
 
+    def clean(self):
+        super().clean()
+        self.address = normalize_network_address(self.address)
+
+    def save(self, *args, **kwargs):
+        self.address = normalize_network_address(self.address)
+        update_fields = kwargs.get("update_fields")
+        if update_fields is not None:
+            kwargs["update_fields"] = set(update_fields) | {"address"}
+        return super().save(*args, **kwargs)
+
     class Meta:
         constraints = [
-            models.UniqueConstraint(fields=["address", "role"], name="uniq_address_role"),
+            models.UniqueConstraint(fields=["address"], name="uniq_network_address"),
             models.UniqueConstraint(fields=["asset", "role"], name="uniq_asset_network_role"),
         ]
 
@@ -501,6 +604,78 @@ class RepairRecord(Timestamped):
     finished_at = models.DateTimeField(null=True, blank=True)
     cost = models.DecimalField(max_digits=14, decimal_places=2, null=True, blank=True)
     notes = models.TextField(blank=True)
+
+
+class RepairPartUsage(Timestamped):
+    INTERNAL_STOCK = "internal_stock"
+    VENDOR_PROVIDED = "vendor_provided"
+    SOURCE_CHOICES = [
+        (INTERNAL_STOCK, "内部库存"),
+        (VENDOR_PROVIDED, "厂商提供"),
+    ]
+
+    fault = models.ForeignKey(
+        FaultEvent,
+        on_delete=models.PROTECT,
+        related_name="part_usages",
+    )
+    source = models.CharField(max_length=30, choices=SOURCE_CHOICES)
+    spare_part = models.ForeignKey(
+        SparePart,
+        null=True,
+        blank=True,
+        on_delete=models.PROTECT,
+        related_name="repair_part_usages",
+    )
+    spare_stock = models.ForeignKey(
+        SpareStock,
+        null=True,
+        blank=True,
+        on_delete=models.PROTECT,
+        related_name="repair_part_usages",
+    )
+    part_code = models.CharField(max_length=80, blank=True)
+    part_name = models.CharField(max_length=160)
+    part_model = models.CharField(max_length=160, blank=True)
+    part_unit = models.CharField(max_length=20, blank=True)
+    vendor_name = models.CharField(max_length=160, blank=True)
+    stock_data_center_name = models.CharField(max_length=120, blank=True)
+    stock_server_room_name = models.CharField(max_length=120, blank=True)
+    quantity = models.PositiveIntegerField()
+    operator = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+        related_name="repair_part_usages",
+    )
+    operator_name = models.CharField(max_length=150, blank=True)
+    notes = models.TextField(blank=True)
+
+    class Meta:
+        ordering = ["-created_at", "-id"]
+        indexes = [models.Index(fields=["fault", "-created_at", "-id"])]
+        constraints = [
+            models.CheckConstraint(
+                condition=models.Q(quantity__gt=0),
+                name="repair_part_usage_quantity_positive",
+            ),
+            models.CheckConstraint(
+                condition=(
+                    (
+                        models.Q(source="internal_stock")
+                        & models.Q(spare_part__isnull=False)
+                        & models.Q(spare_stock__isnull=False)
+                        & models.Q(vendor_name="")
+                    )
+                    | (
+                        models.Q(source="vendor_provided")
+                        & models.Q(spare_stock__isnull=True)
+                    )
+                ),
+                name="repair_part_usage_source_consistent",
+            ),
+        ]
 
 
 class AssetRelation(Timestamped):
@@ -656,7 +831,6 @@ class AuthThrottleState(Timestamped):
         constraints = [
             models.UniqueConstraint(fields=["scope", "key"], name="uniq_auth_throttle_scope_key"),
         ]
-        indexes = [models.Index(fields=["scope", "key"])]
 
     def __str__(self):
         return f"{self.scope}:{self.key}"

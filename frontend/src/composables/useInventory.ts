@@ -200,16 +200,29 @@ export function useInventory(context: InventoryContext) {
   function isExceptionStatus(status: string) {
     return INVENTORY_EXCEPTION_STATUS_VALUES.some((value) => value === status);
   }
-  function isInventoryBatchSelectable(item: InventoryItem) {
-    return context.can("inventory.manage") &&
+  function canRecordInventory(item?: InventoryItem | null) {
+    return Boolean(
       activeTask.value?.status === "in_progress" &&
-      item.status === "pending";
+      context.can("inventory.manage") &&
+      (!item || activeTask.value.id === item.task),
+    );
+  }
+  function canResolveInventoryAnomaly(item?: InventoryItem | null) {
+    return Boolean(
+      item &&
+      activeTask.value &&
+      activeTask.value.id === item.task &&
+      (activeTask.value.status === "in_progress" || activeTask.value.status === "completed") &&
+      context.can("inventory.manage") &&
+      isExceptionStatus(item.status) &&
+      item.resolution_status === "pending",
+    );
+  }
+  function isInventoryBatchSelectable(item: InventoryItem) {
+    return canRecordInventory(item) && item.status === "pending";
   }
   function isResolutionBatchSelectable(item: InventoryItem) {
-    return context.can("inventory.manage") &&
-      activeTask.value?.status === "in_progress" &&
-      isExceptionStatus(item.status) &&
-      item.resolution_status === "pending";
+    return canResolveInventoryAnomaly(item);
   }
   function batchSelectionModeFor(item: InventoryItem): BatchSelectionMode | null {
     if (isInventoryBatchSelectable(item)) return "inventory";
@@ -379,16 +392,47 @@ export function useInventory(context: InventoryContext) {
     auxLoading.value = auxPending > 0;
   }
 
+  async function loadAllPages<T>(
+    basePath: string,
+    controller: AbortController,
+    shouldContinue: () => boolean,
+  ): Promise<T[] | null> {
+    const rows: T[] = [];
+    let page = 1;
+    while (shouldContinue() && !controller.signal.aborted) {
+      const separator = basePath.includes("?") ? "&" : "?";
+      const result = await context.request<PageResult<T> | T[]>(
+        `${basePath}${separator}page=${page}`,
+        { signal: controller.signal },
+      );
+      if (!shouldContinue() || controller.signal.aborted) return null;
+      if (Array.isArray(result)) {
+        rows.push(...result);
+        return rows;
+      }
+      rows.push(...(result.results || []));
+      const hasMore = result.next !== undefined
+        ? Boolean(result.next)
+        : typeof result.count === "number"
+          ? rows.length < result.count
+          : (result.results || []).length >= 50;
+      if (!(result.results || []).length || !hasMore) return rows;
+      page += 1;
+    }
+    return null;
+  }
+
   async function loadRooms() {
     if (!context.can("racks.view")) return;
     const { id, controller } = beginAuxRequest("rooms");
     try {
-      const result = await context.request<PageResult<ServerRoom> | ServerRoom[]>(
-        "/server-rooms/?page_size=100&is_active=true",
-        { signal: controller.signal },
+      const result = await loadAllPages<ServerRoom>(
+        "/server-rooms/?page_size=50&is_active=true",
+        controller,
+        () => id === auxRequestIds.rooms,
       );
       if (id !== auxRequestIds.rooms || controller.signal.aborted || !result) return;
-      context.serverRooms.value = pageItems(result);
+      context.serverRooms.value = result;
     } catch (error) {
       if (id === auxRequestIds.rooms && !controller.signal.aborted) {
         auxErrors.value.rooms = error instanceof Error ? error.message : i18n.global.t("inventory.roomsLoadFailed");
@@ -421,12 +465,13 @@ export function useInventory(context: InventoryContext) {
     if (!context.can("racks.view")) return;
     const { id, controller } = beginAuxRequest("racks");
     try {
-      const result = await context.request<PageResult<Rack> | Rack[]>(
-        "/racks/?page_size=100&is_active=true",
-        { signal: controller.signal },
+      const result = await loadAllPages<Rack>(
+        "/racks/?page_size=50&is_active=true",
+        controller,
+        () => id === auxRequestIds.racks,
       );
       if (id !== auxRequestIds.racks || controller.signal.aborted || !result) return;
-      racks.value = pageItems(result);
+      racks.value = result;
     } catch (error) {
       if (id === auxRequestIds.racks && !controller.signal.aborted) {
         auxErrors.value.racks = error instanceof Error ? error.message : i18n.global.t("inventory.racksLoadFailed");
@@ -637,6 +682,10 @@ export function useInventory(context: InventoryContext) {
     scannedItemId.value = null;
     if (!activeTask.value) {
       scanError.value = i18n.global.t("inventory.scanTaskRequired");
+      return null;
+    }
+    if (activeTask.value.status !== "in_progress") {
+      scanError.value = i18n.global.t("inventory.completedTaskReadOnly");
       return null;
     }
     const parsed = parseAssetQrValue(rawValue);
@@ -1015,7 +1064,7 @@ export function useInventory(context: InventoryContext) {
   }
 
   async function initializeItem(item: InventoryItem) {
-    if (!context.can("inventory.manage") || !activeTask.value || activeTask.value.status === "completed") return false;
+    if (!canRecordInventory(item)) return false;
     if (!racks.value.length) await loadRacks();
     if (itemAuxError.value) return false;
     editingItem.value = item;
@@ -1047,10 +1096,8 @@ export function useInventory(context: InventoryContext) {
 
   function openResolution(item: InventoryItem) {
     if (!isExceptionStatus(item.status)) return;
-    if (
-      item.resolution_status === "pending" &&
-      (activeTask.value?.status !== "in_progress" || !context.can("inventory.manage"))
-    ) return;
+    if (activeTask.value?.id !== item.task) return;
+    if (item.resolution_status === "pending" && !canResolveInventoryAnomaly(item)) return;
     if (item.resolution_status === "resolved" && !context.can("inventory.view")) return;
     if (!["pending", "resolved"].includes(item.resolution_status)) return;
     resolutionItem.value = item;
@@ -1079,8 +1126,8 @@ export function useInventory(context: InventoryContext) {
       ElMessage.error(i18n.global.t("inventory.resolutionPermissionDenied"));
       return false;
     }
-    if (activeTask.value?.id !== item.task || activeTask.value?.status !== "in_progress") {
-      ElMessage.warning(i18n.global.t("inventory.completedTaskReadOnly"));
+    if (!canResolveInventoryAnomaly(item)) {
+      ElMessage.warning(i18n.global.t("inventory.invalidResolutionAction"));
       return false;
     }
     const allowedActions = resolutionActionOptions(item).map((option) => option.value);
@@ -1387,6 +1434,9 @@ export function useInventory(context: InventoryContext) {
     if (!editingItem.value || !activeTask.value || !itemForm.value.status) {
       throw new Error(i18n.global.t("inventory.itemResultRequired"));
     }
+    if (!canRecordInventory(editingItem.value)) {
+      throw new Error(i18n.global.t("inventory.completedTaskReadOnly"));
+    }
     const taskId = activeTask.value.id;
     const itemId = editingItem.value.id;
     const location =
@@ -1630,6 +1680,8 @@ export function useInventory(context: InventoryContext) {
     locationText,
     statusTagType,
     isExceptionStatus,
+    canRecordInventory,
+    canResolveInventoryAnomaly,
     isBatchSelectable,
     onBatchSelectionChange,
     batchSelectionModeFor,
