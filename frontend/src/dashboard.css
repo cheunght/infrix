@@ -567,6 +567,10 @@
 
 .dashboard-activity-item.el-button,
 .dashboard-fault-item.el-button {
+  box-sizing: border-box;
+  height: auto;
+  margin: 0;
+  padding: var(--space-sm) 0;
   justify-content: flex-start;
 }
 
