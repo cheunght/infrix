@@ -25,6 +25,8 @@ import type {
   FacilitySummary,
   FaultEvent,
   InventoryItem,
+  LdapDiagnosticResult,
+  LdapStatus,
   ManagedUser,
   Rack,
   RackFormState,
@@ -547,6 +549,15 @@ export interface SettingsContext extends CustomFieldContext, TagContext {
   retrySystemSettings: () => void | Promise<boolean>;
   resetSystemSettingsForm: () => void;
   saveSystemSettings: () => void | Promise<void>;
+  ldapStatus: Ref<LdapStatus | null>;
+  ldapStatusLoading: Ref<boolean>;
+  ldapStatusError: Ref<string>;
+  ldapDiagnosticLoading: Ref<boolean>;
+  ldapDiagnosticResult: Ref<LdapDiagnosticResult | null>;
+  ldapDiagnosticError: Ref<string>;
+  loadLdapStatus: () => void | Promise<boolean>;
+  retryLdapStatus: () => void | Promise<boolean>;
+  runLdapDiagnostics: () => void | Promise<boolean>;
   dictionarySection: Ref<string>;
   dictionaryPage: Ref<number>;
   dictionaryPageSize: Ref<number>;
@@ -598,6 +609,7 @@ export interface SettingsContext extends CustomFieldContext, TagContext {
   openUserResetModal: (user: ManagedUser) => void;
   resetUserPassword: () => void | Promise<void>;
   userProtectionReason: (user: ManagedUser) => string;
+  userDeleteProtectionReason: (user: ManagedUser) => string;
   canChangeUserRole: (user: ManagedUser) => boolean;
   userSaving: Ref<boolean>;
   userPendingId: Ref<number | null>;

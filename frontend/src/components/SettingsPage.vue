@@ -42,6 +42,14 @@ const {
   systemSettingsError,
   systemSettingsFormErrors,
   systemSettingsDirty,
+  ldapStatus,
+  ldapStatusLoading,
+  ldapStatusError,
+  ldapDiagnosticLoading,
+  ldapDiagnosticResult,
+  ldapDiagnosticError,
+  retryLdapStatus,
+  runLdapDiagnostics,
   retrySystemSettings,
   resetSystemSettingsForm,
   saveSystemSettings,
@@ -92,6 +100,7 @@ const {
   openUserModal,
   openUserResetModal,
   userProtectionReason,
+  userDeleteProtectionReason,
   toggleUser,
   deleteUser,
   roles,
@@ -264,6 +273,37 @@ function systemSettingOptionLabel(key: string, option: { value: string | number;
   if (key === "default_asset_status") return businessOptionLabel(ASSET_STATUS_OPTIONS, String(option.value));
   return String(option.label);
 }
+
+function userDirectoryTooltip(user: { auth_source: string; directory_provider: string | null; directory_login_identifier: string | null; directory_last_seen_at: string | null }) {
+  if (user.auth_source !== "ldap") return t("settings.localAccount");
+  return [
+    `${t("settings.directoryProvider")}: ${user.directory_provider || "—"}`,
+    `${t("settings.directoryLoginIdentifier")}: ${user.directory_login_identifier || "—"}`,
+    `${t("settings.directoryLastSeen")}: ${user.directory_last_seen_at ? formatAuditDateTime(user.directory_last_seen_at) : t("settings.directoryNeverSeen")}`,
+  ].join("\n");
+}
+
+function ldapCheckLabel(name: string) {
+  return t(`settings.ldapChecks.${name}`);
+}
+
+function ldapCheckTone(status: string) {
+  if (status === "success") return "success" as const;
+  if (status === "error") return "danger" as const;
+  return "info" as const;
+}
+
+function ldapCheckStatusLabel(status: string) {
+  if (status === "success") return t("settings.ldapCheckSuccess");
+  if (status === "disabled") return t("settings.ldapCheckDisabled");
+  return t("settings.ldapCheckFailed");
+}
+
+function ldapModeLabel(value: boolean | null) {
+  if (value === true) return t("settings.ldapAdSpecific");
+  if (value === false) return t("settings.ldapGenericDirectory");
+  return t("settings.ldapUnknownMode");
+}
 </script>
 
 <template>
@@ -360,6 +400,94 @@ function systemSettingOptionLabel(key: string, option: { value: string | number;
               </el-form-item>
             </el-form>
           </template>
+
+          <section v-if="can('organization.manage')" class="settings-ldap-panel">
+            <div class="settings-ldap-panel__heading">
+              <div>
+                <h2>{{ t('settings.ldapIntegration') }}</h2>
+                <p>{{ t('settings.ldapIntegrationDescription') }}</p>
+              </div>
+              <el-button
+                type="primary"
+                :loading="ldapDiagnosticLoading"
+                :disabled="ldapDiagnosticLoading || !ldapStatus?.enabled || !ldapStatus?.configured"
+                @click="runLdapDiagnostics"
+              >
+                {{ t('settings.ldapTestConnection') }}
+              </el-button>
+            </div>
+
+            <el-skeleton v-if="ldapStatusLoading" :rows="4" animated />
+            <el-alert
+              v-else-if="ldapStatusError"
+              :title="t('settings.ldapStatusLoadFailed')"
+              :description="ldapStatusError"
+              type="error"
+              show-icon
+              :closable="false"
+            >
+              <el-button link type="danger" @click="retryLdapStatus">{{ t('common.retry') }}</el-button>
+            </el-alert>
+            <template v-else-if="ldapStatus">
+              <el-alert
+                v-if="!ldapStatus.enabled"
+                :title="t('settings.ldapDisabled')"
+                :description="t('settings.ldapDisabledDescription')"
+                type="info"
+                show-icon
+                :closable="false"
+              />
+              <el-alert
+                v-else-if="!ldapStatus.configured"
+                :title="t('settings.ldapConfigurationInvalid')"
+                :description="t('settings.ldapConfigurationInvalidDescription')"
+                type="warning"
+                show-icon
+                :closable="false"
+              />
+              <template v-else>
+                <el-descriptions class="settings-ldap-panel__details" :column="2" border size="small">
+                  <el-descriptions-item :label="t('settings.ldapStatus')">
+                    <StatusTag tone="success" :label="t('settings.ldapEnabled')" />
+                  </el-descriptions-item>
+                  <el-descriptions-item :label="t('settings.ldapProvider')">{{ ldapStatus.provider }}</el-descriptions-item>
+                  <el-descriptions-item :label="t('settings.ldapProtocol')">{{ ldapStatus.protocol || '—' }}</el-descriptions-item>
+                  <el-descriptions-item :label="t('settings.ldapTlsMode')">{{ ldapStatus.tls_mode || '—' }}</el-descriptions-item>
+                  <el-descriptions-item :label="t('settings.ldapServer')">{{ ldapStatus.server || '—' }}</el-descriptions-item>
+                  <el-descriptions-item :label="t('settings.ldapBaseDn')">{{ ldapStatus.base_dn || '—' }}</el-descriptions-item>
+                  <el-descriptions-item :label="t('settings.ldapSearch')">{{ ldapStatus.search_configured ? t('settings.ldapConfigured') : t('settings.ldapNotConfigured') }}</el-descriptions-item>
+                  <el-descriptions-item :label="t('settings.ldapTimeouts')">{{ ldapStatus.connect_timeout }}s / {{ ldapStatus.operation_timeout }}s</el-descriptions-item>
+                  <el-descriptions-item :label="t('settings.ldapMode')">{{ ldapModeLabel(ldapStatus.ad_specific_mode) }}</el-descriptions-item>
+                  <el-descriptions-item :label="t('settings.ldapVerification')">{{ t('settings.ldapVerificationBaseline') }}</el-descriptions-item>
+                </el-descriptions>
+              </template>
+
+              <el-alert
+                v-if="ldapDiagnosticError"
+                class="settings-ldap-panel__diagnostic-error"
+                :title="t('settings.ldapDiagnosticRequestFailed')"
+                :description="ldapDiagnosticError"
+                type="error"
+                show-icon
+                :closable="false"
+              />
+              <div v-if="ldapDiagnosticResult" class="settings-ldap-panel__diagnostic">
+                <el-alert
+                  :title="ldapDiagnosticResult.success ? t('settings.ldapDiagnosticSuccess') : t('settings.ldapDiagnosticFailed')"
+                  :description="ldapDiagnosticResult.success ? t('settings.ldapDiagnosticComplete') : (ldapDiagnosticResult.message || t('settings.ldapDiagnosticRequestFailed'))"
+                  :type="ldapDiagnosticResult.success ? 'success' : 'error'"
+                  show-icon
+                  :closable="false"
+                />
+                <div class="settings-ldap-panel__checks">
+                  <div v-for="check in ldapDiagnosticResult.checks" :key="check.name" class="settings-ldap-panel__check">
+                    <span>{{ ldapCheckLabel(check.name) }}</span>
+                    <StatusTag :tone="ldapCheckTone(check.status)" :label="ldapCheckStatusLabel(check.status)" size="small" />
+                  </div>
+                </div>
+              </div>
+            </template>
+          </section>
         </div>
       </PageContent>
     </PageContainer>
@@ -522,6 +650,15 @@ function systemSettingOptionLabel(key: string, option: { value: string | number;
             <el-table-column prop="username" :label="t('settings.username')" min-width="180" />
             <el-table-column prop="display_name" :label="t('settings.name')" min-width="180" />
             <el-table-column prop="email" :label="t('auth.email')" min-width="220" />
+            <el-table-column :label="t('settings.authSource')" width="116">
+              <template #default="{ row }">
+                <el-tooltip :content="userDirectoryTooltip(row)" placement="top">
+                  <el-tag :type="row.auth_source === 'ldap' ? 'warning' : 'info'" size="small">
+                    {{ row.auth_source === 'ldap' ? t('settings.ldapAccount') : t('settings.localAccount') }}
+                  </el-tag>
+                </el-tooltip>
+              </template>
+            </el-table-column>
             <el-table-column :label="t('settings.role')" min-width="150"><template #default="{ row }">{{ roleLabel(row.assigned_role_code, row.assigned_role_name) }}</template></el-table-column>
             <el-table-column :label="t('common.status')" width="120">
               <template #default="{ row }"><StatusTag :tone="row.is_active ? 'success' : 'info'" :label="row.is_active ? t('status.active') : t('status.inactive')" /></template>
@@ -537,6 +674,7 @@ function systemSettingOptionLabel(key: string, option: { value: string | number;
                     @click="openUserModal(row)"
                   />
                   <TableIconButton
+                    v-if="row.auth_source !== 'ldap'"
                     :icon="Key"
                     :label="t('auth.changePassword')"
                     :disabled="userPendingId === row.id || userSaving"
@@ -550,9 +688,9 @@ function systemSettingOptionLabel(key: string, option: { value: string | number;
                   />
                   <TableIconButton
                     :icon="Delete"
-                    :label="userProtectionReason(row) || t('settings.deleteUser')"
+                    :label="userDeleteProtectionReason(row) || t('settings.deleteUser')"
                     type="danger"
-                    :disabled="userPendingId === row.id || userSaving || Boolean(userProtectionReason(row))"
+                    :disabled="userPendingId === row.id || userSaving || Boolean(userDeleteProtectionReason(row))"
                     @click="deleteUser(row)"
                   />
                 </div>

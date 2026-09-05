@@ -7,6 +7,9 @@ import type {
   CustomFieldForm,
   CustomFieldOption,
   DictionaryItem,
+  LdapDiagnosticCheck,
+  LdapDiagnosticResult,
+  LdapStatus,
   ManagedUser,
   Role,
   SparePartCategory,
@@ -265,6 +268,13 @@ export function useSettings(deps: SettingsDeps) {
   const systemSettingsError = ref("");
   const systemSettingsFormErrors = ref<FormErrors>({});
   const systemSettingsRequestId = ref(0);
+  const ldapStatus = ref<LdapStatus | null>(null);
+  const ldapStatusLoading = ref(false);
+  const ldapStatusError = ref("");
+  const ldapStatusRequestId = ref(0);
+  const ldapDiagnosticLoading = ref(false);
+  const ldapDiagnosticResult = ref<LdapDiagnosticResult | null>(null);
+  const ldapDiagnosticError = ref("");
   const systemSettingsDefinitions = computed<SystemSettingDefinition[]>(
     () => systemSettings.value?.definitions || [],
   );
@@ -414,6 +424,95 @@ export function useSettings(deps: SettingsDeps) {
     };
   }
 
+  function normalizeLdapDiagnosticResult(value: unknown): LdapDiagnosticResult | null {
+    if (!value || typeof value !== "object" || Array.isArray(value)) return null;
+    const source = value as Record<string, unknown>;
+    const stages = ["configuration", "connection", "tls", "service_bind", "search"] as const;
+    const stage = stages.includes(source.stage as typeof stages[number])
+      ? source.stage as LdapDiagnosticResult["stage"]
+      : "configuration";
+    const checks = Array.isArray(source.checks)
+      ? source.checks.flatMap((check): LdapDiagnosticCheck[] => {
+          if (!check || typeof check !== "object" || Array.isArray(check)) return [];
+          const item = check as Record<string, unknown>;
+          const names = ["configuration", "connection", "tls", "service_bind", "search"] as const;
+          const statuses = ["success", "error", "disabled"] as const;
+          if (!names.includes(item.name as typeof names[number]) || !statuses.includes(item.status as typeof statuses[number])) return [];
+          return [{
+            name: item.name as LdapDiagnosticCheck["name"],
+            status: item.status as LdapDiagnosticCheck["status"],
+          }];
+        })
+      : [];
+    const code = typeof source.code === "string" ? source.code : undefined;
+    const message = typeof source.message === "string" ? source.message : undefined;
+    return {
+      success: Boolean(source.success),
+      stage,
+      checks,
+      ...(code ? { code } : {}),
+      ...(message ? { message } : {}),
+    };
+  }
+
+  async function loadLdapStatus(version = deps.beginLoad()): Promise<boolean> {
+    if (!deps.can("organization.manage")) {
+      ldapStatus.value = null;
+      ldapStatusError.value = "";
+      return false;
+    }
+    const requestId = ++ldapStatusRequestId.value;
+    ldapStatusLoading.value = true;
+    ldapStatusError.value = "";
+    try {
+      const result = await deps.request<LdapStatus>("/auth/ldap/status/");
+      if (result == null || requestId !== ldapStatusRequestId.value || !deps.isCurrentLoad(version)) return false;
+      ldapStatus.value = result;
+      return true;
+    } catch (error) {
+      if (requestId === ldapStatusRequestId.value && deps.isCurrentLoad(version) && !isAbortError(error)) {
+        ldapStatusError.value = tr("settings.ldapStatusLoadFailed");
+      }
+      return false;
+    } finally {
+      if (requestId === ldapStatusRequestId.value) ldapStatusLoading.value = false;
+    }
+  }
+
+  async function runLdapDiagnostics(): Promise<boolean> {
+    if (!deps.can("organization.manage") || ldapDiagnosticLoading.value) return false;
+    ldapDiagnosticLoading.value = true;
+    ldapDiagnosticError.value = "";
+    ldapDiagnosticResult.value = null;
+    try {
+      const result = await deps.request<LdapDiagnosticResult>("/auth/ldap/diagnostics/", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({}),
+      });
+      const normalized = normalizeLdapDiagnosticResult(result);
+      if (!normalized) {
+        ldapDiagnosticError.value = tr("settings.ldapDiagnosticRequestFailed");
+        return false;
+      }
+      ldapDiagnosticResult.value = normalized;
+      return normalized.success;
+    } catch (error) {
+      const details = error && typeof error === "object" && "details" in error
+        ? (error as { details?: unknown }).details
+        : undefined;
+      const normalized = normalizeLdapDiagnosticResult(details);
+      if (normalized) {
+        ldapDiagnosticResult.value = normalized;
+      } else if (!isAbortError(error)) {
+        ldapDiagnosticError.value = tr("settings.ldapDiagnosticRequestFailed");
+      }
+      return false;
+    } finally {
+      ldapDiagnosticLoading.value = false;
+    }
+  }
+
   async function loadSystemSettings(version = deps.beginLoad()): Promise<boolean> {
     if (!deps.can("settings.view")) return false;
     const requestId = ++systemSettingsRequestId.value;
@@ -425,6 +524,7 @@ export function useSettings(deps: SettingsDeps) {
       systemSettings.value = result;
       syncSystemSettingsForm(result);
       applySystemSettingsSnapshot(result);
+      if (deps.can("organization.manage")) await loadLdapStatus(version);
       return true;
     } catch (error) {
       if (requestId === systemSettingsRequestId.value && deps.isCurrentLoad(version) && !isAbortError(error)) {
@@ -801,6 +901,11 @@ export function useSettings(deps: SettingsDeps) {
     return "";
   }
 
+  function userDeleteProtectionReason(user: ManagedUser): string {
+    if (user.auth_source === "ldap") return tr("settings.directoryUserProtected");
+    return userProtectionReason(user);
+  }
+
   function handleUserSelection(rows: ManagedUser[]) {
     selectedUserIds.value = rows.map((user) => user.id);
   }
@@ -815,6 +920,10 @@ export function useSettings(deps: SettingsDeps) {
 
   function openUserResetModal(user: ManagedUser) {
     if (!deps.can("organization.manage")) return;
+    if (user.auth_source === "ldap") {
+      deps.actionMessage.value = tr("settings.directoryPasswordManaged");
+      return;
+    }
     resettingUser.value = user;
     userResetError.value = "";
     userResetForm.value = { new_password: "", confirm_password: "" };
@@ -871,6 +980,10 @@ export function useSettings(deps: SettingsDeps) {
     if (!deps.can("organization.manage")) return;
     const user = resettingUser.value;
     if (!user || userPendingId.value === user.id || userResetSaving.value) return;
+    if (user.auth_source === "ldap") {
+      deps.actionMessage.value = tr("settings.directoryPasswordManaged");
+      return;
+    }
     userPendingId.value = user.id;
     userResetSaving.value = true;
     userResetError.value = "";
@@ -964,6 +1077,10 @@ export function useSettings(deps: SettingsDeps) {
 
   async function deleteUser(user: ManagedUser) {
     if (!deps.can("organization.manage")) return;
+    if (user.auth_source === "ldap") {
+      deps.actionMessage.value = tr("settings.directoryUserProtected");
+      return;
+    }
     if (userProtectionReason(user)) {
       deps.actionMessage.value = userProtectionReason(user);
       return;
@@ -1664,6 +1781,12 @@ export function useSettings(deps: SettingsDeps) {
     systemSettingsError,
     systemSettingsFormErrors,
     systemSettingsDefinitions,
+    ldapStatus,
+    ldapStatusLoading,
+    ldapStatusError,
+    ldapDiagnosticLoading,
+    ldapDiagnosticResult,
+    ldapDiagnosticError,
     systemSettingsDirty,
     manufacturers,
     deviceTypes,
@@ -1761,6 +1884,9 @@ export function useSettings(deps: SettingsDeps) {
     auditListError,
     loadDictionaries,
     loadSystemSettings,
+    loadLdapStatus,
+    retryLdapStatus: () => loadLdapStatus(),
+    runLdapDiagnostics,
     retrySystemSettings,
     loadCustomFields,
     retryCustomFieldList,
@@ -1794,6 +1920,7 @@ export function useSettings(deps: SettingsDeps) {
     openUserResetModal,
     resetUserPassword,
     userProtectionReason,
+    userDeleteProtectionReason,
     canChangeUserRole,
     toggleUser,
     deleteUser,

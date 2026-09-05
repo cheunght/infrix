@@ -1,4 +1,5 @@
 from django.conf import settings
+import logging
 from django.db.models import BooleanField, Count, Exists, F, OuterRef, Q, Prefetch, Sum
 from django.db.models.functions import Coalesce
 from django.db import DatabaseError, IntegrityError, connection, transaction
@@ -97,6 +98,7 @@ from .system_settings import get_system_settings, system_settings_snapshot
 
 EXPORT_MAX_ROWS = 10_000
 XLSX_CONTENT_TYPE = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+logger = logging.getLogger(__name__)
 
 
 def _export_timestamp():
@@ -1654,7 +1656,7 @@ def _user_audit_snapshot(user):
 
 
 class UserViewSet(viewsets.ModelViewSet):
-    queryset = User.objects.prefetch_related("groups").order_by("username")
+    queryset = User.objects.select_related("directory_identity").prefetch_related("groups").order_by("username")
     serializer_class = UserSerializer
     permission_classes = [IsSystemAdministrator]
     filter_backends = [SearchFilter, OrderingFilter]
@@ -1782,6 +1784,13 @@ class UserViewSet(viewsets.ModelViewSet):
     @transaction.atomic
     def reset_password(self, request, pk=None):
         instance = self.get_object()
+        if is_directory_managed(instance):
+            raise DRFValidationError(
+                {
+                    "detail": "Directory-managed accounts must change passwords through the corporate directory.",
+                    "code": "directory_password_managed",
+                }
+            )
         serializer = AdminPasswordResetSerializer(
             data=request.data,
             context={"user": instance},
@@ -1808,6 +1817,13 @@ class UserViewSet(viewsets.ModelViewSet):
             raise DRFValidationError("不能删除当前登录账号")
         if instance.is_superuser:
             raise DRFValidationError("不能通过业务接口删除超级管理员")
+        if is_directory_managed(instance):
+            raise DRFValidationError(
+                {
+                    "detail": "Directory-managed accounts must be removed from the corporate directory first.",
+                    "code": "directory_user_protected",
+                }
+            )
         if Asset.objects.filter(responsible_user_id=instance.pk).exists():
             raise DRFValidationError("用户仍是资产责任人，归还或调拨资产后才能删除")
         if InventoryTask.objects.filter(inspector_id=instance.pk).exists():
@@ -2642,6 +2658,38 @@ def _throttle_state(scope, key, now):
     return state
 
 
+LDAP_DIAGNOSTIC_MAX_ATTEMPTS = 3
+LDAP_DIAGNOSTIC_WINDOW_SECONDS = 60
+LDAP_DIAGNOSTIC_LOCK_SECONDS = 60
+
+
+def _ldap_diagnostic_throttle_key(request) -> str:
+    return f"ldap-diagnostic:{request.user.pk}:{_login_ip(request)}"[:255]
+
+
+def _consume_ldap_diagnostic_slot(request) -> tuple[bool, int]:
+    now = timezone.now()
+    window = timedelta(seconds=LDAP_DIAGNOSTIC_WINDOW_SECONDS)
+    lock_duration = timedelta(seconds=LDAP_DIAGNOSTIC_LOCK_SECONDS)
+    with transaction.atomic():
+        state = _throttle_state("ip", _ldap_diagnostic_throttle_key(request), now)
+        if state.first_failed_at and now - state.first_failed_at > window:
+            state.failure_count = 0
+            state.first_failed_at = None
+            state.locked_until = None
+        if state.locked_until and state.locked_until > now:
+            return False, max(1, int((state.locked_until - now).total_seconds()))
+        if state.failure_count >= LDAP_DIAGNOSTIC_MAX_ATTEMPTS:
+            state.locked_until = now + lock_duration
+            state.save(update_fields=["locked_until", "updated_at"])
+            return False, LDAP_DIAGNOSTIC_LOCK_SECONDS
+        if state.first_failed_at is None:
+            state.first_failed_at = now
+        state.failure_count += 1
+        state.save(update_fields=["failure_count", "first_failed_at", "locked_until", "updated_at"])
+    return True, 0
+
+
 def _login_lock_status(username, ip):
     now = timezone.now()
     with transaction.atomic():
@@ -2869,6 +2917,94 @@ def auth_login(request):
 @permission_classes([AllowAny])
 def auth_csrf(request):
     return Response({"csrfToken": get_token(request)})
+
+
+@extend_schema(responses=OpenApiTypes.OBJECT)
+@api_view(["GET"])
+@permission_classes([IsAuthenticated, IsSystemAdministrator])
+def auth_ldap_status(request):
+    return Response(ldap_status_snapshot())
+
+
+def _safe_ldap_diagnostic_payload(result) -> dict:
+    if hasattr(result, "as_dict"):
+        candidate = result.as_dict()
+    elif isinstance(result, dict):
+        candidate = result
+    else:
+        candidate = {}
+
+    allowed_stages = {"configuration", "connection", "tls", "service_bind", "search"}
+    stage = candidate.get("stage") if candidate.get("stage") in allowed_stages else "configuration"
+    success = bool(candidate.get("success"))
+    checks = []
+    for check in candidate.get("checks", []) if isinstance(candidate.get("checks"), list) else []:
+        if not isinstance(check, dict):
+            continue
+        name = check.get("name")
+        status = check.get("status")
+        if name in LDAP_DIAGNOSTIC_CHECKS and status in {"success", "error", "disabled"}:
+            checks.append({"name": name, "status": status})
+    payload = {"success": success, "stage": stage, "checks": checks}
+    if success:
+        return payload
+    code = candidate.get("code")
+    if code not in LDAP_DIAGNOSTIC_MESSAGES:
+        code = "unexpected_error"
+    payload["code"] = code
+    payload["message"] = LDAP_DIAGNOSTIC_MESSAGES[code]
+    return payload
+
+
+@extend_schema(request=OpenApiTypes.OBJECT, responses=OpenApiTypes.OBJECT)
+@api_view(["POST"])
+@permission_classes([IsAuthenticated, IsSystemAdministrator])
+def auth_ldap_diagnostics(request):
+    allowed, retry_after = _consume_ldap_diagnostic_slot(request)
+    if not allowed:
+        write_audit_log(
+            request,
+            action="ldap_diagnostic",
+            resource_type="ldap",
+            resource_id="configuration",
+            extra={"success": False, "stage": "throttled", "code": "throttled"},
+        )
+        return Response(
+            {
+                "detail": "LDAP 诊断请求过于频繁，请稍后再试",
+                "code": "diagnostic_throttled",
+                "retry_after": retry_after,
+            },
+            status=429,
+            headers={"Retry-After": str(retry_after)},
+        )
+
+    try:
+        result = LDAPDirectoryClient().diagnose()
+        payload = _safe_ldap_diagnostic_payload(result)
+    except Exception:
+        logger.exception("LDAP diagnostic endpoint failed")
+        payload = _safe_ldap_diagnostic_payload({
+            "success": False,
+            "stage": "configuration",
+            "code": "unexpected_error",
+        })
+
+    write_audit_log(
+        request,
+        action="ldap_diagnostic",
+        resource_type="ldap",
+        resource_id="configuration",
+        extra={
+            "success": payload["success"],
+            "stage": payload["stage"],
+            **({"code": payload["code"]} if "code" in payload else {}),
+        },
+    )
+    if payload["success"]:
+        return Response(payload)
+    status = 200 if payload.get("code") == "disabled" else 400 if payload.get("code") == "configuration_error" else 503
+    return Response(payload, status=status)
 
 
 @extend_schema(request=CurrentUserProfileSerializer, responses=OpenApiTypes.OBJECT)

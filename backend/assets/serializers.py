@@ -13,7 +13,7 @@ from decimal import Decimal, InvalidOperation
 from typing import Any
 import json
 import re
-from .models import AuditLog, Asset, AssetCustomValue, AssetNetworkAddress, AssetResponsibilityEvent, AssetTag, CustomField, CustomFieldOption, DataCenter, DeviceType, FaultEvent, InventoryItem, InventoryTask, MaintenanceContract, Manufacturer, ProcurementRecord, Rack, RackUnitAllocation, RepairPartUsage, RepairRecord, ServerRoom, SoftwareLicense, SparePart, SparePartCategory, SpareStock, SpareStockTransaction, SystemSetting, Tag, UserSecurityProfile
+from .models import AuditLog, Asset, AssetCustomValue, AssetNetworkAddress, AssetResponsibilityEvent, AssetTag, CustomField, CustomFieldOption, DataCenter, DeviceType, DirectoryIdentity, FaultEvent, InventoryItem, InventoryTask, MaintenanceContract, Manufacturer, ProcurementRecord, Rack, RackUnitAllocation, RepairPartUsage, RepairRecord, ServerRoom, SoftwareLicense, SparePart, SparePartCategory, SpareStock, SpareStockTransaction, SystemSetting, Tag, UserSecurityProfile
 from .depreciation import DepreciationValidationError, calculate_asset_depreciation, validate_depreciation_configuration
 from .enum_contracts import (
     INVENTORY_ITEM_STATUS_LABELS,
@@ -35,6 +35,7 @@ from .services import apply_asset_custom_values, apply_asset_tags, apply_spare_s
 from .custom_fields import normalize_validation_config as _normalize_validation_config, normalize_validation_date as _validation_date
 from .lifecycle import allowed_asset_status_values, transition_asset_status, validate_asset_status_transition
 from .roles import ROLE_AUDITOR, ROLE_DEFINITIONS, ROLE_NAME_TO_CODE, preset_group_for_code, user_role_code
+from .ldap_auth import AUTH_SOURCE_LDAP, AUTH_SOURCE_LOCAL
 from .system_reset import SYSTEM_RESET_CONFIRMATION
 from .system_settings import get_system_settings, system_setting_definitions
 
@@ -71,6 +72,10 @@ class UserSerializer(serializers.ModelSerializer):
     )
     assigned_role_code = serializers.SerializerMethodField()
     assigned_role_name = serializers.SerializerMethodField()
+    auth_source = serializers.SerializerMethodField()
+    directory_provider = serializers.SerializerMethodField()
+    directory_login_identifier = serializers.SerializerMethodField()
+    directory_last_seen_at = serializers.SerializerMethodField()
 
     def get_display_name(self, obj) -> str:
         return obj.get_full_name() or obj.username
@@ -81,6 +86,28 @@ class UserSerializer(serializers.ModelSerializer):
     def get_assigned_role_name(self, obj) -> str:
         code = user_role_code(obj)
         return ROLE_DEFINITIONS.get(code, {}).get("name", "")
+
+    @staticmethod
+    def _directory_identity(obj) -> DirectoryIdentity | None:
+        try:
+            return obj.directory_identity
+        except DirectoryIdentity.DoesNotExist:
+            return None
+
+    def get_auth_source(self, obj) -> str:
+        return AUTH_SOURCE_LDAP if self._directory_identity(obj) is not None else AUTH_SOURCE_LOCAL
+
+    def get_directory_provider(self, obj) -> str | None:
+        identity = self._directory_identity(obj)
+        return identity.provider if identity is not None else None
+
+    def get_directory_login_identifier(self, obj) -> str | None:
+        identity = self._directory_identity(obj)
+        return identity.current_login_identifier if identity is not None else None
+
+    def get_directory_last_seen_at(self, obj):
+        identity = self._directory_identity(obj)
+        return identity.last_seen_at if identity is not None else None
 
     def get_extra_kwargs(self):
         extra_kwargs = super().get_extra_kwargs()
@@ -139,7 +166,7 @@ class UserSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = User
-        fields = ["id", "username", "display_name", "first_name", "last_name", "email", "is_active", "is_staff", "is_superuser", "groups", "role_code", "assigned_role_code", "assigned_role_name", "password", "last_login", "date_joined"]
+        fields = ["id", "username", "display_name", "first_name", "last_name", "email", "is_active", "is_staff", "is_superuser", "groups", "role_code", "assigned_role_code", "assigned_role_name", "auth_source", "directory_provider", "directory_login_identifier", "directory_last_seen_at", "password", "last_login", "date_joined"]
         read_only_fields = ["id", "display_name", "is_staff", "is_superuser", "groups", "assigned_role_code", "assigned_role_name", "last_login", "date_joined"]
 
 

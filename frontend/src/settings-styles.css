@@ -88,6 +88,76 @@
   line-height: 1.5;
 }
 
+.settings-ldap-panel {
+  display: grid;
+  gap: var(--space-lg, 16px);
+  padding-top: var(--space-xl, 24px);
+  border-top: 1px solid var(--el-border-color-lighter);
+}
+
+.settings-ldap-panel__heading {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: var(--space-lg, 16px);
+}
+
+.settings-ldap-panel__heading h2 {
+  margin: 0;
+  color: var(--el-text-color-primary);
+  font-size: var(--el-font-size-medium, 16px);
+  font-weight: 600;
+  line-height: 22px;
+}
+
+.settings-ldap-panel__heading p {
+  margin: var(--space-xs, 4px) 0 0;
+  color: var(--el-text-color-secondary);
+  font-size: var(--el-font-size-base, 14px);
+  line-height: var(--el-line-height-primary, 24px);
+}
+
+.settings-ldap-panel__details .el-descriptions__label,
+.settings-ldap-panel__details .el-descriptions__content {
+  min-width: 0;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+}
+
+.settings-ldap-panel__details .el-descriptions__content {
+  white-space: pre-wrap;
+}
+
+.settings-ldap-panel__diagnostic-error,
+.settings-ldap-panel__diagnostic {
+  margin-top: var(--space-sm, 8px);
+}
+
+.settings-ldap-panel__checks {
+  display: grid;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  gap: var(--space-sm, 8px);
+  margin-top: var(--space-md, 12px);
+}
+
+.settings-ldap-panel__check {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-sm, 8px);
+  min-width: 0;
+  padding: 8px 10px;
+  border: 1px solid var(--el-border-color-lighter);
+  border-radius: var(--el-border-radius-base, 4px);
+  color: var(--el-text-color-regular);
+  font-size: 12px;
+}
+
+.settings-ldap-panel__check > span {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
 .settings-maintenance {
   display: grid;
   gap: var(--space-lg, 16px);
@@ -317,7 +387,25 @@
     grid-template-columns: 1fr;
   }
 
+  .settings-ldap-panel__heading {
+    flex-direction: column;
+  }
+
+  .settings-ldap-panel__checks {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
   .audit-detail-drawer {
     width: 100% !important;
+  }
+}
+
+@media (max-width: 480px) {
+  .settings-ldap-panel__details {
+    --el-descriptions-table-border: var(--el-border-color-lighter);
+  }
+
+  .settings-ldap-panel__checks {
+    grid-template-columns: 1fr;
   }
 }

@@ -65,6 +65,7 @@ const RESOURCE_LABELS: Record<string, string> = {
   inventory_item: "auditLog.resources.inventory_item",
   user: "auditLog.resources.user",
   auth_login: "auditLog.resources.auth_login",
+  ldap: "auditLog.resources.ldap",
   system: "auditLog.resources.system",
   system_settings: "auditLog.resources.system_settings",
 };
@@ -80,6 +81,7 @@ const ACTION_LABELS: Record<string, string> = {
   login_success: "auditLog.actions.login_success",
   login_failure: "auditLog.actions.login_failure",
   login_locked: "auditLog.actions.login_locked",
+  ldap_diagnostic: "auditLog.actions.ldap_diagnostic",
   system_reset: "auditLog.actions.system_reset",
 };
 
@@ -378,6 +380,7 @@ function objectLabelFromSnapshot(snapshot: AuditRecord, resourceType: string): s
     const username = firstDefined(source.username, source.user, snapshot.username);
     return username === undefined ? null : String(username);
   }
+  if (resourceType === "ldap") return String(i18n.global.t("auditLog.ldapConfiguration"));
   if (assetNo !== undefined) return name === undefined ? String(assetNo) : `${String(assetNo)} / ${String(name)}`;
   if (code !== undefined) return name === undefined ? String(code) : `${String(code)} / ${String(name)}`;
   if (name !== undefined) return String(name);
@@ -553,6 +556,23 @@ function loginMetadata(log: AuditLog): AuditMetadata[] {
   return metadata;
 }
 
+function ldapDiagnosticMetadata(log: AuditLog): AuditMetadata[] {
+  const extra = getExtra(log);
+  const metadata: AuditMetadata[] = [];
+  const stage = firstDefined(extra.stage);
+  const code = firstDefined(extra.code);
+  const success = firstDefined(extra.success);
+  if (success !== undefined) {
+    metadata.push({
+      label: String(i18n.global.t("auditLog.diagnosticResult")),
+      value: success ? String(i18n.global.t("auditLog.diagnosticPassed")) : String(i18n.global.t("auditLog.diagnosticFailed")),
+    });
+  }
+  if (stage !== undefined) metadata.push({ label: String(i18n.global.t("auditLog.diagnosticStage")), value: String(stage) });
+  if (code !== undefined) metadata.push({ label: String(i18n.global.t("auditLog.diagnosticCode")), value: String(code) });
+  return metadata;
+}
+
 function fieldsFromSnapshot(log: AuditLog): AuditField[] {
   const snapshot = log.action === "delete" ? getSnapshot(log.payload, "before") : getSnapshot(log.payload, "after");
   const source = [snapshot.task, snapshot.item, snapshot.asset].find(isRecord) || snapshot;
@@ -589,6 +609,13 @@ function summaryForLogin(log: AuditLog): string {
 
 export function auditChangeSummary(log: AuditLog): string {
   if (log.resource_type === "auth_login") return summaryForLogin(log);
+  if (log.resource_type === "ldap" && log.action === "ldap_diagnostic") {
+    const extra = getExtra(log);
+    return String(i18n.global.t(
+      extra.success ? "auditLog.ldapDiagnosticSuccess" : "auditLog.ldapDiagnosticFailure",
+      { stage: String(extra.stage || i18n.global.t("auditLog.empty")) },
+    ));
+  }
   if (log.resource_type === "system" && log.action === "system_reset") return String(i18n.global.t("auditLog.actions.system_reset"));
   const object = auditObjectLabel(log);
   const resource = resourceLabel(log.resource_type);
@@ -643,7 +670,9 @@ export function auditDetail(log: AuditLog): AuditDetail {
         : String(i18n.global.t("auditLog.fieldChanges")),
     changes: auditChanges(log),
     fields,
-    metadata: log.resource_type === "auth_login" ? loginMetadata(log) : [],
+    metadata: log.resource_type === "auth_login"
+      ? loginMetadata(log)
+      : log.resource_type === "ldap" ? ldapDiagnosticMetadata(log) : [],
     rawPayload: formatRawAuditPayload(log.payload),
   };
 }
