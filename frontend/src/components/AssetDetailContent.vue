@@ -34,6 +34,7 @@ const props = withDefaults(defineProps<{
   asset: AssetDetail | null;
   loading: boolean;
   error: string;
+  variant?: "drawer" | "rack";
   showSummary?: boolean;
   descriptionColumns?: 1 | 2;
   retry?: () => void | Promise<void>;
@@ -41,11 +42,14 @@ const props = withDefaults(defineProps<{
   responsibilityHistoryContext?: AssetResponsibilityHistoryContext | null;
   inventoryHistoryContext?: AssetInventoryHistoryContext | null;
 }>(), {
+  variant: "drawer",
   descriptionColumns: 2,
 });
 
 const { asset, loading, error, showSummary, descriptionColumns } = toRefs(props);
 const { t } = useI18n();
+const isDrawer = computed(() => props.variant === "drawer");
+const descriptionLayout = computed(() => isDrawer.value ? "stacked" as const : "horizontal" as const);
 const responsibilityActionContext = computed<AssetResponsibilityContext | null>(
   () => props.responsibilityContext || null,
 );
@@ -162,7 +166,12 @@ function networkStatusLabel(value: unknown): string {
 const basicFields = computed<DetailField[]>(() => {
   const current = asset.value;
   if (!current) return [];
-  const fields = [
+  const fields = isDrawer.value ? [
+    makeField("manufacturer", t("asset.manufacturer"), current.manufacturer_name),
+    makeField("model", t("asset.model"), current.model_name || current.model),
+    makeField("purpose", t("asset.purpose"), current.purpose),
+    makeField("department", t("asset.department"), current.department_name),
+  ] : [
     makeField("device-type", t("asset.deviceType"), current.device_type_name),
     makeField("manufacturer", t("asset.manufacturer"), current.manufacturer_name),
     makeField("model", t("asset.model"), current.model_name || current.model),
@@ -195,12 +204,60 @@ const locationFields = computed<DetailField[]>(() => {
 });
 
 const networkRows = computed<AssetNetwork[]>(() => asset.value?.network_addresses || []);
+const primaryNetwork = computed<AssetNetwork | null>(() => {
+  const rows = networkRows.value;
+  return rows.find((row) => row.is_primary)
+    || rows.find((row) => row.role === "business")
+    || rows[0]
+    || null;
+});
+
+function rackPositionLabel(current: AssetDetail): string {
+  const rack = current.rack_allocation;
+  if (!rack) return displayValue(current.u_range);
+  if (rack.start_u === rack.end_u) return formatU(rack.start_u);
+  return `${formatU(rack.start_u)}–${formatU(rack.end_u)}`;
+}
+
+const locatorFields = computed<DetailField[]>(() => {
+  const current = asset.value;
+  if (!current) return [];
+  const rack = current.rack_allocation;
+  const dataCenter = rack?.data_center || current.asset_data_center_name || current.data_center;
+  const locationPath = [dataCenter, rack?.server_room || current.server_room, rack?.rack_code || current.rack_code]
+    .filter(hasContent)
+    .join(" / ");
+  const brandModel = current.manufacturer_model
+    || [current.manufacturer_name, current.model_name || current.model].filter(hasContent).join(" / ");
+  return [
+    makeField("locator-code", t("asset.code"), current.asset_no),
+    makeField("locator-device-type", t("asset.deviceType"), current.device_type_name),
+    makeField("locator-brand-model", t("asset.manufacturerModel"), brandModel),
+    makeField("locator-serial-number", t("asset.serialNumber"), current.serial_number),
+    { ...makeField("locator-location", t("asset.location"), locationPath), wide: true },
+    makeField("locator-u-range", t("asset.uRange"), rackPositionLabel(current)),
+    makeField(
+      "locator-primary-ip",
+      t("asset.primaryIp"),
+      primaryNetwork.value?.address || current.business_ip || current.management_ip || current.oob_ip,
+    ),
+  ];
+});
 const emptyNetworkFields = computed<DetailField[]>(() => [
   makeField("network-address", t("asset.networkAddress"), null),
 ]);
 
 const procurementRecords = computed(() => asset.value?.procurement_records || []);
 const maintenanceRecords = computed(() => asset.value?.maintenance_contracts || []);
+const procurementRecordCount = computed(() => {
+  if (procurementRecords.value.length) return procurementRecords.value.length;
+  const current = asset.value;
+  return current && [current.purchase_date, current.supplier, current.purchase_order_no].some(hasContent) ? 1 : 0;
+});
+
+function itemCount(count: number): string {
+  return t("units.item", count);
+}
 
 function procurementRecordFields(record: ProcurementRecord | null): DetailField[] {
   const current = asset.value;
@@ -294,6 +351,7 @@ const currentFieldGroups = computed<DynamicFieldGroup[]>(() => {
   const fields = (asset.value?.custom_fields || []).filter(isCurrentScope);
   return groupCurrentFields(fields);
 });
+const customFieldCount = computed(() => currentFieldGroups.value.reduce((total, group) => total + group.fields.length, 0));
 
 function fieldLabel(field: AssetCustomField): string {
   return `${field.name || field.key}${field.is_active === false ? ` (${t("status.inactive")})` : ""}`;
@@ -337,7 +395,10 @@ function retryDetail() {
 </script>
 
 <template>
-  <div class="drawer-content asset-detail-content">
+  <div
+    class="drawer-content asset-detail-content"
+    :class="`asset-detail-content--${variant}`"
+  >
     <div v-if="loading" class="drawer-state asset-detail-state" role="status" aria-live="polite">
       <el-skeleton :rows="8" animated />
     </div>
@@ -362,11 +423,34 @@ function retryDetail() {
         </div>
       </div>
 
+      <section v-if="isDrawer" class="asset-locator-summary" :aria-label="t('asset.locationSnapshot')">
+        <div class="asset-locator-summary__heading">
+          <span>{{ t('asset.locationSnapshot') }}</span>
+        </div>
+        <DescriptionList
+          class="asset-detail-description-list asset-locator-summary__list"
+          :items="locatorFields"
+          :columns="2"
+          layout="stacked"
+        >
+          <template #value-locator-code="{ item }">
+            <span class="asset-detail-technical">{{ item.value }}</span>
+          </template>
+          <template #value-locator-serial-number="{ item }">
+            <span class="asset-detail-technical">{{ item.value }}</span>
+          </template>
+          <template #value-locator-primary-ip="{ item }">
+            <span class="asset-detail-technical">{{ item.value }}</span>
+          </template>
+        </DescriptionList>
+      </section>
+
       <DetailSection :title="t('asset.basicInfo')">
         <DescriptionList
           class="asset-detail-description-list"
           :items="basicFields"
           :columns="descriptionColumns"
+          :layout="descriptionLayout"
         />
       </DetailSection>
 
@@ -375,20 +459,9 @@ function retryDetail() {
           class="asset-detail-description-list"
           :items="locationFields"
           :columns="descriptionColumns"
+          :layout="descriptionLayout"
         />
       </DetailSection>
-
-      <DetailSection v-if="responsibilityActionContext" :title="t('asset.responsibility')">
-        <AssetResponsibilityActions
-          :asset="asset"
-          :context="responsibilityActionContext"
-        />
-      </DetailSection>
-
-      <AssetResponsibilityHistory
-        v-if="responsibilityHistoryContext && showResponsibilityHistory"
-        :context="responsibilityHistoryContext"
-      />
 
       <DetailSection :title="t('asset.network')">
         <el-table
@@ -419,10 +492,28 @@ function retryDetail() {
           class="asset-detail-description-list"
           :items="emptyNetworkFields"
           :columns="descriptionColumns"
+          :layout="descriptionLayout"
         />
       </DetailSection>
 
-      <DetailSection :title="t('asset.procurementInfo')">
+      <DetailSection v-if="responsibilityActionContext" :title="t('asset.responsibility')">
+        <AssetResponsibilityActions
+          :asset="asset"
+          :context="responsibilityActionContext"
+        />
+      </DetailSection>
+
+      <AssetResponsibilityHistory
+        v-if="responsibilityHistoryContext && showResponsibilityHistory"
+        :context="responsibilityHistoryContext"
+        :collapsible="isDrawer"
+      />
+
+      <DetailSection
+        :title="t('asset.procurementInfo')"
+        :collapsible="isDrawer"
+        :summary="itemCount(procurementRecordCount)"
+      >
         <div v-if="procurementRecords.length" class="asset-detail-record-list">
           <article
             v-for="(record, index) in procurementRecords"
@@ -436,6 +527,7 @@ function retryDetail() {
               class="asset-detail-description-list"
               :items="procurementRecordFields(record)"
               :columns="descriptionColumns"
+              :layout="descriptionLayout"
             />
           </article>
         </div>
@@ -444,10 +536,15 @@ function retryDetail() {
           class="asset-detail-description-list"
           :items="procurementRecordFields(null)"
           :columns="descriptionColumns"
+          :layout="descriptionLayout"
         />
       </DetailSection>
 
-      <DetailSection :title="t('asset.maintenanceInfo')">
+      <DetailSection
+        :title="t('asset.maintenanceInfo')"
+        :collapsible="isDrawer"
+        :summary="itemCount(maintenanceRecords.length)"
+      >
         <div v-if="maintenanceRecords.length" class="asset-detail-record-list">
           <article
             v-for="(record, index) in maintenanceRecords"
@@ -461,6 +558,7 @@ function retryDetail() {
               class="asset-detail-description-list"
               :items="maintenanceRecordFields(record)"
               :columns="descriptionColumns"
+              :layout="descriptionLayout"
             >
               <template #value-maintenance-status="{ item }">
                 <StatusTag
@@ -478,6 +576,7 @@ function retryDetail() {
           class="asset-detail-description-list"
           :items="maintenanceRecordFields(null)"
           :columns="descriptionColumns"
+          :layout="descriptionLayout"
         >
           <template #value-maintenance-status="{ item }">
             <StatusTag
@@ -490,11 +589,16 @@ function retryDetail() {
         </DescriptionList>
       </DetailSection>
 
-      <DetailSection :title="t('asset.depreciation')">
+      <DetailSection
+        :title="t('asset.depreciation')"
+        :collapsible="isDrawer"
+        :summary="depreciationStatusLabel(depreciationStatus)"
+      >
         <DescriptionList
           class="asset-detail-description-list"
           :items="depreciationFields"
           :columns="descriptionColumns"
+          :layout="descriptionLayout"
         >
           <template #value-depreciation-status>
             <StatusTag
@@ -505,7 +609,11 @@ function retryDetail() {
         </DescriptionList>
       </DetailSection>
 
-      <DetailSection :title="t('asset.tags')">
+      <DetailSection
+        :title="t('asset.tags')"
+        :collapsible="isDrawer"
+        :summary="itemCount(tags.length)"
+      >
         <div v-if="tags.length" class="asset-detail-tags">
           <el-tag
             v-for="tag in tags"
@@ -520,10 +628,15 @@ function retryDetail() {
           class="asset-detail-description-list"
           :items="emptyTagsFields"
           :columns="descriptionColumns"
+          :layout="descriptionLayout"
         />
       </DetailSection>
 
-      <DetailSection :title="t('asset.customFields')">
+      <DetailSection
+        :title="t('asset.customFields')"
+        :collapsible="isDrawer"
+        :summary="itemCount(customFieldCount)"
+      >
         <div v-if="currentFieldGroups.length" class="asset-detail-custom-groups">
           <section v-for="group in currentFieldGroups" :key="group.name" class="asset-detail-custom-group">
             <h4>{{ group.name }}</h4>
@@ -531,6 +644,7 @@ function retryDetail() {
               class="asset-detail-description-list"
               :items="dynamicFieldItems(group.fields)"
               :columns="descriptionColumns"
+              :layout="descriptionLayout"
             >
               <template v-for="field in group.fields" #[`value-field-${field.id}`]>
                 <DynamicFieldDisplay :field="field" :value="field.value" />
@@ -543,28 +657,35 @@ function retryDetail() {
           class="asset-detail-description-list"
           :items="[makeField('custom-fields-empty', t('asset.customFields'), null)]"
           :columns="descriptionColumns"
+          :layout="descriptionLayout"
         />
       </DetailSection>
 
-      <DetailSection :title="t('common.notes')">
+      <DetailSection :title="t('common.notes')" :collapsible="isDrawer">
         <p :class="['detail-notes', { 'asset-detail-empty-value': !hasContent(asset.notes) }]">
           {{ displayValue(asset.notes) }}
         </p>
       </DetailSection>
 
-      <DetailSection :title="t('asset.systemInfo')">
+      <DetailSection :title="t('asset.systemInfo')" :collapsible="isDrawer">
         <DescriptionList
           class="asset-detail-description-list"
           :items="systemFields"
           :columns="descriptionColumns"
+          :layout="descriptionLayout"
         />
       </DetailSection>
 
-      <DetailSection :title="t('asset.relatedRecords')">
+      <DetailSection
+        :title="t('asset.relatedRecords')"
+        :collapsible="isDrawer"
+        :summary="itemCount(inventoryRecordCount)"
+      >
         <DescriptionList
           class="asset-detail-description-list"
           :items="relatedRecordFields"
           :columns="descriptionColumns"
+          :layout="descriptionLayout"
         >
           <template #value-latest-inventory="{ item }">
             <span class="asset-detail-inline-value">
@@ -583,6 +704,7 @@ function retryDetail() {
       <AssetInventoryHistory
         v-if="inventoryHistoryContext && showInventoryHistory"
         :context="inventoryHistoryContext"
+        :collapsible="isDrawer"
       />
     </template>
   </div>

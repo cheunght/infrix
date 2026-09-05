@@ -15,7 +15,12 @@ import PagedTable from "./PagedTable.vue";
 import ResourceState from "./ResourceState.vue";
 import StatusTag, { type StatusTagType } from "./StatusTag.vue";
 
-const props = defineProps<{ context: AssetInventoryHistoryContext }>();
+const props = withDefaults(defineProps<{
+  context: AssetInventoryHistoryContext;
+  collapsible?: boolean;
+}>(), {
+  collapsible: false,
+});
 const { t } = useI18n();
 const context = props.context;
 
@@ -68,7 +73,12 @@ function changePageSize(value: number) {
 </script>
 
 <template>
-  <DetailSection class="asset-inventory-history" :title="t('asset.inventoryRecords')">
+  <DetailSection
+    class="asset-inventory-history"
+    :title="t('asset.inventoryRecords')"
+    :collapsible="collapsible"
+    :summary="t('units.item', total)"
+  >
     <ResourceState
       :loading="loading"
       :error="error"

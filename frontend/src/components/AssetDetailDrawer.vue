@@ -91,6 +91,7 @@ const assetIdentityMeta = computed(() => {
       </div>
     </template>
     <AssetDetailContent
+      variant="drawer"
       :asset="asset"
       :loading="loading"
       :error="error"

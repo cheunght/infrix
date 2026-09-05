@@ -7,7 +7,12 @@ import DetailSection from "./DetailSection.vue";
 import PagedTable from "./PagedTable.vue";
 import ResourceState from "./ResourceState.vue";
 
-const props = defineProps<{ context: AssetResponsibilityHistoryContext }>();
+const props = withDefaults(defineProps<{
+  context: AssetResponsibilityHistoryContext;
+  collapsible?: boolean;
+}>(), {
+  collapsible: false,
+});
 const { t } = useI18n();
 const context = props.context;
 
@@ -61,7 +66,12 @@ function changePageSize(value: number) {
 </script>
 
 <template>
-  <DetailSection class="asset-responsibility-history" :title="t('asset.responsibilityHistory')">
+  <DetailSection
+    class="asset-responsibility-history"
+    :title="t('asset.responsibilityHistory')"
+    :collapsible="collapsible"
+    :summary="t('units.item', total)"
+  >
     <ResourceState
       :loading="loading"
       :error="error"

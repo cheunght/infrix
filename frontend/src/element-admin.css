@@ -534,6 +534,7 @@ body {
 }
 
 .asset-drawer-title {
+  display: -webkit-box;
   min-width: 0;
   margin: 0;
   overflow: hidden;
@@ -541,8 +542,9 @@ body {
   font-size: var(--el-font-size-large);
   font-weight: 600;
   line-height: var(--el-line-height-primary);
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  overflow-wrap: anywhere;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
 }
 
 .asset-drawer-actions {
@@ -556,12 +558,10 @@ body {
 .asset-drawer-meta {
   max-width: 100%;
   margin: 0;
-  overflow: hidden;
   color: var(--el-text-color-regular);
   font-size: var(--el-font-size-base);
   line-height: var(--el-line-height-primary);
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  overflow-wrap: anywhere;
 }
 
 .asset-detail-drawer .el-drawer__body {
@@ -607,8 +607,46 @@ body {
   padding-bottom: 8px;
 }
 
+.asset-locator-summary {
+  position: relative;
+  margin: 4px 0 10px;
+  padding: 14px 16px 6px;
+  overflow: hidden;
+  border: 1px solid var(--el-color-primary-light-8);
+  border-radius: 8px;
+  background: linear-gradient(100deg, var(--el-color-primary-light-9), var(--el-fill-color-blank) 72%);
+}
+
+.asset-locator-summary::before {
+  position: absolute;
+  inset: 0 auto 0 0;
+  width: 3px;
+  background: var(--el-color-primary);
+  content: "";
+}
+
+.asset-locator-summary__heading {
+  margin-bottom: 10px;
+  color: var(--el-color-primary);
+  font-size: var(--el-font-size-small);
+  font-weight: 600;
+  letter-spacing: 0.04em;
+}
+
+.asset-locator-summary__list .el-descriptions__label {
+  font-size: var(--el-font-size-small);
+}
+
+.asset-locator-summary__list .el-descriptions__content {
+  font-weight: 600;
+}
+
 .asset-detail-drawer .detail-section-shell {
   padding: 12px 0;
+}
+
+.asset-detail-drawer .detail-section-shell--collapsible {
+  padding: 0;
 }
 
 .asset-detail-drawer .detail-section-shell__header {
@@ -626,7 +664,8 @@ body {
 
 .asset-detail-drawer .asset-detail-description-list .el-descriptions__label {
   color: var(--el-text-color-secondary);
-  white-space: nowrap;
+  overflow-wrap: anywhere;
+  white-space: normal;
 }
 
 .asset-detail-drawer .asset-detail-description-list .el-descriptions__content {
@@ -635,14 +674,14 @@ body {
 }
 
 .asset-detail-drawer .asset-detail-description-list .description-list__value {
-  display: inline-block;
+  display: block;
   min-width: 0;
   max-width: 100%;
-  overflow: hidden;
-  overflow-wrap: normal;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  word-break: normal;
+  overflow: visible;
+  overflow-wrap: anywhere;
+  text-overflow: clip;
+  white-space: normal;
+  word-break: break-word;
   vertical-align: top;
 }
 
@@ -751,7 +790,11 @@ body {
 }
 
 .asset-detail-technical {
+  display: inline-block;
+  max-width: 100%;
+  overflow-wrap: anywhere;
   font-variant-numeric: tabular-nums;
+  user-select: text;
 }
 
 .asset-detail-inline-value {
@@ -801,11 +844,11 @@ body {
 .asset-detail-drawer
   .asset-detail-description-list
   .dynamic-field-display:not(.dynamic-field-display--textarea):not(.dynamic-field-display--multiselect) {
-  overflow: hidden;
-  overflow-wrap: normal;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  word-break: normal;
+  overflow: visible;
+  overflow-wrap: anywhere;
+  text-overflow: clip;
+  white-space: normal;
+  word-break: break-word;
 }
 
 .dynamic-field-display--number {
@@ -830,6 +873,7 @@ body {
   }
 
   .asset-drawer-heading {
+    flex-wrap: wrap;
     gap: 10px;
   }
 
@@ -844,6 +888,15 @@ body {
 
   .asset-depreciation-metrics {
     grid-template-columns: minmax(0, 1fr);
+  }
+
+  .asset-locator-summary {
+    padding-right: 12px;
+    padding-left: 14px;
+  }
+
+  .asset-locator-summary__list .el-descriptions__table {
+    table-layout: fixed;
   }
 }
 

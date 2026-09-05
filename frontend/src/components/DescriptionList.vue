@@ -13,6 +13,7 @@ type DescriptionListItem = {
   title?: string;
 };
 type DescriptionListSize = "large" | "default" | "small";
+type DescriptionListLayout = "horizontal" | "stacked";
 
 const props = withDefaults(
   defineProps<{
@@ -21,10 +22,12 @@ const props = withDefaults(
     border?: boolean;
     emptyValue?: string;
     size?: DescriptionListSize;
+    layout?: DescriptionListLayout;
   }>(),
   {
     border: false,
     columns: 2,
+    layout: "horizontal",
   },
 );
 const { t } = useI18n();
@@ -68,9 +71,10 @@ function displayValue(value: unknown): string {
 <template>
   <el-descriptions
     class="description-list"
+    :class="`description-list--${layout}`"
     :border="border"
     :column="descriptionColumns"
-    direction="horizontal"
+    :direction="layout === 'stacked' ? 'vertical' : 'horizontal'"
     :size="size"
   >
     <el-descriptions-item

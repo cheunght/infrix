@@ -40,6 +40,7 @@ watch(rackDetailOpen, (open) => {
       </div>
     </template>
     <AssetDetailContent
+      variant="rack"
       :asset="displayedAsset"
       :loading="detailLoading && !displayedAsset"
       :error="detailError"
