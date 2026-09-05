@@ -8,7 +8,8 @@ from .models import Asset, AssetCustomValue, AuditLog
 SENSITIVE_KEYS = {
     "password", "old_password", "new_password", "confirm_password", "password_hash",
     "csrf", "csrf_token",
-    "token", "session", "cookie",
+    "token", "session", "cookie", "authorization", "secret", "bind_password",
+    "ldap_bind_password", "ldap_filter", "raw_filter", "dn", "entry_dn", "raw_entry",
 }
 
 

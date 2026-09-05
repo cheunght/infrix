@@ -2,6 +2,7 @@ import type { Ref } from "vue";
 import { ApiError, flattenError, isAbortError } from "../api";
 import type { RequestFn } from "../page-context";
 import { i18n, normalizeLocale, type Locale } from "../i18n";
+import type { AuthSource } from "../types";
 import { roleLabel } from "../business-enums";
 import { hasCapability } from "../permissions";
 
@@ -17,6 +18,7 @@ export interface AuthDeps {
   authenticated: Ref<boolean>;
   authChecked: Ref<boolean>;
   passwordChangeRequired: Ref<boolean>;
+  authSource: Ref<AuthSource>;
   isAdmin: Ref<boolean>;
   roleCode: Ref<string>;
   permissions: Ref<string[]>;
@@ -56,6 +58,10 @@ type AuthPayload = {
   role_code?: string | null;
   role_name?: string;
   permissions: string[];
+  auth_source?: AuthSource;
+  directory_provider?: string | null;
+  directory_login_identifier?: string | null;
+  directory_last_seen_at?: string | null;
   password_change_required: boolean;
   last_login?: string | null;
   locale?: string;
@@ -69,6 +75,7 @@ export function useAuth(deps: AuthDeps) {
   }
 
   function openPasswordModal() {
+    if (deps.authSource.value === "ldap") return;
     resetPasswordState();
     deps.showPasswordModal.value = true;
   }
@@ -91,6 +98,7 @@ export function useAuth(deps: AuthDeps) {
     deps.roleCode.value = roleCode;
     deps.permissions.value = user.permissions;
     deps.isAdmin.value = hasCapability(deps.permissions.value, "organization.manage");
+    deps.authSource.value = user.auth_source === "ldap" ? "ldap" : "local";
     deps.passwordChangeRequired.value = Boolean(user.password_change_required);
   }
 
@@ -112,6 +120,7 @@ export function useAuth(deps: AuthDeps) {
       if (!(error instanceof ApiError) || error.status !== 401) throw error;
       deps.authenticated.value = false;
       deps.isAdmin.value = false;
+      deps.authSource.value = "local";
       deps.roleCode.value = "";
       deps.permissions.value = [];
       deps.passwordChangeRequired.value = false;
@@ -144,6 +153,7 @@ export function useAuth(deps: AuthDeps) {
         openPasswordModal();
         return;
       }
+      if (deps.permissions.value.length === 0) return;
       await deps.bootstrapApplication();
     } catch (error) {
       if (isAbortError(error)) return;
@@ -171,6 +181,7 @@ export function useAuth(deps: AuthDeps) {
       deps.resetBootstrap();
       deps.authenticated.value = false;
       deps.isAdmin.value = false;
+      deps.authSource.value = "local";
       deps.roleCode.value = "";
       deps.permissions.value = [];
       deps.userName.value = "";

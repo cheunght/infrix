@@ -108,10 +108,12 @@ const bootstrapError = ref(false);
 let bootstrapAttemptId = 0;
 let bootstrapController: AbortController | null = null;
 const passwordChangeRequired = ref(false);
+const authSource = ref<"local" | "ldap">("local");
 const isAdmin = ref(false);
 const roleCode = ref("");
 const permissions = ref<string[]>([]);
 const can = (capability: string) => hasCapability(permissions.value, capability);
+const hasBusinessCapability = computed(() => permissions.value.length > 0);
 const sidebarCollapsed = ref(
   localStorage.getItem("infrix.sidebar.collapsed") === "1" ||
     (window.matchMedia?.("(max-width: 900px)").matches &&
@@ -487,6 +489,7 @@ const auth = useAuth({
   authenticated,
   authChecked,
   passwordChangeRequired,
+  authSource,
   isAdmin,
   roleCode,
   permissions,
@@ -1353,7 +1356,7 @@ async function runInitialBootstrap() {
     if (!isCurrentBootstrapAttempt(attempt.id, attempt.controller)) return;
     await checkAuth(attempt.controller.signal);
     if (!isCurrentBootstrapAttempt(attempt.id, attempt.controller)) return;
-    if (authenticated.value && !passwordChangeRequired.value) {
+    if (authenticated.value && !passwordChangeRequired.value && hasBusinessCapability.value) {
       resetMainScroll();
       await loadAuthenticatedApplication(attempt.id, attempt.controller);
     }
@@ -1850,6 +1853,13 @@ watch(hasOpenGlobalOverlay, (isOpen) => {
       <small>{{ t('auth.loginHint') }}</small>
     </div>
   </div>
+  <div v-else-if="!passwordChangeRequired && !hasBusinessCapability" class="loading-screen" role="status">
+    <el-result icon="warning" :title="t('auth.noPermissionsTitle')" :sub-title="t('auth.noPermissionsDescription')">
+      <template #extra>
+        <el-button type="primary" @click="logout">{{ t('auth.logout') }}</el-button>
+      </template>
+    </el-result>
+  </div>
   <el-container
     v-else
     class="shell"
@@ -1989,7 +1999,7 @@ watch(hasOpenGlobalOverlay, (isOpen) => {
               ><el-dropdown-menu
                 ><el-dropdown-item @click="openProfileSettings"
                   >{{ t('auth.profile') }}</el-dropdown-item
-                ><el-dropdown-item @click="openPasswordModal"
+                ><el-dropdown-item v-if="authSource !== 'ldap'" @click="openPasswordModal"
                   >{{ t('auth.changePassword') }}</el-dropdown-item
                 ><el-dropdown-item divided @click="logout"
                   >{{ t('auth.logout') }}</el-dropdown-item

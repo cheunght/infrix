@@ -647,7 +647,51 @@ export type RepairPartUsageFormState = {
   notes: string;
 };
 export type Role = { id: number; code: string; name: string; description: string; user_count?: number };
-export type ManagedUser = { id: number; username: string; display_name: string; first_name: string; last_name: string; email: string; is_active: boolean; is_staff: boolean; is_superuser: boolean; groups: number[]; assigned_role_code: string | null; assigned_role_name: string; last_login: string | null; date_joined: string };
+export type AuthSource = "local" | "ldap";
+export type ManagedUser = {
+  id: number;
+  username: string;
+  display_name: string;
+  first_name: string;
+  last_name: string;
+  email: string;
+  is_active: boolean;
+  is_staff: boolean;
+  is_superuser: boolean;
+  groups: number[];
+  assigned_role_code: string | null;
+  assigned_role_name: string;
+  auth_source: AuthSource;
+  directory_provider: string | null;
+  directory_login_identifier: string | null;
+  directory_last_seen_at: string | null;
+  last_login: string | null;
+  date_joined: string;
+};
+export type LdapStatus = {
+  enabled: boolean;
+  configured: boolean;
+  provider: string;
+  protocol: "ldap" | "ldaps" | null;
+  tls_mode: "ldaps" | "starttls" | null;
+  server: string | null;
+  base_dn: string | null;
+  search_configured: boolean;
+  connect_timeout: number;
+  operation_timeout: number;
+  ad_specific_mode: boolean | null;
+};
+export type LdapDiagnosticCheck = {
+  name: "configuration" | "connection" | "tls" | "service_bind" | "search";
+  status: "success" | "error" | "disabled";
+};
+export type LdapDiagnosticResult = {
+  success: boolean;
+  stage: "configuration" | "connection" | "tls" | "service_bind" | "search";
+  checks: LdapDiagnosticCheck[];
+  code?: string;
+  message?: string;
+};
 export type AuditLog = { id: number; actor_username: string | null; actor_display_name: string; action: string; resource_type: string; resource_id: string; payload: Record<string, unknown>; created_at: string };
 export type SoftwareLicense = { id: number; name: string; manufacturer: Manufacturer | null; license_type: string; authorized_count: number; used_count: number; utilization: number; remaining_count: number; expiry_date: string | null; status: LicenseStatus; status_label: string; days_remaining: number | null; notes: string };
 export type SparePart = {

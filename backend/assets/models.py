@@ -818,6 +818,31 @@ class UserSecurityProfile(Timestamped):
         return f"{self.user} security profile"
 
 
+class DirectoryIdentity(Timestamped):
+    """Stable identity link for the single configured enterprise directory."""
+
+    user = models.OneToOneField(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.PROTECT,
+        related_name="directory_identity",
+    )
+    provider = models.CharField(max_length=50, default="ldap")
+    external_id = models.CharField(max_length=255)
+    current_login_identifier = models.CharField(max_length=150)
+    last_seen_at = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        constraints = [
+            models.UniqueConstraint(
+                fields=["provider", "external_id"],
+                name="uniq_directory_identity_provider_external_id",
+            ),
+        ]
+
+    def __str__(self):
+        return f"{self.provider}:{self.external_id}"
+
+
 class AuthThrottleState(Timestamped):
     SCOPE_CHOICES = [("account", "账号"), ("ip", "IP")]
 

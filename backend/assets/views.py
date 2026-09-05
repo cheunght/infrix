@@ -31,7 +31,7 @@ from openpyxl import Workbook
 from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
 from openpyxl.utils import get_column_letter
 from urllib.parse import quote
-from .models import AuthThrottleState, AuditLog, Asset, AssetCustomValue, AssetNetworkAddress, AssetResponsibilityEvent, AssetTag, CustomField, CustomFieldOption, DataCenter, DeviceType, FaultEvent, InventoryItem, InventoryTask, MaintenanceContract, Manufacturer, ProcurementRecord, Rack, RackUnitAllocation, RepairPartUsage, RepairRecord, ServerRoom, SoftwareLicense, SparePart, SparePartCategory, SpareStock, SpareStockTransaction, SystemSetting, Tag, UserSecurityProfile
+from .models import AuthThrottleState, AuditLog, Asset, AssetCustomValue, AssetNetworkAddress, AssetResponsibilityEvent, AssetTag, CustomField, CustomFieldOption, DataCenter, DeviceType, DirectoryIdentity, FaultEvent, InventoryItem, InventoryTask, MaintenanceContract, Manufacturer, ProcurementRecord, Rack, RackUnitAllocation, RepairPartUsage, RepairRecord, ServerRoom, SoftwareLicense, SparePart, SparePartCategory, SpareStock, SpareStockTransaction, SystemSetting, Tag, UserSecurityProfile
 from .enum_contracts import (
     ASSET_STATUS_LABELS,
     ASSET_STATUS_VALUES,
@@ -67,6 +67,18 @@ from .depreciation import calculate_asset_depreciation
 from .license_status import LICENSE_STATUS_KEYS, LICENSE_STATUS_LABELS, filter_licenses_by_status, license_status_counts, license_status_value
 from .audit import asset_audit_snapshot, asset_custom_value_changes, model_snapshot, software_license_audit_snapshot, spare_part_audit_snapshot, spare_stock_transaction_audit_snapshot, write_audit_log
 from .imports import AssetImportService, ImportFileError, ImportValidationError, build_import_template
+from .ldap_auth import (
+    AUTH_SOURCE_LDAP,
+    AUTH_SOURCE_LOCAL,
+    LDAP_DIAGNOSTIC_CHECKS,
+    LDAP_MODEL_BACKEND,
+    LDAP_DIAGNOSTIC_MESSAGES,
+    LDAPDirectoryClient,
+    AuthenticationFailure,
+    authenticate_with_source_routing,
+    is_directory_managed,
+    ldap_status_snapshot,
+)
 from .permissions import BusinessRolePermission, CanExportAssets, CanExportFaults, CanExportInventory, CanExportLicenses, CanExportRacks, CanExportSpares, CanImportAssets, CanManageInventory, CanManageSystemSettings, CanResetSystem, CanViewAssetCustomFieldSchema, CanViewAssetTagsRuntime, CanViewAuditLog, CanViewDashboard, CanViewInventory, CanViewLicenses, CanViewManufacturerRuntime, CanViewSparePartCategoryRuntime, IsSystemAdministrator
 from .roles import ROLE_DEFINITIONS, ROLE_NAME_TO_CODE, user_capabilities, user_has_capability, user_role_code, user_role_codes
 from .reporting import (
@@ -2643,7 +2655,14 @@ def _login_lock_status(username, ip):
     return False, 0
 
 
-def _register_login_failure(request, username, actor=None):
+def _register_login_failure(
+    request,
+    username,
+    actor=None,
+    *,
+    reason="invalid_credentials",
+    auth_source=None,
+):
     now = timezone.now()
     ip = _login_ip(request)
     window = timedelta(seconds=max(1, settings.AUTH_LOGIN_WINDOW_SECONDS))
@@ -2669,7 +2688,13 @@ def _register_login_failure(request, username, actor=None):
             resource_type="auth_login",
             resource_id=username,
             actor=actor,
-            extra=_auth_audit_extra(request, username, reason="invalid_credentials", retry_after=retry_after),
+            extra=_auth_audit_extra(
+                request,
+                username,
+                reason=reason,
+                retry_after=retry_after,
+                **({"auth_source": auth_source} if auth_source else {}),
+            ),
         )
     return is_locked, retry_after
 
@@ -2688,6 +2713,7 @@ def _auth_response(user):
     role_codes = user_role_codes(user)
     role_code = role_codes[0] if role_codes else None
     security_profile = _security_profile(user)
+    directory_identity = DirectoryIdentity.objects.filter(user_id=user.pk).first()
     return {
         "username": user.username,
         "display_name": user.get_full_name() or user.username,
@@ -2705,6 +2731,14 @@ def _auth_response(user):
             for code in role_codes
         ],
         "permissions": user_capabilities(user),
+        "auth_source": AUTH_SOURCE_LDAP if directory_identity is not None else AUTH_SOURCE_LOCAL,
+        "directory_provider": directory_identity.provider if directory_identity is not None else None,
+        "directory_login_identifier": (
+            directory_identity.current_login_identifier if directory_identity is not None else None
+        ),
+        "directory_last_seen_at": (
+            directory_identity.last_seen_at if directory_identity is not None else None
+        ),
         "password_change_required": security_profile.must_change_password,
         "locale": security_profile.locale,
         "last_login": user.last_login,
@@ -2717,6 +2751,8 @@ def _auth_response(user):
 def auth_login(request):
     username = str(request.data.get("username", "")).strip()
     password = request.data.get("password", "")
+    if not isinstance(password, str):
+        password = ""
     if len(username) > LOGIN_USERNAME_MAX_LENGTH:
         return Response(
             {
@@ -2743,9 +2779,63 @@ def auth_login(request):
             status=429,
             headers={"Retry-After": str(retry_after)},
         )
-    user = authenticate(request, username=username, password=password)
-    if not user or not user.is_active:
-        is_locked, retry_after = _register_login_failure(request, username, matched_user)
+    auth_source = (
+        AUTH_SOURCE_LDAP
+        if matched_user and DirectoryIdentity.objects.filter(user_id=matched_user.pk).exists()
+        else AUTH_SOURCE_LOCAL
+        if matched_user
+        else AUTH_SOURCE_LDAP
+        if settings.LDAP_ENABLED
+        else None
+    )
+    try:
+        authentication = authenticate_with_source_routing(request, username, password)
+    except AuthenticationFailure as exc:
+        actor = exc.actor or matched_user
+        source = exc.auth_source or auth_source
+        if exc.infrastructure:
+            write_audit_log(
+                request,
+                action="login_failure",
+                resource_type="auth_login",
+                resource_id=username or "unknown",
+                actor=actor,
+                extra=_auth_audit_extra(
+                    request,
+                    username,
+                    reason=exc.reason,
+                    **({"auth_source": source} if source else {}),
+                ),
+            )
+            return Response(
+                {
+                    "detail": "认证服务暂时不可用",
+                    "code": "authentication_service_unavailable",
+                },
+                status=503,
+            )
+        if not exc.throttle:
+            write_audit_log(
+                request,
+                action="login_failure",
+                resource_type="auth_login",
+                resource_id=username or "unknown",
+                actor=actor,
+                extra=_auth_audit_extra(
+                    request,
+                    username,
+                    reason=exc.reason,
+                    **({"auth_source": source} if source else {}),
+                ),
+            )
+            return Response({"detail": "用户名或密码错误"}, status=400)
+        is_locked, retry_after = _register_login_failure(
+            request,
+            username,
+            actor,
+            reason=exc.reason,
+            auth_source=source,
+        )
         if is_locked:
             return Response(
                 {"detail": "登录失败次数过多，请稍后再试", "code": "login_locked", "retry_after": retry_after},
@@ -2753,15 +2843,23 @@ def auth_login(request):
                 headers={"Retry-After": str(retry_after)},
             )
         return Response({"detail": "用户名或密码错误"}, status=400)
+    user = authentication.user
     _clear_login_throttle(username, ip)
-    login(request, user)
+    if authentication.auth_source == AUTH_SOURCE_LDAP:
+        login(request, user, backend=LDAP_MODEL_BACKEND)
+    else:
+        login(request, user)
     write_audit_log(
         request,
         action="login_success",
         resource_type="auth_login",
         resource_id=user.username,
         actor=user,
-        extra=_auth_audit_extra(request, user.username),
+        extra=_auth_audit_extra(
+            request,
+            user.username,
+            auth_source=authentication.auth_source,
+        ),
     )
     return Response(_auth_response(user))
 
@@ -2822,6 +2920,14 @@ def auth_logout(request):
 @permission_classes([IsAuthenticated])
 @transaction.atomic
 def auth_change_password(request):
+    if is_directory_managed(request.user):
+        return Response(
+            {
+                "detail": "Directory-managed accounts must change passwords through the corporate directory.",
+                "code": "directory_password_managed",
+            },
+            status=400,
+        )
     old_password = request.data.get("old_password", "")
     new_password = request.data.get("new_password", "")
     confirm_password = request.data.get("confirm_password")
