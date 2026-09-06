@@ -366,6 +366,7 @@ export function useFacilities(deps: FacilitiesDeps) {
     );
     if (nextPage === rackPage.value) return;
 
+    clearRackSelection();
     rackPage.value = nextPage;
     const version = deps.beginLoad();
     const requestId = ++rackViewRequestId.value;

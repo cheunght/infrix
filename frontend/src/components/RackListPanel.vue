@@ -5,7 +5,6 @@ import type { Rack } from "../types";
 import type { RackListContext } from "../page-context";
 import StatusTag from "./StatusTag.vue";
 import ResourceState from "./ResourceState.vue";
-import PagedTable from "./PagedTable.vue";
 import { rackStatusLabel, rackStatusTone, rackStatusValue } from "../business-enums";
 
 const props = defineProps<{ context: RackListContext & {
@@ -52,17 +51,7 @@ function rackStatus(rack: Rack) {
         </div>
       </div>
     </template>
-    <PagedTable
-      class="rack-list-paged-table"
-      :current-page="rackPage"
-      :page-size="rackPageSize"
-      :total="rackCount"
-      :disabled="rackListLoading"
-      hide-on-single-page
-      layout="total, prev, pager, next"
-      size="small"
-      @update:current-page="changeRackPage"
-    >
+    <div class="rack-list-paged-table">
       <div class="resource-list-area">
         <ResourceState
           :loading="rackListLoading && !visibleRacks.length"
@@ -112,6 +101,17 @@ function rackStatus(rack: Rack) {
           </el-table>
         </ResourceState>
       </div>
-    </PagedTable>
+      <div v-if="rackCount > rackPageSize" class="paged-table__footer">
+        <el-pagination
+          :current-page="rackPage"
+          :disabled="rackListLoading"
+          :page-size="rackPageSize"
+          :total="rackCount"
+          layout="total, prev, pager, next"
+          size="small"
+          @current-change="changeRackPage"
+        />
+      </div>
+    </div>
   </el-card>
 </template>
