@@ -3,6 +3,7 @@ import { computed, ref, watch } from "vue";
 import { useI18n } from "vue-i18n";
 import type { AssetResponsibilityContext } from "../page-context";
 import type { AssetDetail, AssetResponsibilityUser } from "../types";
+import { normalizeApiError } from "../error-handling";
 
 type ResponsibilityAction = "assign" | "transfer" | "return";
 
@@ -67,6 +68,7 @@ function resetDialogState() {
   reason.value = "";
   dialogError.value = "";
   actionAttempted.value = false;
+  props.context.clearResponsibilityActionErrors();
 }
 
 function openAction(nextAction: ResponsibilityAction) {
@@ -133,11 +135,16 @@ async function submitAction() {
             );
     if (completed) closeAction();
   } catch (error) {
-    dialogError.value =
-      error instanceof Error
-        ? error.message
-        : t("asset.responsibilityActionFailed");
+    const normalized = normalizeApiError(error);
+    dialogError.value = normalized.kind === "unknown"
+      ? t("asset.responsibilityActionFailed")
+      : normalized.message;
   }
+}
+
+function clearResponsibilityFieldError(field: string) {
+  dialogError.value = "";
+  props.context.clearResponsibilityActionFieldError(field);
 }
 
 watch(
@@ -241,7 +248,9 @@ watch(
             <el-form-item
               v-if="showTargetUser"
               :label="t('asset.responsibleUser')"
+              prop="target_user"
               required
+              :error="props.context.responsibilityActionFieldErrors.value.target_user"
             >
               <el-select
                 v-model="targetUserId"
@@ -255,6 +264,7 @@ watch(
                 :no-data-text="t('common.noData')"
                 :no-match-text="t('common.noData')"
                 :aria-label="t('asset.selectResponsibilityUser')"
+                @change="clearResponsibilityFieldError('target_user')"
               >
                 <el-option
                   v-for="user in targetUsers"
@@ -279,7 +289,11 @@ watch(
                 }}</el-button>
               </div>
             </el-form-item>
-            <el-form-item :label="t('common.reason')">
+            <el-form-item
+              :label="t('common.reason')"
+              prop="reason"
+              :error="props.context.responsibilityActionFieldErrors.value.reason"
+            >
               <el-input
                 v-model="reason"
                 type="textarea"
@@ -287,6 +301,7 @@ watch(
                 maxlength="2000"
                 show-word-limit
                 :placeholder="t('common.reason')"
+                @input="clearResponsibilityFieldError('reason')"
               />
             </el-form-item>
           </el-form>

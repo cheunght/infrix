@@ -131,8 +131,11 @@ const {
   showLicenseModal,
   editingLicense,
   licenseForm,
+  licenseFormError,
+  licenseFormErrors,
   licenseManufacturerOptions,
   licenseSaving,
+  clearLicenseFormErrors,
   saveLicense,
 } = props.licenses;
 
@@ -406,6 +409,7 @@ async function submitLicense() {
 }
 
 function clearLicenseValidation() {
+  clearLicenseFormErrors();
   licenseFormRef.value?.clearValidate();
 }
 
@@ -909,6 +913,7 @@ function importRowErrorText(row: { errors: Array<{ label: string; message: strin
     :description="t('overlay.licenseDialogDescription')"
     size="medium"
     :saving="licenseSaving"
+    :error="licenseFormError"
     :show-close="!licenseSaving"
     :close-on-click-modal="!licenseSaving"
     :close-on-press-escape="!licenseSaving"
@@ -927,21 +932,21 @@ function importRowErrorText(row: { errors: Array<{ label: string; message: strin
       <section class="form-dialog__section">
         <h3 class="form-dialog__section-title">{{ t('overlay.basicInformation') }}</h3>
         <div class="horizontal-form__rows">
-          <el-form-item :label="t('license.softwareName')" prop="name" required>
+          <el-form-item :label="t('license.softwareName')" prop="name" required :error="licenseFormErrors.name">
             <el-input v-model="licenseForm.name" maxlength="160" :validate-event="false" />
           </el-form-item>
-          <el-form-item :label="t('license.authorizedCount')" prop="authorized_count" required>
+          <el-form-item :label="t('license.authorizedCount')" prop="authorized_count" required :error="licenseFormErrors.authorized_count">
             <el-input-number v-model="authorizedCountValue" :min="0" :step="1" :precision="0" :value-on-clear="null" :aria-label="t('license.authorizedCount')">
               <template #suffix>{{ t('common.units') }}</template>
             </el-input-number>
           </el-form-item>
-          <el-form-item :label="t('license.usedCount')" prop="used_count" required>
+          <el-form-item :label="t('license.usedCount')" prop="used_count" required :error="licenseFormErrors.used_count">
             <el-input-number v-model="usedCountValue" :min="0" :step="1" :precision="0" :value-on-clear="null" :aria-label="t('license.usedCount')">
               <template #suffix>{{ t('common.units') }}</template>
             </el-input-number>
             <FieldHelp :text="usedCountHelp" />
           </el-form-item>
-          <el-form-item :label="t('license.vendor')" prop="manufacturer_id">
+          <el-form-item :label="t('license.vendor')" prop="manufacturer_id" :error="licenseFormErrors.manufacturer_id">
             <el-select v-model="licenseForm.manufacturer_id" clearable filterable :placeholder="t('assetForm.unlinkedManufacturer')" :validate-event="false">
               <el-option
                 v-for="manufacturer in licenseManufacturerOptions"
@@ -951,14 +956,14 @@ function importRowErrorText(row: { errors: Array<{ label: string; message: strin
               />
             </el-select>
           </el-form-item>
-          <el-form-item :label="t('license.licenseType')" prop="license_type">
+          <el-form-item :label="t('license.licenseType')" prop="license_type" :error="licenseFormErrors.license_type">
             <el-input v-model="licenseForm.license_type" maxlength="80" :placeholder="t('overlay.licenseTypePlaceholder')" :validate-event="false" />
           </el-form-item>
-          <el-form-item :label="t('license.expiryDate')" prop="expiry_date">
+          <el-form-item :label="t('license.expiryDate')" prop="expiry_date" :error="licenseFormErrors.expiry_date">
             <el-date-picker v-model="licenseForm.expiry_date" type="date" value-format="YYYY-MM-DD" :validate-event="false" />
             <FieldHelp :text="expiryDateHelp" />
           </el-form-item>
-          <el-form-item :label="t('common.notes')" prop="notes">
+          <el-form-item :label="t('common.notes')" prop="notes" :error="licenseFormErrors.notes">
             <el-input v-model="licenseForm.notes" type="textarea" :rows="3" :validate-event="false" />
           </el-form-item>
         </div>

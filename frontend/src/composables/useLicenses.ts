@@ -1,14 +1,30 @@
-import { computed, ref, type Ref } from "vue";
+import { computed, ref, watch, type Ref } from "vue";
 import type { LocationQuery } from "vue-router";
 import { buildExportQuery, isAbortError, pageItems, pageTotal, type PageResult } from "../api";
 import type { DictionaryItem, LicenseStatus, SoftwareLicense } from "../types";
 import type { CapabilityFn, RequestFn } from "../page-context";
 import { LICENSE_STATUS_OPTIONS } from "../business-enums";
 import { i18n } from "../i18n";
-import { normalizeApiError, type ActionMessageType } from "../error-handling";
+import {
+  clearFieldError,
+  fieldErrorsToText,
+  normalizeApiError,
+  type ActionMessageType,
+} from "../error-handling";
 
 const tr = (key: string, params?: Record<string, unknown>): string =>
   String(params ? i18n.global.t(key, params) : i18n.global.t(key));
+
+const LICENSE_FORM_FIELDS = [
+  "name",
+  "manufacturer_id",
+  "license_type",
+  "authorized_count",
+  "used_count",
+  "expiry_date",
+  "notes",
+] as const;
+const LICENSE_FORM_FIELD_SET = new Set<string>(LICENSE_FORM_FIELDS);
 
 export interface LicensesDeps {
   can: CapabilityFn;
@@ -48,6 +64,8 @@ export function useLicenses(deps: LicensesDeps) {
     expiry_date: "",
     notes: "",
   });
+  const licenseFormError = ref("");
+  const licenseFormErrors = ref<Record<string, string>>({});
 
   function totalPages(total: number) {
     return Math.max(1, Math.ceil(total / licensePageSize.value));
@@ -59,8 +77,47 @@ export function useLicenses(deps: LicensesDeps) {
   });
   const licenseManufacturerFilterOptions = computed(() => deps.manufacturers.value);
 
-  function errorMessage(error: unknown, fallback: string) {
-    return error instanceof Error && error.message ? error.message : fallback;
+  function setActionMessage(message: string, type: ActionMessageType = "success") {
+    deps.actionMessageType.value = type;
+    deps.actionMessage.value = message;
+  }
+
+  function safeErrorMessage(error: unknown, fallback: string) {
+    const normalized = normalizeApiError(error);
+    return normalized.kind === "unknown" ? fallback : normalized.message;
+  }
+
+  function extractFormError(
+    error: unknown,
+    fallback: string,
+  ): { fields: Record<string, string>; message: string } {
+    const normalized = normalizeApiError(error);
+    const fields = fieldErrorsToText(normalized.fieldErrors, LICENSE_FORM_FIELDS);
+    const hasUnknownField = Object.keys(normalized.fieldErrors).some(
+      (field) => !LICENSE_FORM_FIELD_SET.has(field),
+    );
+    const message = normalized.kind === "field-validation" && !hasUnknownField
+      ? ""
+      : normalized.kind === "unknown"
+        ? fallback
+        : normalized.message;
+    return { fields, message };
+  }
+
+  function clearLicenseFormErrors() {
+    licenseFormError.value = "";
+    licenseFormErrors.value = {};
+  }
+
+  for (const field of LICENSE_FORM_FIELDS) {
+    watch(
+      () => (licenseForm.value as Record<string, unknown>)[field],
+      () => {
+        if (licenseFormErrors.value[field]) {
+          licenseFormErrors.value = clearFieldError(licenseFormErrors.value, field);
+        }
+      },
+    );
   }
 
   async function loadLicenses(version = deps.beginLoad()): Promise<boolean> {
@@ -96,7 +153,7 @@ export function useLicenses(deps: LicensesDeps) {
       return true;
     } catch (error) {
       if (requestId === licenseRequestId.value && deps.isCurrentLoad(version) && !isAbortError(error)) {
-        licenseListError.value = errorMessage(error, tr("license.dataLoadFailed"));
+        licenseListError.value = safeErrorMessage(error, tr("license.dataLoadFailed"));
       }
       return false;
     } finally {
@@ -172,6 +229,7 @@ export function useLicenses(deps: LicensesDeps) {
 
   function openLicenseModal(license?: SoftwareLicense) {
     if (!deps.can("licenses.manage")) return;
+    clearLicenseFormErrors();
     editingLicense.value = license || null;
     licenseForm.value = license
       ? {
@@ -197,6 +255,7 @@ export function useLicenses(deps: LicensesDeps) {
   async function saveLicense(): Promise<boolean> {
     if (!deps.can("licenses.manage")) return false;
     if (licenseSaving.value) return false;
+    clearLicenseFormErrors();
     licenseSaving.value = true;
     try {
       const method = editingLicense.value ? "PATCH" : "POST";
@@ -213,7 +272,9 @@ export function useLicenses(deps: LicensesDeps) {
         }),
       });
     } catch (error) {
-      deps.actionMessage.value = error instanceof Error ? error.message : tr("license.saveFailed");
+      const parsed = extractFormError(error, tr("license.saveFailed"));
+      licenseFormErrors.value = parsed.fields;
+      licenseFormError.value = parsed.message;
       return false;
     } finally {
       licenseSaving.value = false;
@@ -221,10 +282,10 @@ export function useLicenses(deps: LicensesDeps) {
 
     showLicenseModal.value = false;
     editingLicense.value = null;
-    deps.actionMessage.value = tr("license.saved");
+    setActionMessage(tr("license.saved"));
     const refreshed = await loadLicenses();
     if (!refreshed && licenseListError.value)
-      deps.actionMessage.value = tr("license.savedRefreshFailed");
+      setActionMessage(tr("license.savedRefreshFailed"), "error");
     return true;
   }
 
@@ -235,12 +296,12 @@ export function useLicenses(deps: LicensesDeps) {
     try {
       if (!(await deps.confirmAction(tr("license.deleteConfirm", { name: license.name })))) return;
       await deps.request(`/licenses/${license.id}/`, { method: "DELETE" });
-      deps.actionMessage.value = tr("license.deleted");
+      setActionMessage(tr("license.deleted"));
       const refreshed = await loadLicenses();
       if (!refreshed && licenseListError.value)
-        deps.actionMessage.value = tr("license.deletedRefreshFailed");
+        setActionMessage(tr("license.deletedRefreshFailed"), "error");
     } catch (error) {
-      deps.actionMessage.value = error instanceof Error ? error.message : tr("license.deleteFailed");
+      setActionMessage(safeErrorMessage(error, tr("license.deleteFailed")), "error");
     } finally {
       deletingLicenseId.value = null;
     }
@@ -250,8 +311,8 @@ export function useLicenses(deps: LicensesDeps) {
     licenses, licenseCount, licensePage, licensePageSize, licenseKeyword, licenseStatus, licenseManufacturer,
     licenseManufacturerOptions, licenseManufacturerFilterOptions,
     licenseListLoading, licenseListError, exportingLicenses, licenseSaving, deletingLicenseId,
-    showLicenseModal, editingLicense, licenseForm,
+    showLicenseModal, editingLicense, licenseForm, licenseFormError, licenseFormErrors,
     loadLicenses, searchLicenses, changeLicensePage, changeLicensePageSize,
-    resetLicenseFilters, retryLicenseList, syncFiltersFromQuery, openLicenseModal, saveLicense, deleteLicense, exportLicenses,
+    resetLicenseFilters, retryLicenseList, syncFiltersFromQuery, openLicenseModal, clearLicenseFormErrors, saveLicense, deleteLicense, exportLicenses,
   };
 }

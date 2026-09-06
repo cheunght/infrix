@@ -46,6 +46,8 @@ import {
 const tr = (key: string, params?: Record<string, unknown>): string =>
   String(params ? i18n.global.t(key, params) : i18n.global.t(key));
 
+const RESPONSIBILITY_ACTION_FIELDS = ["target_user", "reason"] as const;
+
 export type StaticAssetColumnKey =
   | "asset_no"
   | "name"
@@ -713,6 +715,7 @@ export function useAssets(deps: AssetsDeps) {
   let responsibilityUsersController: AbortController | null = null;
   const responsibilityActionSaving = ref(false);
   const responsibilityActionError = ref("");
+  const responsibilityActionFieldErrors = ref<Record<string, string>>({});
 
   const assetDynamicColumnOptions = computed<AssetColumnOption[]>(() =>
     assetListCustomFieldSchema.value.map((field) => ({
@@ -1225,9 +1228,10 @@ export function useAssets(deps: AssetsDeps) {
         detailAssetId.value === assetId &&
         !isAbortError(error)
       ) {
-        responsibilityHistoryError.value = error instanceof Error
-          ? error.message
-          : tr("asset.responsibilityHistoryLoadFailed");
+        const normalized = normalizeApiError(error);
+        responsibilityHistoryError.value = normalized.kind === "unknown"
+          ? tr("asset.responsibilityHistoryLoadFailed")
+          : normalized.message;
       }
       return false;
     } finally {
@@ -1258,9 +1262,10 @@ export function useAssets(deps: AssetsDeps) {
       return true;
     } catch (error) {
       if (requestId === responsibilityUsersRequestId.value && !isAbortError(error)) {
-        responsibilityUsersError.value = error instanceof Error
-          ? error.message
-          : tr("asset.responsibilityUsersLoadFailed");
+        const normalized = normalizeApiError(error);
+        responsibilityUsersError.value = normalized.kind === "unknown"
+          ? tr("asset.responsibilityUsersLoadFailed")
+          : normalized.message;
       }
       return false;
     } finally {
@@ -1280,6 +1285,7 @@ export function useAssets(deps: AssetsDeps) {
     if (!deps.can("assets.manage") || responsibilityActionSaving.value) return false;
     responsibilityActionSaving.value = true;
     responsibilityActionError.value = "";
+    responsibilityActionFieldErrors.value = {};
     try {
       await deps.request<AssetDetail>(path, {
         method: "POST",
@@ -1294,19 +1300,47 @@ export function useAssets(deps: AssetsDeps) {
         detailRefreshed = !deps.detailError.value;
         historyRefreshed = !inventoryHistoryError.value && !responsibilityHistoryError.value;
       }
-      deps.actionMessage.value = listRefreshed && detailRefreshed && historyRefreshed
-        ? successMessage
-        : `${successMessage}；${tr("common.refreshFailed")}，${tr("common.retry")}`;
+      const refreshFailed = !(listRefreshed && detailRefreshed && historyRefreshed);
+      setActionMessage(
+        refreshFailed
+          ? `${successMessage}；${tr("common.refreshFailed")}，${tr("common.retry")}`
+          : successMessage,
+        refreshFailed ? "error" : "success",
+      );
       return true;
     } catch (error) {
       if (!isAbortError(error)) {
-        responsibilityActionError.value = error instanceof Error
-          ? error.message
-          : tr("asset.responsibilityActionFailed");
+        const normalized = normalizeApiError(error);
+        responsibilityActionFieldErrors.value = fieldErrorsToText(
+          normalized.fieldErrors,
+          RESPONSIBILITY_ACTION_FIELDS,
+        );
+        const hasUnknownField = Object.keys(normalized.fieldErrors).some(
+          (field) => !RESPONSIBILITY_ACTION_FIELDS.includes(field as typeof RESPONSIBILITY_ACTION_FIELDS[number]),
+        );
+        responsibilityActionError.value = normalized.kind === "field-validation" && !hasUnknownField
+          ? ""
+          : normalized.kind === "unknown"
+            ? tr("asset.responsibilityActionFailed")
+            : normalized.message;
       }
       return false;
     } finally {
       responsibilityActionSaving.value = false;
+    }
+  }
+
+  function clearResponsibilityActionErrors() {
+    responsibilityActionError.value = "";
+    responsibilityActionFieldErrors.value = {};
+  }
+
+  function clearResponsibilityActionFieldError(field: string) {
+    if (responsibilityActionFieldErrors.value[field]) {
+      responsibilityActionFieldErrors.value = clearFieldError(
+        responsibilityActionFieldErrors.value,
+        field,
+      );
     }
   }
 
@@ -2366,6 +2400,9 @@ export function useAssets(deps: AssetsDeps) {
     loadResponsibilityUsers,
     responsibilityActionSaving,
     responsibilityActionError,
+    responsibilityActionFieldErrors,
+    clearResponsibilityActionErrors,
+    clearResponsibilityActionFieldError,
     assignAsset,
     returnAsset,
     transferAsset,

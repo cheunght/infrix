@@ -1,4 +1,4 @@
-import { ref, type Ref } from "vue";
+import { ref, watch, type Ref } from "vue";
 import { buildExportQuery, isAbortError, pageItems, pageTotal, type PageResult } from "../api";
 import type { DataCenter, ServerRoom, SparePart, SparePartCategory, SparePartFormState, SpareStock, SpareTransaction } from "../types";
 import type { CapabilityFn, RequestFn } from "../page-context";
@@ -10,10 +10,43 @@ import {
   type StockOperationType,
 } from "../business-enums";
 import { i18n } from "../i18n";
-import { normalizeApiError, type ActionMessageType } from "../error-handling";
+import {
+  clearFieldError,
+  fieldErrorsToText,
+  normalizeApiError,
+  type ActionMessageType,
+} from "../error-handling";
 
 const tr = (key: string, params?: Record<string, unknown>): string =>
   String(params ? i18n.global.t(key, params) : i18n.global.t(key));
+
+const SPARE_PART_FORM_FIELDS = [
+  "code",
+  "name",
+  "category",
+  "manufacturer",
+  "model",
+  "specification",
+  "unit",
+  "initial_quantity",
+  "initial_data_center",
+  "initial_server_room",
+  "safety_stock",
+  "storage_location",
+  "notes",
+] as const;
+
+const SPARE_OPERATION_FORM_FIELDS = [
+  "part",
+  "quantity",
+  "adjustment_quantity",
+  "source_data_center",
+  "source_server_room",
+  "target_data_center",
+  "target_server_room",
+  "reference",
+  "notes",
+] as const;
 
 export type SpareOperationLocation = {
   data_center: number;
@@ -51,6 +84,8 @@ export function useSpareParts(deps: SparePartsDeps) {
     initial_quantity: 0, initial_data_center: "", initial_server_room: "", current_quantity: 0,
     safety_stock: 0, storage_location: "", notes: "",
   });
+  const sparePartFormError = ref("");
+  const sparePartFormErrors = ref<Record<string, string>>({});
   const showSparePartModal = ref(false);
   const editingSparePart = ref<SparePart | null>(null);
   const spareSaving = ref(false);
@@ -68,6 +103,7 @@ export function useSpareParts(deps: SparePartsDeps) {
   const showSpareOperationModal = ref(false);
   const spareOperationSaving = ref(false);
   const spareOperationError = ref("");
+  const spareOperationFormErrors = ref<Record<string, string>>({});
   const spareOperationCurrentQuantity = ref<number | null>(null);
   const spareOperationLocationLabel = ref("");
   const spareOperationLocationLocked = ref(false);
@@ -95,9 +131,59 @@ export function useSpareParts(deps: SparePartsDeps) {
   const transactionPartId = ref<number | null>(null);
   let transactionController: AbortController | null = null;
 
-  function errorMessage(error: unknown, fallback: string) {
-    return error instanceof Error && error.message ? error.message : fallback;
+  function setActionMessage(message: string, type: ActionMessageType = "success") {
+    deps.actionMessageType.value = type;
+    deps.actionMessage.value = message;
   }
+
+  function safeErrorMessage(error: unknown, fallback: string) {
+    const normalized = normalizeApiError(error);
+    return normalized.kind === "unknown" ? fallback : normalized.message;
+  }
+
+  function extractFormError(
+    error: unknown,
+    allowedFields: readonly string[],
+    fallback: string,
+  ): { fields: Record<string, string>; message: string } {
+    const normalized = normalizeApiError(error);
+    const fields = fieldErrorsToText(normalized.fieldErrors, allowedFields);
+    const hasUnknownField = Object.keys(normalized.fieldErrors).some(
+      (field) => !allowedFields.includes(field),
+    );
+    const message = normalized.kind === "field-validation" && !hasUnknownField
+      ? ""
+      : normalized.kind === "unknown"
+        ? fallback
+        : normalized.message;
+    return { fields, message };
+  }
+
+  function watchFormFieldErrors(
+    form: Ref<Record<string, unknown>>,
+    errors: Ref<Record<string, string>>,
+    fields: readonly string[],
+  ) {
+    for (const field of fields) {
+      watch(
+        () => form.value[field],
+        () => {
+          if (errors.value[field]) errors.value = clearFieldError(errors.value, field);
+        },
+      );
+    }
+  }
+
+  watchFormFieldErrors(
+    sparePartForm as unknown as Ref<Record<string, unknown>>,
+    sparePartFormErrors,
+    SPARE_PART_FORM_FIELDS,
+  );
+  watchFormFieldErrors(
+    spareOperationForm,
+    spareOperationFormErrors,
+    SPARE_OPERATION_FORM_FIELDS,
+  );
 
   function totalPages(total: number, pageSize: number) {
     return Math.max(1, Math.ceil(total / Math.max(1, pageSize)));
@@ -193,7 +279,7 @@ export function useSpareParts(deps: SparePartsDeps) {
       return true;
     } catch (error) {
       if (requestId === spareListRequestId.value && deps.isCurrentLoad(version) && !isAbortError(error)) {
-        spareListError.value = errorMessage(error, tr("spare.dataLoadFailed"));
+        spareListError.value = safeErrorMessage(error, tr("spare.dataLoadFailed"));
       }
       return false;
     } finally {
@@ -206,10 +292,15 @@ export function useSpareParts(deps: SparePartsDeps) {
 
   async function refreshSparePart(partId: number) {
     if (!deps.can("spares.view")) return null;
-    const detail = await deps.request<SparePart>(`/spare-parts/${partId}/`);
-    const index = spareParts.value.findIndex((part) => part.id === partId);
-    if (index >= 0) spareParts.value.splice(index, 1, detail);
-    return detail;
+    try {
+      const detail = await deps.request<SparePart>(`/spare-parts/${partId}/`);
+      const index = spareParts.value.findIndex((part) => part.id === partId);
+      if (index >= 0) spareParts.value.splice(index, 1, detail);
+      return detail;
+    } catch (error) {
+      spareListError.value = safeErrorMessage(error, tr("spare.dataLoadFailed"));
+      return null;
+    }
   }
 
   function searchSpareParts() {
@@ -290,7 +381,7 @@ export function useSpareParts(deps: SparePartsDeps) {
       stockLocationLoadedByPart.value = { ...stockLocationLoadedByPart.value, [partId]: true };
     } catch (error) {
       if (stockLocationRequestIds.get(partId) === serial && !isAbortError(error)) {
-        stockLocationErrorByPart.value = { ...stockLocationErrorByPart.value, [partId]: errorMessage(error, tr("spare.stockLocationLoadFailed")) };
+        stockLocationErrorByPart.value = { ...stockLocationErrorByPart.value, [partId]: safeErrorMessage(error, tr("spare.stockLocationLoadFailed")) };
       }
     } finally {
       if (stockLocationRequestIds.get(partId) === serial) {
@@ -337,7 +428,7 @@ export function useSpareParts(deps: SparePartsDeps) {
       transactionCount.value = nextCount;
     } catch (error) {
       if (requestId === transactionRequestId.value && !isAbortError(error)) {
-        transactionError.value = errorMessage(error, tr("spare.transactionLoadFailed"));
+        transactionError.value = safeErrorMessage(error, tr("spare.transactionLoadFailed"));
       }
     } finally {
       if (requestId === transactionRequestId.value) {
@@ -358,6 +449,8 @@ export function useSpareParts(deps: SparePartsDeps) {
   }
   function openSparePartModal(part?: SparePart) {
     if (!deps.can("spares.manage")) return;
+    sparePartFormError.value = "";
+    sparePartFormErrors.value = {};
     editingSparePart.value = part || null;
     const defaultCategory = deps.spareCategories.value.find((item) => item.is_active)?.id;
     sparePartForm.value = part
@@ -399,6 +492,8 @@ export function useSpareParts(deps: SparePartsDeps) {
   async function saveSparePart(): Promise<boolean> {
     if (!deps.can("spares.manage")) return false;
     if (spareSaving.value) return false;
+    sparePartFormError.value = "";
+    sparePartFormErrors.value = {};
     spareSaving.value = true;
     try {
       const path = editingSparePart.value ? `/spare-parts/${editingSparePart.value.id}/` : "/spare-parts/";
@@ -421,15 +516,17 @@ export function useSpareParts(deps: SparePartsDeps) {
       }
       await deps.request(path, { method: editingSparePart.value ? "PATCH" : "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload) });
     } catch (error) {
-      deps.actionMessage.value = errorMessage(error, tr("spare.saveFailed"));
+      const parsed = extractFormError(error, SPARE_PART_FORM_FIELDS, tr("spare.saveFailed"));
+      sparePartFormErrors.value = parsed.fields;
+      sparePartFormError.value = parsed.message;
       return false;
     } finally {
       spareSaving.value = false;
     }
     showSparePartModal.value = false;
     editingSparePart.value = null;
-    deps.actionMessage.value = tr("spare.saved");
-    if (!(await loadSpareData()) && spareListError.value) deps.actionMessage.value = tr("spare.savedRefreshFailed");
+    setActionMessage(tr("spare.saved"));
+    if (!(await loadSpareData()) && spareListError.value) setActionMessage(tr("spare.savedRefreshFailed"), "error");
     return true;
   }
 
@@ -440,10 +537,10 @@ export function useSpareParts(deps: SparePartsDeps) {
     try {
       if (!(await deps.confirmAction(tr("spare.deleteConfirm", { name: part.name })))) return;
       await deps.request(`/spare-parts/${part.id}/`, { method: "DELETE" });
-      deps.actionMessage.value = tr("spare.deleted");
-      if (!(await loadSpareData()) && spareListError.value) deps.actionMessage.value = tr("spare.deletedRefreshFailed");
+      setActionMessage(tr("spare.deleted"));
+      if (!(await loadSpareData()) && spareListError.value) setActionMessage(tr("spare.deletedRefreshFailed"), "error");
     } catch (error) {
-      deps.actionMessage.value = errorMessage(error, tr("spare.deleteFailed"));
+      setActionMessage(safeErrorMessage(error, tr("spare.deleteFailed")), "error");
     } finally {
       deletingSparePartId.value = null;
     }
@@ -452,6 +549,7 @@ export function useSpareParts(deps: SparePartsDeps) {
   function openSpareOperation(part: SparePart, operationType: StockOperationType = "inbound", location?: SpareOperationLocation) {
     if (!deps.can("spares.manage")) return;
     spareOperationError.value = "";
+    spareOperationFormErrors.value = {};
     spareOperationType.value = operationType;
     let remembered: Partial<SpareOperationLocation> | null = null;
     if (!location) {
@@ -478,6 +576,7 @@ export function useSpareParts(deps: SparePartsDeps) {
     if (!deps.can("spares.manage")) return false;
     if (spareOperationSaving.value) return false;
     spareOperationError.value = "";
+    spareOperationFormErrors.value = {};
     spareOperationSaving.value = true;
     try {
       const operation = spareOperationType.value;
@@ -492,13 +591,14 @@ export function useSpareParts(deps: SparePartsDeps) {
       const locationServerRoom = STOCK_SOURCE_OPERATION_VALUES.includes(operation) ? form.source_server_room : form.target_server_room;
       if (locationDataCenter) localStorage.setItem("infrix.spare.last_location", JSON.stringify({ data_center: Number(locationDataCenter), server_room: locationServerRoom ? Number(locationServerRoom) : null }));
       showSpareOperationModal.value = false;
-      deps.actionMessage.value = tr("spare.transactionSaved");
+      setActionMessage(tr("spare.transactionSaved"));
       const refreshed = await loadSpareData();
-      if (!refreshed && spareListError.value) deps.actionMessage.value = tr("spare.transactionSavedRefreshFailed");
+      if (!refreshed && spareListError.value) setActionMessage(tr("spare.transactionSavedRefreshFailed"), "error");
       return true;
     } catch (error) {
-      spareOperationError.value = errorMessage(error, tr("spare.operationFailed"));
-      deps.actionMessage.value = spareOperationError.value;
+      const parsed = extractFormError(error, SPARE_OPERATION_FORM_FIELDS, tr("spare.operationFailed"));
+      spareOperationFormErrors.value = parsed.fields;
+      spareOperationError.value = parsed.message;
       return false;
     } finally {
       spareOperationSaving.value = false;
@@ -515,8 +615,9 @@ export function useSpareParts(deps: SparePartsDeps) {
     spareRooms, spareSearch, spareCategory, spareManufacturer, spareListDataCenter, spareListRoom,
     spareCategories: deps.spareCategories,
     sparePartForm, showSparePartModal, editingSparePart, spareSaving, deletingSparePartId,
+    sparePartFormError, sparePartFormErrors,
     spareListLoading, spareListError, exportingSpares, loadSpareData, refreshSparePart, searchSpareParts, resetSpareFilters, retrySpareList,
-    spareOperationType, spareOperationForm, showSpareOperationModal, spareOperationSaving, spareOperationError, spareOperationCurrentQuantity,
+    spareOperationType, spareOperationForm, showSpareOperationModal, spareOperationSaving, spareOperationError, spareOperationFormErrors, spareOperationCurrentQuantity,
     spareOperationLocationLabel, spareOperationLocationLocked, spareTransactionFilters,
     stockLocations, stockLocationLoadingByPart, stockLocationErrorByPart, stockLocationTotalsByPart,
     stockLocationLoadedByPart, loadStockLocations, transactionRows, transactionCount, transactionPage, transactionPageSize,

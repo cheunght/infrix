@@ -32,12 +32,13 @@ const context = props.context;
 const {
   can, spareParts, sparePartCount, sparePage, sparePageSize, spareSearch, spareCategory, spareManufacturer, spareCategories,
   spareListDataCenter, spareListRoom, spareRooms, sparePartForm, editingSparePart, showSparePartModal,
+  sparePartFormError, sparePartFormErrors,
   spareSaving, deletingSparePartId, spareListLoading, spareListError,
   exportingSpares,
   openSparePartModal, saveSparePart, deleteSparePart, searchSpareParts,
   resetSpareFilters, retrySpareList, changeSparePage, changeSparePageSize, exportSpareParts, exportSpareTransactions,
   openSpareOperation, spareOperationType, spareOperationForm, showSpareOperationModal,
-  spareOperationSaving, spareOperationError, spareOperationCurrentQuantity, spareOperationLocationLabel, spareOperationLocationLocked,
+  spareOperationSaving, spareOperationError, spareOperationFormErrors, spareOperationCurrentQuantity, spareOperationLocationLabel, spareOperationLocationLocked,
   saveSpareOperation, spareOperationLabel, dataCenters, manufacturers,
   stockLocations, stockLocationLoadingByPart, stockLocationErrorByPart, stockLocationTotalsByPart,
   stockLocationLoadedByPart, loadStockLocations: loadStockLocationsInContext, transactionRows, transactionCount,
@@ -342,6 +343,7 @@ watch(showSpareOperationModal, (open, wasOpen) => { if (!open && wasOpen) refres
       :description="t('spare.spareDescription')"
       size="medium"
       :saving="spareSaving"
+      :error="sparePartFormError"
       :close-on-click-modal="!spareSaving"
       :close-on-press-escape="!spareSaving"
       :show-close="!spareSaving"
@@ -352,13 +354,13 @@ watch(showSpareOperationModal, (open, wasOpen) => { if (!open && wasOpen) refres
         <section class="form-dialog__section">
           <h3 class="form-dialog__section-title">{{ t('spare.basicInfo') }}</h3>
           <div class="horizontal-form__rows">
-            <el-form-item :label="t('spare.spareCode')" prop="code"><el-input v-model="sparePartForm.code" :disabled="Boolean(editingSparePart)" :placeholder="t('validation.required', { field: t('spare.spareCode') })" /></el-form-item>
-            <el-form-item :label="t('spare.spareName')" prop="name"><el-input v-model="sparePartForm.name" /></el-form-item>
-            <el-form-item :label="t('spare.spareType')" prop="category"><el-select v-model="sparePartForm.category" filterable :placeholder="t('validation.selectRequired', { field: t('spare.spareType') })"><el-option v-for="item in activeSpareCategories" :key="item.id" :label="`${item.name}${item.is_active ? '' : ` (${t('status.inactive')})`}`" :value="String(item.id)" /></el-select></el-form-item>
-            <el-form-item :label="t('spare.manufacturer')"><el-select v-model="sparePartForm.manufacturer" filterable clearable :placeholder="t('spare.unlinkedManufacturer')"><el-option v-for="manufacturer in manufacturerOptions" :key="manufacturer.id" :label="`${manufacturer.name}${manufacturer.is_active ? '' : ` (${t('status.inactive')})`}`" :value="String(manufacturer.id)" /></el-select></el-form-item>
-            <el-form-item :label="t('asset.model')"><el-input v-model="sparePartForm.model" /></el-form-item>
-            <el-form-item :label="t('spare.specification')"><el-input v-model="sparePartForm.specification" /></el-form-item>
-            <el-form-item :label="t('spare.unit')" prop="unit">
+            <el-form-item :label="t('spare.spareCode')" prop="code" :error="sparePartFormErrors.code"><el-input v-model="sparePartForm.code" :disabled="Boolean(editingSparePart)" :placeholder="t('validation.required', { field: t('spare.spareCode') })" /></el-form-item>
+            <el-form-item :label="t('spare.spareName')" prop="name" :error="sparePartFormErrors.name"><el-input v-model="sparePartForm.name" /></el-form-item>
+            <el-form-item :label="t('spare.spareType')" prop="category" :error="sparePartFormErrors.category"><el-select v-model="sparePartForm.category" filterable :placeholder="t('validation.selectRequired', { field: t('spare.spareType') })"><el-option v-for="item in activeSpareCategories" :key="item.id" :label="`${item.name}${item.is_active ? '' : ` (${t('status.inactive')})`}`" :value="String(item.id)" /></el-select></el-form-item>
+            <el-form-item :label="t('spare.manufacturer')" prop="manufacturer" :error="sparePartFormErrors.manufacturer"><el-select v-model="sparePartForm.manufacturer" filterable clearable :placeholder="t('spare.unlinkedManufacturer')"><el-option v-for="manufacturer in manufacturerOptions" :key="manufacturer.id" :label="`${manufacturer.name}${manufacturer.is_active ? '' : ` (${t('status.inactive')})`}`" :value="String(manufacturer.id)" /></el-select></el-form-item>
+            <el-form-item :label="t('asset.model')" prop="model" :error="sparePartFormErrors.model"><el-input v-model="sparePartForm.model" /></el-form-item>
+            <el-form-item :label="t('spare.specification')" prop="specification" :error="sparePartFormErrors.specification"><el-input v-model="sparePartForm.specification" /></el-form-item>
+            <el-form-item :label="t('spare.unit')" prop="unit" :error="sparePartFormErrors.unit">
               <el-select v-model="sparePartForm.unit" :placeholder="t('validation.selectRequired', { field: t('spare.unit') })" :disabled="spareUnitLocked">
                 <el-option v-for="unit in SPARE_UNIT_OPTIONS" :key="unit.value" :label="spareUnitLabel(unit.value)" :value="unit.value" />
               </el-select>
@@ -369,18 +371,18 @@ watch(showSpareOperationModal, (open, wasOpen) => { if (!open && wasOpen) refres
         <section class="form-dialog__section">
           <h3 class="form-dialog__section-title">{{ t('spare.stockInfo') }}</h3>
           <div class="horizontal-form__rows">
-            <el-form-item v-if="!editingSparePart" :label="t('spare.initialStock')"><el-input-number v-model="sparePartForm.initial_quantity" :min="0" :step="1" :value-on-clear="null" :aria-label="t('spare.initialStock')"><template #suffix>{{ spareUnitLabel(sparePartForm.unit) }}</template></el-input-number><FieldHelp :text="t('spare.initialStockHint')" /></el-form-item>
+            <el-form-item v-if="!editingSparePart" :label="t('spare.initialStock')" prop="initial_quantity" :error="sparePartFormErrors.initial_quantity"><el-input-number v-model="sparePartForm.initial_quantity" :min="0" :step="1" :value-on-clear="null" :aria-label="t('spare.initialStock')"><template #suffix>{{ spareUnitLabel(sparePartForm.unit) }}</template></el-input-number><FieldHelp :text="t('spare.initialStockHint')" /></el-form-item>
             <el-form-item v-else :label="t('spare.currentStock')"><el-input :model-value="`${sparePartForm.current_quantity} ${spareUnitLabel(sparePartForm.unit)}`" disabled /></el-form-item>
-            <el-form-item v-if="!editingSparePart && Number(sparePartForm.initial_quantity || 0) > 0" :label="t('spare.initialDataCenter')" prop="initial_data_center" required><el-select v-model="sparePartForm.initial_data_center" :placeholder="t('validation.selectRequired', { field: t('spare.initialDataCenter') })" @change="onInitialDataCenterChange"><el-option v-for="center in activeDataCenters" :key="center.id" :label="center.name" :value="String(center.id)" /></el-select></el-form-item>
-            <el-form-item v-if="!editingSparePart && Number(sparePartForm.initial_quantity || 0) > 0" :label="t('spare.initialRoom')"><el-select v-model="sparePartForm.initial_server_room" :placeholder="t('spare.centerStock')" clearable><el-option v-for="room in roomsFor(sparePartForm.initial_data_center)" :key="room.id" :label="room.name" :value="String(room.id)" /></el-select></el-form-item>
-            <el-form-item :label="t('spare.safetyStock')"><el-input-number v-model="sparePartForm.safety_stock" :min="0" :step="1" :value-on-clear="null" :aria-label="t('spare.safetyStock')"><template #suffix>{{ spareUnitLabel(sparePartForm.unit) }}</template></el-input-number><FieldHelp :text="t('spare.safetyStockHint')" /></el-form-item>
-            <el-form-item :label="t('spare.storageLocation')"><el-input v-model="sparePartForm.storage_location" :placeholder="t('spare.storageLocationPlaceholder')" /></el-form-item>
+            <el-form-item v-if="!editingSparePart && Number(sparePartForm.initial_quantity || 0) > 0" :label="t('spare.initialDataCenter')" prop="initial_data_center" required :error="sparePartFormErrors.initial_data_center"><el-select v-model="sparePartForm.initial_data_center" :placeholder="t('validation.selectRequired', { field: t('spare.initialDataCenter') })" @change="onInitialDataCenterChange"><el-option v-for="center in activeDataCenters" :key="center.id" :label="center.name" :value="String(center.id)" /></el-select></el-form-item>
+            <el-form-item v-if="!editingSparePart && Number(sparePartForm.initial_quantity || 0) > 0" :label="t('spare.initialRoom')" prop="initial_server_room" :error="sparePartFormErrors.initial_server_room"><el-select v-model="sparePartForm.initial_server_room" :placeholder="t('spare.centerStock')" clearable><el-option v-for="room in roomsFor(sparePartForm.initial_data_center)" :key="room.id" :label="room.name" :value="String(room.id)" /></el-select></el-form-item>
+            <el-form-item :label="t('spare.safetyStock')" prop="safety_stock" :error="sparePartFormErrors.safety_stock"><el-input-number v-model="sparePartForm.safety_stock" :min="0" :step="1" :value-on-clear="null" :aria-label="t('spare.safetyStock')"><template #suffix>{{ spareUnitLabel(sparePartForm.unit) }}</template></el-input-number><FieldHelp :text="t('spare.safetyStockHint')" /></el-form-item>
+            <el-form-item :label="t('spare.storageLocation')" prop="storage_location" :error="sparePartFormErrors.storage_location"><el-input v-model="sparePartForm.storage_location" :placeholder="t('spare.storageLocationPlaceholder')" /></el-form-item>
           </div>
         </section>
         <section class="form-dialog__section">
           <h3 class="form-dialog__section-title">{{ t('spare.otherInfo') }}</h3>
           <div class="horizontal-form__rows">
-            <el-form-item :label="t('common.notes')"><el-input v-model="sparePartForm.notes" type="textarea" :rows="2" /></el-form-item>
+            <el-form-item :label="t('common.notes')" prop="notes" :error="sparePartFormErrors.notes"><el-input v-model="sparePartForm.notes" type="textarea" :rows="2" /></el-form-item>
           </div>
         </section>
       </el-form>
@@ -399,13 +401,13 @@ watch(showSpareOperationModal, (open, wasOpen) => { if (!open && wasOpen) refres
       :error="spareOperationError"
       :close-disabled="spareOperationSaving"
     >
-      <el-form label-position="top" @submit.prevent="saveSpareOperation">
+      <el-form :model="spareOperationForm" label-position="top" @submit.prevent="saveSpareOperation">
         <el-alert v-if="operationPart && selectedOperation !== 'adjustment'" class="spare-operation-context" type="info" :closable="false">{{ t('spare.currentInventory', { inventory: operationInventoryLabel }) }}<span v-if="spareOperationLocationLabel"> · {{ t('spare.currentStockLocation', { location: spareOperationLocationLabel }) }}</span></el-alert>
-        <el-form-item :label="t('spare.spareName')"><el-input :model-value="operationPart?.name || t('common.notAvailable')" disabled /></el-form-item>
+        <el-form-item :label="t('spare.spareName')" prop="part" :error="spareOperationFormErrors.part"><el-input :model-value="operationPart?.name || t('common.notAvailable')" disabled /></el-form-item>
         <el-form-item v-if="selectedOperation === 'adjustment'" :label="t('spare.currentStock')">
           <el-input :model-value="operationInventoryLabel" disabled />
         </el-form-item>
-        <el-form-item v-if="selectedOperation === 'adjustment'" :label="t('spare.adjustmentQuantity')" required>
+        <el-form-item v-if="selectedOperation === 'adjustment'" :label="t('spare.adjustmentQuantity')" prop="adjustment_quantity" required :error="spareOperationFormErrors.adjustment_quantity">
           <el-input-number v-model="adjustmentQuantityValue" :min="adjustmentMin" :step="1" :precision="0" :value-on-clear="null" :formatter="formatAdjustmentQuantity" :parser="parseAdjustmentQuantity" :aria-label="t('spare.adjustmentQuantity')">
             <template #suffix>{{ operationPart ? spareUnitLabel(operationPart.unit) : '' }}</template>
           </el-input-number>
@@ -414,7 +416,7 @@ watch(showSpareOperationModal, (open, wasOpen) => { if (!open && wasOpen) refres
         <el-form-item v-if="selectedOperation === 'adjustment'" :label="t('spare.afterAdjustment')">
           <el-input :model-value="`${adjustmentAfterQuantity} ${operationPart ? spareUnitLabel(operationPart.unit) : ''}`" disabled />
         </el-form-item>
-        <el-form-item v-if="showQuantity" :label="t('spare.operationQuantity')" required>
+        <el-form-item v-if="showQuantity" :label="t('spare.operationQuantity')" prop="quantity" required :error="spareOperationFormErrors.quantity">
           <el-input-number
             v-model="operationQuantityValue"
             :min="1"
@@ -428,9 +430,9 @@ watch(showSpareOperationModal, (open, wasOpen) => { if (!open && wasOpen) refres
           </el-input-number>
           <FieldHelp v-if="operationQuantityHelp" :text="operationQuantityHelp" />
         </el-form-item>
-        <div v-if="showSourceLocation" class="form-grid"><el-form-item :label="t('spare.sourceDataCenter')" required><el-select v-model="spareOperationForm.source_data_center" :disabled="sourceLocationLocked" :placeholder="t('common.select')" @change="onOperationSourceCenterChange"><el-option v-for="center in activeDataCenters" :key="center.id" :label="center.name" :value="String(center.id)" /></el-select></el-form-item><el-form-item :label="t('spare.sourceRoom')"><el-select v-model="spareOperationForm.source_server_room" :disabled="sourceLocationLocked" :placeholder="t('spare.centerStock')" clearable><el-option v-for="room in roomsFor(spareOperationForm.source_data_center)" :key="room.id" :label="room.name" :value="String(room.id)" /></el-select></el-form-item></div>
-        <div v-if="showTargetLocation" class="form-grid"><el-form-item :label="selectedOperation === 'adjustment' ? t('spare.inventoryDataCenter') : t('spare.targetDataCenter')" required><el-select v-model="spareOperationForm.target_data_center" :disabled="targetLocationLocked" :placeholder="t('common.select')" @change="onOperationTargetCenterChange"><el-option v-for="center in activeDataCenters" :key="center.id" :label="center.name" :value="String(center.id)" /></el-select></el-form-item><el-form-item :label="selectedOperation === 'adjustment' ? t('spare.inventoryRoom') : t('spare.targetRoom')"><el-select v-model="spareOperationForm.target_server_room" :disabled="targetLocationLocked" :placeholder="t('spare.centerStock')" clearable><el-option v-for="room in roomsFor(spareOperationForm.target_data_center)" :key="room.id" :label="room.name" :value="String(room.id)" /></el-select></el-form-item></div>
-        <el-alert v-if="operationCannotOperate" class="spare-operation-context" type="warning" :closable="false" :title="operationWarningTitle" /><div class="form-grid"><el-form-item :label="t('spare.referencePurpose')"><el-input v-model="spareOperationForm.reference" /></el-form-item><el-form-item :label="t('common.notes')"><el-input v-model="spareOperationForm.notes" /></el-form-item></div>
+        <div v-if="showSourceLocation" class="form-grid"><el-form-item :label="t('spare.sourceDataCenter')" prop="source_data_center" required :error="spareOperationFormErrors.source_data_center"><el-select v-model="spareOperationForm.source_data_center" :disabled="sourceLocationLocked" :placeholder="t('common.select')" @change="onOperationSourceCenterChange"><el-option v-for="center in activeDataCenters" :key="center.id" :label="center.name" :value="String(center.id)" /></el-select></el-form-item><el-form-item :label="t('spare.sourceRoom')" prop="source_server_room" :error="spareOperationFormErrors.source_server_room"><el-select v-model="spareOperationForm.source_server_room" :disabled="sourceLocationLocked" :placeholder="t('spare.centerStock')" clearable><el-option v-for="room in roomsFor(spareOperationForm.source_data_center)" :key="room.id" :label="room.name" :value="String(room.id)" /></el-select></el-form-item></div>
+        <div v-if="showTargetLocation" class="form-grid"><el-form-item :label="selectedOperation === 'adjustment' ? t('spare.inventoryDataCenter') : t('spare.targetDataCenter')" prop="target_data_center" required :error="spareOperationFormErrors.target_data_center"><el-select v-model="spareOperationForm.target_data_center" :disabled="targetLocationLocked" :placeholder="t('common.select')" @change="onOperationTargetCenterChange"><el-option v-for="center in activeDataCenters" :key="center.id" :label="center.name" :value="String(center.id)" /></el-select></el-form-item><el-form-item :label="selectedOperation === 'adjustment' ? t('spare.inventoryRoom') : t('spare.targetRoom')" prop="target_server_room" :error="spareOperationFormErrors.target_server_room"><el-select v-model="spareOperationForm.target_server_room" :disabled="targetLocationLocked" :placeholder="t('spare.centerStock')" clearable><el-option v-for="room in roomsFor(spareOperationForm.target_data_center)" :key="room.id" :label="room.name" :value="String(room.id)" /></el-select></el-form-item></div>
+        <el-alert v-if="operationCannotOperate" class="spare-operation-context" type="warning" :closable="false" :title="operationWarningTitle" /><div class="form-grid"><el-form-item :label="t('spare.referencePurpose')" prop="reference" :error="spareOperationFormErrors.reference"><el-input v-model="spareOperationForm.reference" /></el-form-item><el-form-item :label="t('common.notes')" prop="notes" :error="spareOperationFormErrors.notes"><el-input v-model="spareOperationForm.notes" /></el-form-item></div>
       </el-form>
       <template #footer><el-button :disabled="spareOperationSaving" @click="showSpareOperationModal = false">{{ t('common.cancel') }}</el-button><el-button type="primary" :disabled="operationCannotOperate || spareOperationSaving" :loading="spareOperationSaving" @click="saveSpareOperation">{{ t('spare.saveTransaction') }}</el-button></template>
     </ActionDialogShell>

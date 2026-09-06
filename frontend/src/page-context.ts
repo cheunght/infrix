@@ -259,6 +259,9 @@ export interface AssetResponsibilityContext extends AssetResponsibilityHistoryCo
   loadResponsibilityUsers: (search?: string) => void | Promise<boolean>;
   responsibilityActionSaving: Ref<boolean>;
   responsibilityActionError: Ref<string>;
+  responsibilityActionFieldErrors: Ref<Record<string, string>>;
+  clearResponsibilityActionErrors: () => void;
+  clearResponsibilityActionFieldError: (field: string) => void;
   assignAsset: (assetId: number, targetUserId: number, reason: string) => void | Promise<boolean>;
   returnAsset: (assetId: number, reason: string) => void | Promise<boolean>;
   transferAsset: (assetId: number, targetUserId: number, reason: string) => void | Promise<boolean>;
@@ -400,6 +403,9 @@ export interface LicenseContext {
   exportLicenses: () => void | Promise<void>;
   can: CapabilityFn;
   openLicenseModal: (license?: SoftwareLicense) => void | Promise<void>;
+  licenseFormError: Ref<string>;
+  licenseFormErrors: Ref<Record<string, string>>;
+  clearLicenseFormErrors: () => void;
   deleteLicense: (license: SoftwareLicense) => void | Promise<void>;
   deletingLicenseId: Ref<number | null>;
   licenses: Ref<SoftwareLicense[]>;
@@ -477,6 +483,8 @@ export interface SpareContext {
   spareRooms: Ref<ServerRoom[]>;
   spareCategories: Ref<SparePartCategory[]>;
   sparePartForm: Ref<SparePartFormState>;
+  sparePartFormError: Ref<string>;
+  sparePartFormErrors: Ref<Record<string, string>>;
   editingSparePart: Ref<SparePart | null>;
   showSparePartModal: Ref<boolean>;
   spareSaving: Ref<boolean>;
@@ -500,6 +508,7 @@ export interface SpareContext {
   showSpareOperationModal: Ref<boolean>;
   spareOperationSaving: Ref<boolean>;
   spareOperationError: Ref<string>;
+  spareOperationFormErrors: Ref<Record<string, string>>;
   spareOperationCurrentQuantity: Ref<number | null>;
   spareOperationLocationLabel: Ref<string>;
   spareOperationLocationLocked: Ref<boolean>;
