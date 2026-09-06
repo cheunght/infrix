@@ -111,7 +111,6 @@ export async function downloadFile(path: string, options: DownloadOptions = {}):
     try {
       const payload = JSON.parse(text);
       details = payload;
-      message = flattenError(payload.detail ?? payload) || message;
     } catch {
       // Never expose raw HTML error pages to users.
     }
@@ -166,8 +165,8 @@ function statusMessage(status: number): string {
   if (status === 401) return tr("api.sessionExpired");
   if (status === 403) return tr("api.forbidden");
   if (status === 404) return tr("api.resourceNotFound");
-  if (status >= 500) return tr("api.serverError").replace("{status}", String(status));
-  return tr("api.requestFailed").replace("{status}", String(status));
+  if (status >= 500) return String(i18n.global.t("api.serverError", { status }));
+  return String(i18n.global.t("api.requestFailed", { status }));
 }
 
 export async function apiRequest<T>(

@@ -155,6 +155,136 @@ export type ImportResult = {
 };
 export type ImportStep = "upload" | "preview" | "result";
 
+const IMPORT_FIELD_LABEL_KEYS: Record<string, string> = {
+  asset_no: "asset.code",
+  name: "asset.name",
+  device_type: "asset.deviceType",
+  device_type_id: "asset.deviceType",
+  manufacturer: "asset.manufacturer",
+  manufacturer_id: "asset.manufacturer",
+  model: "asset.model",
+  manufacturer_model: "asset.manufacturerModel",
+  serial_number: "asset.serialNumber",
+  purpose: "asset.purpose",
+  status: "asset.status",
+  notes: "common.notes",
+  asset_data_center: "common.dataCenter",
+  data_center: "common.dataCenter",
+  server_room: "common.room",
+  server_room_id: "common.room",
+  rack: "asset.rack",
+  rack_code: "asset.rack",
+  rack_id: "asset.rack",
+  rack_start_u: "asset.startU",
+  rack_end_u: "asset.endU",
+  business_ip: "asset.businessIp",
+  management_ip: "asset.managementIp",
+  oob_ip: "asset.oobIp",
+  network_addresses: "asset.networkAddress",
+  purchase_date: "asset.purchaseDate",
+  supplier: "asset.supplier",
+  purchase_order_no: "asset.purchaseOrder",
+  purchase_amount: "asset.purchaseAmount",
+  procurement_notes: "asset.procurementNotes",
+  depreciation_enabled: "asset.depreciation",
+  depreciation_method: "asset.depreciationMethod",
+  depreciation_start_date: "asset.depreciationStart",
+  depreciation_years: "asset.depreciationYears",
+  residual_rate: "asset.residualRate",
+  maintenance_provider: "asset.maintenanceProvider",
+  maintenance_contract_no: "asset.maintenanceContract",
+  maintenance_start_date: "asset.maintenanceStart",
+  maintenance_expiry_date: "asset.maintenanceExpiry",
+  maintenance_notes: "asset.maintenanceNotes",
+  responsible_user: "asset.responsibleUser",
+  department: "asset.department",
+  department_id: "asset.department",
+  tags: "asset.tags",
+  configuration: "asset.locationOwnership",
+  custom_values: "asset.customFields",
+};
+
+type ImportErrorEntry = { field: string; message: string };
+export type FormattedImportError = { field: string; label: string; message: string };
+
+function importFieldRoot(field: string): string {
+  const normalized = field.trim();
+  const root = normalized.split(/[.[\]]/, 1)[0];
+  return IMPORT_FIELD_LABEL_KEYS[root] ? root : "";
+}
+
+function importFieldLabel(field: string): string {
+  const root = importFieldRoot(field);
+  return root ? tr(IMPORT_FIELD_LABEL_KEYS[root]) : "";
+}
+
+function safeImportReason(value: unknown): string {
+  if (typeof value !== "string" || !value.trim()) return "";
+  return normalizeApiError(new ApiError(400, "", { detail: value })).message;
+}
+
+function collectImportErrorEntries(detail: unknown, field = ""): ImportErrorEntry[] {
+  if (Array.isArray(detail)) return detail.flatMap((item) => collectImportErrorEntries(item, field));
+  if (detail && typeof detail === "object") {
+    const record = detail as Record<string, unknown>;
+    const recordField = typeof record.field === "string" ? record.field : field;
+    if (recordField && ("message" in record || "detail" in record)) {
+      return collectImportErrorEntries(record.message ?? record.detail, recordField);
+    }
+    return Object.entries(record)
+      .filter(([key]) => !["field", "label", "code", "status", "preview"].includes(key))
+      .flatMap(([key, value]) => {
+        if (["message", "detail", "non_field_errors"].includes(key)) {
+          return collectImportErrorEntries(value, field);
+        }
+        return collectImportErrorEntries(value, field ? `${field}.${key}` : key);
+      });
+  }
+  const message = safeImportReason(detail);
+  return message ? [{ field, message }] : [];
+}
+
+export function formatImportErrorEntries(detail: unknown): FormattedImportError[] {
+  const entries = collectImportErrorEntries(detail);
+  const formatted = entries.map(({ field, message }) => {
+    const label = importFieldLabel(field);
+    return label
+      ? { field, label, message }
+      : field
+        ? { field: "", label: "", message: tr("asset.importUnknownField") }
+        : { field: "", label: "", message };
+  });
+  const unique = new Map<string, FormattedImportError>();
+  formatted.forEach((entry) => unique.set(`${entry.label}\u0000${entry.message}`, entry));
+  return unique.size
+    ? [...unique.values()]
+    : [{ field: "", label: "", message: tr("asset.importUnknownField") }];
+}
+
+export function formatImportError(detail: unknown): string {
+  return formatImportErrorEntries(detail)
+    .map(({ label, message }) => label ? `${label}：${message}` : message)
+    .join("；");
+}
+
+function normalizeImportPreviewErrors(detail: unknown): ImportPreviewError[] {
+  if (detail == null || (Array.isArray(detail) && detail.length === 0)) return [];
+  return formatImportErrorEntries(detail).map(({ field, label, message }) => ({
+    field: field || "row",
+    label: label || tr("common.errorDetails"),
+    message,
+  }));
+}
+
+function normalizeImportPreview(preview: ImportPreview): ImportPreview {
+  return {
+    ...preview,
+    rows: Array.isArray(preview.rows)
+      ? preview.rows.map((row) => ({ ...row, errors: normalizeImportPreviewErrors(row.errors) }))
+      : [],
+  };
+}
+
 export interface AssetsDeps {
   can: CapabilityFn;
   request: RequestFn;
@@ -1684,7 +1814,7 @@ export function useAssets(deps: AssetsDeps) {
     try {
       await deps.download(`/reports/assets/export/${query ? `?${query}` : ""}`, tr("asset.exportFilename"));
     } catch (error) {
-      deps.actionMessage.value = error instanceof Error ? error.message : tr("asset.exportFailed");
+      setActionError(error, tr("asset.exportFailed"));
     } finally {
       exportingAssets.value = false;
     }
@@ -1756,11 +1886,6 @@ export function useAssets(deps: AssetsDeps) {
     return values[key as StaticAssetColumnKey] || "—";
   }
 
-  function formatImportError(detail: unknown): string {
-    if (Array.isArray(detail)) return detail.map(formatImportError).join("; ");
-    if (detail && typeof detail === "object") return Object.entries(detail).map(([key, value]) => `${key}: ${formatImportError(value)}`).join("; ");
-    return String(detail ?? "");
-  }
   function importErrorText(detail: unknown) { return formatImportError(detail); }
 
   function resetImportState() {
@@ -1813,13 +1938,13 @@ export function useAssets(deps: AssetsDeps) {
     importPreviewError.value = "";
     try {
       const preview = await deps.request<ImportPreview>("/assets/import/preview/", { method: "POST", body: form, signal: importController.signal });
-      importPreview.value = preview;
+      const normalizedPreview = normalizeImportPreview(preview);
+      importPreview.value = normalizedPreview;
       importStep.value = "preview";
-      deps.actionMessage.value = tr("asset.importPreviewSummary", { valid: preview.valid, invalid: preview.invalid });
+      setActionMessage(tr("asset.importPreviewSummary", { valid: normalizedPreview.valid, invalid: normalizedPreview.invalid }));
     } catch (error) {
       if (isAbortError(error)) return;
-      importPreviewError.value = error instanceof Error ? error.message : tr("asset.importPreviewFailed");
-      deps.actionMessage.value = importPreviewError.value;
+      importPreviewError.value = errorMessage(error, tr("asset.importPreviewFailed"));
     } finally {
       importPreviewing.value = false;
       importController = null;
@@ -1842,28 +1967,38 @@ export function useAssets(deps: AssetsDeps) {
       const result = await deps.request<ImportResult>("/assets/import/", { method: "POST", body: form, signal: importController.signal });
       importResult.value = result;
       importStep.value = "result";
-      deps.actionMessage.value = tr("asset.importSuccess", { count: result.created });
-      await loadAssets();
+      const importMessage = result.errors.length
+        ? tr("overlay.importCreatedWithErrors", { created: result.created, failed: result.errors.length })
+        : tr("asset.importSuccess", { count: result.created });
+      const refreshed = await loadAssets();
+      setActionMessage(
+        refreshed ? importMessage : `${importMessage}；${tr("common.refreshFailed")}，${tr("common.retry")}`,
+        result.errors.length || !refreshed ? "error" : "success",
+      );
     } catch (error) {
       if (isAbortError(error)) return;
       const details = error instanceof ApiError ? error.details : null;
       if (details && typeof details === "object" && "preview" in details) {
         const latest = (details as { preview?: ImportPreview }).preview;
         if (latest) {
-          importPreview.value = latest;
+          const normalizedPreview = normalizeImportPreview(latest);
+          importPreview.value = normalizedPreview;
           importStep.value = "preview";
-          importPreviewFilter.value = latest.invalid ? "errors" : "all";
+          importPreviewFilter.value = normalizedPreview.invalid ? "errors" : "all";
         }
       }
-      importPreviewError.value = error instanceof Error ? error.message : tr("asset.importConfirmFailed");
-      deps.actionMessage.value = importPreviewError.value;
+      importPreviewError.value = errorMessage(error, tr("asset.importConfirmFailed"));
     } finally {
       importing.value = false;
       importController = null;
     }
   }
   async function copyImportErrors() {
-    const text = importResult.value.errors.map((item) => `${tr("common.line")} ${item.line}: ${formatImportError(item.detail)}`).join("\n");
+    const text = importResult.value.errors
+      .flatMap((item) => formatImportErrorEntries(item.detail).map(({ label, message }) => (
+        `${tr("overlay.importErrorLine", { line: item.line })}${label ? `${label}：` : ""}${message}`
+      )))
+      .join("\n");
     try {
       await navigator.clipboard.writeText(text);
       ElMessage.success(tr("asset.importErrorsCopied"));
@@ -1872,7 +2007,13 @@ export function useAssets(deps: AssetsDeps) {
     }
   }
   function downloadImportErrors() {
-    const rows = [`${tr("common.line")},${tr("common.errorDetails")}`, ...importResult.value.errors.map((item) => `${item.line},"${formatImportError(item.detail).replace(/"/g, '""')}"`)];
+    const csvCell = (value: unknown) => `"${String(value ?? "").replace(/"/g, '""')}"`;
+    const rows = [
+      [tr("common.line"), tr("common.field"), tr("common.errorDetails")].map(csvCell).join(","),
+      ...importResult.value.errors.flatMap((item) => formatImportErrorEntries(item.detail).map(({ label, message }) => (
+        [item.line, label || tr("common.errorDetails"), message].map(csvCell).join(",")
+      ))),
+    ];
     const url = URL.createObjectURL(new Blob([`\ufeff${rows.join("\n")}`], { type: "text/csv;charset=utf-8" }));
     const link = document.createElement("a");
     link.href = url;
@@ -1885,7 +2026,7 @@ export function useAssets(deps: AssetsDeps) {
     try {
       await deps.download("/assets/import/template/", "asset-import-template.xlsx");
     } catch (error) {
-      if (!isAbortError(error)) deps.actionMessage.value = error instanceof Error ? error.message : tr("asset.importTemplateFailed");
+      if (!isAbortError(error)) setActionError(error, tr("asset.importTemplateFailed"));
     }
   }
   async function syncAssetDeviceType() {

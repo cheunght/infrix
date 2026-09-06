@@ -12,6 +12,7 @@ import type {
 import type { CapabilityFn, RequestFn } from "../page-context";
 import { REPAIR_PART_USAGE_SOURCE_OPTIONS, type RepairPartUsageSource } from "../business-enums";
 import { i18n } from "../i18n";
+import { normalizeApiError, type ActionMessageType } from "../error-handling";
 
 const tr = (key: string, params?: Record<string, unknown>): string =>
   String(params ? i18n.global.t(key, params) : i18n.global.t(key));
@@ -26,6 +27,7 @@ export interface RepairsDeps {
   assets: Ref<Asset[]>;
   selectedAssetIds: Ref<number[]>;
   actionMessage: Ref<string>;
+  actionMessageType: Ref<ActionMessageType | null>;
   refreshOpenAssetDetail?: (assetId: number) => Promise<boolean | null>;
   clearRouteQuery?: (keys: string[]) => boolean;
 }
@@ -715,7 +717,9 @@ export function useRepairs(deps: RepairsDeps) {
       const query = buildExportQuery(params);
       await deps.download(`/reports/repairs/export/${query ? `?${query}` : ""}`, "maintenance-records.xlsx");
     } catch (error) {
-      deps.actionMessage.value = error instanceof Error ? error.message : tr("repair.exportFailed");
+      const normalized = normalizeApiError(error);
+      deps.actionMessageType.value = "error";
+      deps.actionMessage.value = normalized.kind === "unknown" ? tr("repair.exportFailed") : normalized.message;
     } finally {
       exportingRepairs.value = false;
     }

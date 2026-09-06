@@ -393,6 +393,13 @@ body {
   line-height: 1.5;
 }
 
+.import-error-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 8px;
+}
+
 .import-preview-summary {
   display: flex;
   flex-wrap: wrap;

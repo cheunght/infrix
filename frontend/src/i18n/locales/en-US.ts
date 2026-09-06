@@ -468,7 +468,10 @@ export default {
     importConfirmFailed: "Import confirmation failed. Check the preview and retry.",
     importErrorsCopied: "Failure details copied",
     copyDenied: "The browser blocked direct copying. Select the details manually.",
+    copyImportErrors: "Copy failure details",
+    downloadImportErrors: "Download CSV",
     importTemplateFailed: "Failed to download the import template",
+    importUnknownField: "Some field data is invalid. Check this row.",
     deviceTypeSwitchConfirm: "Switching device types will clear the previous type's extended field values. Continue?",
   },
   assetForm: {

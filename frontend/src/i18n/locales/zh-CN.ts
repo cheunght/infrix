@@ -468,7 +468,10 @@ export default {
     importConfirmFailed: "确认导入失败，请检查预览结果后重试",
     importErrorsCopied: "失败明细已复制",
     copyDenied: "浏览器不允许直接复制，请手动选择明细",
+    copyImportErrors: "复制失败明细",
+    downloadImportErrors: "下载 CSV",
     importTemplateFailed: "导入模板下载失败",
+    importUnknownField: "部分字段数据无效，请检查该行内容",
     deviceTypeSwitchConfirm: "切换设备类型将清除原设备类型的扩展字段值，是否继续？",
   },
   assetForm: {

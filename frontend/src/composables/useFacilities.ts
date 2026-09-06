@@ -792,7 +792,7 @@ export function useFacilities(deps: FacilitiesDeps) {
       const exportPath = query ? `/reports/racks/export/?${query}` : "/reports/racks/export/";
       await deps.download(exportPath, "rack-layout.xlsx");
     } catch (error) {
-      deps.actionMessage.value = error instanceof Error ? error.message : tr("facility.rackLayoutExportFailed");
+      setActionError(error, tr("facility.rackLayoutExportFailed"));
     } finally {
       exportingRackLayout.value = false;
     }

@@ -5,6 +5,7 @@ import type { DictionaryItem, LicenseStatus, SoftwareLicense } from "../types";
 import type { CapabilityFn, RequestFn } from "../page-context";
 import { LICENSE_STATUS_OPTIONS } from "../business-enums";
 import { i18n } from "../i18n";
+import { normalizeApiError, type ActionMessageType } from "../error-handling";
 
 const tr = (key: string, params?: Record<string, unknown>): string =>
   String(params ? i18n.global.t(key, params) : i18n.global.t(key));
@@ -17,6 +18,7 @@ export interface LicensesDeps {
   isCurrentLoad: (version: number) => boolean;
   confirmAction: (message: string) => Promise<boolean>;
   actionMessage: Ref<string>;
+  actionMessageType: Ref<ActionMessageType | null>;
   manufacturers: Ref<DictionaryItem[]>;
   clearRouteQuery?: (keys: string[]) => boolean;
 }
@@ -156,7 +158,9 @@ export function useLicenses(deps: LicensesDeps) {
     try {
       await deps.download(`/reports/licenses/export/${query ? `?${query}` : ""}`, "software-licenses.xlsx");
     } catch (error) {
-      deps.actionMessage.value = errorMessage(error, tr("license.exportFailed"));
+      const normalized = normalizeApiError(error);
+      deps.actionMessageType.value = "error";
+      deps.actionMessage.value = normalized.kind === "unknown" ? tr("license.exportFailed") : normalized.message;
     } finally {
       exportingLicenses.value = false;
     }

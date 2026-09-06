@@ -20,6 +20,7 @@ import type {
 } from "../types";
 import { parseAssetQrValue } from "../asset-qr";
 import type { InventoryContext } from "../page-context";
+import { normalizeApiError } from "../error-handling";
 import {
   businessOptionLabel,
   businessOptionTone,
@@ -1021,7 +1022,8 @@ export function useInventory(context: InventoryContext) {
         String(i18n.global.t("inventory.exportFilename")),
       );
     } catch (error) {
-      ElMessage.error(error instanceof Error ? error.message : i18n.global.t("inventory.exportFailed"));
+      const normalized = normalizeApiError(error);
+      ElMessage.error(normalized.kind === "unknown" ? i18n.global.t("inventory.exportFailed") : normalized.message);
     } finally {
       if (exportingTaskId.value === task.id) exportingTaskId.value = null;
     }

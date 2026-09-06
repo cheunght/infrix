@@ -10,6 +10,7 @@ import {
   type StockOperationType,
 } from "../business-enums";
 import { i18n } from "../i18n";
+import { normalizeApiError, type ActionMessageType } from "../error-handling";
 
 const tr = (key: string, params?: Record<string, unknown>): string =>
   String(params ? i18n.global.t(key, params) : i18n.global.t(key));
@@ -30,6 +31,7 @@ export interface SparePartsDeps {
   dataCenters: Ref<DataCenter[]>;
   spareCategories: Ref<SparePartCategory[]>;
   actionMessage: Ref<string>;
+  actionMessageType: Ref<ActionMessageType | null>;
   can: CapabilityFn;
 }
 
@@ -237,7 +239,9 @@ export function useSpareParts(deps: SparePartsDeps) {
     try {
       await deps.download(`/reports/spare-parts/export/${query ? `?${query}` : ""}`, "spare-parts.xlsx");
     } catch (error) {
-      deps.actionMessage.value = errorMessage(error, tr("spare.exportFailed"));
+      const normalized = normalizeApiError(error);
+      deps.actionMessageType.value = "error";
+      deps.actionMessage.value = normalized.kind === "unknown" ? tr("spare.exportFailed") : normalized.message;
     } finally {
       exportingSpares.value = false;
     }
@@ -257,7 +261,9 @@ export function useSpareParts(deps: SparePartsDeps) {
     try {
       await deps.download(`/reports/spare-transactions/export/${query ? `?${query}` : ""}`, "spare-transactions.xlsx");
     } catch (error) {
-      deps.actionMessage.value = errorMessage(error, tr("spare.exportFailed"));
+      const normalized = normalizeApiError(error);
+      deps.actionMessageType.value = "error";
+      deps.actionMessage.value = normalized.kind === "unknown" ? tr("spare.exportFailed") : normalized.message;
     } finally {
       exportingSpares.value = false;
     }

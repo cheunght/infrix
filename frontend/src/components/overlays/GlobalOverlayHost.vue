@@ -99,6 +99,8 @@ const {
   importResult,
   importPreview,
   filteredImportRows,
+  copyImportErrors,
+  downloadImportErrors,
   downloadImportTemplate,
   onElementUploadChange,
   chooseAnotherImportFile,
@@ -1366,6 +1368,10 @@ function importRowErrorText(row: { errors: Array<{ label: string; message: strin
         />
         <div v-if="importResult.errors.length" class="import-error-list">
           <p v-for="item in importResult.errors" :key="item.line"><strong>{{ t('overlay.importErrorLine', { line: item.line }) }}</strong>{{ importErrorText(item.detail) }}</p>
+          <div class="import-error-actions">
+            <el-button link type="primary" size="small" @click="copyImportErrors">{{ t('asset.copyImportErrors') }}</el-button>
+            <el-button link type="primary" size="small" @click="downloadImportErrors">{{ t('asset.downloadImportErrors') }}</el-button>
+          </div>
         </div>
       </section>
     </template>

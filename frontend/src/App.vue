@@ -726,6 +726,7 @@ const licensesApi = useLicenses({
   isCurrentLoad,
   confirmAction,
   actionMessage,
+  actionMessageType,
   manufacturers,
   clearRouteQuery,
 });
@@ -768,6 +769,7 @@ const repairs = useRepairs({
   assets,
   selectedAssetIds,
   actionMessage,
+  actionMessageType,
   refreshOpenAssetDetail: assetsApi.refreshOpenAssetDetail,
   clearRouteQuery,
 });
@@ -840,6 +842,7 @@ const spares = useSpareParts({
   dataCenters,
   spareCategories,
   actionMessage,
+  actionMessageType,
   can,
 });
 const {
