@@ -2,6 +2,7 @@ import { computed, onBeforeUnmount, ref, watch, type Ref } from "vue";
 import { isAbortError } from "../api";
 import type { OperationalAlert, OperationalAlertsResponse } from "../types";
 import type { CapabilityFn, RequestFn } from "../page-context";
+import { normalizeApiError } from "../error-handling";
 import { i18n } from "../i18n";
 
 const READ_ALERTS_PREFIX = "infrix.alerts.read";
@@ -85,9 +86,10 @@ export function useNotifications(deps: NotificationsDeps) {
       return true;
     } catch (reason) {
       if (currentRequestId === requestId && !isAbortError(reason)) {
-        error.value = reason instanceof Error && reason.message
-          ? reason.message
-          : i18n.global.t("notifications.loadFailed");
+        const normalized = normalizeApiError(reason);
+        error.value = normalized.kind === "unknown"
+          ? i18n.global.t("notifications.loadFailed")
+          : normalized.message;
       }
       return false;
     } finally {

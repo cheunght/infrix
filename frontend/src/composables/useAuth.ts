@@ -221,15 +221,19 @@ export function useAuth(deps: AuthDeps) {
         deps.bootstrapError.value = true;
         return;
       }
+      const normalized = normalizeApiError(error);
+      const loginMessage = normalized.kind === "unknown"
+        ? normalized.nonFieldErrors[0] || i18n.global.t("auth.loginFailed")
+        : normalized.message;
       if (error instanceof ApiError && error.status === 429) {
         const details = error.details as { retry_after?: number } | undefined;
         const retryAfter = Number(details?.retry_after || 0);
         const minutes = retryAfter ? Math.ceil(retryAfter / 60) : 0;
         deps.loginError.value = minutes
-          ? `${error.message} ${i18n.global.t("auth.loginRetryAfter", { minutes })}`
-          : error.message;
+          ? `${loginMessage} ${i18n.global.t("auth.loginRetryAfter", { minutes })}`
+          : loginMessage;
       } else {
-        deps.loginError.value = error instanceof Error ? error.message : i18n.global.t("auth.loginFailed");
+        deps.loginError.value = loginMessage;
       }
     }
   }

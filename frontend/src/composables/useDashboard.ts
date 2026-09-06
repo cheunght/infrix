@@ -2,6 +2,7 @@ import { computed, ref } from "vue";
 import { isAbortError } from "../api";
 import type { DashboardOverview } from "../types";
 import type { CapabilityFn } from "../page-context";
+import { normalizeApiError } from "../error-handling";
 import { currentLocale, i18n } from "../i18n";
 
 export interface DashboardApi {
@@ -24,15 +25,19 @@ export function useDashboard(api: DashboardApi) {
     try {
       const result = await api.request<DashboardOverview>("/reports/dashboard/");
       if (!api.isCurrentLoad(version)) return false;
-      if (result == null) throw new Error(i18n.global.t("common.noData"));
+      if (result == null) {
+        dashboardError.value = i18n.global.t("common.noData");
+        return false;
+      }
       dashboard.value = result;
       dashboardUpdatedAt.value = new Date().toISOString();
       return true;
     } catch (error) {
       if (api.isCurrentLoad(version) && !isAbortError(error)) {
-        dashboardError.value = error instanceof Error && error.message
-          ? error.message
-          : i18n.global.t("dashboard.dataLoadFailed");
+        const normalized = normalizeApiError(error);
+        dashboardError.value = normalized.kind === "unknown"
+          ? i18n.global.t("dashboard.dataLoadFailed")
+          : normalized.message;
       }
       return false;
     } finally {

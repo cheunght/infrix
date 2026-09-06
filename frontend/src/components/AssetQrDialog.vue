@@ -6,6 +6,7 @@ import { ElMessage } from "element-plus/es/components/message/index.mjs";
 import QRCode from "qrcode";
 import type { Asset } from "../types";
 import { assetLocationLabel, buildAssetQrValue } from "../asset-qr";
+import { normalizeApiError } from "../error-handling";
 
 type QrEntry = {
   asset: Asset;
@@ -49,7 +50,10 @@ async function generateCodes() {
     if (currentGeneration === generation) entries.value = nextEntries;
   } catch (generationError) {
     if (currentGeneration === generation) {
-      error.value = generationError instanceof Error ? generationError.message : t("asset.qrCodeGenerateFailed");
+      const normalized = normalizeApiError(generationError);
+      error.value = normalized.kind === "unknown"
+        ? t("asset.qrCodeGenerateFailed")
+        : normalized.message;
       entries.value = [];
     }
   } finally {

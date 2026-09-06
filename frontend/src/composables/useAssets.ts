@@ -1164,9 +1164,10 @@ export function useAssets(deps: AssetsDeps) {
         detailAssetId.value === assetId &&
         !isAbortError(error)
       ) {
-        inventoryHistoryError.value = error instanceof Error
-          ? error.message
-          : tr("asset.relatedDataLoadFailed");
+        const normalized = normalizeApiError(error);
+        inventoryHistoryError.value = normalized.kind === "unknown"
+          ? tr("asset.relatedDataLoadFailed")
+          : normalized.message;
       }
       return false;
     } finally {

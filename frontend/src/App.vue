@@ -35,7 +35,7 @@ import { useRepairs } from "./composables/useRepairs";
 import { useSpareParts } from "./composables/useSpareParts";
 import { useSettings } from "./composables/useSettings";
 import { isAbortError } from "./api";
-import type { ActionMessageType } from "./error-handling";
+import { normalizeApiError, type ActionMessageType } from "./error-handling";
 import { useRoute, useRouter, type RouteLocationRaw } from "vue-router";
 import ApiErrorAlert from "./components/ApiErrorAlert.vue";
 import SearchField from "./components/SearchField.vue";
@@ -1300,6 +1300,7 @@ async function persistLocalePreference(locale: Locale) {
   } catch {
     profileForm.value.locale = previousLocale;
     setLocale(previousLocale);
+    actionMessageType.value = "error";
     actionMessage.value = t("auth.languageSaveFailed");
   } finally {
     localeSaving.value = false;
@@ -1483,7 +1484,11 @@ async function load() {
   } catch (error) {
     console.error(error);
     if (isCurrentLoad(version)) {
-      pageError.value = error instanceof Error ? error.message : t("common.dataLoadFailed");
+      const normalized = normalizeApiError(error);
+      pageError.value = normalized.kind === "unknown"
+        ? t("common.dataLoadFailed")
+        : normalized.message;
+      actionMessageType.value = "error";
       actionMessage.value = pageError.value;
     }
   } finally {
@@ -1616,10 +1621,7 @@ function updateViewportHeight() {
 }
 watch(actionMessage, (message) => {
   if (!message) return;
-  const forcedType = actionMessageType.value;
-  const isError = forcedType
-    ? forcedType === "error"
-    : /(^\d{3}:|失败|错误|不能|请先|未找到|请求|权限|无权|失效|未保存|failed|error|cannot|could not|not saved|permission|invalid|unable|expired)/i.test(message);
+  const isError = actionMessageType.value === "error";
   ElMessage({
     message,
     type: isError ? "error" : "success",
