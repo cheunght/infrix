@@ -1,8 +1,9 @@
 """Database-backed LDAP configuration and secret boundary.
 
-The deployment environment remains a read-only bootstrap source for older
-installations.  Once the singleton row exists, it is the only source used by
-authentication, diagnostics, and administration APIs.
+The singleton database row is the only runtime source for LDAP configuration.
+Fresh installations start disabled and can be configured from the administrator
+UI.  The deployment environment supplies only the encryption key used for
+stored bind secrets.
 """
 
 from __future__ import annotations
@@ -11,7 +12,6 @@ from dataclasses import dataclass
 import os
 import re
 from typing import Any
-from urllib.parse import urlsplit
 
 from cryptography.fernet import Fernet, InvalidToken
 from django.conf import settings
@@ -37,11 +37,6 @@ SECURITY_MODE_CHOICES = (
 )
 ATTRIBUTE_PATTERN = re.compile(r"^[A-Za-z][A-Za-z0-9-]*$")
 
-DEFAULT_PORTS = {
-    SECURITY_MODE_LDAPS: 636,
-    SECURITY_MODE_STARTTLS: 389,
-    SECURITY_MODE_NONE: 389,
-}
 DEFAULT_DIRECTORY_VALUES = {
     DIRECTORY_TYPE_ACTIVE_DIRECTORY: {
         "user_login_attribute": "sAMAccountName",
@@ -99,7 +94,7 @@ class EffectiveLDAPConfiguration:
     account_control_attribute: str = ""
     connect_timeout: int = 5
     operation_timeout: int = 5
-    source: str = "environment"
+    source: str = "default"
 
     @property
     def effective_user_search_base(self) -> str:
@@ -124,68 +119,6 @@ def _as_int(value: Any) -> int | None:
         return int(value)
     except (TypeError, ValueError):
         return None
-
-
-def _legacy_directory_type() -> str:
-    external_id = _as_text(getattr(settings, "LDAP_EXTERNAL_ID_ATTRIBUTE", ""))
-    username = _as_text(getattr(settings, "LDAP_USERNAME_ATTRIBUTE", ""))
-    user_filter = _as_text(getattr(settings, "LDAP_USER_FILTER", ""))
-    if (
-        external_id.casefold() == "objectguid"
-        or username.casefold() in {"samaccountname", "userprincipalname"}
-        or "objectclass=user" in user_filter.casefold()
-    ):
-        return DIRECTORY_TYPE_ACTIVE_DIRECTORY
-    return DIRECTORY_TYPE_GENERIC_LDAP
-
-
-def _legacy_configuration() -> EffectiveLDAPConfiguration:
-    server_uri = _as_text(getattr(settings, "LDAP_SERVER_URI", ""))
-    try:
-        parsed = urlsplit(server_uri)
-        host = parsed.hostname or ""
-        port = parsed.port
-    except (TypeError, ValueError):
-        host = ""
-        port = None
-        parsed = None
-    starttls = bool(getattr(settings, "LDAP_STARTTLS", False))
-    if parsed and parsed.scheme == SECURITY_MODE_LDAPS:
-        security_mode = SECURITY_MODE_LDAPS
-    elif starttls:
-        security_mode = SECURITY_MODE_STARTTLS
-    else:
-        security_mode = SECURITY_MODE_NONE
-    if port is None:
-        port = DEFAULT_PORTS[security_mode]
-
-    return EffectiveLDAPConfiguration(
-        enabled=bool(getattr(settings, "LDAP_ENABLED", False)),
-        directory_type=_legacy_directory_type(),
-        primary_host=host,
-        primary_port=port,
-        base_dn=_as_text(getattr(settings, "LDAP_USER_BASE_DN", "")),
-        bind_dn=_as_text(getattr(settings, "LDAP_BIND_DN", "")),
-        bind_password=str(getattr(settings, "LDAP_BIND_PASSWORD", "") or ""),
-        password_configured=bool(getattr(settings, "LDAP_BIND_PASSWORD", "")),
-        secret_available=True,
-        security_mode=security_mode,
-        tls_server_name=_as_text(getattr(settings, "LDAP_TLS_SERVER_NAME", "")),
-        ca_cert_file=_as_text(getattr(settings, "LDAP_CA_CERT_FILE", "")),
-        user_search_base=_as_text(getattr(settings, "LDAP_USER_BASE_DN", "")),
-        user_login_attribute=_as_text(getattr(settings, "LDAP_USERNAME_ATTRIBUTE", "")),
-        user_filter=_as_text(getattr(settings, "LDAP_USER_FILTER", "")),
-        external_id_attribute=_as_text(getattr(settings, "LDAP_EXTERNAL_ID_ATTRIBUTE", "")),
-        email_attribute=_as_text(getattr(settings, "LDAP_EMAIL_ATTRIBUTE", "")),
-        first_name_attribute=_as_text(getattr(settings, "LDAP_FIRST_NAME_ATTRIBUTE", "")),
-        last_name_attribute=_as_text(getattr(settings, "LDAP_LAST_NAME_ATTRIBUTE", "")),
-        account_control_attribute=_as_text(
-            getattr(settings, "LDAP_AD_ACCOUNT_CONTROL_ATTRIBUTE", "")
-        ),
-        connect_timeout=int(getattr(settings, "LDAP_CONNECT_TIMEOUT", 5) or 5),
-        operation_timeout=int(getattr(settings, "LDAP_OPERATION_TIMEOUT", 5) or 5),
-        source="environment",
-    )
 
 
 def _fernet() -> Fernet:
@@ -257,7 +190,7 @@ def get_configuration_record() -> DirectoryServiceConfiguration | None:
 
 def get_effective_ldap_configuration() -> EffectiveLDAPConfiguration:
     record = get_configuration_record()
-    return _from_record(record) if record is not None else _legacy_configuration()
+    return _from_record(record) if record is not None else EffectiveLDAPConfiguration()
 
 
 def _candidate_value(current: EffectiveLDAPConfiguration, changes: dict[str, Any], name: str):
@@ -473,15 +406,6 @@ def save_configuration(
     password_value: str,
 ) -> DirectoryServiceConfiguration:
     current_record = get_configuration_record()
-    if (
-        current_record is None
-        and candidate.source == "environment"
-        and candidate.password_configured
-        and candidate.enabled
-        and not password_submitted
-    ):
-        raise ConfigurationSecretError("bootstrap bind password must be re-entered before saving")
-
     encrypted_password = current_record.bind_password_encrypted if current_record else ""
     if password_submitted and password_value:
         encrypted_password = encrypt_bind_password(password_value)

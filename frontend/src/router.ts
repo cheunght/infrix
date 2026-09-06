@@ -166,6 +166,7 @@ const pageComponents: Partial<Record<Page, () => Promise<Component>>> = {
     "ElPagination",
     "ElSelect",
     "ElSkeleton",
+    "ElSwitch",
     "ElTabPane",
     "ElTable",
     "ElTableColumn",

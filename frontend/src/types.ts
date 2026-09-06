@@ -684,7 +684,7 @@ export type LdapStatus = {
   ad_specific_mode: boolean | null;
   password_configured: boolean;
   secret_available: boolean;
-  source: "database" | "environment";
+  source: "database" | "default";
   configuration_error: boolean;
   last_diagnostic_at?: string | null;
   last_diagnostic_success?: boolean | null;
@@ -720,7 +720,7 @@ export type LdapConfiguration = {
   directory_identity_count: number;
   identity_anchor_locked: boolean;
   identity_anchor_attribute: string;
-  source: "database" | "environment";
+  source: "database" | "default";
   configured: boolean;
   configuration_errors: Record<string, string>;
   last_diagnostic_at?: string | null;

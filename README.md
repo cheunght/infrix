@@ -116,11 +116,11 @@ Production rejects missing or placeholder secrets, wildcard hosts, non-HTTPS CSR
 
 Do not commit `.env` files, SQLite databases, SQL dumps, certificates, private keys, logs, virtual environments, `node_modules`, or frontend build output. Use least-privilege database credentials and maintain a tested backup and restore procedure.
 
-LDAP / Active Directory is configured by a system administrator from the
-Settings page. `INFRIX_CONFIG_ENCRYPTION_KEY` must be present before saving a
-bind password; it is used only for authenticated encryption at rest. Existing
-`LDAP_*` environment variables remain a read-only bootstrap path and are not
-the runtime source after the first database configuration is saved.
+LDAP / Active Directory is configured by a system administrator from
+Organization & Permissions → LDAP / AD. `INFRIX_CONFIG_ENCRYPTION_KEY` must be
+present before saving a bind password; it is used only for authenticated
+encryption at rest. Fresh installations start with LDAP disabled and do not
+require any LDAP runtime environment variables.
 
 ## Rocky Linux 9 Deployment
 

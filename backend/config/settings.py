@@ -1,6 +1,5 @@
 from pathlib import Path
 import os
-import re
 from urllib.parse import urlsplit
 
 from django.core.exceptions import ImproperlyConfigured
@@ -188,84 +187,6 @@ def validate_production_settings(
         )
 
 
-def validate_ldap_settings(
-    *,
-    enabled,
-    server_uri,
-    bind_dn,
-    bind_password,
-    user_base_dn,
-    user_filter,
-    username_attribute,
-    external_id_attribute,
-    connect_timeout,
-    operation_timeout,
-    starttls,
-    tls_validate,
-    ca_cert_file,
-):
-    """Validate the explicit single-directory LDAP runtime contract."""
-    if not enabled:
-        return
-
-    normalized_uri = str(server_uri or "").strip()
-    if not normalized_uri:
-        raise ImproperlyConfigured("LDAP_SERVER_URI is required when LDAP_ENABLED=true.")
-    try:
-        parsed_uri = urlsplit(normalized_uri)
-        hostname = parsed_uri.hostname
-        parsed_uri.port  # Force malformed-port validation.
-    except ValueError as exc:
-        raise ImproperlyConfigured("LDAP_SERVER_URI is invalid.") from exc
-    if parsed_uri.scheme not in {"ldap", "ldaps"} or not hostname:
-        raise ImproperlyConfigured("LDAP_SERVER_URI must be an ldap:// or ldaps:// URI.")
-    if parsed_uri.username or parsed_uri.password:
-        raise ImproperlyConfigured("LDAP_SERVER_URI must not contain credentials.")
-    if parsed_uri.path not in {"", "/"} or parsed_uri.query or parsed_uri.fragment:
-        raise ImproperlyConfigured("LDAP_SERVER_URI must contain only the LDAP server endpoint.")
-    if parsed_uri.scheme == "ldap" and not starttls:
-        raise ImproperlyConfigured("LDAP_STARTTLS=true is required for ldap:// endpoints.")
-    if parsed_uri.scheme == "ldaps" and starttls:
-        raise ImproperlyConfigured("LDAP_STARTTLS must be false for ldaps:// endpoints.")
-    if not tls_validate:
-        raise ImproperlyConfigured("LDAP_TLS_VALIDATE=true is required when LDAP_ENABLED=true.")
-
-    required_values = {
-        "LDAP_BIND_DN": bind_dn,
-        "LDAP_BIND_PASSWORD": bind_password,
-        "LDAP_USER_BASE_DN": user_base_dn,
-        "LDAP_USER_FILTER": user_filter,
-        "LDAP_USERNAME_ATTRIBUTE": username_attribute,
-        "LDAP_EXTERNAL_ID_ATTRIBUTE": external_id_attribute,
-    }
-    for setting_name, value in required_values.items():
-        if not str(value or "").strip():
-            raise ImproperlyConfigured(f"{setting_name} is required when LDAP_ENABLED=true.")
-
-    if user_filter.count("{username}") != 1:
-        raise ImproperlyConfigured(
-            "LDAP_USER_FILTER must contain exactly one {username} placeholder."
-        )
-    if "{" in user_filter.replace("{username}", "") or "}" in user_filter.replace("{username}", ""):
-        raise ImproperlyConfigured("LDAP_USER_FILTER may only use the {username} placeholder.")
-
-    attribute_pattern = re.compile(r"^[A-Za-z][A-Za-z0-9-]*$")
-    for setting_name, value in {
-        "LDAP_USERNAME_ATTRIBUTE": username_attribute,
-        "LDAP_EXTERNAL_ID_ATTRIBUTE": external_id_attribute,
-    }.items():
-        if not attribute_pattern.fullmatch(str(value).strip()):
-            raise ImproperlyConfigured(f"{setting_name} must be a simple LDAP attribute name.")
-
-    if connect_timeout <= 0 or operation_timeout <= 0:
-        raise ImproperlyConfigured("LDAP timeouts must be positive integers.")
-    if ca_cert_file and (
-        not Path(ca_cert_file).is_file()
-        or not os.access(ca_cert_file, os.R_OK)
-    ):
-        raise ImproperlyConfigured("LDAP_CA_CERT_FILE must point to a readable certificate file.")
-
-
 DJANGO_ENV = os.getenv("DJANGO_ENV", "development").strip().lower()
 if DJANGO_ENV not in {"development", "production"}:
     raise ImproperlyConfigured("DJANGO_ENV must be either 'development' or 'production'.")
@@ -408,38 +329,6 @@ AUTH_PASSWORD_VALIDATORS = [
 AUTH_LOGIN_MAX_ATTEMPTS = _env_int("AUTH_LOGIN_MAX_ATTEMPTS", "5", minimum=1)
 AUTH_LOGIN_WINDOW_SECONDS = _env_int("AUTH_LOGIN_WINDOW_SECONDS", "900", minimum=1)
 AUTH_LOGIN_LOCK_SECONDS = _env_int("AUTH_LOGIN_LOCK_SECONDS", "900", minimum=1)
-LDAP_ENABLED = _env_bool("LDAP_ENABLED", "0")
-LDAP_SERVER_URI = os.getenv("LDAP_SERVER_URI", "").strip()
-LDAP_TLS_SERVER_NAME = os.getenv("LDAP_TLS_SERVER_NAME", "").strip()
-LDAP_BIND_DN = os.getenv("LDAP_BIND_DN", "").strip()
-LDAP_BIND_PASSWORD = os.getenv("LDAP_BIND_PASSWORD", "")
-LDAP_USER_BASE_DN = os.getenv("LDAP_USER_BASE_DN", "").strip()
-LDAP_USER_FILTER = os.getenv(
-    "LDAP_USER_FILTER",
-    "(&(objectClass=user)(sAMAccountName={username}))",
-).strip()
-LDAP_USERNAME_ATTRIBUTE = os.getenv("LDAP_USERNAME_ATTRIBUTE", "sAMAccountName").strip()
-LDAP_EXTERNAL_ID_ATTRIBUTE = os.getenv("LDAP_EXTERNAL_ID_ATTRIBUTE", "objectGUID").strip()
-LDAP_EMAIL_ATTRIBUTE = os.getenv("LDAP_EMAIL_ATTRIBUTE", "mail").strip()
-LDAP_FIRST_NAME_ATTRIBUTE = os.getenv("LDAP_FIRST_NAME_ATTRIBUTE", "givenName").strip()
-LDAP_LAST_NAME_ATTRIBUTE = os.getenv("LDAP_LAST_NAME_ATTRIBUTE", "sn").strip()
-LDAP_AD_ACCOUNT_CONTROL_ATTRIBUTE = os.getenv(
-    "LDAP_AD_ACCOUNT_CONTROL_ATTRIBUTE",
-    "userAccountControl",
-).strip()
-LDAP_CONNECT_TIMEOUT = 5
-LDAP_OPERATION_TIMEOUT = 5
-LDAP_STARTTLS = False
-LDAP_TLS_VALIDATE = True
-LDAP_CA_CERT_FILE = os.getenv("LDAP_CA_CERT_FILE", "").strip()
-if LDAP_ENABLED:
-    # These values remain a backward-compatible bootstrap source only.  The
-    # runtime resolver validates them lazily so a database-managed directory
-    # configuration can safely supersede an incomplete legacy environment.
-    LDAP_CONNECT_TIMEOUT = _env_int("LDAP_CONNECT_TIMEOUT", "5", minimum=1)
-    LDAP_OPERATION_TIMEOUT = _env_int("LDAP_OPERATION_TIMEOUT", "5", minimum=1)
-    LDAP_STARTTLS = _env_bool("LDAP_STARTTLS", "0")
-    LDAP_TLS_VALIDATE = _env_bool("LDAP_TLS_VALIDATE", "1")
 INFRIX_CONFIG_ENCRYPTION_KEY = os.getenv("INFRIX_CONFIG_ENCRYPTION_KEY", "").strip()
 LANGUAGE_CODE = "zh-hans"
 TIME_ZONE = os.getenv("TZ", "Asia/Shanghai")

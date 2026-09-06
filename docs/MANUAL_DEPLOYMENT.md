@@ -225,10 +225,9 @@ Do not print the secret or database password in logs. Do not store the real envi
 bind password stored in the database. Generate a Fernet key outside the
 repository, keep it in the restricted environment file, and do not rotate it
 without a planned re-encryption migration. The system administrator can then
-configure the directory in Settings → LDAP integration. The legacy `LDAP_*`
-environment variables are read-only bootstrap values for existing deployments;
-enabling the configuration from the UI requires the administrator to re-enter
-the bind password.
+configure the directory in Organization & Permissions → LDAP / AD. Fresh
+installations start with LDAP disabled; no LDAP runtime environment variables
+are required.
 
 The settings page accepts hostnames or IP addresses and keeps the primary and
 secondary endpoints separate from the security mode. Use LDAPS or StartTLS in

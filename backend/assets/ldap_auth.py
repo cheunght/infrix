@@ -658,8 +658,6 @@ def _ldap_endpoint_display(host: str, port: int | None) -> str | None:
 
 def _ad_specific_mode(configuration: EffectiveLDAPConfiguration | None = None) -> bool | None:
     config = configuration or get_effective_ldap_configuration()
-    if not config.primary_host and not config.base_dn and config.source == "environment":
-        return None
     return config.directory_type == "active_directory"
 
 
