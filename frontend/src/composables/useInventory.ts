@@ -214,6 +214,7 @@ export function useInventory(context: InventoryContext) {
     resolutionStatus: InventoryResolutionStatus | "";
     page: number;
   } | null = null;
+  let initialDataLoaded = false;
 
   const activeDataCenters = computed(() =>
     context.dataCenters.value.filter((item) => item.is_active !== false),
@@ -689,8 +690,8 @@ export function useInventory(context: InventoryContext) {
     }
   }
 
-  async function openTask(task: InventoryTask) {
-    if (!context.can("inventory.view")) return;
+  async function openTask(task: InventoryTask): Promise<boolean> {
+    if (!context.can("inventory.view")) return false;
     resetScanState();
     clearBatchSelection();
     const requestId = ++taskDetailRequestId;
@@ -706,17 +707,25 @@ export function useInventory(context: InventoryContext) {
         `/inventory-tasks/${task.id}/`,
         { signal: controller.signal },
       );
-      if (requestId !== taskDetailRequestId || controller.signal.aborted || !result) return;
+      if (requestId !== taskDetailRequestId || controller.signal.aborted || !result) return false;
       activeTask.value = result;
+      context.updateRouteQuery?.({ task: String(result.id) });
       itemPage.value = 1;
       itemSearch.value = "";
       itemStatus.value = "";
       itemResolutionStatus.value = "";
       await loadItems();
+      return true;
     } catch (error) {
       if (requestId === taskDetailRequestId && !controller.signal.aborted) {
-        taskDetailError.value = errorMessage(error, i18n.global.t("inventory.taskLoadFailed"));
+        const message = errorMessage(error, i18n.global.t("inventory.taskLoadFailed"));
+        taskDetailError.value = message;
+        if (context.inventoryTaskId.value === task.id) {
+          taskListError.value = message;
+          context.clearRouteQuery?.(["task"]);
+        }
       }
+      return false;
     } finally {
       if (requestId === taskDetailRequestId) {
         taskDetailLoading.value = false;
@@ -737,6 +746,12 @@ export function useInventory(context: InventoryContext) {
     itemCount.value = 0;
     itemListError.value = "";
     taskDetailError.value = "";
+    context.clearRouteQuery?.(["task"]);
+  }
+
+  async function openTaskById(taskId: number): Promise<boolean> {
+    if (!Number.isSafeInteger(taskId) || taskId <= 0) return false;
+    return openTask({ id: taskId } as InventoryTask);
   }
 
   function resetScanState() {
@@ -1702,7 +1717,18 @@ export function useInventory(context: InventoryContext) {
   }
   async function loadInitialData() {
     await Promise.allSettled([loadTasks(), loadRooms(), loadInspectors()]);
+    initialDataLoaded = true;
+    if (context.inventoryTaskId.value) await openTaskById(context.inventoryTaskId.value);
   }
+
+  watch(
+    () => context.inventoryTaskId.value,
+    (taskId, previousTaskId) => {
+      if (!initialDataLoaded || taskId === previousTaskId) return;
+      if (taskId) void openTaskById(taskId);
+      else if (activeTask.value) closeTask();
+    },
+  );
 
   onBeforeUnmount(clearScopePreview);
 
@@ -1817,6 +1843,7 @@ export function useInventory(context: InventoryContext) {
     refreshActiveTask,
     retryActiveTask,
     openTask,
+    openTaskById,
     closeTask,
     openNewTask,
     changeTaskDataCenter,
