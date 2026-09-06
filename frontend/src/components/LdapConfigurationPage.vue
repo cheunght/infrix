@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, ref, watch } from "vue";
 import { useI18n } from "vue-i18n";
+import { InfoFilled } from "@element-plus/icons-vue";
 import PageContent from "./page/PageContent.vue";
 import StatusTag from "./StatusTag.vue";
 import type { SettingsContext } from "../page-context";
@@ -27,6 +28,7 @@ const {
 const ldapPasswordEditing = ref(false);
 const ldapPrimaryPortTouched = ref(false);
 const ldapSecondaryPortTouched = ref(false);
+const ldapFormSnapshot = ref<Record<string, unknown>>({});
 
 function ldapCheckLabel(name: string) {
   return t(`settings.ldapChecks.${name}`);
@@ -79,6 +81,30 @@ watch(
   },
 );
 
+function snapshotLdapForm() {
+  return { ...ldapConfigurationForm.value } as Record<string, unknown>;
+}
+
+ldapFormSnapshot.value = snapshotLdapForm();
+
+watch(
+  ldapConfigurationForm,
+  (value) => {
+    const current = { ...value } as Record<string, unknown>;
+    const nextErrors = { ...ldapConfigurationFormErrors.value };
+    let errorsCleared = false;
+    for (const field of Object.keys(nextErrors)) {
+      if (current[field] !== ldapFormSnapshot.value[field]) {
+        delete nextErrors[field];
+        errorsCleared = true;
+      }
+    }
+    if (errorsCleared) ldapConfigurationFormErrors.value = nextErrors;
+    ldapFormSnapshot.value = current;
+  },
+  { deep: true },
+);
+
 const savedConfigurationStatus = computed(() => {
   if (ldapConfiguration.value?.configured) {
     return { tone: "success" as const, label: t("settings.ldapConfigurationComplete") };
@@ -115,7 +141,6 @@ const secretStatus = computed(() => {
   return { tone: "warning" as const, label: t("settings.ldapSecretMissing") };
 });
 
-const hasFormErrors = computed(() => Object.keys(ldapConfigurationFormErrors.value).length > 0);
 const isBusy = computed(() => ldapConfigurationLoading.value || ldapConfigurationSaving.value);
 
 function statusDotClass(status: { tone: "success" | "warning" | "danger" | "info" }) {
@@ -140,28 +165,6 @@ function formatLdapDiagnosticAt(value?: string | null) {
 <template>
   <PageContent surface>
     <section class="settings-ldap-panel settings-ldap-panel--page">
-      <header class="settings-ldap-panel__heading">
-        <div class="settings-ldap-panel__heading-copy">
-          <h2>{{ t("settings.ldapConfigurationTitle") }}</h2>
-        </div>
-        <div class="settings-ldap-panel__heading-side">
-          <div class="settings-ldap-panel__service-control">
-            <div class="settings-ldap-panel__service-row">
-              <span class="settings-ldap-panel__service-label">{{ t("settings.ldapEnabledToggle") }}</span>
-              <el-switch
-                v-model="ldapConfigurationForm.enabled"
-                :disabled="isBusy || !ldapConfiguration"
-                :aria-label="t('settings.ldapEnabledToggle')"
-              />
-              <el-text class="settings-ldap-panel__draft-status" :type="draftRuntimeStatus.tone">
-                {{ draftRuntimeStatus.label }}
-              </el-text>
-            </div>
-            <span class="settings-ldap-panel__service-hint">{{ t("settings.ldapEnableDraftHint") }}</span>
-          </div>
-        </div>
-      </header>
-
       <el-skeleton v-if="ldapConfigurationLoading" :rows="8" animated />
       <el-alert
         v-else-if="ldapConfigurationError"
@@ -174,24 +177,6 @@ function formatLdapDiagnosticAt(value?: string | null) {
         <el-button link type="danger" @click="retryLdapConfiguration">{{ t("common.retry") }}</el-button>
       </el-alert>
       <template v-else-if="ldapConfiguration">
-        <el-alert
-          v-if="ldapConfigurationDirty"
-          class="settings-ldap-panel__draft-alert"
-          :title="t('settings.ldapUnsavedChanges')"
-          :description="t('settings.ldapUnsavedHint')"
-          type="info"
-          show-icon
-          :closable="false"
-        />
-        <el-alert
-          v-if="hasFormErrors"
-          class="settings-ldap-panel__draft-alert"
-          :title="t('settings.ldapConfigurationInvalid')"
-          :description="t('settings.ldapConfigurationInvalidDescription')"
-          type="warning"
-          show-icon
-          :closable="false"
-        />
         <el-alert
           v-if="ldapConfiguration.secret_error"
           class="settings-ldap-panel__draft-alert"
@@ -368,31 +353,32 @@ function formatLdapDiagnosticAt(value?: string | null) {
             </el-collapse-item>
           </el-collapse>
 
-                <div class="settings-ldap-panel__action-bar">
-                  <div class="settings-ldap-panel__action-test">
-                    <el-button
-                      :loading="ldapDiagnosticLoading"
-                      :disabled="ldapDiagnosticLoading || ldapConfigurationLoading || ldapConfigurationSaving || !ldapConfiguration"
-                      @click="runLdapDiagnostics"
-                    >
-                      {{ t("settings.ldapTestConnection") }}
-                    </el-button>
-                    <span>{{ t("settings.ldapUnsavedHint") }}</span>
-                  </div>
-                  <div class="settings-ldap-panel__action-save">
-                    <el-button :disabled="!ldapConfigurationDirty || ldapConfigurationSaving" @click="resetLdapConfigurationForm">
-                      {{ t("settings.ldapRestoreConfiguration") }}
-                    </el-button>
-                    <el-button
-                      type="primary"
-                      :loading="ldapConfigurationSaving"
-                      :disabled="!ldapConfigurationDirty || ldapConfigurationSaving || !ldapConfiguration"
-                      @click="saveLdapConfiguration"
-                    >
-                      {{ t("settings.ldapSaveConfiguration") }}
-                    </el-button>
-                  </div>
+              <div class="settings-ldap-panel__action-bar">
+                <div v-if="ldapConfigurationDirty" class="settings-ldap-panel__action-notice" role="status">
+                  <el-icon aria-hidden="true"><InfoFilled /></el-icon>
+                  <span>{{ t("settings.ldapUnsavedChanges") }} · {{ t("settings.ldapUnsavedHint") }}</span>
                 </div>
+                <div class="settings-ldap-panel__action-controls">
+                  <el-button
+                    :loading="ldapDiagnosticLoading"
+                    :disabled="ldapDiagnosticLoading || ldapConfigurationLoading || ldapConfigurationSaving || !ldapConfiguration"
+                    @click="runLdapDiagnostics"
+                  >
+                    {{ t("settings.ldapTestConnection") }}
+                  </el-button>
+                  <el-button :disabled="!ldapConfigurationDirty || ldapConfigurationSaving" @click="resetLdapConfigurationForm">
+                    {{ t("settings.ldapRestoreConfiguration") }}
+                  </el-button>
+                  <el-button
+                    type="primary"
+                    :loading="ldapConfigurationSaving"
+                    :disabled="!ldapConfigurationDirty || ldapConfigurationSaving || !ldapConfiguration"
+                    @click="saveLdapConfiguration"
+                  >
+                    {{ t("settings.ldapSaveConfiguration") }}
+                  </el-button>
+                </div>
+              </div>
               </el-form>
             </div>
           </div>
@@ -400,6 +386,21 @@ function formatLdapDiagnosticAt(value?: string | null) {
           <aside class="settings-ldap-panel__sidebar">
             <section class="settings-ldap-panel__sidebar-section" aria-live="polite">
               <h3>{{ t("settings.ldapCurrentStatus") }}</h3>
+              <div class="settings-ldap-panel__enable-control">
+                <div class="settings-ldap-panel__enable-row">
+                  <span class="settings-ldap-panel__enable-label">{{ t("settings.ldapEnabledToggle") }}</span>
+                  <el-switch
+                    v-model="ldapConfigurationForm.enabled"
+                    :disabled="isBusy || !ldapConfiguration"
+                    :aria-label="t('settings.ldapEnabledToggle')"
+                  />
+                  <el-text class="settings-ldap-panel__draft-status" :type="draftRuntimeStatus.tone">
+                    {{ draftRuntimeStatus.label }}
+                  </el-text>
+                </div>
+                <span class="settings-ldap-panel__enable-hint">{{ t("settings.ldapEnableDraftHint") }}</span>
+              </div>
+              <el-divider class="settings-ldap-panel__status-divider" />
               <div class="settings-ldap-panel__status-list">
                 <div class="settings-ldap-panel__status-row">
                   <span class="settings-ldap-panel__status-dot" :class="statusDotClass(runtimeStatus)" aria-hidden="true" />

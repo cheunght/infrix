@@ -1,6 +1,6 @@
 import { computed, nextTick, ref, type ComputedRef, type Ref } from "vue";
 import { type FormInstance, type FormRules } from "element-plus";
-import { flattenError, isAbortError, pageItems, pageTotal, type PageResult } from "../api";
+import { ApiError, flattenError, isAbortError, pageItems, pageTotal, type PageResult } from "../api";
 import type {
   AuditLog,
   CustomField,
@@ -51,6 +51,14 @@ type CustomFieldOptionForm = {
 };
 
 type FormErrors = Record<string, string>;
+
+const LDAP_CONFIGURATION_FIELDS = [
+  "enabled", "directory_type", "primary_host", "primary_port", "secondary_host", "secondary_port",
+  "base_dn", "bind_dn", "bind_password", "security_mode", "tls_server_name", "ca_cert_file",
+  "user_search_base", "user_login_attribute", "user_filter", "external_id_attribute",
+  "email_attribute", "first_name_attribute", "last_name_attribute", "account_control_attribute",
+  "connect_timeout", "operation_timeout",
+] as const;
 
 function extractFieldErrors(error: unknown, allowedFields: readonly string[]): FormErrors {
   const details = error && typeof error === "object" && "details" in error
@@ -624,14 +632,17 @@ export function useSettings(deps: SettingsDeps) {
       deps.actionMessage.value = tr("settings.ldapConfigurationSaved");
       return true;
     } catch (error) {
-      ldapConfigurationFormErrors.value = extractFieldErrors(error, [
-        "enabled", "directory_type", "primary_host", "primary_port", "secondary_host", "secondary_port",
-        "base_dn", "bind_dn", "bind_password", "security_mode", "tls_server_name", "ca_cert_file",
-        "user_search_base", "user_login_attribute", "user_filter", "external_id_attribute",
-        "email_attribute", "first_name_attribute", "last_name_attribute", "account_control_attribute",
-        "connect_timeout", "operation_timeout",
-      ]);
-      deps.actionMessage.value = errorMessage(error, tr("settings.ldapConfigurationSaveFailed"));
+      const fieldErrors = extractFieldErrors(error, LDAP_CONFIGURATION_FIELDS);
+      ldapConfigurationFormErrors.value = fieldErrors;
+      const status = error instanceof ApiError ? error.status : undefined;
+      const hasFieldErrors = Object.keys(fieldErrors).length > 0;
+      if (status === 403) {
+        deps.actionMessage.value = tr("settings.ldapConfigurationPermissionDenied");
+      } else if (status === 400 || (status === undefined && hasFieldErrors)) {
+        deps.actionMessage.value = tr("settings.ldapConfigurationValidationFailed");
+      } else {
+        deps.actionMessage.value = tr("settings.ldapConfigurationSaveFailed");
+      }
       return false;
     } finally {
       ldapConfigurationSaving.value = false;

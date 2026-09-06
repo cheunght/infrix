@@ -1598,7 +1598,7 @@ function updateViewportHeight() {
 }
 watch(actionMessage, (message) => {
   if (!message) return;
-  const isError = /(^\d{3}:|失败|错误|不能|请先|未找到|请求|权限|无权|失效|failed|error|cannot|permission|invalid|unable|expired)/i.test(message);
+  const isError = /(^\d{3}:|失败|错误|不能|请先|未找到|请求|权限|无权|失效|未保存|failed|error|cannot|could not|not saved|permission|invalid|unable|expired)/i.test(message);
   ElMessage({
     message,
     type: isError ? "error" : "success",
