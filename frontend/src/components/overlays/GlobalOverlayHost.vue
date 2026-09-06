@@ -162,6 +162,7 @@ const {
   faultForm,
   faultSaving,
   faultError,
+  faultFormErrors,
   createFault,
   showRepairModal,
   selectedFault,
@@ -169,6 +170,7 @@ const {
   repairTimeError,
   repairSaving,
   repairError,
+  repairFormErrors,
   saveRepair,
   reopenRepair,
   showRepairPartUsageModal,
@@ -180,6 +182,7 @@ const {
   repairPartUsageLoading,
   repairPartUsageError,
   repairPartUsageSaving,
+  repairPartUsageFormErrors,
   repairPartUsageOptions,
   repairPartUsageOptionsLoading,
   repairPartUsageOptionsError,
@@ -1010,7 +1013,7 @@ function importRowErrorText(row: { errors: Array<{ label: string; message: strin
   >
     <el-form ref="faultFormRef" class="horizontal-form fault-form" :model="faultForm" :rules="faultFormRules" label-position="right" :validate-on-rule-change="false" @submit.prevent="submitFault">
       <div class="horizontal-form__rows">
-        <el-form-item :label="t('repair.asset')" prop="asset" required :validate-event="false">
+        <el-form-item :label="t('repair.asset')" prop="asset" required :validate-event="false" :error="faultFormErrors.asset">
           <AssetSelect
             v-model="faultForm.asset"
             :request="request"
@@ -1018,9 +1021,9 @@ function importRowErrorText(row: { errors: Array<{ label: string; message: strin
             :placeholder="t('assetSelect.placeholder')"
           />
         </el-form-item>
-        <el-form-item :label="t('repair.occurredAt')" prop="occurred_at" required :validate-event="false"><el-date-picker v-model="faultForm.occurred_at" type="datetime" value-format="YYYY-MM-DDTHH:mm" /></el-form-item>
-        <el-form-item :label="t('overlay.faultReason')"><el-input v-model="faultForm.reason" :placeholder="t('overlay.faultReasonPlaceholder')" /></el-form-item>
-        <el-form-item :label="t('overlay.faultDescription')"><el-input v-model="faultForm.description" type="textarea" :rows="4" :placeholder="t('overlay.faultDescriptionPlaceholder')" /></el-form-item>
+        <el-form-item :label="t('repair.occurredAt')" prop="occurred_at" required :validate-event="false" :error="faultFormErrors.occurred_at"><el-date-picker v-model="faultForm.occurred_at" type="datetime" value-format="YYYY-MM-DDTHH:mm" /></el-form-item>
+        <el-form-item :label="t('overlay.faultReason')" :error="faultFormErrors.reason"><el-input v-model="faultForm.reason" :placeholder="t('overlay.faultReasonPlaceholder')" /></el-form-item>
+        <el-form-item :label="t('overlay.faultDescription')" :error="faultFormErrors.description"><el-input v-model="faultForm.description" type="textarea" :rows="4" :placeholder="t('overlay.faultDescriptionPlaceholder')" /></el-form-item>
       </div>
     </el-form>
     <template #footer>
@@ -1125,13 +1128,13 @@ function importRowErrorText(row: { errors: Array<{ label: string; message: strin
         </PagedTable>
         <el-empty v-else-if="!repairPartUsageError" :description="t('repair.noPartUsage')" :image-size="56" />
       </section>
-      <el-form-item :label="t('overlay.repairProvider')"><el-input v-model="repairForm.provider" :readonly="repairReadOnly" :placeholder="t('overlay.repairProviderPlaceholder')" /></el-form-item>
-      <el-form-item :label="t('overlay.repairStartedAt')" prop="started_at"><el-date-picker v-model="repairForm.started_at" type="datetime" value-format="YYYY-MM-DDTHH:mm" :disabled="repairReadOnly" /></el-form-item>
-      <el-form-item :label="t('overlay.repairFinishedAt')" prop="finished_at">
+      <el-form-item :label="t('overlay.repairProvider')" :error="repairFormErrors.provider"><el-input v-model="repairForm.provider" :readonly="repairReadOnly" :placeholder="t('overlay.repairProviderPlaceholder')" /></el-form-item>
+      <el-form-item :label="t('overlay.repairStartedAt')" prop="started_at" :error="repairFormErrors.started_at"><el-date-picker v-model="repairForm.started_at" type="datetime" value-format="YYYY-MM-DDTHH:mm" :disabled="repairReadOnly" /></el-form-item>
+      <el-form-item :label="t('overlay.repairFinishedAt')" prop="finished_at" :error="repairFormErrors.finished_at">
         <el-date-picker v-model="repairForm.finished_at" type="datetime" value-format="YYYY-MM-DDTHH:mm" :disabled="repairReadOnly" />
         <FieldHelp v-if="!repairReadOnly" :text="repairFinishedAtHelp" />
       </el-form-item>
-      <el-form-item :label="t('common.notes')"><el-input v-model="repairForm.notes" type="textarea" :rows="4" :readonly="repairReadOnly" :placeholder="t('overlay.repairNotesPlaceholder')" /></el-form-item>
+      <el-form-item :label="t('common.notes')" :error="repairFormErrors.notes"><el-input v-model="repairForm.notes" type="textarea" :rows="4" :readonly="repairReadOnly" :placeholder="t('overlay.repairNotesPlaceholder')" /></el-form-item>
     </el-form>
     <template #footer>
       <el-button :disabled="repairSaving" @click="showRepairModal = false">{{ repairReadOnly ? t('common.close') : t('common.cancel') }}</el-button>
@@ -1168,7 +1171,7 @@ function importRowErrorText(row: { errors: Array<{ label: string; message: strin
         :closable="false"
         show-icon
       />
-      <el-form-item :label="t('repair.partUsageSource')" prop="source" required>
+      <el-form-item :label="t('repair.partUsageSource')" prop="source" required :error="repairPartUsageFormErrors.source">
         <el-select v-model="repairPartUsageForm.source" class="repair-part-usage-form__wide" @change="changeRepairPartUsageSource">
           <el-option
             v-for="option in repairPartUsageAvailableSourceOptions"
@@ -1179,7 +1182,7 @@ function importRowErrorText(row: { errors: Array<{ label: string; message: strin
         </el-select>
       </el-form-item>
       <template v-if="repairPartUsageForm.source === 'internal_stock'">
-        <el-form-item :label="t('repair.partUsagePart')" prop="spare_part_id" required>
+        <el-form-item :label="t('repair.partUsagePart')" prop="spare_part_id" required :error="repairPartUsageFormErrors.spare_part_id">
           <el-select
             v-model="repairPartUsageForm.spare_part_id"
             class="repair-part-usage-form__wide"
@@ -1204,7 +1207,7 @@ function importRowErrorText(row: { errors: Array<{ label: string; message: strin
             <el-button link type="danger" @click="loadRepairPartUsageOptions()">{{ t('common.retry') }}</el-button>
           </div>
         </el-form-item>
-        <el-form-item :label="t('repair.partUsageStock')" prop="spare_stock_id" required>
+        <el-form-item :label="t('repair.partUsageStock')" prop="spare_stock_id" required :error="repairPartUsageFormErrors.spare_stock_id">
           <el-select
             v-model="repairPartUsageForm.spare_stock_id"
             class="repair-part-usage-form__wide"
@@ -1227,20 +1230,20 @@ function importRowErrorText(row: { errors: Array<{ label: string; message: strin
         </el-form-item>
       </template>
       <template v-else>
-        <el-form-item :label="t('repair.partUsageName')" prop="part_name" required>
+        <el-form-item :label="t('repair.partUsageName')" prop="part_name" required :error="repairPartUsageFormErrors.part_name">
           <el-input v-model="repairPartUsageForm.part_name" maxlength="160" :placeholder="t('repair.partUsageNamePlaceholder')" />
         </el-form-item>
-        <el-form-item :label="t('repair.partUsageModel')" prop="part_model">
+        <el-form-item :label="t('repair.partUsageModel')" prop="part_model" :error="repairPartUsageFormErrors.part_model">
           <el-input v-model="repairPartUsageForm.part_model" maxlength="160" :placeholder="t('repair.partUsageModelPlaceholder')" />
         </el-form-item>
-        <el-form-item :label="t('repair.partUsageCode')" prop="part_code">
+        <el-form-item :label="t('repair.partUsageCode')" prop="part_code" :error="repairPartUsageFormErrors.part_code">
           <el-input v-model="repairPartUsageForm.part_code" maxlength="80" :placeholder="t('repair.partUsageCodePlaceholder')" />
         </el-form-item>
-        <el-form-item :label="t('repair.partUsageVendor')" prop="vendor_name">
+        <el-form-item :label="t('repair.partUsageVendor')" prop="vendor_name" :error="repairPartUsageFormErrors.vendor_name">
           <el-input v-model="repairPartUsageForm.vendor_name" maxlength="160" :placeholder="t('repair.partUsageVendorPlaceholder')" />
         </el-form-item>
       </template>
-      <el-form-item :label="t('repair.partUsageQuantity')" prop="quantity" required>
+      <el-form-item :label="t('repair.partUsageQuantity')" prop="quantity" required :error="repairPartUsageFormErrors.quantity">
         <el-input-number
           v-model="repairPartUsageQuantity"
           :min="1"
@@ -1252,7 +1255,7 @@ function importRowErrorText(row: { errors: Array<{ label: string; message: strin
         />
       </el-form-item>
       <el-alert v-if="repairPartUsageStockImpact" :title="repairPartUsageStockImpact" type="warning" :closable="false" show-icon />
-      <el-form-item :label="t('common.notes')" prop="notes">
+      <el-form-item :label="t('common.notes')" prop="notes" :error="repairPartUsageFormErrors.notes">
         <el-input v-model="repairPartUsageForm.notes" type="textarea" :rows="3" maxlength="2000" :placeholder="t('repair.partUsageNotesPlaceholder')" />
       </el-form-item>
     </el-form>

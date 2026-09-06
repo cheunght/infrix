@@ -1,8 +1,8 @@
-import { computed, onBeforeUnmount, ref } from "vue";
+import { computed, onBeforeUnmount, ref, watch, type Ref } from "vue";
 import { ElMessage } from "element-plus/es/components/message/index.mjs";
 import { ElMessageBox } from "element-plus/es/components/message-box/index.mjs";
 import { currentLocale, i18n } from "../i18n";
-import { ApiError, buildExportQuery, pageItems, pageTotal, type PageResult } from "../api";
+import { buildExportQuery, pageItems, pageTotal, type PageResult } from "../api";
 import type {
   Asset,
   InventoryBulkNormalResponse,
@@ -20,7 +20,12 @@ import type {
 } from "../types";
 import { parseAssetQrValue } from "../asset-qr";
 import type { InventoryContext } from "../page-context";
-import { normalizeApiError } from "../error-handling";
+import {
+  clearFieldError,
+  fieldErrorsToText,
+  normalizeApiError,
+  type ActionMessageType,
+} from "../error-handling";
 import {
   businessOptionLabel,
   businessOptionTone,
@@ -34,6 +39,15 @@ import {
 
 type AuxKey = "rooms" | "inspectors" | "racks";
 type BatchSelectionMode = "inventory" | "resolution";
+
+const INVENTORY_TASK_FORM_FIELDS = [
+  "name", "data_center", "server_room", "inspector", "start_at", "end_at", "notes",
+] as const;
+const INVENTORY_ITEM_FORM_FIELDS = [
+  "status", "actual_rack", "actual_start_u", "actual_end_u", "notes",
+] as const;
+const INVENTORY_RESOLUTION_FORM_FIELDS = ["action", "note"] as const;
+const INVENTORY_BULK_FORM_FIELDS = ["note"] as const;
 
 export function useInventory(context: InventoryContext) {
   const taskListLoading = ref(false);
@@ -58,6 +72,10 @@ export function useInventory(context: InventoryContext) {
   const resolutionDialogError = ref("");
   const bulkResolutionDialogError = ref("");
   const bulkNormalDialogError = ref("");
+  const taskFormErrors = ref<Record<string, string>>({});
+  const itemFormErrors = ref<Record<string, string>>({});
+  const resolutionFormErrors = ref<Record<string, string>>({});
+  const bulkResolutionFormErrors = ref<Record<string, string>>({});
   const exportingTaskId = ref<number | null>(null);
 
   const tasks = ref<InventoryTask[]>([]);
@@ -127,6 +145,57 @@ export function useInventory(context: InventoryContext) {
   const bulkResolutionResult = ref<InventoryBulkResolutionResponse | null>(null);
   const bulkNormalCount = ref(0);
   const bulkNormalResult = ref<InventoryBulkNormalResponse | null>(null);
+
+  function setActionMessage(message: string, type: ActionMessageType = "success") {
+    context.actionMessageType.value = type;
+    context.actionMessage.value = message;
+  }
+
+  function errorMessage(error: unknown, fallback: string) {
+    const normalized = normalizeApiError(error);
+    return normalized.kind === "unknown" ? fallback : normalized.message;
+  }
+
+  function setActionError(error: unknown, fallback: string) {
+    const message = errorMessage(error, fallback);
+    setActionMessage(message, "error");
+    return message;
+  }
+
+  function setDialogError(
+    target: typeof taskDialogError,
+    fieldTarget: typeof taskFormErrors,
+    error: unknown,
+    fallback: string,
+    allowedFields: readonly string[],
+  ) {
+    const normalized = normalizeApiError(error);
+    const fields = fieldErrorsToText(normalized.fieldErrors, allowedFields);
+    fieldTarget.value = fields;
+    target.value = Object.keys(fields).length
+      ? ""
+      : (normalized.kind === "unknown" ? fallback : normalized.message);
+  }
+
+  function watchFormFieldErrors<T extends object>(
+    form: Ref<T>,
+    errors: Ref<Record<string, string>>,
+    fields: readonly string[],
+  ) {
+    for (const field of fields) {
+      watch(
+        () => (form.value as Record<string, unknown>)[field],
+        () => {
+          if (errors.value[field]) errors.value = clearFieldError(errors.value, field);
+        },
+      );
+    }
+  }
+
+  watchFormFieldErrors(taskForm, taskFormErrors, INVENTORY_TASK_FORM_FIELDS);
+  watchFormFieldErrors(itemForm, itemFormErrors, INVENTORY_ITEM_FORM_FIELDS);
+  watchFormFieldErrors(resolutionForm, resolutionFormErrors, INVENTORY_RESOLUTION_FORM_FIELDS);
+  watchFormFieldErrors(bulkResolutionForm, bulkResolutionFormErrors, INVENTORY_BULK_FORM_FIELDS);
 
   let taskRequestId = 0;
   let itemRequestId = 0;
@@ -363,7 +432,7 @@ export function useInventory(context: InventoryContext) {
       return true;
     } catch (error) {
       if (requestId === scopePreviewRequestId && !controller.signal.aborted) {
-        scopePreviewError.value = error instanceof Error ? error.message : i18n.global.t("inventory.rangeLoadFailed");
+        scopePreviewError.value = errorMessage(error, i18n.global.t("inventory.rangeLoadFailed"));
       }
       return false;
     } finally {
@@ -436,7 +505,7 @@ export function useInventory(context: InventoryContext) {
       context.serverRooms.value = result;
     } catch (error) {
       if (id === auxRequestIds.rooms && !controller.signal.aborted) {
-        auxErrors.value.rooms = error instanceof Error ? error.message : i18n.global.t("inventory.roomsLoadFailed");
+        auxErrors.value.rooms = errorMessage(error, i18n.global.t("inventory.roomsLoadFailed"));
       }
     } finally {
       finishAuxRequest();
@@ -455,7 +524,7 @@ export function useInventory(context: InventoryContext) {
       inspectors.value = result;
     } catch (error) {
       if (id === auxRequestIds.inspectors && !controller.signal.aborted) {
-        auxErrors.value.inspectors = error instanceof Error ? error.message : i18n.global.t("inventory.inspectorsLoadFailed");
+        auxErrors.value.inspectors = errorMessage(error, i18n.global.t("inventory.inspectorsLoadFailed"));
       }
     } finally {
       finishAuxRequest();
@@ -475,7 +544,7 @@ export function useInventory(context: InventoryContext) {
       racks.value = result;
     } catch (error) {
       if (id === auxRequestIds.racks && !controller.signal.aborted) {
-        auxErrors.value.racks = error instanceof Error ? error.message : i18n.global.t("inventory.racksLoadFailed");
+        auxErrors.value.racks = errorMessage(error, i18n.global.t("inventory.racksLoadFailed"));
       }
     } finally {
       finishAuxRequest();
@@ -519,7 +588,7 @@ export function useInventory(context: InventoryContext) {
       taskCount.value = total;
     } catch (error) {
       if (requestId === taskRequestId && !controller.signal.aborted) {
-        taskListError.value = error instanceof Error ? error.message : i18n.global.t("inventory.taskLoadFailed");
+        taskListError.value = errorMessage(error, i18n.global.t("inventory.taskLoadFailed"));
       }
     } finally {
       if (requestId === taskRequestId) {
@@ -574,7 +643,7 @@ export function useInventory(context: InventoryContext) {
       return true;
     } catch (error) {
       if (requestId === itemRequestId && !controller.signal.aborted) {
-        itemListError.value = error instanceof Error ? error.message : i18n.global.t("inventory.itemLoadFailed");
+        itemListError.value = errorMessage(error, i18n.global.t("inventory.itemLoadFailed"));
       }
       return false;
     } finally {
@@ -609,7 +678,7 @@ export function useInventory(context: InventoryContext) {
       return true;
     } catch (error) {
       if (requestId === taskDetailRequestId && !controller.signal.aborted) {
-        taskDetailError.value = error instanceof Error ? error.message : i18n.global.t("inventory.taskDetailLoadFailed");
+        taskDetailError.value = errorMessage(error, i18n.global.t("inventory.taskDetailLoadFailed"));
       }
       return false;
     } finally {
@@ -646,8 +715,7 @@ export function useInventory(context: InventoryContext) {
       await loadItems();
     } catch (error) {
       if (requestId === taskDetailRequestId && !controller.signal.aborted) {
-        taskDetailError.value = error instanceof Error ? error.message : i18n.global.t("inventory.taskLoadFailed");
-        ElMessage.error(taskDetailError.value);
+        taskDetailError.value = errorMessage(error, i18n.global.t("inventory.taskLoadFailed"));
       }
     } finally {
       if (requestId === taskDetailRequestId) {
@@ -756,7 +824,7 @@ export function useInventory(context: InventoryContext) {
       return false;
     }
     if (!context.can("inventory.manage")) {
-      ElMessage.error(i18n.global.t("inventory.inventoryPermissionDenied"));
+      setActionMessage(i18n.global.t("inventory.inventoryPermissionDenied"), "error");
       return false;
     }
     if (item.status !== "pending") {
@@ -777,13 +845,13 @@ export function useInventory(context: InventoryContext) {
         refreshActiveTask(taskId),
         loadTasks(),
       ]);
-      ElMessage.success(i18n.global.t("inventory.scannedNormalCompleted", { asset: item.asset_no }));
+      setActionMessage(i18n.global.t("inventory.scannedNormalCompleted", { asset: item.asset_no }), "success");
       if (!itemsLoaded || !taskDetailLoaded || itemListError.value || taskDetailError.value || taskListError.value) {
         ElMessage.warning(i18n.global.t("inventory.scannedNormalRefreshFailed"));
       }
       return true;
     } catch (error) {
-      ElMessage.error(error instanceof Error ? error.message : i18n.global.t("inventory.scannedNormalFailed"));
+      setActionError(error, i18n.global.t("inventory.scannedNormalFailed"));
       return false;
     } finally {
       scannedNormalSaving.value = false;
@@ -810,6 +878,7 @@ export function useInventory(context: InventoryContext) {
   async function openNewTask() {
     if (!context.can("inventory.manage")) return;
     taskDialogError.value = "";
+    taskFormErrors.value = {};
     clearScopePreview();
     resetTaskForm();
     showTaskDialog.value = true;
@@ -837,12 +906,14 @@ export function useInventory(context: InventoryContext) {
   function closeTaskDialog() {
     showTaskDialog.value = false;
     taskDialogError.value = "";
+    taskFormErrors.value = {};
     clearScopePreview();
   }
 
   async function saveTask() {
     if (!context.can("inventory.manage") || taskCreating.value) return false;
     taskDialogError.value = "";
+    taskFormErrors.value = {};
     if (
       !taskForm.value.name.trim() ||
       !taskForm.value.data_center ||
@@ -850,29 +921,24 @@ export function useInventory(context: InventoryContext) {
       !taskForm.value.end_at
     ) {
       taskDialogError.value = i18n.global.t("inventory.taskCreateInvalid");
-      ElMessage.warning(taskDialogError.value);
       return false;
     }
     const startAt = new Date(taskForm.value.start_at).getTime();
     const endAt = new Date(taskForm.value.end_at).getTime();
     if (Number.isNaN(startAt) || Number.isNaN(endAt) || startAt > endAt) {
       taskDialogError.value = i18n.global.t("inventory.startAfterEnd");
-      ElMessage.warning(taskDialogError.value);
       return false;
     }
     if (scopePreviewLoading.value) {
       taskDialogError.value = i18n.global.t("inventory.rangeCalculating");
-      ElMessage.warning(taskDialogError.value);
       return false;
     }
     if (scopePreviewError.value || !scopePreview.value) {
       taskDialogError.value = i18n.global.t("inventory.rangeReloadFirst");
-      ElMessage.warning(taskDialogError.value);
       return false;
     }
     if (scopePreview.value.total <= 0) {
       taskDialogError.value = i18n.global.t("inventory.noInventoryAssetsCreate");
-      ElMessage.warning(taskDialogError.value);
       return false;
     }
     taskCreating.value = true;
@@ -892,7 +958,7 @@ export function useInventory(context: InventoryContext) {
         }),
       });
       closeTaskDialog();
-      ElMessage.success(i18n.global.t("inventory.taskCreated", { count: createdTask.summary.total }));
+      setActionMessage(i18n.global.t("inventory.taskCreated", { count: createdTask.summary.total }), "success");
       taskPage.value = 1;
       await loadTasks();
       if (taskListError.value) {
@@ -900,8 +966,13 @@ export function useInventory(context: InventoryContext) {
       }
       return true;
     } catch (error) {
-      taskDialogError.value = error instanceof Error ? error.message : i18n.global.t("inventory.taskCreateFailed");
-      ElMessage.error(taskDialogError.value);
+      setDialogError(
+        taskDialogError,
+        taskFormErrors,
+        error,
+        i18n.global.t("inventory.taskCreateFailed"),
+        INVENTORY_TASK_FORM_FIELDS,
+      );
       return false;
     } finally {
       taskCreating.value = false;
@@ -928,13 +999,13 @@ export function useInventory(context: InventoryContext) {
     try {
       await context.request(`/inventory-tasks/${task.id}/`, { method: "DELETE" });
       await loadTasks();
-      ElMessage.success(i18n.global.t("inventory.taskDeleted"));
+      setActionMessage(i18n.global.t("inventory.taskDeleted"), "success");
       if (taskListError.value) {
         ElMessage.warning(i18n.global.t("inventory.taskDeletedRefreshFailed"));
       }
       return true;
     } catch (error) {
-      ElMessage.error(error instanceof Error ? error.message : i18n.global.t("inventory.taskDeleteFailed"));
+      setActionError(error, i18n.global.t("inventory.taskDeleteFailed"));
       return false;
     } finally {
       taskDeletingId.value = null;
@@ -974,16 +1045,17 @@ export function useInventory(context: InventoryContext) {
       if (activeTask.value?.id === taskId) activeTask.value = result;
       await Promise.all([loadItems(), loadTasks()]);
       const resolutionPending = result.summary.resolution_pending || 0;
-      ElMessage.success(
+      setActionMessage(
         resolutionPending > 0
           ? i18n.global.t("inventory.taskCompletedWithPending", { count: resolutionPending })
           : i18n.global.t("inventory.taskCompleted"),
+        "success",
       );
       if (itemListError.value || taskListError.value) {
         ElMessage.warning(i18n.global.t("inventory.taskCompleteRefreshFailed"));
       }
     } catch (error) {
-      ElMessage.error(error instanceof Error ? error.message : i18n.global.t("inventory.taskCompleteFailed"));
+      setActionError(error, i18n.global.t("inventory.taskCompleteFailed"));
     } finally {
       taskCompleting.value = false;
     }
@@ -1000,12 +1072,12 @@ export function useInventory(context: InventoryContext) {
       );
       if (activeTask.value?.id === taskId) activeTask.value = result;
       await Promise.all([loadItems(), loadTasks()]);
-      ElMessage.success(i18n.global.t("inventory.taskReopened"));
+      setActionMessage(i18n.global.t("inventory.taskReopened"), "success");
       if (itemListError.value || taskListError.value) {
         ElMessage.warning(i18n.global.t("inventory.taskReopenRefreshFailed"));
       }
     } catch (error) {
-      ElMessage.error(error instanceof Error ? error.message : i18n.global.t("inventory.taskReopenFailed"));
+      setActionError(error, i18n.global.t("inventory.taskReopenFailed"));
     } finally {
       taskReopening.value = false;
     }
@@ -1088,6 +1160,7 @@ export function useInventory(context: InventoryContext) {
       notes: item.notes || "",
     };
     itemDialogError.value = "";
+    itemFormErrors.value = {};
     showItemDialog.value = true;
     return true;
   }
@@ -1108,6 +1181,7 @@ export function useInventory(context: InventoryContext) {
       note: item.resolution_note || "",
     };
     resolutionDialogError.value = "";
+    resolutionFormErrors.value = {};
     showResolutionDialog.value = true;
   }
 
@@ -1115,6 +1189,7 @@ export function useInventory(context: InventoryContext) {
     if (resolutionSaving.value) return;
     showResolutionDialog.value = false;
     resolutionDialogError.value = "";
+    resolutionFormErrors.value = {};
     resolutionItem.value = null;
     resolutionForm.value = { action: "", note: "" };
   }
@@ -1124,21 +1199,22 @@ export function useInventory(context: InventoryContext) {
     const action = resolutionForm.value.action;
     if (!item || resolutionSaving.value) return false;
     resolutionDialogError.value = "";
+    resolutionFormErrors.value = {};
     if (!context.can("inventory.manage")) {
-      ElMessage.error(i18n.global.t("inventory.resolutionPermissionDenied"));
+      resolutionDialogError.value = i18n.global.t("inventory.resolutionPermissionDenied");
       return false;
     }
     if (!canResolveInventoryAnomaly(item)) {
-      ElMessage.warning(i18n.global.t("inventory.invalidResolutionAction"));
+      resolutionDialogError.value = i18n.global.t("inventory.invalidResolutionAction");
       return false;
     }
     const allowedActions = resolutionActionOptions(item).map((option) => option.value);
     if (item.resolution_status !== "pending" || !action || !allowedActions.includes(action)) {
-      ElMessage.warning(i18n.global.t("inventory.invalidResolutionAction"));
+      resolutionDialogError.value = i18n.global.t("inventory.invalidResolutionAction");
       return false;
     }
     if (action === "ignore" && !resolutionForm.value.note.trim()) {
-      ElMessage.warning(i18n.global.t("inventory.ignoreNoteRequired"));
+      resolutionDialogError.value = i18n.global.t("inventory.ignoreNoteRequired");
       return false;
     }
 
@@ -1176,10 +1252,8 @@ export function useInventory(context: InventoryContext) {
       }
       return true;
     } catch (error) {
-      const message = error instanceof Error ? error.message : "";
-      const errorCode = error instanceof ApiError && error.details && typeof error.details === "object"
-        ? String((error.details as { code?: unknown }).code || "")
-        : "";
+      const normalized = normalizeApiError(error);
+      const errorCode = normalized.code;
       if (errorCode === "inventory_item_already_resolved") {
         const [itemsLoaded, taskLoaded] = await Promise.all([
           loadItems(),
@@ -1196,8 +1270,13 @@ export function useInventory(context: InventoryContext) {
         );
         return false;
       }
-      resolutionDialogError.value = message || i18n.global.t("inventory.exceptionProcessFailed");
-      ElMessage.error(resolutionDialogError.value);
+      setDialogError(
+        resolutionDialogError,
+        resolutionFormErrors,
+        error,
+        i18n.global.t("inventory.exceptionProcessFailed"),
+        INVENTORY_RESOLUTION_FORM_FIELDS,
+      );
       return false;
     } finally {
       resolutionSaving.value = false;
@@ -1211,6 +1290,7 @@ export function useInventory(context: InventoryContext) {
     bulkResolutionForm.value = { note: "" };
     bulkResolutionResult.value = null;
     bulkResolutionDialogError.value = "";
+    bulkResolutionFormErrors.value = {};
   }
 
   function openBulkResolution(action: InventoryResolutionAction) {
@@ -1224,6 +1304,7 @@ export function useInventory(context: InventoryContext) {
     bulkResolutionForm.value = { note: "" };
     bulkResolutionResult.value = null;
     bulkResolutionDialogError.value = "";
+    bulkResolutionFormErrors.value = {};
     showBulkResolutionDialog.value = true;
   }
 
@@ -1237,16 +1318,17 @@ export function useInventory(context: InventoryContext) {
     const selectedItems = selectedBatchItems.value;
     if (!action || !selectedItems.length || bulkResolutionSaving.value) return false;
     bulkResolutionDialogError.value = "";
+    bulkResolutionFormErrors.value = {};
     if (!context.can("inventory.manage")) {
-      ElMessage.error(i18n.global.t("inventory.resolutionPermissionDenied"));
+      bulkResolutionDialogError.value = i18n.global.t("inventory.resolutionPermissionDenied");
       return false;
     }
     if (!batchResolutionActionOptions(selectedItems).some((option) => option.value === action)) {
-      ElMessage.warning(i18n.global.t("inventory.unsupportedBulkAction"));
+      bulkResolutionDialogError.value = i18n.global.t("inventory.unsupportedBulkAction");
       return false;
     }
     if (action === "ignore" && !bulkResolutionForm.value.note.trim()) {
-      ElMessage.warning(i18n.global.t("inventory.ignoreNoteRequired"));
+      bulkResolutionDialogError.value = i18n.global.t("inventory.ignoreNoteRequired");
       return false;
     }
 
@@ -1278,9 +1360,10 @@ export function useInventory(context: InventoryContext) {
         Boolean(itemListError.value || taskDetailError.value || taskListError.value);
       if (result.failed === 0) {
         if (refreshFailed) {
+          setActionMessage(i18n.global.t("inventory.bulkProcessed", { count: result.succeeded }), "success");
           ElMessage.warning(i18n.global.t("inventory.bulkProcessRefreshFailed"));
         } else {
-          ElMessage.success(i18n.global.t("inventory.bulkProcessed", { count: result.succeeded }));
+          setActionMessage(i18n.global.t("inventory.bulkProcessed", { count: result.succeeded }), "success");
         }
       } else {
         ElMessage.warning(
@@ -1291,8 +1374,13 @@ export function useInventory(context: InventoryContext) {
       }
       return true;
     } catch (error) {
-      bulkResolutionDialogError.value = error instanceof Error ? error.message : i18n.global.t("inventory.bulkProcessFailed");
-      ElMessage.error(bulkResolutionDialogError.value);
+      setDialogError(
+        bulkResolutionDialogError,
+        bulkResolutionFormErrors,
+        error,
+        i18n.global.t("inventory.bulkProcessFailed"),
+        INVENTORY_BULK_FORM_FIELDS,
+      );
       return false;
     } finally {
       bulkResolutionSaving.value = false;
@@ -1337,7 +1425,7 @@ export function useInventory(context: InventoryContext) {
     ) return false;
     bulkNormalDialogError.value = "";
     if (!context.can("inventory.manage")) {
-      ElMessage.error(i18n.global.t("inventory.inventoryPermissionDenied"));
+      bulkNormalDialogError.value = i18n.global.t("inventory.inventoryPermissionDenied");
       return false;
     }
     if (
@@ -1371,9 +1459,10 @@ export function useInventory(context: InventoryContext) {
         Boolean(itemListError.value || taskDetailError.value || taskListError.value);
       if (result.failed === 0) {
         if (refreshFailed) {
+          setActionMessage(i18n.global.t("inventory.bulkNormalCompleted", { count: result.succeeded }), "success");
           ElMessage.warning(i18n.global.t("inventory.bulkNormalRefreshFailed"));
         } else {
-          ElMessage.success(i18n.global.t("inventory.bulkNormalCompleted", { count: result.succeeded }));
+          setActionMessage(i18n.global.t("inventory.bulkNormalCompleted", { count: result.succeeded }), "success");
         }
       } else {
         ElMessage.warning(
@@ -1384,8 +1473,10 @@ export function useInventory(context: InventoryContext) {
       }
       return true;
     } catch (error) {
-      bulkNormalDialogError.value = error instanceof Error ? error.message : i18n.global.t("inventory.bulkNormalFailed");
-      ElMessage.error(bulkNormalDialogError.value);
+      const normalized = normalizeApiError(error);
+      bulkNormalDialogError.value = normalized.kind === "unknown"
+        ? i18n.global.t("inventory.bulkNormalFailed")
+        : normalized.message;
       return false;
     } finally {
       bulkNormalSaving.value = false;
@@ -1470,6 +1561,7 @@ export function useInventory(context: InventoryContext) {
   async function saveItem() {
     if (!context.can("inventory.manage") || !editingItem.value || itemSaving.value) return false;
     itemDialogError.value = "";
+    itemFormErrors.value = {};
     itemSaving.value = true;
     try {
       const saved = await persistInventoryItem();
@@ -1479,14 +1571,19 @@ export function useInventory(context: InventoryContext) {
         loadTasks(),
         refreshActiveTask(saved.taskId),
       ]);
-      ElMessage.success(i18n.global.t("inventory.itemSaved"));
+      setActionMessage(i18n.global.t("inventory.itemSaved"), "success");
       if (!itemsLoaded || itemListError.value || taskListError.value || taskDetailError.value) {
         ElMessage.warning(i18n.global.t("inventory.itemSavedRefreshFailed"));
       }
       return true;
     } catch (error) {
-      itemDialogError.value = error instanceof Error ? error.message : i18n.global.t("inventory.itemSaveFailed");
-      ElMessage.error(itemDialogError.value);
+      setDialogError(
+        itemDialogError,
+        itemFormErrors,
+        error,
+        i18n.global.t("inventory.itemSaveFailed"),
+        INVENTORY_ITEM_FORM_FIELDS,
+      );
       return false;
     } finally {
       itemSaving.value = false;
@@ -1498,6 +1595,7 @@ export function useInventory(context: InventoryContext) {
     const savedContext = captureItemSaveContext();
     if (!savedContext) return false;
     itemDialogError.value = "";
+    itemFormErrors.value = {};
     itemSaving.value = true;
     try {
       const saved = await persistInventoryItem();
@@ -1507,6 +1605,7 @@ export function useInventory(context: InventoryContext) {
       void Promise.allSettled([loadTasks(), refreshActiveTask(saved.taskId)]);
       if (!itemsLoaded || itemListError.value || activeTask.value?.id !== savedContext.taskId) {
         showItemDialog.value = false;
+        setActionMessage(i18n.global.t("inventory.itemSaved"), "success");
         ElMessage.warning(i18n.global.t("inventory.itemSavedNextFailed"));
         return true;
       }
@@ -1524,6 +1623,7 @@ export function useInventory(context: InventoryContext) {
         const nextPageLoaded = await loadItems();
         if (!nextPageLoaded || itemListError.value) {
           showItemDialog.value = false;
+          setActionMessage(i18n.global.t("inventory.itemSaved"), "success");
           ElMessage.warning(i18n.global.t("inventory.itemSavedNextFailed"));
           return true;
         }
@@ -1532,20 +1632,26 @@ export function useInventory(context: InventoryContext) {
 
       if (!nextItem) {
         showItemDialog.value = false;
-        ElMessage.success(i18n.global.t("inventory.itemSavedAll"));
+        setActionMessage(i18n.global.t("inventory.itemSavedAll"), "success");
         return true;
       }
 
       const initialized = await initializeItem(nextItem);
       if (!initialized) {
         showItemDialog.value = false;
+        setActionMessage(i18n.global.t("inventory.itemSaved"), "success");
         ElMessage.warning(i18n.global.t("inventory.itemSavedNextFailed"));
         return true;
       }
       return true;
     } catch (error) {
-      itemDialogError.value = error instanceof Error ? error.message : i18n.global.t("inventory.itemSaveFailed");
-      ElMessage.error(itemDialogError.value);
+      setDialogError(
+        itemDialogError,
+        itemFormErrors,
+        error,
+        i18n.global.t("inventory.itemSaveFailed"),
+        INVENTORY_ITEM_FORM_FIELDS,
+      );
       return false;
     } finally {
       itemSaving.value = false;
@@ -1625,6 +1731,10 @@ export function useInventory(context: InventoryContext) {
     resolutionDialogError,
     bulkResolutionDialogError,
     bulkNormalDialogError,
+    taskFormErrors,
+    itemFormErrors,
+    resolutionFormErrors,
+    bulkResolutionFormErrors,
     exportingTaskId,
     tasks,
     taskCount,

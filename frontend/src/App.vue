@@ -1698,6 +1698,8 @@ const pageContext = {
   request,
   downloadFile: download,
   currentUsername: username,
+  actionMessage,
+  actionMessageType,
   loading, dashboard, assets,
   dashboardDate, dashboardDateTime, handleMenuSelect,
   goToAssets, goToRepairs, goToLicenses,

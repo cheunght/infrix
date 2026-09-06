@@ -1,5 +1,6 @@
 import type { ComputedRef, Ref } from "vue";
 import type { BusinessOption } from "./business-enums";
+import type { ActionMessageType } from "./error-handling";
 import type {
   LocationStatusFilter,
   LocationTypeFilter,
@@ -530,6 +531,8 @@ export interface InventoryContext {
   downloadFile: (path: string, filename?: string) => Promise<void>;
   can: CapabilityFn;
   currentUsername: Ref<string>;
+  actionMessage: Ref<string>;
+  actionMessageType: Ref<ActionMessageType | null>;
   openAssetDetail: (assetId: number) => void | Promise<void>;
   refreshOpenAssetDetail?: (assetId: number) => Promise<boolean | null>;
   dataCenters: Ref<DataCenter[]>;

@@ -71,6 +71,7 @@ const {
   scannedNormalSaving,
   bulkResolutionSaving, bulkNormalSaving,
   taskDialogError, itemDialogError, resolutionDialogError, bulkResolutionDialogError, bulkNormalDialogError,
+  taskFormErrors, itemFormErrors, resolutionFormErrors, bulkResolutionFormErrors,
   tasks, taskCount, taskPage, taskPageSize, taskSearch, taskStatus,
   activeTask, items, itemCount, itemPage, itemPageSize,
   itemSearch, itemStatus, itemResolutionStatus, inspectors, racks, showTaskDialog, showItemDialog,
@@ -775,9 +776,9 @@ onMounted(async () => {
       </el-alert>
       <el-form ref="taskFormRef" class="horizontal-form inventory-task-form" :model="taskForm" :rules="taskRules" :validate-on-rule-change="false" label-position="right" @submit.prevent="submitTask">
         <div class="horizontal-form__rows">
-          <el-form-item :label="t('inventory.taskName')" prop="name"><el-input v-model="taskForm.name" :placeholder="t('inventory.taskNamePlaceholder')" /></el-form-item>
-          <el-form-item :label="t('common.dataCenter')" prop="data_center"><el-select v-model="taskForm.data_center" :loading="auxLoading" @change="changeTaskDataCenter"><el-option v-for="center in activeDataCenters" :key="center.id" :label="center.name" :value="String(center.id)" /></el-select></el-form-item>
-          <el-form-item :label="t('common.room')">
+          <el-form-item :label="t('inventory.taskName')" prop="name" :error="taskFormErrors.name"><el-input v-model="taskForm.name" :placeholder="t('inventory.taskNamePlaceholder')" /></el-form-item>
+          <el-form-item :label="t('common.dataCenter')" prop="data_center" :error="taskFormErrors.data_center"><el-select v-model="taskForm.data_center" :loading="auxLoading" @change="changeTaskDataCenter"><el-option v-for="center in activeDataCenters" :key="center.id" :label="center.name" :value="String(center.id)" /></el-select></el-form-item>
+          <el-form-item :label="t('common.room')" :error="taskFormErrors.server_room">
             <el-select v-model="taskForm.server_room" clearable :disabled="Boolean(taskAuxError)" :placeholder="t('inventory.wholeDataCenter')" @change="changeTaskServerRoom"><el-option v-for="room in activeRooms" :key="room.id" :label="room.name" :value="String(room.id)" /></el-select>
             <FieldHelp :text="taskRoomHelp" />
           </el-form-item>
@@ -814,10 +815,10 @@ onMounted(async () => {
           <div v-else class="inventory-scope-preview__state">{{ t('inventory.selectDataCenterHint') }}</div>
         </section>
         <div class="horizontal-form__rows">
-          <el-form-item :label="t('inventory.inspector')"><el-select v-model="taskForm.inspector" clearable :loading="auxLoading" :disabled="Boolean(taskAuxError)" :placeholder="t('inventory.defaultCurrentUser')"><el-option v-for="person in inspectors" :key="person.id" :label="person.display_name" :value="String(person.id)" /></el-select></el-form-item>
-          <el-form-item :label="t('inventory.startTime')" prop="start_at"><el-date-picker v-model="taskForm.start_at" type="datetime" value-format="YYYY-MM-DDTHH:mm:ss" /></el-form-item>
-          <el-form-item :label="t('inventory.endTime')" prop="end_at"><el-date-picker v-model="taskForm.end_at" type="datetime" value-format="YYYY-MM-DDTHH:mm:ss" /></el-form-item>
-          <el-form-item :label="t('common.notes')"><el-input v-model="taskForm.notes" type="textarea" :rows="3" /></el-form-item>
+          <el-form-item :label="t('inventory.inspector')" :error="taskFormErrors.inspector"><el-select v-model="taskForm.inspector" clearable :loading="auxLoading" :disabled="Boolean(taskAuxError)" :placeholder="t('inventory.defaultCurrentUser')"><el-option v-for="person in inspectors" :key="person.id" :label="person.display_name" :value="String(person.id)" /></el-select></el-form-item>
+          <el-form-item :label="t('inventory.startTime')" prop="start_at" :error="taskFormErrors.start_at"><el-date-picker v-model="taskForm.start_at" type="datetime" value-format="YYYY-MM-DDTHH:mm:ss" /></el-form-item>
+          <el-form-item :label="t('inventory.endTime')" prop="end_at" :error="taskFormErrors.end_at"><el-date-picker v-model="taskForm.end_at" type="datetime" value-format="YYYY-MM-DDTHH:mm:ss" /></el-form-item>
+          <el-form-item :label="t('common.notes')" :error="taskFormErrors.notes"><el-input v-model="taskForm.notes" type="textarea" :rows="3" /></el-form-item>
         </div>
       </el-form>
       <template #footer><el-button :disabled="taskCreating" @click="closeTaskDialog">{{ t('common.cancel') }}</el-button><el-button type="primary" :loading="taskCreating" :disabled="taskCreating || scopePreviewLoading || Boolean(scopePreviewError) || !scopePreview || scopePreview.total <= 0" @click="submitTask">{{ t('inventory.saveTask') }}</el-button></template>
@@ -839,14 +840,14 @@ onMounted(async () => {
       </el-alert>
       <AssetSummary v-if="editingItem" :asset="editingItem" compact :show-status="false" />
       <el-form :key="editingItem?.id ?? 'inventory-item-form'" ref="itemFormRef" :model="itemForm" :rules="itemRules" :validate-on-rule-change="false" label-position="top" class="inventory-item-form">
-          <el-form-item :label="t('inventory.result')" prop="status"><el-select v-model="itemForm.status" :placeholder="t('inventory.selectInventoryResult')" @change="changeItemStatus"><el-option v-for="item in itemResultOptions" :key="item.value" :label="item.label" :value="item.value" /></el-select></el-form-item>
+          <el-form-item :label="t('inventory.result')" prop="status" :error="itemFormErrors.status"><el-select v-model="itemForm.status" :placeholder="t('inventory.selectInventoryResult')" @change="changeItemStatus"><el-option v-for="item in itemResultOptions" :key="item.value" :label="item.label" :value="item.value" /></el-select></el-form-item>
           <el-alert v-if="itemForm.status === 'normal'" :title="t('inventory.resultNormalHint')" type="success" :closable="false" show-icon />
           <div v-if="itemForm.status && itemForm.status !== 'not_found'" class="form-grid">
-          <el-form-item :label="t('inventory.actualRack')"><el-select v-model="itemForm.actual_rack" clearable :disabled="Boolean(itemAuxError) || itemForm.status === 'normal'" :placeholder="t('inventory.notMountedPlaceholder')"><el-option v-for="rack in activeRacks" :key="rack.id" :label="`${rack.data_center_name} / ${rack.server_room_name} / ${rack.code}`" :value="String(rack.id)" /></el-select></el-form-item>
-          <el-form-item :label="t('inventory.actualStartU')"><el-input-number v-model="actualStartUValue" :min="1" :step="1" :precision="0" :value-on-clear="null" :aria-label="t('inventory.actualStartU')" :disabled="itemForm.status === 'normal'"><template #suffix>U</template></el-input-number></el-form-item>
-          <el-form-item :label="t('inventory.actualEndU')"><el-input-number v-model="actualEndUValue" :min="1" :step="1" :precision="0" :value-on-clear="null" :aria-label="t('inventory.actualEndU')" :disabled="itemForm.status === 'normal'"><template #suffix>U</template></el-input-number></el-form-item>
+          <el-form-item :label="t('inventory.actualRack')" :error="itemFormErrors.actual_rack"><el-select v-model="itemForm.actual_rack" clearable :disabled="Boolean(itemAuxError) || itemForm.status === 'normal'" :placeholder="t('inventory.notMountedPlaceholder')"><el-option v-for="rack in activeRacks" :key="rack.id" :label="`${rack.data_center_name} / ${rack.server_room_name} / ${rack.code}`" :value="String(rack.id)" /></el-select></el-form-item>
+          <el-form-item :label="t('inventory.actualStartU')" :error="itemFormErrors.actual_start_u"><el-input-number v-model="actualStartUValue" :min="1" :step="1" :precision="0" :value-on-clear="null" :aria-label="t('inventory.actualStartU')" :disabled="itemForm.status === 'normal'"><template #suffix>U</template></el-input-number></el-form-item>
+          <el-form-item :label="t('inventory.actualEndU')" :error="itemFormErrors.actual_end_u"><el-input-number v-model="actualEndUValue" :min="1" :step="1" :precision="0" :value-on-clear="null" :aria-label="t('inventory.actualEndU')" :disabled="itemForm.status === 'normal'"><template #suffix>U</template></el-input-number></el-form-item>
           </div>
-        <el-form-item :label="t('common.notes')"><el-input v-model="itemForm.notes" type="textarea" :rows="3" :placeholder="t('inventory.mismatchNotePlaceholder')" /></el-form-item>
+        <el-form-item :label="t('common.notes')" :error="itemFormErrors.notes"><el-input v-model="itemForm.notes" type="textarea" :rows="3" :placeholder="t('inventory.mismatchNotePlaceholder')" /></el-form-item>
       </el-form>
       <template #footer><el-button :disabled="itemSaving" @click="showItemDialog = false">{{ t('common.cancel') }}</el-button><el-button :disabled="!itemCanSave" @click="submitItem">{{ t('common.save') }}</el-button><el-button type="primary" :loading="itemSaving" :disabled="!itemCanSave" @click="submitItemAndNext">{{ t('inventory.saveAndNext') }}</el-button></template>
     </ActionDialogShell>
@@ -911,7 +912,7 @@ onMounted(async () => {
           label-position="top"
           class="inventory-resolution-form"
         >
-          <el-form-item :label="t('inventory.processMethod')" prop="action">
+          <el-form-item :label="t('inventory.processMethod')" prop="action" :error="resolutionFormErrors.action">
             <el-select v-model="resolutionForm.action" :placeholder="t('validation.selectRequired', { field: t('inventory.processMethod') })" :disabled="resolutionSaving">
               <el-option v-for="option in resolutionOptions" :key="option.value" :label="option.label" :value="option.value" />
             </el-select>
@@ -923,7 +924,7 @@ onMounted(async () => {
               <div><span>{{ t('inventory.updateAfter') }}</span><strong>{{ locationText(resolutionItem, true) }}</strong></div>
             </div>
           </el-alert>
-          <el-form-item :label="t('inventory.processNote')" prop="note">
+          <el-form-item :label="t('inventory.processNote')" prop="note" :error="resolutionFormErrors.note">
             <el-input v-model="resolutionForm.note" type="textarea" :rows="3" :disabled="resolutionSaving" :placeholder="t('inventory.processNotePlaceholder')" />
           </el-form-item>
         </el-form>
@@ -977,7 +978,7 @@ onMounted(async () => {
           <strong>{{ resolutionActionLabel(bulkResolutionAction) }}</strong>
         </div>
         <el-alert v-if="bulkResolutionNotice" type="info" :closable="false" :title="bulkResolutionNotice" />
-        <el-form-item :label="t('inventory.processNote')" prop="note">
+        <el-form-item :label="t('inventory.processNote')" prop="note" :error="bulkResolutionFormErrors.note">
           <el-input
             v-model="bulkResolutionForm.note"
             type="textarea"
