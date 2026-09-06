@@ -159,6 +159,7 @@ const pageComponents: Partial<Record<Page, () => Promise<Component>>> = {
     "ElDescriptions",
     "ElDescriptionsItem",
     "ElDialog",
+    "ElDivider",
     "ElDrawer",
     "ElEmpty",
     "ElInputNumber",
@@ -172,6 +173,7 @@ const pageComponents: Partial<Record<Page, () => Promise<Component>>> = {
     "ElTableColumn",
     "ElTabs",
     "ElTag",
+    "ElText",
     "ElTooltip",
   ]),
 };

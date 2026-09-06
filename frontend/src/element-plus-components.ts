@@ -32,6 +32,7 @@ export type ElementPlusComponentName =
   | "ElDescriptions"
   | "ElDescriptionsItem"
   | "ElDialog"
+  | "ElDivider"
   | "ElDrawer"
   | "ElDropdown"
   | "ElDropdownItem"
@@ -65,6 +66,7 @@ export type ElementPlusComponentName =
   | "ElTableColumn"
   | "ElTabs"
   | "ElTag"
+  | "ElText"
   | "ElTooltip"
   | "ElUpload";
 
@@ -103,6 +105,7 @@ const componentLoaders: Partial<Record<ElementPlusComponentName, () => Promise<C
   ElDescriptions: () => import("element-plus/es/components/descriptions/index.mjs").then((module) => module.ElDescriptions),
   ElDescriptionsItem: () => import("element-plus/es/components/descriptions/index.mjs").then((module) => module.ElDescriptionsItem),
   ElDialog: () => import("element-plus/es/components/dialog/index.mjs").then((module) => module.ElDialog),
+  ElDivider: () => import("element-plus/es/components/divider/index.mjs").then((module) => module.ElDivider),
   ElDrawer: () => import("element-plus/es/components/drawer/index.mjs").then((module) => module.ElDrawer),
   ElEmpty: () => import("element-plus/es/components/empty/index.mjs").then((module) => module.ElEmpty),
   ElInputNumber: () => import("element-plus/es/components/input-number/index.mjs").then((module) => module.ElInputNumber),
@@ -122,6 +125,7 @@ const componentLoaders: Partial<Record<ElementPlusComponentName, () => Promise<C
   ElTableColumn: () => import("element-plus/es/components/table/index.mjs").then((module) => module.ElTableColumn),
   ElTabs: () => import("element-plus/es/components/tabs/index.mjs").then((module) => module.ElTabs),
   ElTag: () => import("element-plus/es/components/tag/index.mjs").then((module) => module.ElTag),
+  ElText: () => import("element-plus/es/components/text/index.mjs").then((module) => module.ElText),
   ElUpload: () => import("element-plus/es/components/upload/index.mjs").then((module) => module.ElUpload),
 };
 
