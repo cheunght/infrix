@@ -1,6 +1,12 @@
-import { computed, nextTick, ref, type ComputedRef, type Ref } from "vue";
+import { computed, nextTick, ref, watch, type ComputedRef, type Ref } from "vue";
 import { type FormInstance, type FormRules } from "element-plus";
-import { ApiError, flattenError, isAbortError, pageItems, pageTotal, type PageResult } from "../api";
+import { ApiError, isAbortError, pageItems, pageTotal, type PageResult } from "../api";
+import {
+  clearFieldError,
+  fieldErrorsToText,
+  normalizeApiError,
+  type ActionMessageType,
+} from "../error-handling";
 import type {
   AuditLog,
   CustomField,
@@ -39,6 +45,7 @@ export interface SettingsDeps {
   currentUsername: Ref<string>;
   settingsSection: Ref<SettingsSection>;
   actionMessage: Ref<string>;
+  actionMessageType: Ref<ActionMessageType | null>;
 }
 
 export const SYSTEM_RESET_CONFIRMATION = "RESET INFRIX";
@@ -61,17 +68,7 @@ const LDAP_CONFIGURATION_FIELDS = [
 ] as const;
 
 function extractFieldErrors(error: unknown, allowedFields: readonly string[]): FormErrors {
-  const details = error && typeof error === "object" && "details" in error
-    ? (error as { details?: unknown }).details
-    : undefined;
-  const source = details && typeof details === "object" && !Array.isArray(details)
-    ? details as Record<string, unknown>
-    : {};
-  return Object.fromEntries(
-    allowedFields
-      .map((field) => [field, flattenError(source[field])] as const)
-      .filter(([, message]) => Boolean(message)),
-  );
+  return fieldErrorsToText(normalizeApiError(error).fieldErrors, allowedFields);
 }
 
 export function useSettings(deps: SettingsDeps) {
@@ -333,9 +330,50 @@ export function useSettings(deps: SettingsDeps) {
 
   const organizationError = computed(() => userListError.value || roleListError.value);
 
-  function errorMessage(error: unknown, fallback: string) {
-    return error instanceof Error && error.message ? error.message : fallback;
+  function setActionMessage(message: string, type: ActionMessageType = "success") {
+    deps.actionMessageType.value = type;
+    deps.actionMessage.value = message;
   }
+
+  function errorMessage(error: unknown, fallback: string) {
+    const normalized = normalizeApiError(error);
+    return normalized.kind === "unknown" ? fallback : normalized.message;
+  }
+
+  function setActionError(error: unknown, fallback: string): string {
+    const message = errorMessage(error, fallback);
+    setActionMessage(message, "error");
+    return message;
+  }
+
+  function watchFormFieldErrors<T extends object>(
+    form: Ref<T>,
+    errors: Ref<FormErrors>,
+    fields: readonly string[],
+  ) {
+    for (const field of fields) {
+      watch(
+        () => (form.value as Record<string, unknown>)[field],
+        () => {
+          if (errors.value[field]) errors.value = clearFieldError(errors.value, field);
+        },
+      );
+    }
+  }
+
+  watchFormFieldErrors(customFieldForm, customFieldFormErrors, [
+    "device_type", "key", "name", "field_type", "default_value", "sort_order", "group",
+    "help_text", "placeholder", "form_visible", "detail_visible", "list_visible", "filterable",
+    "validation_config",
+  ]);
+  watchFormFieldErrors(customFieldOptionForm, customFieldOptionFormErrors, ["value", "label", "sort_order"]);
+  watchFormFieldErrors(tagForm, tagFormErrors, ["name"]);
+  watchFormFieldErrors(userForm, userFormErrors, [
+    "username", "first_name", "last_name", "email", "password", "confirm_password", "role_code",
+  ]);
+  watchFormFieldErrors(userResetForm, userResetFormErrors, ["new_password", "confirm_password"]);
+  watchFormFieldErrors(dictionaryForm, dictionaryFormErrors, ["name", "code", "color"]);
+  watchFormFieldErrors(systemSettingsForm, systemSettingsFormErrors, ["default_page_size", "default_asset_status"]);
 
   function dictionaryCapability(_kind = dictionarySection.value) {
     return "settings.manage";
@@ -629,7 +667,7 @@ export function useSettings(deps: SettingsDeps) {
       ldapConfiguration.value = result;
       syncLdapConfigurationForm(result);
       await loadLdapStatus();
-      deps.actionMessage.value = tr("settings.ldapConfigurationSaved");
+      setActionMessage(tr("settings.ldapConfigurationSaved"));
       return true;
     } catch (error) {
       const fieldErrors = extractFieldErrors(error, LDAP_CONFIGURATION_FIELDS);
@@ -637,11 +675,11 @@ export function useSettings(deps: SettingsDeps) {
       const status = error instanceof ApiError ? error.status : undefined;
       const hasFieldErrors = Object.keys(fieldErrors).length > 0;
       if (status === 403) {
-        deps.actionMessage.value = tr("settings.ldapConfigurationPermissionDenied");
+        setActionMessage(tr("settings.ldapConfigurationPermissionDenied"), "error");
       } else if (status === 400 || (status === undefined && hasFieldErrors)) {
-        deps.actionMessage.value = tr("settings.ldapConfigurationValidationFailed");
+        setActionMessage(tr("settings.ldapConfigurationValidationFailed"), "error");
       } else {
-        deps.actionMessage.value = tr("settings.ldapConfigurationSaveFailed");
+        setActionMessage(tr("settings.ldapConfigurationSaveFailed"), "error");
       }
       return false;
     } finally {
@@ -1090,7 +1128,7 @@ export function useSettings(deps: SettingsDeps) {
   function openUserResetModal(user: ManagedUser) {
     if (!deps.can("organization.manage")) return;
     if (user.auth_source === "ldap") {
-      deps.actionMessage.value = tr("settings.directoryPasswordManaged");
+      setActionMessage(tr("settings.directoryPasswordManaged"), "error");
       return;
     }
     resettingUser.value = user;
@@ -1134,15 +1172,15 @@ export function useSettings(deps: SettingsDeps) {
         "role_code",
         "password",
       ]);
-      deps.actionMessage.value = errorMessage(error, tr("settings.userSaveFailed"));
+      setActionError(error, tr("settings.userSaveFailed"));
     } finally {
       userSaving.value = false;
     }
     if (!saved) return;
     showUserModal.value = false;
-    deps.actionMessage.value = tr("settings.userSaved");
+    setActionMessage(tr("settings.userSaved"));
     const refreshed = await loadUsers();
-    if (!refreshed && userListError.value) deps.actionMessage.value = tr("settings.userSavedRefreshFailed");
+    if (!refreshed && userListError.value) setActionMessage(tr("settings.userSavedRefreshFailed"), "error");
   }
 
   async function resetUserPassword() {
@@ -1150,7 +1188,7 @@ export function useSettings(deps: SettingsDeps) {
     const user = resettingUser.value;
     if (!user || userPendingId.value === user.id || userResetSaving.value) return;
     if (user.auth_source === "ldap") {
-      deps.actionMessage.value = tr("settings.directoryPasswordManaged");
+      setActionMessage(tr("settings.directoryPasswordManaged"), "error");
       return;
     }
     userPendingId.value = user.id;
@@ -1168,7 +1206,6 @@ export function useSettings(deps: SettingsDeps) {
     } catch (error) {
       userResetFormErrors.value = extractFieldErrors(error, ["new_password", "confirm_password"]);
       userResetError.value = errorMessage(error, tr("settings.passwordResetFailed"));
-      deps.actionMessage.value = userResetError.value;
     } finally {
       userResetSaving.value = false;
       userPendingId.value = null;
@@ -1178,13 +1215,13 @@ export function useSettings(deps: SettingsDeps) {
     resettingUser.value = null;
     userResetError.value = "";
     userResetForm.value = { new_password: "", confirm_password: "" };
-    deps.actionMessage.value = tr("settings.passwordReset");
+    setActionMessage(tr("settings.passwordReset"));
   }
 
   async function toggleUser(user: ManagedUser) {
     if (!deps.can("organization.manage")) return;
     if (userProtectionReason(user)) {
-      deps.actionMessage.value = userProtectionReason(user);
+      setActionMessage(userProtectionReason(user), "error");
       return;
     }
     if (userPendingId.value === user.id) return;
@@ -1195,11 +1232,11 @@ export function useSettings(deps: SettingsDeps) {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ is_active: !user.is_active }),
       });
-      deps.actionMessage.value = user.is_active ? tr("settings.userDisabled") : tr("settings.userEnabled");
+      setActionMessage(user.is_active ? tr("settings.userDisabled") : tr("settings.userEnabled"));
       const refreshed = await loadUsers();
-      if (!refreshed && userListError.value) deps.actionMessage.value = tr("settings.userStatusRefreshFailed");
+      if (!refreshed && userListError.value) setActionMessage(tr("settings.userStatusRefreshFailed"), "error");
     } catch (error) {
-      deps.actionMessage.value = errorMessage(error, tr("settings.userStatusFailed"));
+      setActionError(error, tr("settings.userStatusFailed"));
     } finally {
       userPendingId.value = null;
     }
@@ -1225,14 +1262,14 @@ export function useSettings(deps: SettingsDeps) {
       const mutationMessage = result.failed
         ? tr("settings.batchUserStatusSummary", { action: actionLabel, succeeded: result.succeeded, failed: result.failed })
         : tr("settings.batchUserStatusSuccess", { action: actionLabel, count: result.succeeded });
-      deps.actionMessage.value = mutationMessage;
+      setActionMessage(mutationMessage, result.failed ? "error" : "success");
       const refreshed = await loadUsers();
       if (!refreshed) {
-        deps.actionMessage.value = `${mutationMessage}; ${tr("common.refreshFailed")}. ${tr("common.retry")}.`;
+        setActionMessage(`${mutationMessage}; ${tr("common.refreshFailed")}. ${tr("common.retry")}.`, "error");
       }
       if (result.failed) showUserBatchResult.value = true;
     } catch (error) {
-      deps.actionMessage.value = errorMessage(error, tr("settings.batchUserStatusFailed", { action: actionLabel }));
+      setActionError(error, tr("settings.batchUserStatusFailed", { action: actionLabel }));
     } finally {
       userBatchSaving.value = false;
     }
@@ -1247,11 +1284,11 @@ export function useSettings(deps: SettingsDeps) {
   async function deleteUser(user: ManagedUser) {
     if (!deps.can("organization.manage")) return;
     if (user.auth_source === "ldap") {
-      deps.actionMessage.value = tr("settings.directoryUserProtected");
+      setActionMessage(tr("settings.directoryUserProtected"), "error");
       return;
     }
     if (userProtectionReason(user)) {
-      deps.actionMessage.value = userProtectionReason(user);
+      setActionMessage(userProtectionReason(user), "error");
       return;
     }
     if (userPendingId.value === user.id) return;
@@ -1259,11 +1296,11 @@ export function useSettings(deps: SettingsDeps) {
     try {
       if (!(await deps.confirmAction(tr("settings.userDeleteConfirm", { username: user.username })))) return;
       await deps.request(`/users/${user.id}/`, { method: "DELETE" });
-      deps.actionMessage.value = tr("settings.userDeleted");
+      setActionMessage(tr("settings.userDeleted"));
       const refreshed = await loadUsers();
-      if (!refreshed && userListError.value) deps.actionMessage.value = tr("settings.userDeletedRefreshFailed");
+      if (!refreshed && userListError.value) setActionMessage(tr("settings.userDeletedRefreshFailed"), "error");
     } catch (error) {
-      deps.actionMessage.value = errorMessage(error, tr("settings.userDeleteFailed"));
+      setActionError(error, tr("settings.userDeleteFailed"));
     } finally {
       userPendingId.value = null;
     }
@@ -1375,15 +1412,15 @@ export function useSettings(deps: SettingsDeps) {
         "filterable",
         "validation_config",
       ]);
-      deps.actionMessage.value = errorMessage(error, tr("customField.saveFailed"));
+      setActionError(error, tr("customField.saveFailed"));
     } finally {
       customFieldSaving.value = false;
     }
     if (!saved) return;
     showCustomFieldModal.value = false;
-    deps.actionMessage.value = tr("customField.saved");
+    setActionMessage(tr("customField.saved"));
     const refreshed = await loadCustomFields();
-    if (!refreshed && customFieldListError.value) deps.actionMessage.value = tr("customField.savedRefreshFailed");
+    if (!refreshed && customFieldListError.value) setActionMessage(tr("customField.savedRefreshFailed"), "error");
   }
   async function toggleCustomField(field: CustomField) {
     if (!deps.can("custom_fields.manage")) return;
@@ -1395,11 +1432,11 @@ export function useSettings(deps: SettingsDeps) {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ is_active: !field.is_active }),
       });
-      deps.actionMessage.value = field.is_active ? tr("customField.disabled") : tr("customField.enabled");
+      setActionMessage(field.is_active ? tr("customField.disabled") : tr("customField.enabled"));
       const refreshed = await loadCustomFields();
-      if (!refreshed && customFieldListError.value) deps.actionMessage.value = tr("customField.statusRefreshFailed");
+      if (!refreshed && customFieldListError.value) setActionMessage(tr("customField.statusRefreshFailed"), "error");
     } catch (error) {
-      deps.actionMessage.value = errorMessage(error, tr("customField.statusFailed"));
+      setActionError(error, tr("customField.statusFailed"));
     } finally {
       customFieldActionId.value = null;
     }
@@ -1407,7 +1444,7 @@ export function useSettings(deps: SettingsDeps) {
   async function deleteCustomField(field: CustomField) {
     if (!deps.can("custom_fields.manage")) return;
     if ((field.assets_count || 0) > 0) {
-      deps.actionMessage.value = tr("customField.inUse");
+      setActionMessage(tr("customField.inUse"), "error");
       return;
     }
     if (customFieldActionId.value === field.id) return;
@@ -1415,11 +1452,11 @@ export function useSettings(deps: SettingsDeps) {
     try {
       if (!(await deps.confirmAction(tr("customField.deleteConfirm", { name: field.name })))) return;
       await deps.request(`/custom-fields/${field.id}/`, { method: "DELETE" });
-      deps.actionMessage.value = tr("customField.deleted");
+      setActionMessage(tr("customField.deleted"));
       const refreshed = await loadCustomFields();
-      if (!refreshed && customFieldListError.value) deps.actionMessage.value = tr("customField.deletedRefreshFailed");
+      if (!refreshed && customFieldListError.value) setActionMessage(tr("customField.deletedRefreshFailed"), "error");
     } catch (error) {
-      deps.actionMessage.value = errorMessage(error, tr("customField.deleteFailed"));
+      setActionError(error, tr("customField.deleteFailed"));
     } finally {
       customFieldActionId.value = null;
     }
@@ -1468,15 +1505,15 @@ export function useSettings(deps: SettingsDeps) {
         "label",
         "sort_order",
       ]);
-      deps.actionMessage.value = errorMessage(error, tr("customField.optionSaveFailed"));
+      setActionError(error, tr("customField.optionSaveFailed"));
     } finally {
       customFieldOptionSaving.value = false;
     }
     if (!saved) return;
     showCustomFieldOptionModal.value = false;
-    deps.actionMessage.value = tr("customField.optionSaved");
+    setActionMessage(tr("customField.optionSaved"));
     const refreshed = await loadCustomFields();
-    if (!refreshed && customFieldListError.value) deps.actionMessage.value = tr("customField.optionSavedRefreshFailed");
+    if (!refreshed && customFieldListError.value) setActionMessage(tr("customField.optionSavedRefreshFailed"), "error");
   }
   async function deleteCustomFieldOption(option: CustomFieldOption) {
     if (!deps.can("custom_fields.manage")) return;
@@ -1485,11 +1522,11 @@ export function useSettings(deps: SettingsDeps) {
     try {
       if (!(await deps.confirmAction(tr("customField.optionDeleteConfirm", { name: option.label })))) return;
       await deps.request(`/custom-field-options/${option.id}/`, { method: "DELETE" });
-      deps.actionMessage.value = tr("customField.optionDeleted");
+      setActionMessage(tr("customField.optionDeleted"));
       const refreshed = await loadCustomFieldOptions(editingCustomField.value);
-      if (!refreshed && customFieldOptionError.value) deps.actionMessage.value = tr("customField.optionDeletedRefreshFailed");
+      if (!refreshed && customFieldOptionError.value) setActionMessage(tr("customField.optionDeletedRefreshFailed"), "error");
     } catch (error) {
-      deps.actionMessage.value = errorMessage(error, tr("customField.optionDeleteFailed"));
+      setActionError(error, tr("customField.optionDeleteFailed"));
     } finally {
       customFieldOptionActionId.value = null;
     }
@@ -1519,16 +1556,16 @@ export function useSettings(deps: SettingsDeps) {
       saved = true;
     } catch (error) {
       tagFormErrors.value = extractFieldErrors(error, ["name"]);
-      deps.actionMessage.value = errorMessage(error, tr("tag.saveFailed"));
+      setActionError(error, tr("tag.saveFailed"));
     } finally {
       tagSaving.value = false;
     }
     if (!saved) return;
     showTagModal.value = false;
-    deps.actionMessage.value = tr("tag.saved");
+    setActionMessage(tr("tag.saved"));
     invalidateTagReferences();
     const refreshed = await loadTags();
-    if (!refreshed && tagListError.value) deps.actionMessage.value = tr("tag.savedRefreshFailed");
+    if (!refreshed && tagListError.value) setActionMessage(tr("tag.savedRefreshFailed"), "error");
   }
   async function toggleTag(tag: Tag) {
     if (!deps.can("tags.manage")) return;
@@ -1540,12 +1577,12 @@ export function useSettings(deps: SettingsDeps) {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ is_active: !tag.is_active }),
       });
-      deps.actionMessage.value = tag.is_active ? tr("tag.disabled") : tr("tag.enabled");
+      setActionMessage(tag.is_active ? tr("tag.disabled") : tr("tag.enabled"));
       invalidateTagReferences();
       const refreshed = await loadTags();
-      if (!refreshed && tagListError.value) deps.actionMessage.value = tr("tag.statusRefreshFailed");
+      if (!refreshed && tagListError.value) setActionMessage(tr("tag.statusRefreshFailed"), "error");
     } catch (error) {
-      deps.actionMessage.value = errorMessage(error, tr("tag.statusFailed"));
+      setActionError(error, tr("tag.statusFailed"));
     } finally {
       tagActionId.value = null;
     }
@@ -1553,7 +1590,7 @@ export function useSettings(deps: SettingsDeps) {
   async function deleteTag(tag: Tag) {
     if (!deps.can("tags.manage")) return;
     if ((tag.assets_count || 0) > 0) {
-      deps.actionMessage.value = tr("tag.inUse");
+      setActionMessage(tr("tag.inUse"), "error");
       return;
     }
     if (tagActionId.value === tag.id) return;
@@ -1561,12 +1598,12 @@ export function useSettings(deps: SettingsDeps) {
     try {
       if (!(await deps.confirmAction(tr("tag.deleteConfirm", { name: tag.name })))) return;
       await deps.request(`/tags/${tag.id}/`, { method: "DELETE" });
-      deps.actionMessage.value = tr("tag.deleted");
+      setActionMessage(tr("tag.deleted"));
       invalidateTagReferences();
       const refreshed = await loadTags();
-      if (!refreshed && tagListError.value) deps.actionMessage.value = tr("tag.deletedRefreshFailed");
+      if (!refreshed && tagListError.value) setActionMessage(tr("tag.deletedRefreshFailed"), "error");
     } catch (error) {
-      deps.actionMessage.value = errorMessage(error, tr("tag.deleteFailed"));
+      setActionError(error, tr("tag.deleteFailed"));
     } finally {
       tagActionId.value = null;
     }
@@ -1643,7 +1680,7 @@ export function useSettings(deps: SettingsDeps) {
     const section = dictionarySection.value;
     const label = currentDictionaryLabel.value;
     if (!canManageDictionary(section)) {
-      deps.actionMessage.value = tr("settings.dictionaryPermissionDenied");
+      setActionMessage(tr("settings.dictionaryPermissionDenied"), "error");
       return;
     }
     dictionarySaving.value = true;
@@ -1673,23 +1710,23 @@ export function useSettings(deps: SettingsDeps) {
       saved = true;
     } catch (error) {
       dictionaryFormErrors.value = extractFieldErrors(error, ["name", "code", "color"]);
-      deps.actionMessage.value = errorMessage(error, tr("settings.dictionarySaveFailed", { item: label }));
+      setActionError(error, tr("settings.dictionarySaveFailed", { item: label }));
     } finally {
       dictionarySaving.value = false;
     }
     if (!saved) return;
     showDictionaryModal.value = false;
-    deps.actionMessage.value = tr("settings.dictionarySaved", { item: label });
+    setActionMessage(tr("settings.dictionarySaved", { item: label }));
     invalidateDictionaryReferences();
     const refreshed = await loadDictionaries();
-    if (!refreshed && dictionaryError.value) deps.actionMessage.value = tr("settings.dictionarySavedRefreshFailed", { item: label });
+    if (!refreshed && dictionaryError.value) setActionMessage(tr("settings.dictionarySavedRefreshFailed", { item: label }), "error");
   }
   async function toggleDictionary(item: DictionaryItem) {
     if (dictionaryActionId.value === item.id) return;
     const section = dictionarySection.value;
     const label = currentDictionaryLabel.value;
     if (!canManageDictionary(section)) {
-      deps.actionMessage.value = tr("settings.dictionaryPermissionDenied");
+      setActionMessage(tr("settings.dictionaryPermissionDenied"), "error");
       return;
     }
     dictionaryActionId.value = item.id;
@@ -1700,34 +1737,34 @@ export function useSettings(deps: SettingsDeps) {
           ? "device-types"
           : "spare-part-categories";
       await deps.request(`/${base}/${item.id}/`, { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ is_active: !item.is_active }) });
-      deps.actionMessage.value = item.is_active
+      setActionMessage(item.is_active
         ? tr("settings.dictionaryDisabled", { item: label })
-        : tr("settings.dictionaryEnabled", { item: label });
+        : tr("settings.dictionaryEnabled", { item: label }));
       invalidateDictionaryReferences();
       const refreshed = await loadDictionaries();
-      if (!refreshed && dictionaryError.value) deps.actionMessage.value = tr("settings.dictionaryStatusRefreshFailed", { item: label });
+      if (!refreshed && dictionaryError.value) setActionMessage(tr("settings.dictionaryStatusRefreshFailed", { item: label }), "error");
     } catch (error) {
-      deps.actionMessage.value = errorMessage(error, tr("settings.dictionaryStatusFailed", { item: label }));
+      setActionError(error, tr("settings.dictionaryStatusFailed", { item: label }));
     } finally {
       dictionaryActionId.value = null;
     }
   }
   async function deleteDictionary(item: DictionaryItem) {
     if (dictionaryItemUsed(item)) {
-      deps.actionMessage.value = dictionarySection.value === "manufacturers"
+      setActionMessage(dictionarySection.value === "manufacturers"
         ? tr("settings.manufacturerInUse")
         : dictionarySection.value === "device-types"
           ? tr("settings.deviceTypeInUse")
         : dictionarySection.value === "spare-categories"
           ? tr("settings.spareCategoryInUse")
-          : tr("settings.dictionaryItemInUse");
+          : tr("settings.dictionaryItemInUse"), "error");
       return;
     }
     if (dictionaryActionId.value === item.id) return;
     const section = dictionarySection.value;
     const label = currentDictionaryLabel.value;
     if (!canManageDictionary(section)) {
-      deps.actionMessage.value = tr("settings.dictionaryPermissionDenied");
+      setActionMessage(tr("settings.dictionaryPermissionDenied"), "error");
       return;
     }
     dictionaryActionId.value = item.id;
@@ -1739,12 +1776,12 @@ export function useSettings(deps: SettingsDeps) {
           ? "device-types"
           : "spare-part-categories";
       await deps.request(`/${base}/${item.id}/`, { method: "DELETE" });
-      deps.actionMessage.value = tr("settings.dictionaryDeleted", { item: label });
+      setActionMessage(tr("settings.dictionaryDeleted", { item: label }));
       invalidateDictionaryReferences();
       const refreshed = await loadDictionaries();
-      if (!refreshed && dictionaryError.value) deps.actionMessage.value = tr("settings.dictionaryDeletedRefreshFailed", { item: label });
+      if (!refreshed && dictionaryError.value) setActionMessage(tr("settings.dictionaryDeletedRefreshFailed", { item: label }), "error");
     } catch (error) {
-      deps.actionMessage.value = errorMessage(error, tr("settings.dictionaryDeleteFailed", { item: label }));
+      setActionError(error, tr("settings.dictionaryDeleteFailed", { item: label }));
     } finally {
       dictionaryActionId.value = null;
     }
@@ -1869,7 +1906,7 @@ export function useSettings(deps: SettingsDeps) {
   async function saveSystemSettings(): Promise<void> {
     if (systemSettingsSaving.value) return;
     if (!deps.can("settings.manage")) {
-      deps.actionMessage.value = tr("settings.settingsPermissionDenied");
+      setActionMessage(tr("settings.settingsPermissionDenied"), "error");
       return;
     }
     systemSettingsSaving.value = true;
@@ -1886,13 +1923,13 @@ export function useSettings(deps: SettingsDeps) {
       systemSettings.value = result;
       syncSystemSettingsForm(result);
       applySystemSettingsSnapshot(result);
-      deps.actionMessage.value = tr("settings.settingsSaved");
+      setActionMessage(tr("settings.settingsSaved"));
     } catch (error) {
       systemSettingsFormErrors.value = extractFieldErrors(
         error,
         ["default_page_size", "default_asset_status"],
       );
-      deps.actionMessage.value = errorMessage(error, tr("settings.settingsSaveFailed"));
+      setActionError(error, tr("settings.settingsSaveFailed"));
     } finally {
       systemSettingsSaving.value = false;
     }

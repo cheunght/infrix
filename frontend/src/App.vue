@@ -35,6 +35,7 @@ import { useRepairs } from "./composables/useRepairs";
 import { useSpareParts } from "./composables/useSpareParts";
 import { useSettings } from "./composables/useSettings";
 import { isAbortError } from "./api";
+import type { ActionMessageType } from "./error-handling";
 import { useRoute, useRouter, type RouteLocationRaw } from "vue-router";
 import ApiErrorAlert from "./components/ApiErrorAlert.vue";
 import SearchField from "./components/SearchField.vue";
@@ -170,6 +171,7 @@ const detailError = ref("");
 let openAssetDetail: (assetId: number) => Promise<void> = async () => {};
 let invalidateAssetDetail: () => void = () => {};
 const actionMessage = ref("");
+const actionMessageType = ref<ActionMessageType | null>(null);
 const pageError = ref("");
 const accessDenied = ref(false);
 const passwordForm = ref({ old_password: "", new_password: "", confirm_password: "" });
@@ -300,6 +302,7 @@ const settings = useSettings({
   currentUsername: username,
   settingsSection,
   actionMessage,
+  actionMessageType,
 });
 const {
   systemSettings,
@@ -535,6 +538,7 @@ const auth = useAuth({
   userIsActive,
   lastLogin,
   actionMessage,
+  actionMessageType,
   settingsSection,
   locale: currentLocale,
   setLocale,
@@ -1598,7 +1602,10 @@ function updateViewportHeight() {
 }
 watch(actionMessage, (message) => {
   if (!message) return;
-  const isError = /(^\d{3}:|失败|错误|不能|请先|未找到|请求|权限|无权|失效|未保存|failed|error|cannot|could not|not saved|permission|invalid|unable|expired)/i.test(message);
+  const forcedType = actionMessageType.value;
+  const isError = forcedType
+    ? forcedType === "error"
+    : /(^\d{3}:|失败|错误|不能|请先|未找到|请求|权限|无权|失效|未保存|failed|error|cannot|could not|not saved|permission|invalid|unable|expired)/i.test(message);
   ElMessage({
     message,
     type: isError ? "error" : "success",
@@ -1606,6 +1613,7 @@ watch(actionMessage, (message) => {
     showClose: true,
   });
   actionMessage.value = "";
+  actionMessageType.value = null;
 });
 let assetQrRouteRequest = 0;
 watch(

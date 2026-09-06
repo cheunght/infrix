@@ -1,5 +1,11 @@
-import type { Ref } from "vue";
-import { ApiError, flattenError, isAbortError } from "../api";
+import { watch, type Ref } from "vue";
+import { ApiError, isAbortError } from "../api";
+import {
+  fieldErrorsToText,
+  normalizeApiError,
+  clearFieldError,
+  type ActionMessageType,
+} from "../error-handling";
 import type { RequestFn } from "../page-context";
 import { i18n, normalizeLocale, type Locale } from "../i18n";
 import type { AuthSource } from "../types";
@@ -41,6 +47,7 @@ export interface AuthDeps {
   userIsActive: Ref<boolean>;
   lastLogin: Ref<string | null>;
   actionMessage: Ref<string>;
+  actionMessageType: Ref<ActionMessageType | null>;
   settingsSection: Ref<string>;
   locale: Ref<Locale>;
   setLocale: (value: unknown, persist?: boolean) => Locale;
@@ -68,6 +75,40 @@ type AuthPayload = {
 };
 
 export function useAuth(deps: AuthDeps) {
+  function setActionMessage(message: string, type: ActionMessageType = "success") {
+    deps.actionMessageType.value = type;
+    deps.actionMessage.value = message;
+  }
+
+  function errorMessage(error: unknown, fallback: string) {
+    const normalized = normalizeApiError(error);
+    return normalized.kind === "unknown" ? fallback : normalized.message;
+  }
+
+  function setActionError(error: unknown, fallback: string): string {
+    const message = errorMessage(error, fallback);
+    setActionMessage(message, "error");
+    return message;
+  }
+
+  function watchFieldErrors<T extends object>(
+    form: Ref<T>,
+    errors: Ref<Record<string, string>>,
+    fields: readonly string[],
+  ) {
+    for (const field of fields) {
+      watch(
+        () => (form.value as Record<string, unknown>)[field],
+        () => {
+          if (errors.value[field]) errors.value = clearFieldError(errors.value, field);
+        },
+      );
+    }
+  }
+
+  watchFieldErrors(deps.profileForm, deps.profileFormErrors, ["first_name", "last_name", "email"]);
+  watchFieldErrors(deps.passwordForm, deps.passwordFormErrors, ["old_password", "new_password", "confirm_password"]);
+
   function resetPasswordState() {
     deps.passwordForm.value = { old_password: "", new_password: "", confirm_password: "" };
     deps.passwordError.value = "";
@@ -227,7 +268,7 @@ export function useAuth(deps: AuthDeps) {
       return true;
     } catch (error) {
       if (isAbortError(error)) return false;
-      deps.profileError.value = error instanceof Error ? error.message : i18n.global.t("auth.profileLoadFailed");
+      deps.profileError.value = errorMessage(error, i18n.global.t("auth.profileLoadFailed"));
       return false;
     } finally {
       deps.profileLoading.value = false;
@@ -256,21 +297,15 @@ export function useAuth(deps: AuthDeps) {
       });
       applyAuthPayload(user);
       deps.showProfileModal.value = false;
-      deps.actionMessage.value = i18n.global.t("auth.profileSaved");
+      setActionMessage(i18n.global.t("auth.profileSaved"));
       return true;
     } catch (error) {
-      const details = error && typeof error === "object" && "details" in error
-        ? (error as { details?: unknown }).details
-        : undefined;
-      const source = details && typeof details === "object" && !Array.isArray(details)
-        ? details as Record<string, unknown>
-        : {};
-      deps.profileFormErrors.value = Object.fromEntries(
-        ["first_name", "last_name", "email"]
-          .map((field) => [field, flattenError(source[field])] as const)
-          .filter(([, message]) => Boolean(message)),
+      const normalized = normalizeApiError(error);
+      deps.profileFormErrors.value = fieldErrorsToText(
+        normalized.fieldErrors,
+        ["first_name", "last_name", "email"],
       );
-      deps.actionMessage.value = error instanceof Error ? error.message : i18n.global.t("auth.profileSaveFailed");
+      setActionError(error, i18n.global.t("auth.profileSaveFailed"));
       return false;
     } finally {
       deps.profileSaving.value = false;
@@ -297,25 +332,15 @@ export function useAuth(deps: AuthDeps) {
       deps.passwordChangeRequired.value = false;
       deps.passwordError.value = "";
       deps.passwordForm.value = { old_password: "", new_password: "", confirm_password: "" };
-      deps.actionMessage.value = i18n.global.t("auth.passwordChanged");
+      setActionMessage(i18n.global.t("auth.passwordChanged"));
       if (wasRequired) await deps.bootstrapApplication();
     } catch (error) {
-      const details = error && typeof error === "object" && "details" in error
-        ? (error as { details?: unknown }).details
-        : undefined;
-      const source = details && typeof details === "object" && !Array.isArray(details)
-        ? details as Record<string, unknown>
-        : {};
-      const fieldErrors: Record<string, string> = {};
-      if (source.old_password) fieldErrors.old_password = flattenError(source.old_password);
-      if (source.new_password) fieldErrors.new_password = flattenError(source.new_password);
-      if (source.confirm_password) fieldErrors.confirm_password = flattenError(source.confirm_password);
-      if (source.detail && !fieldErrors.old_password && !fieldErrors.new_password) {
-        fieldErrors.old_password = flattenError(source.detail);
-      }
-      deps.passwordFormErrors.value = fieldErrors;
-      deps.passwordError.value = error instanceof Error ? error.message : i18n.global.t("auth.passwordChangeFailed");
-      deps.actionMessage.value = deps.passwordError.value;
+      const normalized = normalizeApiError(error);
+      deps.passwordFormErrors.value = fieldErrorsToText(
+        normalized.fieldErrors,
+        ["old_password", "new_password", "confirm_password"],
+      );
+      deps.passwordError.value = errorMessage(error, i18n.global.t("auth.passwordChangeFailed"));
     } finally {
       deps.passwordSaving.value = false;
     }
