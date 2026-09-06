@@ -106,16 +106,6 @@
   grid-template-columns: minmax(0, 1fr) minmax(320px, 380px);
   align-items: flex-start;
   gap: 24px;
-  padding-bottom: 2px;
-}
-
-.settings-ldap-panel__eyebrow {
-  margin-bottom: 4px;
-  color: var(--el-color-primary);
-  font-size: 11px;
-  font-weight: 700;
-  letter-spacing: 0.12em;
-  text-transform: uppercase;
 }
 
 .settings-ldap-panel__heading-copy {
@@ -176,13 +166,6 @@
   font-size: var(--el-font-size-medium, 16px);
   font-weight: 600;
   line-height: 22px;
-}
-
-.settings-ldap-panel__heading p {
-  margin: var(--space-xs, 4px) 0 0;
-  color: var(--el-text-color-secondary);
-  font-size: var(--el-font-size-base, 14px);
-  line-height: 1.55;
 }
 
 .settings-ldap-panel__form {
@@ -502,20 +485,6 @@
 .settings-ldap-panel__check > span {
   min-width: 0;
   overflow-wrap: anywhere;
-}
-
-.settings-ldap-panel__notes ul {
-  display: grid;
-  gap: 8px;
-  margin: 0;
-  padding-left: 18px;
-  color: var(--el-text-color-secondary);
-  font-size: 12px;
-  line-height: 1.55;
-}
-
-.settings-ldap-panel__notes li::marker {
-  color: var(--el-color-primary);
 }
 
 .settings-maintenance {

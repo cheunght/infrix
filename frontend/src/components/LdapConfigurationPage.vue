@@ -142,9 +142,7 @@ function formatLdapDiagnosticAt(value?: string | null) {
     <section class="settings-ldap-panel settings-ldap-panel--page">
       <header class="settings-ldap-panel__heading">
         <div class="settings-ldap-panel__heading-copy">
-          <div class="settings-ldap-panel__eyebrow">{{ t("settings.ldapIntegration") }}</div>
           <h2>{{ t("settings.ldapConfigurationTitle") }}</h2>
-          <p>{{ t("settings.ldapPageDescription") }}</p>
         </div>
         <div class="settings-ldap-panel__heading-side">
           <div class="settings-ldap-panel__service-control">
@@ -473,16 +471,6 @@ function formatLdapDiagnosticAt(value?: string | null) {
               </div>
             </section>
 
-            <el-divider />
-
-            <section class="settings-ldap-panel__sidebar-section settings-ldap-panel__notes">
-              <h3>{{ t("settings.ldapConfigurationNotes") }}</h3>
-              <ul>
-                <li>{{ t("settings.ldapConfigNoteDatabase") }}</li>
-                <li>{{ t("settings.ldapConfigNoteEnable") }}</li>
-                <li>{{ t("settings.ldapConfigNoteDisable") }}</li>
-              </ul>
-            </section>
           </aside>
         </div>
       </template>
