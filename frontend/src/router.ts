@@ -15,6 +15,7 @@ export type SettingsSection =
   | "tags"
   | "maintenance";
 export type AssetConfigSection = "custom-fields" | "tags";
+export type OrganizationTab = "users" | "roles" | "ldap";
 
 export type RackSection = "locations" | "view";
 export type LocationTypeFilter = "" | "data-center" | "room";
@@ -287,6 +288,7 @@ export function routeForPage(
   page: Page,
   options: {
     settingsSection?: SettingsSection;
+    organizationTab?: OrganizationTab;
     assetConfigSection?: AssetConfigSection;
     rackSection?: RackSection;
   } = {},
@@ -309,6 +311,9 @@ export function routeForPage(
     const section = options.settingsSection || "system";
     if (section === "custom-fields" || section === "tags") {
       return routeForPage("asset-config", { assetConfigSection: section });
+    }
+    if (section === "organization" && options.organizationTab && options.organizationTab !== "users") {
+      return { name: `settings-${section}`, query: { tab: options.organizationTab } };
     }
     return { name: `settings-${section}` };
   }

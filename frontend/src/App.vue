@@ -49,6 +49,7 @@ import { useI18n } from "vue-i18n";
 import {
   routeForPage,
   type AssetConfigSection,
+  type OrganizationTab,
   type RackSection,
   type SettingsSection,
 } from "./router";
@@ -191,6 +192,7 @@ const userIsActive = ref(false);
 const lastLogin = ref<string | null>(null);
 const viewportHeight = ref(window.innerHeight);
 const settingsSection = ref<SettingsSection>("system");
+const organizationTab = ref<OrganizationTab>("users");
 const assetConfigSection = ref<AssetConfigSection>("custom-fields");
 const rackSection = ref<RackSection>("locations");
 const facilities = useFacilities({
@@ -949,8 +951,18 @@ function syncRouteState(): boolean {
   const hasQueryKey = (key: string) =>
     Object.prototype.hasOwnProperty.call(route.query, key);
   page.value = routePage;
-  if (routePage === "settings")
+  if (routePage === "settings") {
     settingsSection.value = route.meta.settingsSection || "system";
+    if (settingsSection.value === "organization") {
+      const requestedTab = routeQueryValue("tab");
+      organizationTab.value = requestedTab === "roles" || requestedTab === "ldap"
+        ? requestedTab
+        : "users";
+      if (hasQueryKey("tab") && requestedTab !== "users" && requestedTab !== "roles" && requestedTab !== "ldap") {
+        queryKeysToClear.push("tab");
+      }
+    }
+  }
   if (routePage === "asset-config") {
     const assetConfigQuery = routeQueryValue("tab");
     assetConfigSection.value = assetConfigQuery === "tags"
@@ -1431,8 +1443,13 @@ async function load() {
     if (page.value === "settings") {
       if (settingsSection.value === "system" && can("settings.view"))
         await loadSystemSettings(version);
-      else if (settingsSection.value === "organization" && can("organization.manage"))
-        await loadOrganization(version);
+      else if (settingsSection.value === "organization" && can("organization.manage")) {
+        if (organizationTab.value === "ldap") {
+          await Promise.all([loadLdapConfiguration(version), loadLdapStatus(version)]);
+        } else {
+          await loadOrganization(version);
+        }
+      }
       else if (settingsSection.value === "audit" && can("audit.view"))
         await loadAuditLogs(version);
       else if (settingsSection.value === "dictionaries")
@@ -1497,7 +1514,19 @@ function openSettingsSection(
   closeTransientUi();
   settingsSection.value = section;
   nextTick(() => sidebarMenu.value?.open("settings"));
-  navigateToRoute(routeForPage("settings", { settingsSection: section }), true);
+  navigateToRoute(routeForPage("settings", {
+    settingsSection: section,
+    organizationTab: section === "organization" ? organizationTab.value : undefined,
+  }), true);
+}
+function changeOrganizationTab(value: string) {
+  if (!can("organization.manage")) return;
+  const nextTab: OrganizationTab = value === "roles" || value === "ldap" ? value : "users";
+  organizationTab.value = nextTab;
+  navigateToRoute(routeForPage("settings", {
+    settingsSection: "organization",
+    organizationTab: nextTab,
+  }), true);
 }
 function openAssetConfiguration(section: AssetConfigSection) {
   if (section === "custom-fields" && !can("custom_fields.view")) return;
@@ -1733,7 +1762,7 @@ const pageContext = {
   responsibilityUsers, responsibilityUsersLoading, responsibilityUsersError, loadResponsibilityUsers,
   responsibilityActionSaving, responsibilityActionError, assignAsset, returnAsset, transferAsset,
   rackCount, rackPage, rackPageSize, changeRackPage,
-  settingsSection, systemSettings, systemSettingsForm, systemSettingsDefinitions, systemSettingsLoading,
+  settingsSection, organizationTab, changeOrganizationTab, systemSettings, systemSettingsForm, systemSettingsDefinitions, systemSettingsLoading,
   systemSettingsSaving, systemSettingsError, systemSettingsFormErrors, systemSettingsDirty,
   ldapStatus, ldapConfiguration, ldapConfigurationForm, ldapConfigurationLoading, ldapConfigurationSaving,
   ldapConfigurationError, ldapConfigurationFormErrors, ldapConfigurationDirty,

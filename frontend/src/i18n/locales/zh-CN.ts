@@ -1294,6 +1294,7 @@ export default {
     maintenance: "系统维护",
     runtimeParameters: "运行参数",
     runtimeParametersDescription: "仅维护当前应用中已有的少量运行时默认值。",
+    ldapOrganizationTab: "LDAP / AD",
     ldapIntegration: "LDAP 集成",
     ldapIntegrationDescription: "由系统管理员维护目录连接，先用当前表单测试，再保存并决定是否启用。",
     ldapConfigurationTitle: "目录服务连接",

@@ -683,9 +683,6 @@ export function useSettings(deps: SettingsDeps) {
       systemSettings.value = result;
       syncSystemSettingsForm(result);
       applySystemSettingsSnapshot(result);
-      if (deps.can("organization.manage")) {
-        await Promise.all([loadLdapConfiguration(version), loadLdapStatus(version)]);
-      }
       return true;
     } catch (error) {
       if (requestId === systemSettingsRequestId.value && deps.isCurrentLoad(version) && !isAbortError(error)) {

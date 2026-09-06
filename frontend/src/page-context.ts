@@ -3,6 +3,7 @@ import type { BusinessOption } from "./business-enums";
 import type {
   LocationStatusFilter,
   LocationTypeFilter,
+  OrganizationTab,
   RackSection,
   SettingsSection,
 } from "./router";
@@ -538,6 +539,8 @@ export interface InventoryContext {
 export interface SettingsContext extends CustomFieldContext, TagContext {
   loading: Ref<boolean>;
   settingsSection: Ref<SettingsSection>;
+  organizationTab: Ref<OrganizationTab>;
+  changeOrganizationTab: (value: string) => void;
   can: CapabilityFn;
   systemSettings: Ref<SystemSettings | null>;
   systemSettingsForm: Ref<SystemSettingsForm>;

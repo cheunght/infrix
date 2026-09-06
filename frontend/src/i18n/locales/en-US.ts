@@ -1294,6 +1294,7 @@ export default {
     maintenance: "System Maintenance",
     runtimeParameters: "Runtime parameters",
     runtimeParametersDescription: "Maintain the small set of runtime defaults already used by the application.",
+    ldapOrganizationTab: "LDAP / AD",
     ldapIntegration: "LDAP integration",
     ldapIntegrationDescription: "System administrators maintain the directory connection here, test the current form, then choose whether to enable it.",
     ldapConfigurationTitle: "Directory service connection",

@@ -95,6 +95,11 @@
   border-top: 1px solid var(--el-border-color-lighter);
 }
 
+.settings-ldap-panel--page {
+  padding-top: 0;
+  border-top: 0;
+}
+
 .settings-ldap-panel__heading {
   display: flex;
   align-items: flex-start;
