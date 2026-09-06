@@ -1,5 +1,11 @@
-import { computed, ref, type Ref } from "vue";
-import { flattenError, isAbortError } from "../api";
+import { computed, ref, watch, type Ref } from "vue";
+import { isAbortError } from "../api";
+import {
+  clearFieldError,
+  fieldErrorsToText,
+  normalizeApiError,
+  type ActionMessageType,
+} from "../error-handling";
 import type {
   AssetDetail,
   DataCenter,
@@ -36,6 +42,7 @@ export interface FacilitiesDeps extends FacilitiesApi {
   detailAsset: Ref<AssetDetail | null>;
   viewportHeight: Ref<number>;
   actionMessage: Ref<string>;
+  actionMessageType: Ref<ActionMessageType | null>;
   closeAssetDetail: () => void;
   openRackAssetDetail: (assetId: number, rackId: number) => void | Promise<void>;
   reload: () => void | Promise<void>;
@@ -107,19 +114,60 @@ export function useFacilities(deps: FacilitiesDeps) {
   const updatingRoomId = ref<number | null>(null);
   const exportingRackLayout = ref(false);
 
-  function extractFormErrors(error: unknown, fields: readonly string[]) {
-    const details = error && typeof error === "object" && "details" in error
-      ? (error as { details?: unknown }).details
-      : undefined;
-    const source = details && typeof details === "object" && !Array.isArray(details)
-      ? details as Record<string, unknown>
-      : {};
-    return Object.fromEntries(
-      fields
-        .map((field) => [field, flattenError(source[field])] as const)
-        .filter(([, message]) => Boolean(message)),
-    );
+  function setActionMessage(message: string, type: ActionMessageType = "success") {
+    deps.actionMessageType.value = type;
+    deps.actionMessage.value = message;
   }
+
+  function errorMessage(error: unknown, fallback: string) {
+    const normalized = normalizeApiError(error);
+    return normalized.kind === "unknown" ? fallback : normalized.message;
+  }
+
+  function setActionError(error: unknown, fallback: string): string {
+    const message = errorMessage(error, fallback);
+    setActionMessage(message, "error");
+    return message;
+  }
+
+  function watchFormFieldErrors<T extends object>(
+    form: Ref<T>,
+    errors: Ref<Record<string, string>>,
+    fields: readonly string[],
+  ) {
+    for (const field of fields) {
+      watch(
+        () => (form.value as Record<string, unknown>)[field],
+        () => {
+          if (errors.value[field]) errors.value = clearFieldError(errors.value, field);
+        },
+      );
+    }
+  }
+
+  function extractFormErrors(error: unknown, fields: readonly string[]) {
+    return fieldErrorsToText(normalizeApiError(error).fieldErrors, fields);
+  }
+
+  watchFormFieldErrors(dataCenterForm, dataCenterFormErrors, ["name", "address", "is_active"]);
+  watchFormFieldErrors(roomForm, roomFormErrors, [
+    "data_center",
+    "name",
+    "owner_name",
+    "contact_phone",
+    "notes",
+    "is_active",
+  ]);
+  watchFormFieldErrors(rackForm, rackFormFieldErrors, [
+    "room",
+    "code",
+    "name",
+    "rack_type",
+    "owner_name",
+    "notes",
+    "total_u",
+    "status",
+  ]);
 
   async function loadDataCenters(version = deps.beginLoad()): Promise<boolean> {
     if (!deps.can("racks.view")) return false;
@@ -201,7 +249,7 @@ export function useFacilities(deps: FacilitiesDeps) {
 
   function requestErrorMessage(error: unknown, fallback: string) {
     if (isAbortError(error)) return "";
-    return error instanceof Error && error.message ? error.message : fallback;
+    return errorMessage(error, fallback);
   }
 
   async function loadServerRooms(version = deps.beginLoad()) {
@@ -299,9 +347,7 @@ export function useFacilities(deps: FacilitiesDeps) {
         || null;
     } catch (error) {
       if (!deps.isCurrentLoad(version) || requestId !== rackViewRequestId.value || isAbortError(error)) return;
-      const message = error instanceof Error && error.message
-        ? error.message
-        : tr("facility.rackLoadFailed");
+      const message = requestErrorMessage(error, tr("facility.rackLoadFailed"));
       rackListError.value = message;
       rackCanvasError.value = message;
     } finally {
@@ -344,9 +390,7 @@ export function useFacilities(deps: FacilitiesDeps) {
       }
     } catch (error) {
       if (!deps.isCurrentLoad(version) || requestId !== rackViewRequestId.value || isAbortError(error)) return;
-      rackListError.value = error instanceof Error && error.message
-        ? error.message
-        : tr("facility.rackLoadFailed");
+      rackListError.value = requestErrorMessage(error, tr("facility.rackLoadFailed"));
     } finally {
       if (deps.isCurrentLoad(version) && requestId === rackViewRequestId.value) {
         rackListLoading.value = false;
@@ -394,15 +438,15 @@ export function useFacilities(deps: FacilitiesDeps) {
         body: JSON.stringify(dataCenterForm.value),
       });
       showDataCenterModal.value = false;
-      deps.actionMessage.value = tr("facility.dataCenterSaved");
+      setActionMessage(tr("facility.dataCenterSaved"));
       try {
         if (!(await refreshLocationManagement())) throw new Error(tr("common.retryLater"));
-      } catch (refreshError) {
-        deps.actionMessage.value = `${tr("facility.dataCenterSavedRefreshFailed")}: ${refreshError instanceof Error ? refreshError.message : tr("common.retryLater")}`;
+      } catch {
+        setActionMessage(tr("facility.dataCenterSavedRefreshFailed"), "error");
       }
     } catch (error) {
       dataCenterFormErrors.value = extractFormErrors(error, ["name", "address", "is_active"]);
-      deps.actionMessage.value = error instanceof Error ? error.message : tr("facility.dataCenterSaveFailed");
+      setActionError(error, tr("facility.dataCenterSaveFailed"));
     } finally {
       dataCenterSaving.value = false;
     }
@@ -424,15 +468,15 @@ export function useFacilities(deps: FacilitiesDeps) {
           body: JSON.stringify({ is_active: isActive }),
         });
       } catch (error) {
-        deps.actionMessage.value = error instanceof Error ? error.message : tr("facility.dataCenterStatusFailed");
+        setActionError(error, tr("facility.dataCenterStatusFailed"));
         return;
       }
       const successMessage = isActive ? tr("facility.dataCenterEnabled") : tr("facility.dataCenterDisabled");
-      deps.actionMessage.value = successMessage;
+      setActionMessage(successMessage);
       try {
         if (!(await refreshLocationManagement())) throw new Error(tr("common.retryLater"));
-      } catch (refreshError) {
-        deps.actionMessage.value = `${successMessage}: ${refreshError instanceof Error ? refreshError.message : tr("common.retryLater")}`;
+      } catch {
+        setActionMessage(`${successMessage}；${tr("common.refreshFailed")}，${tr("common.retry")}`, "error");
       }
     } finally {
       dataCenterActionId.value = null;
@@ -442,7 +486,7 @@ export function useFacilities(deps: FacilitiesDeps) {
   async function deleteDataCenter(dataCenter: DataCenter) {
     if (!deps.can("racks.manage")) return;
     if (dataCenterHasAssociations(dataCenter)) {
-      deps.actionMessage.value = tr("facility.dataCenterHasAssociations");
+      setActionMessage(tr("facility.dataCenterHasAssociations"), "error");
       return;
     }
     if (dataCenterActionId.value === dataCenter.id) return;
@@ -452,15 +496,15 @@ export function useFacilities(deps: FacilitiesDeps) {
       try {
         await deps.request(`/data-centers/${dataCenter.id}/`, { method: "DELETE" });
       } catch (error) {
-        deps.actionMessage.value = error instanceof Error ? error.message : tr("facility.dataCenterDeleteFailed");
+        setActionError(error, tr("facility.dataCenterDeleteFailed"));
         return;
       }
       const successMessage = tr("facility.dataCenterDeleted");
-      deps.actionMessage.value = successMessage;
+      setActionMessage(successMessage);
       try {
         if (!(await refreshLocationManagement())) throw new Error(tr("common.retryLater"));
-      } catch (refreshError) {
-        deps.actionMessage.value = `${successMessage}: ${refreshError instanceof Error ? refreshError.message : tr("common.retryLater")}`;
+      } catch {
+        setActionMessage(`${successMessage}；${tr("common.refreshFailed")}，${tr("common.retry")}`, "error");
       }
     } finally {
       dataCenterActionId.value = null;
@@ -511,11 +555,11 @@ export function useFacilities(deps: FacilitiesDeps) {
         body: JSON.stringify(roomForm.value),
       });
       showRoomModal.value = false;
-      deps.actionMessage.value = tr("facility.roomSaved");
+      setActionMessage(tr("facility.roomSaved"));
       try {
         if (!(await refreshLocationManagement())) throw new Error(tr("facility.resourceRefreshFailed"));
-      } catch (refreshError) {
-        deps.actionMessage.value = `${tr("facility.roomSavedRefreshFailed")}: ${refreshError instanceof Error ? refreshError.message : tr("common.retryLater")}`;
+      } catch {
+        setActionMessage(tr("facility.roomSavedRefreshFailed"), "error");
       }
     } catch (error) {
       roomFormErrors.value = extractFormErrors(error, [
@@ -526,7 +570,7 @@ export function useFacilities(deps: FacilitiesDeps) {
         "notes",
         "is_active",
       ]);
-      deps.actionMessage.value = error instanceof Error ? error.message : tr("facility.roomSaveFailed");
+      setActionError(error, tr("facility.roomSaveFailed"));
     } finally {
       roomSaving.value = false;
     }
@@ -542,14 +586,15 @@ export function useFacilities(deps: FacilitiesDeps) {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ is_active: isActive }),
       });
-      deps.actionMessage.value = isActive ? tr("facility.roomEnabled") : tr("facility.roomDisabled");
+      const successMessage = isActive ? tr("facility.roomEnabled") : tr("facility.roomDisabled");
+      setActionMessage(successMessage);
       try {
         if (!(await refreshLocationManagement())) throw new Error(tr("facility.resourceRefreshFailed"));
-      } catch (refreshError) {
-        deps.actionMessage.value = `${isActive ? tr("facility.roomEnabled") : tr("facility.roomDisabled")}: ${refreshError instanceof Error ? refreshError.message : tr("common.retryLater")}`;
+      } catch {
+        setActionMessage(`${successMessage}；${tr("common.refreshFailed")}，${tr("common.retry")}`, "error");
       }
     } catch (error) {
-      deps.actionMessage.value = error instanceof Error ? error.message : tr("facility.roomStatusFailed");
+      setActionError(error, tr("facility.roomStatusFailed"));
     } finally {
       updatingRoomId.value = null;
     }
@@ -558,22 +603,22 @@ export function useFacilities(deps: FacilitiesDeps) {
   async function deleteRoom(room: ServerRoom) {
     if (!deps.can("racks.manage")) return;
     if (room.racks_count || room.assets_count) {
-      deps.actionMessage.value = tr("facility.roomHasAssociations");
+      setActionMessage(tr("facility.roomHasAssociations"), "error");
       return;
     }
     if (!(await deps.confirmAction(tr("facility.roomDeleteConfirm", { name: room.name })))) return;
     try {
       await deps.request(`/server-rooms/${room.id}/`, { method: "DELETE" });
     } catch (error) {
-      deps.actionMessage.value = error instanceof Error ? error.message : tr("facility.roomDeleteFailed");
+      setActionError(error, tr("facility.roomDeleteFailed"));
       return;
     }
     const successMessage = tr("facility.roomDeleted");
-    deps.actionMessage.value = successMessage;
+    setActionMessage(successMessage);
     try {
       if (!(await refreshLocationManagement())) throw new Error(tr("common.retryLater"));
-    } catch (refreshError) {
-      deps.actionMessage.value = `${successMessage}: ${refreshError instanceof Error ? refreshError.message : tr("common.retryLater")}`;
+    } catch {
+      setActionMessage(`${successMessage}；${tr("common.refreshFailed")}，${tr("common.retry")}`, "error");
     }
   }
 
@@ -616,34 +661,21 @@ export function useFacilities(deps: FacilitiesDeps) {
     showRackModal.value = true;
   }
 
-  function errorText(value: unknown): string {
-    if (Array.isArray(value)) return value.map(errorText).filter(Boolean).join("；");
-    if (value && typeof value === "object") return Object.values(value).map(errorText).filter(Boolean).join("；");
-    return String(value ?? "");
-  }
-
   function extractRackFormErrors(error: unknown) {
-    const candidate = error && typeof error === "object"
-      ? error as { details?: unknown; message?: string }
-      : {};
-    const details = candidate.details;
-    const source = details && typeof details === "object" && !Array.isArray(details)
-      ? details as Record<string, unknown>
-      : {};
-    const fields: Record<string, string> = {};
-    const general: string[] = [];
-    for (const [field, value] of Object.entries(source)) {
-      const message = errorText(value);
-      if (!message) continue;
-      if (["room", "code", "name", "rack_type", "owner_name", "notes", "total_u", "status"].includes(field)) {
-        fields[field] = message;
-      } else if (field === "detail" || field === "non_field_errors") {
-        general.push(message);
-      } else {
-        general.push(`${field}: ${message}`);
-      }
-    }
-    return { fields, message: general.join("；") || candidate.message || tr("facility.rackSaveFailed") };
+    const normalized = normalizeApiError(error);
+    return {
+      fields: fieldErrorsToText(normalized.fieldErrors, [
+        "room",
+        "code",
+        "name",
+        "rack_type",
+        "owner_name",
+        "notes",
+        "total_u",
+        "status",
+      ]),
+      message: normalized.message,
+    };
   }
 
   async function refreshRackDataAfterMutation() {
@@ -683,16 +715,16 @@ export function useFacilities(deps: FacilitiesDeps) {
       });
       showRackModal.value = false;
       editingRack.value = null;
-      deps.actionMessage.value = tr("facility.rackSaved");
+      setActionMessage(tr("facility.rackSaved"));
       try {
         await refreshRackDataAfterMutation();
-      } catch (refreshError) {
-        deps.actionMessage.value = `${tr("facility.rackSavedRefreshFailed")}: ${refreshError instanceof Error ? refreshError.message : tr("common.retryLater")}`;
+      } catch {
+        setActionMessage(tr("facility.rackSavedRefreshFailed"), "error");
       }
     } catch (error) {
       const parsed = extractRackFormErrors(error);
       rackFormFieldErrors.value = parsed.fields;
-      deps.actionMessage.value = parsed.message;
+      setActionMessage(parsed.message, "error");
     } finally {
       rackSaving.value = false;
     }
@@ -712,14 +744,14 @@ export function useFacilities(deps: FacilitiesDeps) {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ status }),
       });
-      deps.actionMessage.value = tr("facility.rackStatusUpdated");
+      setActionMessage(tr("facility.rackStatusUpdated"));
       try {
         await refreshRackDataAfterMutation();
-      } catch (refreshError) {
-        deps.actionMessage.value = `${tr("facility.rackStatusRefreshFailed")}: ${refreshError instanceof Error ? refreshError.message : tr("common.retryLater")}`;
+      } catch {
+        setActionMessage(tr("facility.rackStatusRefreshFailed"), "error");
       }
     } catch (error) {
-      deps.actionMessage.value = error instanceof Error ? error.message : tr("facility.rackStatusFailed");
+      setActionError(error, tr("facility.rackStatusFailed"));
     } finally {
       updatingRackId.value = null;
     }
@@ -735,14 +767,14 @@ export function useFacilities(deps: FacilitiesDeps) {
       await deps.request(`/racks/${rack.id}/`, { method: "DELETE" });
       if (focusedRackId.value === rack.id) clearRackSelection();
       if (selectedRack.value === rack.code) selectedRack.value = "";
-      deps.actionMessage.value = tr("facility.rackDeleted");
+      setActionMessage(tr("facility.rackDeleted"));
       try {
         await refreshRackDataAfterMutation();
-      } catch (refreshError) {
-        deps.actionMessage.value = `${tr("facility.rackDeletedRefreshFailed")}: ${refreshError instanceof Error ? refreshError.message : tr("common.retryLater")}`;
+      } catch {
+        setActionMessage(tr("facility.rackDeletedRefreshFailed"), "error");
       }
     } catch (error) {
-      deps.actionMessage.value = error instanceof Error ? error.message : tr("facility.rackDeleteFailed");
+      setActionError(error, tr("facility.rackDeleteFailed"));
     } finally {
       deletingRackId.value = null;
     }

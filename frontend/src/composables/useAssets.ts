@@ -36,6 +36,12 @@ import {
 } from "../depreciation";
 import { systemSettingsState } from "../system-settings";
 import { i18n } from "../i18n";
+import {
+  clearFieldError,
+  fieldErrorsToText,
+  normalizeApiError,
+  type ActionMessageType,
+} from "../error-handling";
 
 const tr = (key: string, params?: Record<string, unknown>): string =>
   String(params ? i18n.global.t(key, params) : i18n.global.t(key));
@@ -159,6 +165,7 @@ export interface AssetsDeps {
   authenticated: Ref<boolean>;
   page: Ref<Page>;
   actionMessage: Ref<string>;
+  actionMessageType: Ref<ActionMessageType | null>;
   dataCenters: Ref<DataCenter[]>;
   serverRooms: Ref<ServerRoom[]>;
   racks: Ref<Rack[]>;
@@ -301,6 +308,7 @@ function loadSavedColumns(): AssetColumnKey[] {
 const assetFormFieldNames = new Set([
   "asset_no",
   "name",
+  "manufacturer_id",
   "manufacturer",
   "model",
   "device_type",
@@ -329,6 +337,7 @@ const assetFormFieldNames = new Set([
   "depreciation_years",
   "residual_rate",
   "depreciation_method",
+  "configuration",
   "maintenance_provider",
   "maintenance_contract_no",
   "maintenance_start_date",
@@ -338,54 +347,17 @@ const assetFormFieldNames = new Set([
   "custom_values",
 ]);
 
-function errorText(value: unknown): string {
-  if (Array.isArray(value)) return value.map(errorText).filter(Boolean).join("；");
-  if (value && typeof value === "object") {
-    return Object.values(value).map(errorText).filter(Boolean).join("；");
-  }
-  return String(value ?? "");
-}
-
 function extractAssetFormErrors(error: unknown): {
   fields: Record<string, string>;
   message: string;
 } {
-  const candidate = error && typeof error === "object"
-    ? error as { details?: unknown; message?: string }
-    : {};
-  const details = candidate.details;
-  const fields: Record<string, string> = {};
-  const general: string[] = [];
-  const source = details && typeof details === "object" && !Array.isArray(details)
-    ? details as Record<string, unknown>
-    : {};
-  const nestedDetail = source.detail && typeof source.detail === "object" && !Array.isArray(source.detail)
-    ? source.detail as Record<string, unknown>
-    : null;
-  const errorEntries = nestedDetail || source;
-
-  for (const [rawKey, value] of Object.entries(errorEntries)) {
-    if (rawKey === "detail" || rawKey === "non_field_errors") {
-      const message = errorText(value);
-      if (message) general.push(message);
-      continue;
-    }
-    if (rawKey === "custom_values" && value && typeof value === "object" && !Array.isArray(value)) {
-      for (const [customKey, customValue] of Object.entries(value)) {
-        const message = errorText(customValue);
-        if (message) fields[`custom_values.${customKey}`] = message;
-      }
-      continue;
-    }
-    const key = rawKey;
-    const message = errorText(value);
-    if (!message) continue;
-    if (assetFormFieldNames.has(key) || key.startsWith("custom_values.")) fields[key] = message;
-    else general.push(`${rawKey}: ${message}`);
+  const normalized = normalizeApiError(error);
+  const allowedFields = [...assetFormFieldNames].filter((field) => field !== "custom_values");
+  const fields = fieldErrorsToText(normalized.fieldErrors, allowedFields);
+  for (const [field, messages] of Object.entries(normalized.fieldErrors)) {
+    if (field.startsWith("custom_values.")) fields[field] = messages.join("；");
   }
-
-  const message = general.join("；") || candidate.message || tr("asset.saveFailed");
-  return { fields, message };
+  return { fields, message: normalized.message };
 }
 
 export function useAssets(deps: AssetsDeps) {
@@ -491,6 +463,87 @@ export function useAssets(deps: AssetsDeps) {
     clone: false,
     isNew: false,
   });
+
+  function setActionMessage(message: string, type: ActionMessageType = "success") {
+    deps.actionMessageType.value = type;
+    deps.actionMessage.value = message;
+  }
+
+  function errorMessage(error: unknown, fallback: string) {
+    const normalized = normalizeApiError(error);
+    return normalized.kind === "unknown" ? fallback : normalized.message;
+  }
+
+  function setActionError(error: unknown, fallback: string): string {
+    const message = errorMessage(error, fallback);
+    setActionMessage(message, "error");
+    return message;
+  }
+
+  function watchAssetFormFieldErrors(fields: readonly string[]) {
+    for (const field of fields) {
+      watch(
+        () => (assetForm.value as Record<string, unknown>)[field],
+        () => {
+          if (assetFormFieldErrors.value[field]) {
+            assetFormFieldErrors.value = clearFieldError(assetFormFieldErrors.value, field);
+          }
+        },
+      );
+    }
+  }
+
+  watchAssetFormFieldErrors([
+    "asset_no",
+    "name",
+    "manufacturer_id",
+    "model",
+    "device_type",
+    "manufacturer_model",
+    "serial_number",
+    "purpose",
+    "status",
+    "notes",
+    "rack_mounted",
+    "asset_data_center",
+    "data_center",
+    "server_room_id",
+    "rack_id",
+    "rack_total_u",
+    "rack_start_u",
+    "rack_end_u",
+    "business_ip",
+    "management_ip",
+    "oob_ip",
+    "purchase_date",
+    "supplier",
+    "purchase_order_no",
+    "purchase_amount",
+    "procurement_notes",
+    "depreciation_enabled",
+    "depreciation_start_date",
+    "depreciation_years",
+    "residual_rate",
+    "maintenance_provider",
+    "maintenance_contract_no",
+    "maintenance_start_date",
+    "maintenance_expiry_date",
+    "maintenance_notes",
+    "tags",
+    "configuration",
+  ]);
+  watch(
+    () => JSON.stringify(assetForm.value.custom_values || {}),
+    () => {
+      const next = Object.fromEntries(
+        Object.entries(assetFormFieldErrors.value)
+          .filter(([field]) => !field.startsWith("custom_values.")),
+      );
+      if (Object.keys(next).length !== Object.keys(assetFormFieldErrors.value).length) {
+        assetFormFieldErrors.value = next;
+      }
+    },
+  );
 
   const importFile = ref<File | null>(null);
   const showImportDialog = ref(false);
@@ -616,9 +669,7 @@ export function useAssets(deps: AssetsDeps) {
         if (requestId === assetListCustomSchemaRequestId.value && !isAbortError(error)) {
           assetListCustomFieldSchema.value = [];
           assetListCustomSchemaLoaded.value = false;
-          assetListCustomSchemaError.value = error instanceof Error && error.message
-            ? error.message
-            : tr("asset.extendedColumnsLoadFailed");
+          assetListCustomSchemaError.value = errorMessage(error, tr("asset.extendedColumnsLoadFailed"));
         }
         return false;
       } finally {
@@ -672,9 +723,7 @@ export function useAssets(deps: AssetsDeps) {
         if (requestId === assetFilterCustomSchemaRequestId.value && !isAbortError(error)) {
           assetFilterCustomFieldSchema.value = [];
           assetFilterCustomSchemaLoaded.value = false;
-          assetFilterCustomSchemaError.value = error instanceof Error && error.message
-            ? error.message
-            : tr("asset.dynamicFiltersLoadFailed");
+          assetFilterCustomSchemaError.value = errorMessage(error, tr("asset.dynamicFiltersLoadFailed"));
         }
         return false;
       } finally {
@@ -703,10 +752,7 @@ export function useAssets(deps: AssetsDeps) {
 
   function invalidCustomFilterError(error: unknown): string {
     if (!(error instanceof ApiError) || error.status !== 400) return "";
-    const details = error.details && typeof error.details === "object" && !Array.isArray(error.details)
-      ? error.details as Record<string, unknown>
-      : {};
-    const message = errorText(details.custom_filters);
+    const message = fieldErrorsToText(normalizeApiError(error).fieldErrors).custom_filters;
     return message ? tr("asset.invalidFilter", { message }) : "";
   }
 
@@ -798,9 +844,7 @@ export function useAssets(deps: AssetsDeps) {
       return true;
     } catch (error) {
       if (deps.isCurrentLoad(version) && !isAbortError(error)) {
-        assetListError.value = invalidCustomFilterError(error) || (error instanceof Error && error.message
-          ? error.message
-          : tr("asset.dataLoadFailed"));
+        assetListError.value = invalidCustomFilterError(error) || errorMessage(error, tr("asset.dataLoadFailed"));
       }
       return false;
     } finally {
@@ -924,9 +968,7 @@ export function useAssets(deps: AssetsDeps) {
       return true;
     } catch (error) {
       if (requestId === assetCustomSchemaRequestId.value && !isAbortError(error)) {
-        assetCustomSchemaError.value = error instanceof Error && error.message
-          ? error.message
-          : tr("asset.extendedFieldsLoadFailed");
+        assetCustomSchemaError.value = errorMessage(error, tr("asset.extendedFieldsLoadFailed"));
       }
       return false;
     } finally {
@@ -1186,7 +1228,7 @@ export function useAssets(deps: AssetsDeps) {
       }
     } catch (error) {
       if (requestId === detailRequestId.value && !isAbortError(error)) {
-        deps.detailError.value = error instanceof Error ? error.message : tr("asset.assetDetailLoadFailed");
+        deps.detailError.value = errorMessage(error, tr("asset.assetDetailLoadFailed"));
       }
     } finally {
       if (requestId === detailRequestId.value) deps.detailLoading.value = false;
@@ -1350,8 +1392,7 @@ export function useAssets(deps: AssetsDeps) {
       }
     } catch (error) {
       if (requestId === assetFormRequestId.value && !isAbortError(error)) {
-        assetFormLoadError.value = error instanceof Error ? error.message : tr("asset.formLoadFailed");
-        deps.actionMessage.value = assetFormLoadError.value;
+        assetFormLoadError.value = errorMessage(error, tr("asset.formLoadFailed"));
       }
     } finally {
       if (requestId === assetFormRequestId.value) assetFormLoading.value = false;
@@ -1377,8 +1418,7 @@ export function useAssets(deps: AssetsDeps) {
       await loadAssetCustomSchema("");
     } catch (error) {
       if (requestId === assetFormRequestId.value && !isAbortError(error)) {
-        assetFormLoadError.value = error instanceof Error ? error.message : tr("asset.relatedDataLoadFailed");
-        deps.actionMessage.value = assetFormLoadError.value;
+        assetFormLoadError.value = errorMessage(error, tr("asset.relatedDataLoadFailed"));
       }
     } finally {
       if (requestId === assetFormRequestId.value) assetFormLoading.value = false;
@@ -1489,7 +1529,7 @@ export function useAssets(deps: AssetsDeps) {
           (value) => !String(value || "").trim(),
         )
       ) {
-        deps.actionMessage.value = tr("asset.rackPlacementIncomplete");
+        setActionMessage(tr("asset.rackPlacementIncomplete"), "error");
         return;
       }
       const method = editingAsset.value ? "PATCH" : "POST";
@@ -1546,15 +1586,18 @@ export function useAssets(deps: AssetsDeps) {
         await openAssetDetail(editingAssetId);
         refreshFailed = refreshFailed || Boolean(deps.detailError.value);
       }
-      deps.actionMessage.value = refreshFailed
-        ? tr("asset.savedRefreshFailed")
-        : wasEditing
-          ? tr("asset.updated")
-          : tr("asset.saved");
+      setActionMessage(
+        refreshFailed
+          ? tr("asset.savedRefreshFailed")
+          : wasEditing
+            ? tr("asset.updated")
+            : tr("asset.saved"),
+        refreshFailed ? "error" : "success",
+      );
     } catch (error) {
       const parsed = extractAssetFormErrors(error);
       assetFormFieldErrors.value = parsed.fields;
-      deps.actionMessage.value = parsed.message;
+      setActionMessage(parsed.message, "error");
     } finally {
       assetFormSaving.value = false;
     }
@@ -1586,12 +1629,12 @@ export function useAssets(deps: AssetsDeps) {
     try {
       await deps.request(`/assets/${asset.id}/`, { method: "DELETE" });
       selectedAssetIds.value = selectedAssetIds.value.filter((id) => id !== asset.id);
-      deps.actionMessage.value = tr("asset.deleted");
+      setActionMessage(tr("asset.deleted"));
       if (!(await loadAssets())) {
-        deps.actionMessage.value = tr("asset.deletedRefreshFailed");
+        setActionMessage(tr("asset.deletedRefreshFailed"), "error");
       }
     } catch (error) {
-      deps.actionMessage.value = error instanceof Error ? error.message : tr("asset.deleteFailed");
+      setActionError(error, tr("asset.deleteFailed"));
     }
   }
 
@@ -1614,14 +1657,14 @@ export function useAssets(deps: AssetsDeps) {
       const mutationMessage = result.failed
         ? tr("asset.batchDeleteSummary", { succeeded: result.succeeded, failed: result.failed })
         : tr("asset.batchDeleteSuccess", { count: result.succeeded });
-      deps.actionMessage.value = mutationMessage;
+      setActionMessage(mutationMessage, result.failed ? "error" : "success");
       const refreshed = await loadAssets();
       if (!refreshed) {
-        deps.actionMessage.value = `${mutationMessage}；${tr("common.refreshFailed")}，${tr("common.retry")}`;
+        setActionMessage(`${mutationMessage}；${tr("common.refreshFailed")}，${tr("common.retry")}`, "error");
       }
       if (result.failed) showAssetBatchDeleteResult.value = true;
     } catch (error) {
-      deps.actionMessage.value = error instanceof Error ? error.message : tr("asset.batchDeleteFailed");
+      setActionError(error, tr("asset.batchDeleteFailed"));
     } finally {
       assetBatchDeleteSaving.value = false;
     }
@@ -2022,12 +2065,15 @@ export function useAssets(deps: AssetsDeps) {
       assetPage.value = 1;
       assets.value = matches;
       assetCount.value = matchCount;
-      deps.actionMessage.value = matches.length
-        ? tr("asset.quickLookupFound", { count: matchCount })
-        : tr("asset.quickLookupNotFound", { query });
+      setActionMessage(
+        matches.length
+          ? tr("asset.quickLookupFound", { count: matchCount })
+          : tr("asset.quickLookupNotFound", { query }),
+        matches.length ? "success" : "error",
+      );
       deps.goToLedger();
     } catch (error) {
-      deps.actionMessage.value = error instanceof Error ? error.message : tr("asset.quickLookupFailed");
+      setActionError(error, tr("asset.quickLookupFailed"));
     }
   }
 
