@@ -148,18 +148,18 @@ function formatLdapDiagnosticAt(value?: string | null) {
         </div>
         <div class="settings-ldap-panel__heading-side">
           <div class="settings-ldap-panel__service-control">
-            <div class="settings-ldap-panel__service-copy">
+            <div class="settings-ldap-panel__service-row">
               <span class="settings-ldap-panel__service-label">{{ t("settings.ldapEnabledToggle") }}</span>
-              <span class="settings-ldap-panel__service-hint">{{ t("settings.ldapEnableDraftHint") }}</span>
+              <el-switch
+                v-model="ldapConfigurationForm.enabled"
+                :disabled="isBusy || !ldapConfiguration"
+                :aria-label="t('settings.ldapEnabledToggle')"
+              />
+              <el-text class="settings-ldap-panel__draft-status" :type="draftRuntimeStatus.tone">
+                {{ draftRuntimeStatus.label }}
+              </el-text>
             </div>
-            <el-switch
-              v-model="ldapConfigurationForm.enabled"
-              :disabled="isBusy || !ldapConfiguration"
-              :aria-label="t('settings.ldapEnabledToggle')"
-            />
-            <el-text class="settings-ldap-panel__draft-status" :type="draftRuntimeStatus.tone">
-              {{ draftRuntimeStatus.label }}
-            </el-text>
+            <span class="settings-ldap-panel__service-hint">{{ t("settings.ldapEnableDraftHint") }}</span>
           </div>
         </div>
       </header>
@@ -236,7 +236,6 @@ function formatLdapDiagnosticAt(value?: string | null) {
                 <h3>{{ t("settings.ldapSectionConnection") }}</h3>
                 <p>{{ t("settings.ldapSectionConnectionDescription") }}</p>
               </div>
-              <span class="settings-ldap-panel__section-index">01</span>
             </div>
             <div class="settings-ldap-panel__grid">
               <el-form-item :label="t('settings.ldapDirectoryType')" :error="ldapConfigurationFormErrors.directory_type">
@@ -277,7 +276,6 @@ function formatLdapDiagnosticAt(value?: string | null) {
                 <h3>{{ t("settings.ldapSectionServiceAccount") }}</h3>
                 <p>{{ t("settings.ldapSectionServiceAccountDescription") }}</p>
               </div>
-              <span class="settings-ldap-panel__section-index">02</span>
             </div>
             <div class="settings-ldap-panel__grid">
               <el-form-item :label="t('settings.ldapBindAccount')" :error="ldapConfigurationFormErrors.bind_dn">
@@ -309,7 +307,6 @@ function formatLdapDiagnosticAt(value?: string | null) {
                 <h3>{{ t("settings.ldapSectionUserDirectory") }}</h3>
                 <p>{{ t("settings.ldapSectionUserDirectoryDescription") }}</p>
               </div>
-              <span class="settings-ldap-panel__section-index">03</span>
             </div>
             <div class="settings-ldap-panel__grid">
               <el-form-item :label="t('settings.ldapBaseDn')" :error="ldapConfigurationFormErrors.base_dn">
@@ -386,7 +383,7 @@ function formatLdapDiagnosticAt(value?: string | null) {
                   </div>
                   <div class="settings-ldap-panel__action-save">
                     <el-button :disabled="!ldapConfigurationDirty || ldapConfigurationSaving" @click="resetLdapConfigurationForm">
-                      {{ t("settings.restoreUnsaved") }}
+                      {{ t("settings.ldapRestoreConfiguration") }}
                     </el-button>
                     <el-button
                       type="primary"
@@ -436,7 +433,7 @@ function formatLdapDiagnosticAt(value?: string | null) {
               <el-alert
                 v-if="ldapDiagnosticError"
                 class="settings-ldap-panel__recent-alert"
-                :title="t('settings.ldapDiagnosticRequestFailed')"
+                :title="t('settings.ldapDiagnosticConnectionFailed')"
                 :description="ldapDiagnosticError"
                 type="error"
                 show-icon
@@ -445,7 +442,7 @@ function formatLdapDiagnosticAt(value?: string | null) {
               <template v-else-if="ldapDiagnosticResult">
                 <el-alert
                   class="settings-ldap-panel__recent-alert"
-                  :title="ldapDiagnosticResult.success ? t('settings.ldapDiagnosticSuccess') : t('settings.ldapDiagnosticFailed')"
+                  :title="ldapDiagnosticResult.success ? t('settings.ldapDiagnosticSuccess') : t('settings.ldapDiagnosticConnectionFailed')"
                   :description="ldapDiagnosticResult.success ? t('settings.ldapDiagnosticComplete') : (ldapDiagnosticResult.message || t('settings.ldapDiagnosticRequestFailed'))"
                   :type="ldapDiagnosticResult.success ? 'success' : 'error'"
                   show-icon
@@ -484,8 +481,6 @@ function formatLdapDiagnosticAt(value?: string | null) {
                 <li>{{ t("settings.ldapConfigNoteDatabase") }}</li>
                 <li>{{ t("settings.ldapConfigNoteEnable") }}</li>
                 <li>{{ t("settings.ldapConfigNoteDisable") }}</li>
-                <li>{{ t("settings.ldapConfigNoteIdentity") }}</li>
-                <li>{{ t("settings.ldapConfigNoteDraft") }}</li>
               </ul>
             </section>
           </aside>
