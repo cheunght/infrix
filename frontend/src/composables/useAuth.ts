@@ -102,6 +102,26 @@ export function useAuth(deps: AuthDeps) {
     deps.passwordChangeRequired.value = Boolean(user.password_change_required);
   }
 
+  function clearSessionIdentity() {
+    deps.authenticated.value = false;
+    deps.isAdmin.value = false;
+    deps.authSource.value = "local";
+    deps.roleCode.value = "";
+    deps.roleName.value = "";
+    deps.permissions.value = [];
+    deps.userName.value = "";
+    deps.username.value = "";
+    deps.userIsActive.value = false;
+    deps.lastLogin.value = null;
+    deps.passwordChangeRequired.value = false;
+    deps.showPasswordModal.value = false;
+    deps.showProfileModal.value = false;
+    deps.profileForm.value = { first_name: "", last_name: "", email: "", locale: deps.locale.value };
+    deps.profileError.value = "";
+    deps.profileFormErrors.value = {};
+    resetPasswordState();
+  }
+
   async function checkAuth(signal?: AbortSignal) {
     try {
       const user = await deps.request<AuthPayload & { username: string }>(
@@ -117,14 +137,13 @@ export function useAuth(deps: AuthDeps) {
       }
     } catch (error) {
       if (isAbortError(error)) return;
-      if (!(error instanceof ApiError) || error.status !== 401) throw error;
-      deps.authenticated.value = false;
-      deps.isAdmin.value = false;
-      deps.authSource.value = "local";
-      deps.roleCode.value = "";
-      deps.permissions.value = [];
-      deps.passwordChangeRequired.value = false;
-      deps.showPasswordModal.value = false;
+      // DRF's session authentication returns 403 when an unauthenticated
+      // request has no authentication challenge header.  `/auth/me/` is the
+      // session probe, so both 401 and 403 mean that the browser simply needs
+      // to return to the login screen; neither should blank the application
+      // behind the bootstrap error page.
+      if (!(error instanceof ApiError) || (error.status !== 401 && error.status !== 403)) throw error;
+      clearSessionIdentity();
     } finally {
       deps.authChecked.value = true;
     }
