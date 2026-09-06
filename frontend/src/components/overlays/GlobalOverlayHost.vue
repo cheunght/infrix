@@ -15,6 +15,7 @@ import FieldHelp from "../FieldHelp.vue";
 import FormDialogShell from "../FormDialogShell.vue";
 import AssetSelect from "../AssetSelect.vue";
 import AssetSummary from "../AssetSummary.vue";
+import MoneyInput from "../MoneyInput.vue";
 import PagedTable from "../PagedTable.vue";
 import StatusTag from "../StatusTag.vue";
 import type { Asset, AssetDetail, Page } from "../../types";
@@ -157,6 +158,13 @@ const usedCountValue = computed<number | null>({
   get: () => numberFromText(licenseForm.value.used_count),
   set: (value) => {
     licenseForm.value.used_count = value == null ? "" : String(value);
+  },
+});
+
+const repairCostValue = computed<string | null>({
+  get: () => repairForm.value.cost || null,
+  set: (value) => {
+    repairForm.value.cost = value ?? "";
   },
 });
 
@@ -1138,6 +1146,9 @@ function importRowErrorText(row: { errors: Array<{ label: string; message: strin
       <el-form-item :label="t('overlay.repairFinishedAt')" prop="finished_at" :error="repairFormErrors.finished_at">
         <el-date-picker v-model="repairForm.finished_at" type="datetime" value-format="YYYY-MM-DDTHH:mm" :disabled="repairReadOnly" />
         <FieldHelp v-if="!repairReadOnly" :text="repairFinishedAtHelp" />
+      </el-form-item>
+      <el-form-item :label="t('overlay.repairCost')" :error="repairFormErrors.cost">
+        <MoneyInput v-model="repairCostValue" currency="CNY" :readonly="repairReadOnly" :placeholder="t('overlay.repairCostPlaceholder')" />
       </el-form-item>
       <el-form-item :label="t('common.notes')" :error="repairFormErrors.notes"><el-input v-model="repairForm.notes" type="textarea" :rows="4" :readonly="repairReadOnly" :placeholder="t('overlay.repairNotesPlaceholder')" /></el-form-item>
     </el-form>

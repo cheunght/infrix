@@ -65,7 +65,7 @@ function emptyRepairPartUsageForm(): RepairPartUsageFormState {
 }
 
 const FAULT_FORM_FIELDS = ["asset", "occurred_at", "reason", "description"] as const;
-const REPAIR_FORM_FIELDS = ["provider", "started_at", "finished_at", "notes"] as const;
+const REPAIR_FORM_FIELDS = ["provider", "started_at", "finished_at", "cost", "notes"] as const;
 const REPAIR_PART_USAGE_FORM_FIELDS = [
   "source", "spare_part_id", "spare_stock_id", "part_code", "part_name", "part_model", "vendor_name", "quantity", "notes",
 ] as const;
@@ -84,7 +84,7 @@ export function useRepairs(deps: RepairsDeps) {
   const showRepairModal = ref(false);
   const selectedFault = ref<FaultEvent | null>(null);
   const faultForm = ref({ asset: "", occurred_at: "", reason: "", description: "" });
-  const repairForm = ref({ provider: "", started_at: "", finished_at: "", notes: "" });
+  const repairForm = ref({ provider: "", started_at: "", finished_at: "", cost: "", notes: "" });
   const showRepairPartUsageModal = ref(false);
   const repairPartUsageForm = ref<RepairPartUsageFormState>({
     source: "internal_stock",
@@ -213,6 +213,7 @@ export function useRepairs(deps: RepairsDeps) {
       provider: fault.repair?.provider || "",
       started_at: toDateTimeLocal(fault.repair?.started_at || null),
       finished_at: toDateTimeLocal(fault.repair?.finished_at || null),
+      cost: fault.repair?.cost || "",
       notes: fault.repair?.notes || "",
     };
     repairPartUsageItems.value = [];
@@ -703,6 +704,7 @@ export function useRepairs(deps: RepairsDeps) {
         provider: repairForm.value.provider.trim(),
         started_at: repairForm.value.started_at || null,
         finished_at: repairForm.value.finished_at || null,
+        cost: repairForm.value.cost.trim() || null,
         notes: repairForm.value.notes,
       };
       if (selectedFault.value.repair) {

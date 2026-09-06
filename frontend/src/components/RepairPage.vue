@@ -57,6 +57,11 @@ function formatRepairDateTime(value: string | null | undefined): string {
   return Number.isNaN(date.getTime()) ? t("common.notAvailable") : date.toLocaleString(locale.value);
 }
 
+function formatRepairCost(fault: FaultEvent): string {
+  const cost = fault.repair?.cost;
+  return cost || t("common.notAvailable");
+}
+
 function repairStage(fault: FaultEvent) {
   if (fault.repair?.finished_at) {
     return { label: t("status.completed"), tone: statusTone("completed") };
@@ -167,6 +172,9 @@ function repairActionIcon(fault: FaultEvent) {
               <template #default="{ row }">
                 <StatusTag :tone="repairStage(row).tone" :label="repairStage(row).label" />
               </template>
+            </el-table-column>
+            <el-table-column :label="t('repair.cost')" width="130">
+              <template #default="{ row }">{{ formatRepairCost(row) }}</template>
             </el-table-column>
             <el-table-column v-if="can('faults.view')" :label="t('common.operation')" fixed="right" width="132">
               <template #default="{ row }">
