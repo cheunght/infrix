@@ -46,7 +46,7 @@ from .enum_contracts import (
     STOCK_OPERATION_TYPE_LABELS,
     STOCK_OPERATION_TYPE_VALUES,
 )
-from .serializers import AdminPasswordResetSerializer, AssetBatchDeleteResponseSerializer, AssetBatchDeleteSerializer, AssetDetailSerializer, AssetListSerializer, AssetResponsibilityEventSerializer, AssetResponsibilityReturnSerializer, AssetResponsibilityTargetSerializer, AssetResponsibilityUserSerializer, AssetSerializer, AssetWriteSerializer, AuditLogSerializer, CurrentUserProfileSerializer, CustomFieldOptionSerializer, CustomFieldRuntimeSchemaSerializer, CustomFieldSerializer, DataCenterSerializer, DeviceTypeSerializer, FaultEventSerializer, GroupSerializer, InventoryBulkNormalResponseSerializer, InventoryBulkNormalSerializer, InventoryBulkResolutionResponseSerializer, InventoryBulkResolutionSerializer, InventoryInspectorSerializer, InventoryItemPageSerializer, InventoryItemSerializer, InventoryResolutionSerializer, InventoryScopePreviewQuerySerializer, InventoryScopePreviewSerializer, InventoryTaskSerializer, ManufacturerSerializer, RackSerializer, RepairPartUsageCreateSerializer, RepairPartUsageSerializer, RepairRecordSerializer, ServerRoomSerializer, SoftwareLicenseSerializer, SparePartCategorySerializer, SparePartDetailSerializer, SparePartSerializer, SpareStockSerializer, SpareStockTransactionSerializer, SystemResetSerializer, SystemSettingsSerializer, TagSerializer, UserBatchStatusResponseSerializer, UserBatchStatusSerializer, UserSerializer, _default_references_option, _responsibility_user_name
+from .serializers import AdminPasswordResetSerializer, AssetBatchDeleteResponseSerializer, AssetBatchDeleteSerializer, AssetDetailSerializer, AssetListSerializer, AssetResponsibilityEventSerializer, AssetResponsibilityReturnSerializer, AssetResponsibilityTargetSerializer, AssetResponsibilityUserSerializer, AssetSerializer, AssetWriteSerializer, AuditLogSerializer, CurrentUserProfileSerializer, CustomFieldOptionSerializer, CustomFieldRuntimeSchemaSerializer, CustomFieldSerializer, DataCenterSerializer, DeviceTypeSerializer, FaultEventSerializer, GroupSerializer, InventoryBulkNormalResponseSerializer, InventoryBulkNormalSerializer, InventoryBulkResolutionResponseSerializer, InventoryBulkResolutionSerializer, InventoryInspectorSerializer, InventoryItemPageSerializer, InventoryItemSerializer, InventoryResolutionSerializer, InventoryScopePreviewQuerySerializer, InventoryScopePreviewSerializer, InventoryTaskSerializer, LdapConfigurationUpdateSerializer, ManufacturerSerializer, RackSerializer, RepairPartUsageCreateSerializer, RepairPartUsageSerializer, RepairRecordSerializer, ServerRoomSerializer, SoftwareLicenseSerializer, SparePartCategorySerializer, SparePartDetailSerializer, SparePartSerializer, SpareStockSerializer, SpareStockTransactionSerializer, SystemResetSerializer, SystemSettingsSerializer, TagSerializer, UserBatchStatusResponseSerializer, UserBatchStatusSerializer, UserSerializer, _default_references_option, _responsibility_user_name
 from .services import (
     apply_spare_stock_transaction,
     confirm_inventory_item_normal,
@@ -79,6 +79,16 @@ from .ldap_auth import (
     authenticate_with_source_routing,
     is_directory_managed,
     ldap_status_snapshot,
+    ldap_is_enabled,
+)
+from .ldap_configuration import (
+    ConfigurationIdentityError,
+    ConfigurationSecretError,
+    configuration_errors,
+    get_effective_ldap_configuration,
+    merge_configuration,
+    public_configuration,
+    save_configuration,
 )
 from .permissions import BusinessRolePermission, CanExportAssets, CanExportFaults, CanExportInventory, CanExportLicenses, CanExportRacks, CanExportSpares, CanImportAssets, CanManageInventory, CanManageSystemSettings, CanResetSystem, CanViewAssetCustomFieldSchema, CanViewAssetTagsRuntime, CanViewAuditLog, CanViewDashboard, CanViewInventory, CanViewLicenses, CanViewManufacturerRuntime, CanViewSparePartCategoryRuntime, IsSystemAdministrator
 from .roles import ROLE_DEFINITIONS, ROLE_NAME_TO_CODE, user_capabilities, user_has_capability, user_role_code, user_role_codes
@@ -2833,7 +2843,7 @@ def auth_login(request):
         else AUTH_SOURCE_LOCAL
         if matched_user
         else AUTH_SOURCE_LDAP
-        if settings.LDAP_ENABLED
+        if ldap_is_enabled()
         else None
     )
     try:
@@ -2923,7 +2933,109 @@ def auth_csrf(request):
 @api_view(["GET"])
 @permission_classes([IsAuthenticated, IsSystemAdministrator])
 def auth_ldap_status(request):
-    return Response(ldap_status_snapshot())
+    return Response(_ldap_status_payload())
+
+
+def _ldap_last_diagnostic_payload() -> dict[str, object | None]:
+    audit = (
+        AuditLog.objects.filter(resource_type="ldap", action="ldap_diagnostic")
+        .order_by("-created_at", "-id")
+        .first()
+    )
+    if audit is None:
+        return {
+            "last_diagnostic_at": None,
+            "last_diagnostic_success": None,
+            "last_diagnostic_code": None,
+        }
+    extra = (audit.payload or {}).get("extra")
+    extra = extra if isinstance(extra, dict) else {}
+    return {
+        "last_diagnostic_at": audit.created_at,
+        "last_diagnostic_success": bool(extra.get("success")),
+        "last_diagnostic_code": extra.get("code") if isinstance(extra.get("code"), str) else None,
+    }
+
+
+def _ldap_status_payload() -> dict:
+    return {**ldap_status_snapshot(), **_ldap_last_diagnostic_payload()}
+
+
+@extend_schema(responses=OpenApiTypes.OBJECT)
+@api_view(["GET", "PATCH"])
+@permission_classes([IsAuthenticated, IsSystemAdministrator])
+def auth_ldap_config(request):
+    if request.method == "GET":
+        return Response({
+            **public_configuration(get_effective_ldap_configuration()),
+            **_ldap_last_diagnostic_payload(),
+        })
+
+    serializer = LdapConfigurationUpdateSerializer(data=request.data, partial=True)
+    if not serializer.is_valid():
+        return Response(serializer.errors, status=400)
+
+    current = get_effective_ldap_configuration()
+    password_value = serializer.validated_data.get("bind_password", "")
+    password_submitted = bool(password_value)
+    candidate = merge_configuration(
+        current,
+        serializer.validated_data,
+        password_submitted=password_submitted,
+        password_value=password_value,
+    )
+    errors = configuration_errors(candidate, require_password=candidate.enabled)
+    if candidate.enabled and errors:
+        return Response(errors, status=400)
+
+    try:
+        save_configuration(
+            candidate,
+            password_submitted=password_submitted,
+            password_value=password_value,
+        )
+    except ConfigurationIdentityError as exc:
+        return Response(exc.errors, status=400)
+    except ConfigurationSecretError as exc:
+        return Response({"bind_password": str(exc)}, status=400)
+
+    updated = get_effective_ldap_configuration()
+    before_public = public_configuration(current)
+    after_public = public_configuration(updated)
+    changed_fields = [
+        field
+        for field in serializer.validated_data
+        if field != "bind_password" and before_public.get(field) != after_public.get(field)
+    ]
+    if password_submitted:
+        changed_fields.append("bind_password")
+    write_audit_log(
+        request,
+        action="ldap_configuration_updated",
+        resource_type="ldap",
+        resource_id="configuration",
+        extra={"changed_fields": sorted(set(changed_fields))},
+    )
+    if current.enabled != updated.enabled:
+        write_audit_log(
+            request,
+            action="ldap_enabled" if updated.enabled else "ldap_disabled",
+            resource_type="ldap",
+            resource_id="configuration",
+            extra={"enabled": updated.enabled},
+        )
+    if password_submitted:
+        write_audit_log(
+            request,
+            action="ldap_bind_password_updated",
+            resource_type="ldap",
+            resource_id="configuration",
+            extra={"configured": True},
+        )
+    return Response({
+        **public_configuration(updated),
+        **_ldap_last_diagnostic_payload(),
+    })
 
 
 def _safe_ldap_diagnostic_payload(result) -> dict:
@@ -2956,6 +3068,20 @@ def _safe_ldap_diagnostic_payload(result) -> dict:
     return payload
 
 
+def _write_ldap_diagnostic_audit(request, payload: dict) -> None:
+    write_audit_log(
+        request,
+        action="ldap_diagnostic",
+        resource_type="ldap",
+        resource_id="configuration",
+        extra={
+            "success": payload["success"],
+            "stage": payload["stage"],
+            **({"code": payload["code"]} if "code" in payload else {}),
+        },
+    )
+
+
 @extend_schema(request=OpenApiTypes.OBJECT, responses=OpenApiTypes.OBJECT)
 @api_view(["POST"])
 @permission_classes([IsAuthenticated, IsSystemAdministrator])
@@ -2980,7 +3106,38 @@ def auth_ldap_diagnostics(request):
         )
 
     try:
-        result = LDAPDirectoryClient().diagnose()
+        staged_configuration = None
+        if request.data:
+            serializer = LdapConfigurationUpdateSerializer(data=request.data, partial=True)
+            if not serializer.is_valid():
+                _write_ldap_diagnostic_audit(
+                    request,
+                    {"success": False, "stage": "configuration", "code": "configuration_error"},
+                )
+                return Response(serializer.errors, status=400)
+            current = get_effective_ldap_configuration()
+            password_value = serializer.validated_data.get("bind_password", "")
+            staged_configuration = merge_configuration(
+                current,
+                serializer.validated_data,
+                password_submitted=bool(password_value),
+                password_value=password_value,
+            )
+            staged_errors = configuration_errors(staged_configuration, require_password=True)
+            if staged_errors:
+                _write_ldap_diagnostic_audit(
+                    request,
+                    {"success": False, "stage": "configuration", "code": "configuration_error"},
+                )
+                return Response(staged_errors, status=400)
+        result = (
+            LDAPDirectoryClient(configuration=staged_configuration).diagnose(
+                staged_configuration,
+                allow_disabled=staged_configuration is not None,
+            )
+            if staged_configuration is not None
+            else LDAPDirectoryClient().diagnose()
+        )
         payload = _safe_ldap_diagnostic_payload(result)
     except Exception:
         logger.exception("LDAP diagnostic endpoint failed")
@@ -2990,17 +3147,7 @@ def auth_ldap_diagnostics(request):
             "code": "unexpected_error",
         })
 
-    write_audit_log(
-        request,
-        action="ldap_diagnostic",
-        resource_type="ldap",
-        resource_id="configuration",
-        extra={
-            "success": payload["success"],
-            "stage": payload["stage"],
-            **({"code": payload["code"]} if "code" in payload else {}),
-        },
-    )
+    _write_ldap_diagnostic_audit(request, payload)
     if payload["success"]:
         return Response(payload)
     status = 200 if payload.get("code") == "disabled" else 400 if payload.get("code") == "configuration_error" else 503

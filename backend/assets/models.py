@@ -474,6 +474,72 @@ class SystemSetting(Timestamped):
         return "系统设置"
 
 
+class DirectoryServiceConfiguration(Timestamped):
+    """The singleton runtime configuration for the enterprise directory.
+
+    The bind secret is deliberately stored only as an authenticated-encryption
+    token.  The encryption key is deployment-owned and never crosses the API
+    boundary.
+    """
+
+    SINGLETON_ID = 1
+    DIRECTORY_TYPE_CHOICES = [
+        ("active_directory", "Microsoft Active Directory"),
+        ("generic_ldap", "Generic LDAP"),
+    ]
+    SECURITY_MODE_CHOICES = [
+        ("ldaps", "LDAPS"),
+        ("starttls", "StartTLS"),
+        ("none", "None"),
+    ]
+
+    id = models.PositiveSmallIntegerField(
+        primary_key=True,
+        default=SINGLETON_ID,
+        editable=False,
+    )
+    enabled = models.BooleanField(default=False)
+    directory_type = models.CharField(
+        max_length=30,
+        choices=DIRECTORY_TYPE_CHOICES,
+        default="generic_ldap",
+    )
+    primary_host = models.CharField(max_length=255, blank=True, default="")
+    primary_port = models.PositiveIntegerField(null=True, blank=True)
+    secondary_host = models.CharField(max_length=255, blank=True, default="")
+    secondary_port = models.PositiveIntegerField(null=True, blank=True)
+    base_dn = models.CharField(max_length=255, blank=True, default="")
+    bind_dn = models.CharField(max_length=255, blank=True, default="")
+    bind_password_encrypted = models.TextField(blank=True, default="")
+    security_mode = models.CharField(
+        max_length=20,
+        choices=SECURITY_MODE_CHOICES,
+        default="ldaps",
+    )
+    tls_server_name = models.CharField(max_length=255, blank=True, default="")
+    ca_cert_file = models.CharField(max_length=500, blank=True, default="")
+    user_search_base = models.CharField(max_length=255, blank=True, default="")
+    user_login_attribute = models.CharField(max_length=80, default="uid")
+    user_filter = models.CharField(
+        max_length=500,
+        default="(&(objectClass=inetOrgPerson)(uid={username}))",
+    )
+    external_id_attribute = models.CharField(max_length=80, default="entryUUID")
+    email_attribute = models.CharField(max_length=80, default="mail")
+    first_name_attribute = models.CharField(max_length=80, default="givenName")
+    last_name_attribute = models.CharField(max_length=80, default="sn")
+    account_control_attribute = models.CharField(
+        max_length=80,
+        blank=True,
+        default="",
+    )
+    connect_timeout = models.PositiveIntegerField(default=5)
+    operation_timeout = models.PositiveIntegerField(default=5)
+
+    def __str__(self):
+        return "LDAP / Active Directory 配置"
+
+
 class AssetCustomValue(Timestamped):
     asset = models.ForeignKey(Asset, on_delete=models.CASCADE, related_name="custom_values")
     field = models.ForeignKey(CustomField, on_delete=models.PROTECT, related_name="asset_values")

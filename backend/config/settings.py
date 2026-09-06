@@ -433,25 +433,14 @@ LDAP_STARTTLS = False
 LDAP_TLS_VALIDATE = True
 LDAP_CA_CERT_FILE = os.getenv("LDAP_CA_CERT_FILE", "").strip()
 if LDAP_ENABLED:
+    # These values remain a backward-compatible bootstrap source only.  The
+    # runtime resolver validates them lazily so a database-managed directory
+    # configuration can safely supersede an incomplete legacy environment.
     LDAP_CONNECT_TIMEOUT = _env_int("LDAP_CONNECT_TIMEOUT", "5", minimum=1)
     LDAP_OPERATION_TIMEOUT = _env_int("LDAP_OPERATION_TIMEOUT", "5", minimum=1)
     LDAP_STARTTLS = _env_bool("LDAP_STARTTLS", "0")
     LDAP_TLS_VALIDATE = _env_bool("LDAP_TLS_VALIDATE", "1")
-    validate_ldap_settings(
-        enabled=LDAP_ENABLED,
-        server_uri=LDAP_SERVER_URI,
-        bind_dn=LDAP_BIND_DN,
-        bind_password=LDAP_BIND_PASSWORD,
-        user_base_dn=LDAP_USER_BASE_DN,
-        user_filter=LDAP_USER_FILTER,
-        username_attribute=LDAP_USERNAME_ATTRIBUTE,
-        external_id_attribute=LDAP_EXTERNAL_ID_ATTRIBUTE,
-        connect_timeout=LDAP_CONNECT_TIMEOUT,
-        operation_timeout=LDAP_OPERATION_TIMEOUT,
-        starttls=LDAP_STARTTLS,
-        tls_validate=LDAP_TLS_VALIDATE,
-        ca_cert_file=LDAP_CA_CERT_FILE,
-    )
+INFRIX_CONFIG_ENCRYPTION_KEY = os.getenv("INFRIX_CONFIG_ENCRYPTION_KEY", "").strip()
 LANGUAGE_CODE = "zh-hans"
 TIME_ZONE = os.getenv("TZ", "Asia/Shanghai")
 USE_I18N = True

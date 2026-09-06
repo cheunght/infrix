@@ -36,6 +36,7 @@ from .custom_fields import normalize_validation_config as _normalize_validation_
 from .lifecycle import allowed_asset_status_values, transition_asset_status, validate_asset_status_transition
 from .roles import ROLE_AUDITOR, ROLE_DEFINITIONS, ROLE_NAME_TO_CODE, preset_group_for_code, user_role_code
 from .ldap_auth import AUTH_SOURCE_LDAP, AUTH_SOURCE_LOCAL
+from .ldap_configuration import DIRECTORY_TYPE_CHOICES, SECURITY_MODE_CHOICES
 from .system_reset import SYSTEM_RESET_CONFIRMATION
 from .system_settings import get_system_settings, system_setting_definitions
 
@@ -229,6 +230,44 @@ class SystemSettingsSerializer(serializers.ModelSerializer):
             raise serializers.ValidationError(
                 {key: "该系统设置不支持通过当前接口修改" for key in unknown}
             )
+        return attrs
+
+
+class LdapConfigurationUpdateSerializer(serializers.Serializer):
+    """Write-only update contract for the singleton directory configuration."""
+
+    enabled = serializers.BooleanField(required=False)
+    directory_type = serializers.ChoiceField(choices=DIRECTORY_TYPE_CHOICES, required=False)
+    primary_host = serializers.CharField(required=False, allow_blank=True, max_length=255)
+    primary_port = serializers.IntegerField(required=False, allow_null=True, min_value=1, max_value=65535)
+    secondary_host = serializers.CharField(required=False, allow_blank=True, max_length=255)
+    secondary_port = serializers.IntegerField(required=False, allow_null=True, min_value=1, max_value=65535)
+    base_dn = serializers.CharField(required=False, allow_blank=True, max_length=255)
+    bind_dn = serializers.CharField(required=False, allow_blank=True, max_length=255)
+    bind_password = serializers.CharField(
+        required=False,
+        allow_blank=True,
+        trim_whitespace=False,
+        write_only=True,
+    )
+    security_mode = serializers.ChoiceField(choices=SECURITY_MODE_CHOICES, required=False)
+    tls_server_name = serializers.CharField(required=False, allow_blank=True, max_length=255)
+    ca_cert_file = serializers.CharField(required=False, allow_blank=True, max_length=500)
+    user_search_base = serializers.CharField(required=False, allow_blank=True, max_length=255)
+    user_login_attribute = serializers.CharField(required=False, allow_blank=True, max_length=80)
+    user_filter = serializers.CharField(required=False, allow_blank=True, max_length=500)
+    external_id_attribute = serializers.CharField(required=False, allow_blank=True, max_length=80)
+    email_attribute = serializers.CharField(required=False, allow_blank=True, max_length=80)
+    first_name_attribute = serializers.CharField(required=False, allow_blank=True, max_length=80)
+    last_name_attribute = serializers.CharField(required=False, allow_blank=True, max_length=80)
+    account_control_attribute = serializers.CharField(required=False, allow_blank=True, max_length=80)
+    connect_timeout = serializers.IntegerField(required=False, min_value=1)
+    operation_timeout = serializers.IntegerField(required=False, min_value=1)
+
+    def validate(self, attrs):
+        unknown = sorted(set(self.initial_data.keys()) - set(self.fields))
+        if unknown:
+            raise serializers.ValidationError({key: "该 LDAP 配置字段不受支持" for key in unknown})
         return attrs
 
 

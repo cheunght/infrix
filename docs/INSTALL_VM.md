@@ -89,9 +89,10 @@ export DB_USER=infrix
 export DB_HOST=127.0.0.1
 export DB_PASSWORD='<database-password>'
 export DB_PORT=3306
+export INFRIX_CONFIG_ENCRYPTION_KEY='<base64-fernet-key>'
 ```
 
-Replace `<database-password>` with a real password before execution. Do not put the real password into the repository or a shell history that is accessible to other users.
+Replace the database password and Fernet key with real values before execution. Do not put either secret into the repository or a shell history that is accessible to other users. The encryption key is retained in the generated environment file for database-managed LDAP secrets.
 
 Production requires an explicit MySQL/MariaDB configuration. `DB_NAME`, `DB_USER`, `DB_PASSWORD`, and `DB_HOST` must be non-empty. SQLite, an empty `DB_ENGINE`, an unknown database engine, wildcard `DJANGO_ALLOWED_HOSTS`, non-HTTPS CSRF origins, insecure cookies, and invalid proxy settings are rejected.
 
@@ -201,6 +202,7 @@ export DB_PORT=3306
 export DB_NAME=infrix
 export DB_USER=infrix
 export DB_PASSWORD='<database-password>'
+export INFRIX_CONFIG_ENCRYPTION_KEY='<base64-fernet-key>'
 sudo -E ./deploy/install.sh
 ```
 

@@ -4,16 +4,11 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 import logging
-import os
-from pathlib import Path
-import re
 import socket
 import ssl
 from typing import Any, Callable
-from urllib.parse import urlsplit
 from uuid import UUID
 
-from django.conf import settings
 from django.contrib.auth import authenticate
 from django.contrib.auth.models import User
 from django.db import IntegrityError, transaction
@@ -22,6 +17,11 @@ from ldap3 import ALL, BASE, Connection, Server, SUBTREE, Tls
 from ldap3.core.exceptions import LDAPException
 from ldap3.utils.conv import escape_filter_chars
 
+from .ldap_configuration import (
+    EffectiveLDAPConfiguration,
+    configuration_errors,
+    get_effective_ldap_configuration,
+)
 from .models import DirectoryIdentity, UserSecurityProfile
 
 
@@ -94,7 +94,7 @@ class LDAPCredentialFailure(AuthenticationFailure):
 
 
 class LDAPInfrastructureFailure(AuthenticationFailure):
-    def __init__(self, reason="ldap_unavailable", *, actor=None):
+    def __init__(self, reason="ldap_unavailable", *, actor=None, retryable=False):
         super().__init__(
             reason,
             infrastructure=True,
@@ -102,6 +102,7 @@ class LDAPInfrastructureFailure(AuthenticationFailure):
             auth_source=AUTH_SOURCE_LDAP,
             throttle=False,
         )
+        self.retryable = retryable
 
 
 class LDAPDiagnosticFailure(Exception):
@@ -306,60 +307,64 @@ def _invalid_credential_result(result: Any) -> bool:
 
 
 class LDAPDirectoryClient:
-    """Small ldap3 adapter with no application or database responsibilities."""
+    """Small ldap3 adapter using the unified effective directory config."""
 
     def __init__(
         self,
         *,
         connection_factory: Callable[..., Any] | None = None,
         server_factory: Callable[..., Any] | None = None,
+        configuration: EffectiveLDAPConfiguration | None = None,
     ):
         self.connection_factory = connection_factory or Connection
         self.server_factory = server_factory or Server
+        self.configuration = configuration or get_effective_ldap_configuration()
 
-    def _server(self):
-        parsed_uri = urlsplit(settings.LDAP_SERVER_URI)
-        hostname = parsed_uri.hostname
-        if parsed_uri.scheme not in {"ldap", "ldaps"} or not hostname:
-            raise LDAPInfrastructureFailure("ldap_tls_failure")
-        if (
-            parsed_uri.username
-            or parsed_uri.password
-            or parsed_uri.path not in {"", "/"}
-            or parsed_uri.query
-            or parsed_uri.fragment
-        ):
-            raise LDAPInfrastructureFailure("ldap_tls_failure")
-        if parsed_uri.scheme == "ldap" and not settings.LDAP_STARTTLS:
-            raise LDAPInfrastructureFailure("ldap_tls_failure")
-        if parsed_uri.scheme == "ldaps" and settings.LDAP_STARTTLS:
-            raise LDAPInfrastructureFailure("ldap_tls_failure")
-        if settings.LDAP_TLS_VALIDATE is not True:
-            raise LDAPInfrastructureFailure("ldap_tls_failure")
-        use_ssl = parsed_uri.scheme == "ldaps"
-        tls_server_name = settings.LDAP_TLS_SERVER_NAME or hostname
-        tls = Tls(
-            validate=ssl.CERT_REQUIRED,
-            ca_certs_file=settings.LDAP_CA_CERT_FILE or None,
-            valid_names=[tls_server_name],
-            sni=tls_server_name,
-        )
+    def _server(
+        self,
+        configuration: EffectiveLDAPConfiguration | None = None,
+        *,
+        endpoint: tuple[str, str, int | None] | None = None,
+    ):
+        config = configuration or self.configuration
+        endpoint = endpoint or config.endpoints[0]
+        _name, hostname, port = endpoint
+        if not hostname or port is None:
+            raise LDAPInfrastructureFailure("ldap_connection_failure", retryable=True)
+        if config.security_mode not in {"ldaps", "starttls", "none"}:
+            raise LDAPInfrastructureFailure("ldap_tls_failure", retryable=True)
+        tls = None
+        if config.security_mode != "none":
+            tls_server_name = config.tls_server_name or hostname
+            tls = Tls(
+                validate=ssl.CERT_REQUIRED,
+                ca_certs_file=config.ca_cert_file or None,
+                valid_names=[tls_server_name],
+                sni=tls_server_name,
+            )
         return self.server_factory(
             hostname,
-            port=parsed_uri.port,
-            use_ssl=use_ssl,
+            port=port,
+            use_ssl=config.security_mode == "ldaps",
             tls=tls,
             get_info=ALL,
-            connect_timeout=settings.LDAP_CONNECT_TIMEOUT,
+            connect_timeout=config.connect_timeout,
         )
 
-    def _connection(self, server, *, user, password):
+    def _connection(
+        self,
+        server,
+        configuration: EffectiveLDAPConfiguration,
+        *,
+        user,
+        password,
+    ):
         return self.connection_factory(
             server,
             user=user,
             password=password,
             auto_bind=False,
-            receive_timeout=settings.LDAP_OPERATION_TIMEOUT,
+            receive_timeout=configuration.operation_timeout,
         )
 
     @staticmethod
@@ -382,107 +387,41 @@ class LDAPDirectoryClient:
             message=LDAP_DIAGNOSTIC_MESSAGES[safe_code],
         )
 
-    @staticmethod
-    def _validate_diagnostic_configuration() -> str | None:
-        """Validate the runtime contract without returning configuration details."""
-        if not bool(getattr(settings, "LDAP_ENABLED", False)):
+    def _validate_diagnostic_configuration(
+        self,
+        configuration: EffectiveLDAPConfiguration | None = None,
+        *,
+        allow_disabled: bool = False,
+    ) -> str | None:
+        config = configuration or self.configuration
+        if not allow_disabled and not config.enabled:
             return "disabled"
+        return "configuration_error" if configuration_errors(config, require_password=True) else None
 
-        server_uri = str(getattr(settings, "LDAP_SERVER_URI", "") or "").strip()
-        try:
-            parsed_uri = urlsplit(server_uri)
-            hostname = parsed_uri.hostname
-            parsed_uri.port
-        except (TypeError, ValueError):
-            return "configuration_error"
-        if parsed_uri.scheme not in {"ldap", "ldaps"} or not hostname:
-            return "configuration_error"
-        if (
-            parsed_uri.username
-            or parsed_uri.password
-            or parsed_uri.path not in {"", "/"}
-            or parsed_uri.query
-            or parsed_uri.fragment
-        ):
-            return "configuration_error"
-
-        starttls = bool(getattr(settings, "LDAP_STARTTLS", False))
-        if parsed_uri.scheme == "ldap" and not starttls:
-            return "configuration_error"
-        if parsed_uri.scheme == "ldaps" and starttls:
-            return "configuration_error"
-        if getattr(settings, "LDAP_TLS_VALIDATE", True) is not True:
-            return "configuration_error"
-
-        required_values = (
-            "LDAP_BIND_DN",
-            "LDAP_BIND_PASSWORD",
-            "LDAP_USER_BASE_DN",
-            "LDAP_USER_FILTER",
-            "LDAP_USERNAME_ATTRIBUTE",
-            "LDAP_EXTERNAL_ID_ATTRIBUTE",
-        )
-        if any(not str(getattr(settings, name, "") or "").strip() for name in required_values):
-            return "configuration_error"
-
-        user_filter = str(getattr(settings, "LDAP_USER_FILTER", "") or "")
-        if user_filter.count("{username}") != 1:
-            return "configuration_error"
-        if "{" in user_filter.replace("{username}", "") or "}" in user_filter.replace("{username}", ""):
-            return "configuration_error"
-
-        attribute_pattern = re.compile(r"^[A-Za-z][A-Za-z0-9-]*$")
-        for name in ("LDAP_USERNAME_ATTRIBUTE", "LDAP_EXTERNAL_ID_ATTRIBUTE"):
-            if not attribute_pattern.fullmatch(str(getattr(settings, name, "") or "").strip()):
-                return "configuration_error"
-
-        try:
-            connect_timeout = int(getattr(settings, "LDAP_CONNECT_TIMEOUT", 0))
-            operation_timeout = int(getattr(settings, "LDAP_OPERATION_TIMEOUT", 0))
-        except (TypeError, ValueError):
-            return "configuration_error"
-        if connect_timeout <= 0 or operation_timeout <= 0:
-            return "configuration_error"
-
-        ca_cert_file = str(getattr(settings, "LDAP_CA_CERT_FILE", "") or "").strip()
-        if ca_cert_file and (
-            not Path(ca_cert_file).is_file()
-            or not os.access(ca_cert_file, os.R_OK)
-        ):
-            return "configuration_error"
-        return None
-
-    def diagnose(self) -> LDAPDiagnosticResult:
-        """Run a fixed, non-user LDAP health check with a safe result contract."""
+    def _diagnose_endpoint(
+        self,
+        configuration: EffectiveLDAPConfiguration,
+        endpoint: tuple[str, str, int | None],
+    ) -> LDAPDiagnosticResult:
         checks: list[dict[str, str]] = []
-        configuration_error = self._validate_diagnostic_configuration()
-        if configuration_error:
-            if configuration_error == "disabled":
-                checks.append({"name": "configuration", "status": "disabled"})
-                return LDAPDiagnosticResult(
-                    success=False,
-                    stage="configuration",
-                    checks=tuple(checks),
-                    code="disabled",
-                    message=LDAP_DIAGNOSTIC_MESSAGES["disabled"],
-                )
-            return self._diagnostic_failure("configuration", checks, configuration_error)
-
         self._diagnostic_success(checks, "configuration")
         connection = None
         stage = "connection"
         try:
-            server = self._server()
+            server = self._server(configuration, endpoint=endpoint)
             connection = self._connection(
                 server,
-                user=settings.LDAP_BIND_DN,
-                password=settings.LDAP_BIND_PASSWORD,
+                configuration,
+                user=configuration.bind_dn,
+                password=configuration.bind_password,
             )
-            connection.open()
+            opened = connection.open()
+            if opened is False:
+                raise LDAPInfrastructureFailure("ldap_connection_failure", retryable=True)
             self._diagnostic_success(checks, "connection")
 
             stage = "tls"
-            if settings.LDAP_STARTTLS and not connection.start_tls():
+            if configuration.security_mode == "starttls" and not connection.start_tls():
                 raise LDAPDiagnosticFailure("tls_error")
             self._diagnostic_success(checks, "tls")
 
@@ -493,7 +432,7 @@ class LDAPDirectoryClient:
 
             stage = "search"
             if not connection.search(
-                search_base=settings.LDAP_USER_BASE_DN,
+                search_base=configuration.base_dn,
                 search_filter="(objectClass=*)",
                 search_scope=BASE,
                 attributes=["1.1"],
@@ -501,11 +440,7 @@ class LDAPDirectoryClient:
             ):
                 raise LDAPDiagnosticFailure("search_error")
             self._diagnostic_success(checks, "search")
-            return LDAPDiagnosticResult(
-                success=True,
-                stage="search",
-                checks=tuple(checks),
-            )
+            return LDAPDiagnosticResult(success=True, stage="search", checks=tuple(checks))
         except LDAPDiagnosticFailure as exc:
             return self._diagnostic_failure(stage, checks, exc.code)
         except (socket.timeout, TimeoutError):
@@ -530,10 +465,49 @@ class LDAPDirectoryClient:
             if connection is not None:
                 self._close(connection)
 
+    def diagnose(
+        self,
+        configuration: EffectiveLDAPConfiguration | None = None,
+        *,
+        allow_disabled: bool = False,
+    ) -> LDAPDiagnosticResult:
+        """Run a fixed, safe health check against saved or staged settings."""
+        config = configuration or self.configuration
+        checks: list[dict[str, str]] = []
+        configuration_error = self._validate_diagnostic_configuration(
+            config,
+            allow_disabled=allow_disabled,
+        )
+        if configuration_error:
+            if configuration_error == "disabled":
+                checks.append({"name": "configuration", "status": "disabled"})
+                return LDAPDiagnosticResult(
+                    success=False,
+                    stage="configuration",
+                    checks=tuple(checks),
+                    code="disabled",
+                    message=LDAP_DIAGNOSTIC_MESSAGES["disabled"],
+                )
+            return self._diagnostic_failure("configuration", checks, configuration_error)
+
+        attempts = config.endpoints
+        result = self._diagnostic_failure("connection", checks, "connection_error")
+        for index, endpoint in enumerate(attempts):
+            endpoint_name = endpoint[0]
+            logger.info("LDAP diagnostic attempting %s endpoint", endpoint_name)
+            result = self._diagnose_endpoint(config, endpoint)
+            if result.success:
+                return result
+            if result.code not in {"connection_error", "timeout", "tls_error"}:
+                return result
+            if index + 1 < len(attempts):
+                logger.warning("LDAP diagnostic infrastructure failure on %s; trying secondary", endpoint_name)
+        return result
+
     @staticmethod
-    def _start_tls_if_needed(connection):
-        if settings.LDAP_STARTTLS and not connection.start_tls():
-            raise LDAPInfrastructureFailure("ldap_tls_failure")
+    def _start_tls_if_needed(connection, configuration: EffectiveLDAPConfiguration):
+        if configuration.security_mode == "starttls" and not connection.start_tls():
+            raise LDAPInfrastructureFailure("ldap_tls_failure", retryable=True)
 
     @staticmethod
     def _close(connection):
@@ -542,41 +516,49 @@ class LDAPDirectoryClient:
         except (LDAPException, OSError, socket.timeout, TimeoutError, ssl.SSLError):
             logger.debug("LDAP connection close failed")
 
-    def authenticate(self, username: str, password: str) -> DirectoryUser:
+    def _authenticate_endpoint(
+        self,
+        configuration: EffectiveLDAPConfiguration,
+        username: str,
+        password: str,
+        endpoint: tuple[str, str, int | None],
+    ) -> DirectoryUser:
         server = None
         service_connection = None
         user_connection = None
+        stage = "connection"
         try:
-            if not password:
-                raise LDAPCredentialFailure()
-            server = self._server()
+            server = self._server(configuration, endpoint=endpoint)
             service_connection = self._connection(
                 server,
-                user=settings.LDAP_BIND_DN,
-                password=settings.LDAP_BIND_PASSWORD,
+                configuration,
+                user=configuration.bind_dn,
+                password=configuration.bind_password,
             )
-            self._start_tls_if_needed(service_connection)
+            self._start_tls_if_needed(service_connection, configuration)
+            stage = "service_bind"
             if not service_connection.bind():
-                raise LDAPInfrastructureFailure("ldap_unavailable")
+                raise LDAPInfrastructureFailure("ldap_bind_failure")
 
             escaped_username = escape_filter_chars(username)
-            search_filter = settings.LDAP_USER_FILTER.replace("{username}", escaped_username)
+            stage = "search"
+            search_filter = configuration.user_filter.replace("{username}", escaped_username)
             attributes = list(
                 dict.fromkeys(
                     attribute
                     for attribute in [
-                        settings.LDAP_USERNAME_ATTRIBUTE,
-                        settings.LDAP_EXTERNAL_ID_ATTRIBUTE,
-                        settings.LDAP_EMAIL_ATTRIBUTE,
-                        settings.LDAP_FIRST_NAME_ATTRIBUTE,
-                        settings.LDAP_LAST_NAME_ATTRIBUTE,
-                        settings.LDAP_AD_ACCOUNT_CONTROL_ATTRIBUTE,
+                        configuration.user_login_attribute,
+                        configuration.external_id_attribute,
+                        configuration.email_attribute,
+                        configuration.first_name_attribute,
+                        configuration.last_name_attribute,
+                        configuration.account_control_attribute,
                     ]
                     if attribute
                 )
             )
             search_succeeded = service_connection.search(
-                search_base=settings.LDAP_USER_BASE_DN,
+                search_base=configuration.effective_user_search_base,
                 search_filter=search_filter,
                 search_scope=SUBTREE,
                 attributes=attributes,
@@ -592,30 +574,36 @@ class LDAPDirectoryClient:
 
             entry = entries[0]
             external_id = normalize_external_id(
-                _attribute_value(entry, settings.LDAP_EXTERNAL_ID_ATTRIBUTE),
-                settings.LDAP_EXTERNAL_ID_ATTRIBUTE,
+                _attribute_value(entry, configuration.external_id_attribute),
+                configuration.external_id_attribute,
             )
-            login_identifier = _text_attribute(entry, settings.LDAP_USERNAME_ATTRIBUTE)
+            login_identifier = _text_attribute(entry, configuration.user_login_attribute)
             if not external_id or not login_identifier:
                 raise LDAPCredentialFailure("ldap_search_error", throttle=False)
-            if _account_disabled(entry, settings.LDAP_AD_ACCOUNT_CONTROL_ATTRIBUTE):
+            if _account_disabled(entry, configuration.account_control_attribute):
                 raise LDAPCredentialFailure("directory_disabled", throttle=False)
 
             entry_dn = str(getattr(entry, "entry_dn", "") or "").strip()
             if not entry_dn:
                 raise LDAPCredentialFailure("ldap_search_error", throttle=False)
-            user_connection = self._connection(server, user=entry_dn, password=password)
-            self._start_tls_if_needed(user_connection)
+            stage = "user_bind"
+            user_connection = self._connection(
+                server,
+                configuration,
+                user=entry_dn,
+                password=password,
+            )
+            self._start_tls_if_needed(user_connection, configuration)
             if not user_connection.bind():
                 if _invalid_credential_result(getattr(user_connection, "result", None)):
                     raise LDAPCredentialFailure()
-                raise LDAPInfrastructureFailure("ldap_unavailable")
+                raise LDAPInfrastructureFailure("ldap_user_bind_failure")
             return DirectoryUser(
                 external_id=external_id,
                 login_identifier=login_identifier,
-                first_name=_text_attribute(entry, settings.LDAP_FIRST_NAME_ATTRIBUTE),
-                last_name=_text_attribute(entry, settings.LDAP_LAST_NAME_ATTRIBUTE),
-                email=_text_attribute(entry, settings.LDAP_EMAIL_ATTRIBUTE),
+                first_name=_text_attribute(entry, configuration.first_name_attribute),
+                last_name=_text_attribute(entry, configuration.last_name_attribute),
+                email=_text_attribute(entry, configuration.email_attribute),
             )
         except LDAPCredentialFailure as exc:
             if not exc.throttle:
@@ -625,91 +613,99 @@ class LDAPDirectoryClient:
             logger.warning("LDAP authentication infrastructure failure: %s", exc.reason)
             raise
         except (LDAPException, OSError, socket.timeout, TimeoutError, ssl.SSLError, ValueError) as exc:
-            reason = "ldap_tls_failure" if isinstance(exc, ssl.SSLError) else "ldap_unavailable"
+            reason = "ldap_tls_failure" if isinstance(exc, ssl.SSLError) else (
+                "ldap_search_error" if stage == "search" else "ldap_connection_failure"
+            )
             logger.warning("LDAP authentication infrastructure failure: %s (%s)", reason, type(exc).__name__)
-            raise LDAPInfrastructureFailure(reason) from exc
+            raise LDAPInfrastructureFailure(
+                reason,
+                retryable=stage == "connection" or isinstance(exc, (socket.timeout, TimeoutError, ssl.SSLError)),
+            ) from exc
         finally:
             if user_connection is not None:
                 self._close(user_connection)
             if service_connection is not None:
                 self._close(service_connection)
 
+    def authenticate(self, username: str, password: str) -> DirectoryUser:
+        configuration = self.configuration
+        if not configuration.enabled:
+            raise LDAPInfrastructureFailure("ldap_disabled")
+        if not password:
+            raise LDAPCredentialFailure()
+        if configuration_errors(configuration, require_password=True):
+            raise LDAPInfrastructureFailure("ldap_configuration_error")
+        attempts = configuration.endpoints
+        last_error: LDAPInfrastructureFailure | None = None
+        for index, endpoint in enumerate(attempts):
+            try:
+                return self._authenticate_endpoint(configuration, username, password, endpoint)
+            except LDAPCredentialFailure:
+                raise
+            except LDAPInfrastructureFailure as exc:
+                last_error = exc
+                if not exc.retryable or index + 1 >= len(attempts):
+                    raise
+                logger.warning("LDAP authentication retrying secondary endpoint after %s", exc.reason)
+        raise last_error or LDAPInfrastructureFailure("ldap_unavailable")
 
-def _ldap_endpoint_display(parsed_uri) -> str | None:
-    hostname = getattr(parsed_uri, "hostname", None)
-    if not hostname:
+
+def _ldap_endpoint_display(host: str, port: int | None) -> str | None:
+    if not host:
         return None
-    try:
-        port = parsed_uri.port
-    except (TypeError, ValueError):
-        return None
-    if port is None:
-        return hostname
-    return f"{hostname}:{port}"
+    return f"{host}:{port}" if port is not None else host
 
 
-def _ad_specific_mode() -> bool | None:
-    values = {
-        "username": str(getattr(settings, "LDAP_USERNAME_ATTRIBUTE", "") or "").strip().casefold(),
-        "external_id": str(getattr(settings, "LDAP_EXTERNAL_ID_ATTRIBUTE", "") or "").strip().casefold(),
-        "account_control": str(getattr(settings, "LDAP_AD_ACCOUNT_CONTROL_ATTRIBUTE", "") or "").strip().casefold(),
-        "filter": str(getattr(settings, "LDAP_USER_FILTER", "") or "").strip().casefold(),
-    }
-    if not any(values.values()):
+def _ad_specific_mode(configuration: EffectiveLDAPConfiguration | None = None) -> bool | None:
+    config = configuration or get_effective_ldap_configuration()
+    if not config.primary_host and not config.base_dn and config.source == "environment":
         return None
-    ad_markers = (
-        values["username"] in {"samaccountname", "userprincipalname"},
-        values["external_id"] == "objectguid",
-        values["account_control"] == "useraccountcontrol",
-        "objectclass=user" in values["filter"],
-    )
-    generic_markers = (
-        values["username"] in {"uid", "cn"},
-        values["external_id"] in {"entryuuid", "nsuniqueid"},
-        "objectclass=person" in values["filter"],
-    )
-    if any(ad_markers):
-        return True
-    if any(generic_markers):
-        return False
-    return None
+    return config.directory_type == "active_directory"
+
+
+def ldap_is_enabled() -> bool:
+    return get_effective_ldap_configuration().enabled
 
 
 def ldap_status_snapshot() -> dict[str, Any]:
-    """Return only admin-safe LDAP runtime metadata; never return credentials or filters."""
-    enabled = bool(getattr(settings, "LDAP_ENABLED", False))
-    server_uri = str(getattr(settings, "LDAP_SERVER_URI", "") or "").strip()
-    try:
-        parsed_uri = urlsplit(server_uri)
-        protocol = parsed_uri.scheme if parsed_uri.scheme in {"ldap", "ldaps"} else None
-        server = _ldap_endpoint_display(parsed_uri)
-    except (TypeError, ValueError):
-        protocol = None
-        server = None
-
-    configured = LDAPDirectoryClient._validate_diagnostic_configuration() is None
-    if not enabled:
-        configured = False
+    """Return admin-safe metadata; never return credentials or encrypted tokens."""
+    configuration = get_effective_ldap_configuration()
+    errors = configuration_errors(
+        configuration,
+        require_password=configuration.enabled,
+    )
+    if configuration.secret_error:
+        errors["bind_password"] = "无法读取已保存的绑定密码，请重新输入并保存"
+    protocol = (
+        "ldaps"
+        if configuration.security_mode == "ldaps"
+        else "ldap"
+        if configuration.security_mode in {"starttls", "none"}
+        else None
+    )
     return {
-        "enabled": enabled,
-        "configured": configured,
+        "enabled": configuration.enabled,
+        "configured": not errors,
         "provider": LDAP_PROVIDER,
-        "protocol": protocol if enabled else None,
-        "tls_mode": (
-            "ldaps" if protocol == "ldaps" else "starttls" if protocol == "ldap" else None
-        ) if enabled else None,
-        "server": server if enabled and configured else None,
-        "base_dn": (
-            str(getattr(settings, "LDAP_USER_BASE_DN", "") or "").strip() or None
-        ) if enabled and configured else None,
-        "search_configured": bool(
-            enabled
-            and str(getattr(settings, "LDAP_USER_BASE_DN", "") or "").strip()
-            and str(getattr(settings, "LDAP_USER_FILTER", "") or "").strip()
+        "directory_type": configuration.directory_type,
+        "protocol": protocol,
+        "tls_mode": configuration.security_mode,
+        "server": _ldap_endpoint_display(configuration.primary_host, configuration.primary_port),
+        "secondary_server": _ldap_endpoint_display(
+            configuration.secondary_host,
+            configuration.secondary_port,
         ),
-        "connect_timeout": int(getattr(settings, "LDAP_CONNECT_TIMEOUT", 5) or 5),
-        "operation_timeout": int(getattr(settings, "LDAP_OPERATION_TIMEOUT", 5) or 5),
-        "ad_specific_mode": _ad_specific_mode() if enabled and configured else None,
+        "base_dn": configuration.base_dn or None,
+        "search_configured": bool(
+            configuration.effective_user_search_base and configuration.user_filter
+        ),
+        "connect_timeout": configuration.connect_timeout,
+        "operation_timeout": configuration.operation_timeout,
+        "ad_specific_mode": _ad_specific_mode(configuration),
+        "password_configured": configuration.password_configured,
+        "secret_available": configuration.secret_available,
+        "source": configuration.source,
+        "configuration_error": bool(errors),
     }
 
 
@@ -894,7 +890,7 @@ def authenticate_with_source_routing(request, username: str, password: str) -> A
         return AuthenticationResult(user, AUTH_SOURCE_LOCAL)
 
     if route.source == AUTH_SOURCE_LDAP:
-        if not settings.LDAP_ENABLED:
+        if not ldap_is_enabled():
             raise LDAPInfrastructureFailure(actor=route.user)
         return LDAPAuthenticationService().authenticate(
             username,
@@ -902,7 +898,7 @@ def authenticate_with_source_routing(request, username: str, password: str) -> A
             expected_identity=route.identity,
         )
 
-    if not settings.LDAP_ENABLED:
+    if not ldap_is_enabled():
         user = authenticate(request, username=username, password=password)
         if user is not None and user.is_active:
             return AuthenticationResult(user, AUTH_SOURCE_LOCAL)

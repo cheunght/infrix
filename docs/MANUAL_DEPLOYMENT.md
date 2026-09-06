@@ -201,6 +201,7 @@ DB_USER=infrix
 DB_PASSWORD=<database-password>
 DB_HOST=db.example.internal
 DB_PORT=3306
+INFRIX_CONFIG_ENCRYPTION_KEY=<base64-fernet-key>
 ```
 
 Replace every placeholder. Production rejects short or placeholder secrets, wildcard hosts, non-HTTPS CSRF origins, insecure cookies, invalid HSTS values, forwarded-host trust, SQLite, unknown database engines, and incomplete MySQL settings.
@@ -217,6 +218,23 @@ chown root:infrix /etc/infrix/infrix.env
 ```
 
 Do not print the secret or database password in logs. Do not store the real environment file in the source repository.
+
+### LDAP / Active Directory configuration
+
+`INFRIX_CONFIG_ENCRYPTION_KEY` is a deployment secret used to encrypt the LDAP
+bind password stored in the database. Generate a Fernet key outside the
+repository, keep it in the restricted environment file, and do not rotate it
+without a planned re-encryption migration. The system administrator can then
+configure the directory in Settings → LDAP integration. The legacy `LDAP_*`
+environment variables are read-only bootstrap values for existing deployments;
+enabling the configuration from the UI requires the administrator to re-enter
+the bind password.
+
+The settings page accepts hostnames or IP addresses and keeps the primary and
+secondary endpoints separate from the security mode. Use LDAPS or StartTLS in
+production. “Test connection” validates the current unsaved form and does not
+enable LDAP or persist any value. An incomplete configuration cannot be
+enabled, and disabling LDAP retains the configuration and existing sessions.
 
 ## Production Configuration Validation
 

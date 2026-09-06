@@ -42,13 +42,19 @@ const {
   systemSettingsError,
   systemSettingsFormErrors,
   systemSettingsDirty,
-  ldapStatus,
-  ldapStatusLoading,
-  ldapStatusError,
+  ldapConfiguration,
+  ldapConfigurationForm,
+  ldapConfigurationLoading,
+  ldapConfigurationSaving,
+  ldapConfigurationError,
+  ldapConfigurationFormErrors,
+  ldapConfigurationDirty,
   ldapDiagnosticLoading,
   ldapDiagnosticResult,
   ldapDiagnosticError,
-  retryLdapStatus,
+  retryLdapConfiguration,
+  resetLdapConfigurationForm,
+  saveLdapConfiguration,
   runLdapDiagnostics,
   retrySystemSettings,
   resetSystemSettingsForm,
@@ -304,6 +310,39 @@ function ldapModeLabel(value: boolean | null) {
   if (value === false) return t("settings.ldapGenericDirectory");
   return t("settings.ldapUnknownMode");
 }
+
+const ldapPasswordEditing = ref(false);
+const ldapPrimaryPortTouched = ref(false);
+const ldapSecondaryPortTouched = ref(false);
+
+function ldapDirectoryTypeLabel(value: string) {
+  return value === "active_directory"
+    ? t("settings.ldapActiveDirectory")
+    : t("settings.ldapGenericDirectory");
+}
+
+function ldapSecurityModeLabel(value: string) {
+  if (value === "ldaps") return t("settings.ldapSecurityLdaps");
+  if (value === "starttls") return t("settings.ldapSecurityStarttls");
+  return t("settings.ldapSecurityNone");
+}
+
+function applyLdapSecurityDefaults() {
+  const port = ldapConfigurationForm.value.security_mode === "ldaps" ? 636 : 389;
+  if (!ldapPrimaryPortTouched.value) ldapConfigurationForm.value.primary_port = port;
+  if (!ldapSecondaryPortTouched.value && ldapConfigurationForm.value.secondary_host) {
+    ldapConfigurationForm.value.secondary_port = port;
+  }
+}
+
+watch(
+  () => ldapConfigurationForm.value.directory_type,
+  (value) => {
+    if (value === "active_directory") {
+      ldapConfigurationForm.value.external_id_attribute = "objectGUID";
+    }
+  },
+);
 </script>
 
 <template>
@@ -404,63 +443,198 @@ function ldapModeLabel(value: boolean | null) {
           <section v-if="can('organization.manage')" class="settings-ldap-panel">
             <div class="settings-ldap-panel__heading">
               <div>
-                <h2>{{ t('settings.ldapIntegration') }}</h2>
+                <div class="settings-ldap-panel__eyebrow">{{ t('settings.ldapIntegration') }}</div>
+                <h2>{{ t('settings.ldapConfigurationTitle') }}</h2>
                 <p>{{ t('settings.ldapIntegrationDescription') }}</p>
               </div>
-              <el-button
-                type="primary"
-                :loading="ldapDiagnosticLoading"
-                :disabled="ldapDiagnosticLoading || !ldapStatus?.enabled || !ldapStatus?.configured"
-                @click="runLdapDiagnostics"
-              >
-                {{ t('settings.ldapTestConnection') }}
-              </el-button>
+              <div class="settings-ldap-panel__actions">
+                <el-button
+                  :loading="ldapDiagnosticLoading"
+                  :disabled="ldapDiagnosticLoading || ldapConfigurationLoading"
+                  @click="runLdapDiagnostics"
+                >
+                  {{ t('settings.ldapTestConnection') }}
+                </el-button>
+                <el-button
+                  type="primary"
+                  :loading="ldapConfigurationSaving"
+                  :disabled="!ldapConfigurationDirty || ldapConfigurationSaving"
+                  @click="saveLdapConfiguration"
+                >
+                  {{ t('settings.ldapSaveConfiguration') }}
+                </el-button>
+              </div>
             </div>
 
-            <el-skeleton v-if="ldapStatusLoading" :rows="4" animated />
+            <el-skeleton v-if="ldapConfigurationLoading" :rows="8" animated />
             <el-alert
-              v-else-if="ldapStatusError"
-              :title="t('settings.ldapStatusLoadFailed')"
-              :description="ldapStatusError"
+              v-else-if="ldapConfigurationError"
+              :title="t('settings.ldapConfigurationLoadFailed')"
+              :description="ldapConfigurationError"
               type="error"
               show-icon
               :closable="false"
             >
-              <el-button link type="danger" @click="retryLdapStatus">{{ t('common.retry') }}</el-button>
+              <el-button link type="danger" @click="retryLdapConfiguration">{{ t('common.retry') }}</el-button>
             </el-alert>
-            <template v-else-if="ldapStatus">
+            <template v-else-if="ldapConfiguration">
               <el-alert
-                v-if="!ldapStatus.enabled"
-                :title="t('settings.ldapDisabled')"
-                :description="t('settings.ldapDisabledDescription')"
+                v-if="ldapConfiguration.source === 'environment'"
+                :title="t('settings.ldapBootstrapConfiguration')"
+                :description="t('settings.ldapBootstrapConfigurationDescription')"
                 type="info"
                 show-icon
                 :closable="false"
               />
               <el-alert
-                v-else-if="!ldapStatus.configured"
-                :title="t('settings.ldapConfigurationInvalid')"
-                :description="t('settings.ldapConfigurationInvalidDescription')"
+                v-if="ldapConfigurationForm.security_mode === 'none'"
+                :title="t('settings.ldapSecurityNoneWarning')"
+                :description="t('settings.ldapSecurityNoneWarningDescription')"
                 type="warning"
                 show-icon
                 :closable="false"
               />
-              <template v-else>
-                <el-descriptions class="settings-ldap-panel__details" :column="2" border size="small">
-                  <el-descriptions-item :label="t('settings.ldapStatus')">
-                    <StatusTag tone="success" :label="t('settings.ldapEnabled')" />
-                  </el-descriptions-item>
-                  <el-descriptions-item :label="t('settings.ldapProvider')">{{ ldapStatus.provider }}</el-descriptions-item>
-                  <el-descriptions-item :label="t('settings.ldapProtocol')">{{ ldapStatus.protocol || '—' }}</el-descriptions-item>
-                  <el-descriptions-item :label="t('settings.ldapTlsMode')">{{ ldapStatus.tls_mode || '—' }}</el-descriptions-item>
-                  <el-descriptions-item :label="t('settings.ldapServer')">{{ ldapStatus.server || '—' }}</el-descriptions-item>
-                  <el-descriptions-item :label="t('settings.ldapBaseDn')">{{ ldapStatus.base_dn || '—' }}</el-descriptions-item>
-                  <el-descriptions-item :label="t('settings.ldapSearch')">{{ ldapStatus.search_configured ? t('settings.ldapConfigured') : t('settings.ldapNotConfigured') }}</el-descriptions-item>
-                  <el-descriptions-item :label="t('settings.ldapTimeouts')">{{ ldapStatus.connect_timeout }}s / {{ ldapStatus.operation_timeout }}s</el-descriptions-item>
-                  <el-descriptions-item :label="t('settings.ldapMode')">{{ ldapModeLabel(ldapStatus.ad_specific_mode) }}</el-descriptions-item>
-                  <el-descriptions-item :label="t('settings.ldapVerification')">{{ t('settings.ldapVerificationBaseline') }}</el-descriptions-item>
-                </el-descriptions>
-              </template>
+              <el-alert
+                v-if="ldapConfiguration.identity_anchor_locked"
+                :title="t('settings.ldapIdentityAnchorLocked')"
+                :description="t('settings.ldapIdentityAnchorLockedDescription', { count: ldapConfiguration.directory_identity_count })"
+                type="info"
+                show-icon
+                :closable="false"
+              />
+
+              <el-form
+                class="settings-ldap-panel__form"
+                label-position="top"
+                @submit.prevent="saveLdapConfiguration"
+              >
+                <div class="settings-ldap-panel__summary">
+                  <div>
+                    <span>{{ t('settings.ldapStatus') }}</span>
+                    <StatusTag
+                      :tone="ldapConfigurationForm.enabled ? (ldapConfiguration.configured ? 'success' : 'warning') : 'info'"
+                      :label="ldapConfigurationForm.enabled ? (ldapConfiguration.configured ? t('settings.ldapEnabled') : t('settings.ldapConfigurationInvalid')) : t('settings.ldapDisabled')"
+                    />
+                  </div>
+                  <div>
+                    <span>{{ t('settings.ldapDirectoryType') }}</span>
+                    <strong>{{ ldapDirectoryTypeLabel(ldapConfigurationForm.directory_type) }}</strong>
+                  </div>
+                  <div>
+                    <span>{{ t('settings.ldapSecretStatus') }}</span>
+                    <strong>{{ ldapConfiguration.bind_password_configured && ldapConfiguration.secret_available ? t('settings.ldapSecretConfigured') : t('settings.ldapSecretMissing') }}</strong>
+                  </div>
+                  <div v-if="ldapConfiguration.last_diagnostic_at">
+                    <span>{{ t('settings.ldapLastDiagnostic') }}</span>
+                    <strong>{{ ldapConfiguration.last_diagnostic_success ? t('settings.ldapDiagnosticSuccess') : t('settings.ldapDiagnosticFailed') }}</strong>
+                  </div>
+                </div>
+
+                <div class="settings-ldap-panel__grid">
+                  <el-form-item :label="t('settings.ldapEnabledToggle')" :error="ldapConfigurationFormErrors.enabled">
+                    <el-switch v-model="ldapConfigurationForm.enabled" :active-text="t('settings.ldapEnabled')" :inactive-text="t('settings.ldapDisabled')" />
+                  </el-form-item>
+                  <el-form-item :label="t('settings.ldapDirectoryType')" :error="ldapConfigurationFormErrors.directory_type">
+                    <el-select v-model="ldapConfigurationForm.directory_type" class="settings-ldap-panel__control" :disabled="ldapConfigurationSaving || ldapConfiguration.identity_anchor_locked">
+                      <el-option value="active_directory" :label="t('settings.ldapActiveDirectory')" />
+                      <el-option value="generic_ldap" :label="t('settings.ldapGenericDirectory')" />
+                    </el-select>
+                  </el-form-item>
+                  <el-form-item :label="t('settings.ldapSecurityMode')" :error="ldapConfigurationFormErrors.security_mode">
+                    <el-select v-model="ldapConfigurationForm.security_mode" class="settings-ldap-panel__control" :disabled="ldapConfigurationSaving" @change="applyLdapSecurityDefaults">
+                      <el-option value="ldaps" :label="ldapSecurityModeLabel('ldaps')" />
+                      <el-option value="starttls" :label="ldapSecurityModeLabel('starttls')" />
+                      <el-option value="none" :label="ldapSecurityModeLabel('none')" />
+                    </el-select>
+                  </el-form-item>
+                  <el-form-item class="settings-ldap-panel__span-2" :label="t('settings.ldapPrimaryServer')" :error="ldapConfigurationFormErrors.primary_host">
+                    <div class="settings-ldap-panel__host-port">
+                      <el-input v-model="ldapConfigurationForm.primary_host" :placeholder="t('settings.ldapHostPlaceholder')" :disabled="ldapConfigurationSaving" />
+                      <el-form-item :error="ldapConfigurationFormErrors.primary_port">
+                        <el-input-number v-model="ldapConfigurationForm.primary_port" :min="1" :max="65535" controls-position="right" :disabled="ldapConfigurationSaving" @change="ldapPrimaryPortTouched = true" />
+                      </el-form-item>
+                    </div>
+                  </el-form-item>
+                  <el-form-item class="settings-ldap-panel__span-2" :label="t('settings.ldapSecondaryServer')" :error="ldapConfigurationFormErrors.secondary_host">
+                    <div class="settings-ldap-panel__host-port">
+                      <el-input v-model="ldapConfigurationForm.secondary_host" :placeholder="t('settings.ldapOptional')" :disabled="ldapConfigurationSaving" />
+                      <el-form-item :error="ldapConfigurationFormErrors.secondary_port">
+                        <el-input-number v-model="ldapConfigurationForm.secondary_port" :min="1" :max="65535" controls-position="right" :disabled="ldapConfigurationSaving" @change="ldapSecondaryPortTouched = true" />
+                      </el-form-item>
+                    </div>
+                  </el-form-item>
+                  <el-form-item class="settings-ldap-panel__span-2" :label="t('settings.ldapBaseDn')" :error="ldapConfigurationFormErrors.base_dn">
+                    <el-input v-model="ldapConfigurationForm.base_dn" :placeholder="t('settings.ldapBaseDnPlaceholder')" :disabled="ldapConfigurationSaving" />
+                  </el-form-item>
+                  <el-form-item :label="t('settings.ldapBindAccount')" :error="ldapConfigurationFormErrors.bind_dn">
+                    <el-input v-model="ldapConfigurationForm.bind_dn" :placeholder="t('settings.ldapBindAccountPlaceholder')" :disabled="ldapConfigurationSaving" />
+                    <div class="settings-ldap-panel__help">{{ t('settings.ldapBindAccountHelp') }}</div>
+                  </el-form-item>
+                  <el-form-item :label="t('settings.ldapBindPassword')" :error="ldapConfigurationFormErrors.bind_password">
+                    <div v-if="!ldapPasswordEditing" class="settings-ldap-panel__secret-control">
+                      <el-input :model-value="ldapConfiguration.bind_password_configured ? '••••••••' : ''" readonly :placeholder="t('settings.ldapPasswordNotConfigured')" />
+                      <el-button link type="primary" @click="ldapPasswordEditing = true">{{ t('settings.ldapUpdatePassword') }}</el-button>
+                    </div>
+                    <el-input
+                      v-else
+                      v-model="ldapConfigurationForm.bind_password"
+                      type="password"
+                      show-password
+                      autocomplete="new-password"
+                      :placeholder="t('settings.ldapPasswordPlaceholder')"
+                      :disabled="ldapConfigurationSaving"
+                    />
+                    <div class="settings-ldap-panel__help">{{ t('settings.ldapBindPasswordHelp') }}</div>
+                  </el-form-item>
+                </div>
+
+                <el-collapse class="settings-ldap-panel__advanced">
+                  <el-collapse-item :title="t('settings.ldapAdvancedTitle')" name="advanced">
+                    <div class="settings-ldap-panel__grid">
+                      <el-form-item :label="t('settings.ldapUserSearchBase')" :error="ldapConfigurationFormErrors.user_search_base">
+                        <el-input v-model="ldapConfigurationForm.user_search_base" :placeholder="t('settings.ldapUseBaseDn')" :disabled="ldapConfigurationSaving" />
+                      </el-form-item>
+                      <el-form-item :label="t('settings.ldapLoginAttribute')" :error="ldapConfigurationFormErrors.user_login_attribute">
+                        <el-input v-model="ldapConfigurationForm.user_login_attribute" :disabled="ldapConfigurationSaving" />
+                      </el-form-item>
+                      <el-form-item :label="t('settings.ldapIdentityAttribute')" :error="ldapConfigurationFormErrors.external_id_attribute">
+                        <el-input
+                          v-model="ldapConfigurationForm.external_id_attribute"
+                          :disabled="ldapConfigurationSaving || ldapConfiguration.identity_anchor_locked || ldapConfigurationForm.directory_type === 'active_directory'"
+                        />
+                        <div class="settings-ldap-panel__help">
+                          {{ ldapConfigurationForm.directory_type === 'active_directory'
+                            ? t('settings.ldapIdentityAttributeAdHelp')
+                            : ldapConfiguration.identity_anchor_locked
+                              ? t('settings.ldapIdentityAttributeLockedHelp')
+                              : t('settings.ldapIdentityAttributeGenericHelp') }}
+                        </div>
+                      </el-form-item>
+                      <el-form-item class="settings-ldap-panel__span-2" :label="t('settings.ldapUserFilter')" :error="ldapConfigurationFormErrors.user_filter">
+                        <el-input v-model="ldapConfigurationForm.user_filter" :disabled="ldapConfigurationSaving" />
+                        <div class="settings-ldap-panel__help">{{ t('settings.ldapUserFilterHelp') }}</div>
+                      </el-form-item>
+                      <el-form-item :label="t('settings.ldapTlsServerName')" :error="ldapConfigurationFormErrors.tls_server_name">
+                        <el-input v-model="ldapConfigurationForm.tls_server_name" :placeholder="t('settings.ldapTlsServerNamePlaceholder')" :disabled="ldapConfigurationSaving" />
+                      </el-form-item>
+                      <el-form-item :label="t('settings.ldapCaCertFile')" :error="ldapConfigurationFormErrors.ca_cert_file">
+                        <el-input v-model="ldapConfigurationForm.ca_cert_file" :placeholder="t('settings.ldapCaCertFilePlaceholder')" :disabled="ldapConfigurationSaving" />
+                      </el-form-item>
+                      <el-form-item :label="t('settings.ldapConnectTimeout')" :error="ldapConfigurationFormErrors.connect_timeout">
+                        <el-input-number v-model="ldapConfigurationForm.connect_timeout" :min="1" :max="300" controls-position="right" :disabled="ldapConfigurationSaving" />
+                      </el-form-item>
+                      <el-form-item :label="t('settings.ldapOperationTimeout')" :error="ldapConfigurationFormErrors.operation_timeout">
+                        <el-input-number v-model="ldapConfigurationForm.operation_timeout" :min="1" :max="300" controls-position="right" :disabled="ldapConfigurationSaving" />
+                      </el-form-item>
+                    </div>
+                  </el-collapse-item>
+                </el-collapse>
+
+                <div class="settings-ldap-panel__footer">
+                  <el-button :disabled="!ldapConfigurationDirty || ldapConfigurationSaving" @click="resetLdapConfigurationForm">{{ t('settings.restoreUnsaved') }}</el-button>
+                  <span>{{ t('settings.ldapUnsavedHint') }}</span>
+                </div>
+              </el-form>
 
               <el-alert
                 v-if="ldapDiagnosticError"

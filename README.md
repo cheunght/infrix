@@ -109,11 +109,18 @@ DB_USER=infrix
 DB_PASSWORD=<database-password>
 DB_HOST=db.example.internal
 DB_PORT=3306
+INFRIX_CONFIG_ENCRYPTION_KEY=<base64 Fernet key for database-managed LDAP secrets>
 ```
 
 Production rejects missing or placeholder secrets, wildcard hosts, non-HTTPS CSRF origins, insecure cookies, invalid proxy settings, SQLite, unknown database engines, and incomplete MySQL settings. The Rocky local-MariaDB path keeps port 3306 loopback-only. Fresh installation requires an empty target database; a target directory containing only synchronized source files may be reused. An existing Infrix installation is upgraded in place from the baseline migration set: the environment file and business data are preserved, a database backup is created before migration, and unapplied Django migrations are applied. Databases from releases whose migration files are no longer present are rejected instead of being modified.
 
 Do not commit `.env` files, SQLite databases, SQL dumps, certificates, private keys, logs, virtual environments, `node_modules`, or frontend build output. Use least-privilege database credentials and maintain a tested backup and restore procedure.
+
+LDAP / Active Directory is configured by a system administrator from the
+Settings page. `INFRIX_CONFIG_ENCRYPTION_KEY` must be present before saving a
+bind password; it is used only for authenticated encryption at rest. Existing
+`LDAP_*` environment variables remain a read-only bootstrap path and are not
+the runtime source after the first database configuration is saved.
 
 ## Rocky Linux 9 Deployment
 

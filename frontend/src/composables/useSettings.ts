@@ -9,6 +9,8 @@ import type {
   DictionaryItem,
   LdapDiagnosticCheck,
   LdapDiagnosticResult,
+  LdapConfiguration,
+  LdapConfigurationForm,
   LdapStatus,
   ManagedUser,
   Role,
@@ -269,6 +271,36 @@ export function useSettings(deps: SettingsDeps) {
   const systemSettingsFormErrors = ref<FormErrors>({});
   const systemSettingsRequestId = ref(0);
   const ldapStatus = ref<LdapStatus | null>(null);
+  const ldapConfiguration = ref<LdapConfiguration | null>(null);
+  const ldapConfigurationForm = ref<LdapConfigurationForm>({
+    enabled: false,
+    directory_type: "generic_ldap",
+    primary_host: "",
+    primary_port: 636,
+    secondary_host: "",
+    secondary_port: null,
+    base_dn: "",
+    bind_dn: "",
+    bind_password: "",
+    security_mode: "ldaps",
+    tls_server_name: "",
+    ca_cert_file: "",
+    user_search_base: "",
+    user_login_attribute: "uid",
+    user_filter: "(&(objectClass=inetOrgPerson)(uid={username}))",
+    external_id_attribute: "entryUUID",
+    email_attribute: "mail",
+    first_name_attribute: "givenName",
+    last_name_attribute: "sn",
+    account_control_attribute: "",
+    connect_timeout: 5,
+    operation_timeout: 5,
+  });
+  const ldapConfigurationLoading = ref(false);
+  const ldapConfigurationSaving = ref(false);
+  const ldapConfigurationError = ref("");
+  const ldapConfigurationFormErrors = ref<FormErrors>({});
+  const ldapConfigurationRequestId = ref(0);
   const ldapStatusLoading = ref(false);
   const ldapStatusError = ref("");
   const ldapStatusRequestId = ref(0);
@@ -424,6 +456,72 @@ export function useSettings(deps: SettingsDeps) {
     };
   }
 
+  function syncLdapConfigurationForm(value: LdapConfiguration): void {
+    ldapConfigurationForm.value = {
+      enabled: value.enabled,
+      directory_type: value.directory_type,
+      primary_host: value.primary_host,
+      primary_port: value.primary_port,
+      secondary_host: value.secondary_host,
+      secondary_port: value.secondary_port,
+      base_dn: value.base_dn,
+      bind_dn: value.bind_dn,
+      bind_password: "",
+      security_mode: value.security_mode,
+      tls_server_name: value.tls_server_name,
+      ca_cert_file: value.ca_cert_file,
+      user_search_base: value.user_search_base,
+      user_login_attribute: value.user_login_attribute,
+      user_filter: value.user_filter,
+      external_id_attribute: value.external_id_attribute,
+      email_attribute: value.email_attribute,
+      first_name_attribute: value.first_name_attribute,
+      last_name_attribute: value.last_name_attribute,
+      account_control_attribute: value.account_control_attribute,
+      connect_timeout: value.connect_timeout,
+      operation_timeout: value.operation_timeout,
+    };
+  }
+
+  const ldapConfigurationDirty = computed(() => {
+    if (!ldapConfiguration.value) return Boolean(ldapConfigurationForm.value.bind_password);
+    const form = ldapConfigurationForm.value;
+    const value = ldapConfiguration.value;
+    return Boolean(form.bind_password) || Object.entries(form).some(([key, current]) => {
+      if (key === "bind_password") return false;
+      return current !== value[key as keyof LdapConfiguration] as unknown;
+    });
+  });
+
+  function ldapConfigurationPayload() {
+    const form = ldapConfigurationForm.value;
+    const payload: Record<string, unknown> = {
+      enabled: form.enabled,
+      directory_type: form.directory_type,
+      primary_host: form.primary_host,
+      primary_port: form.primary_port,
+      secondary_host: form.secondary_host,
+      secondary_port: form.secondary_port,
+      base_dn: form.base_dn,
+      bind_dn: form.bind_dn,
+      security_mode: form.security_mode,
+      tls_server_name: form.tls_server_name,
+      ca_cert_file: form.ca_cert_file,
+      user_search_base: form.user_search_base,
+      user_login_attribute: form.user_login_attribute,
+      user_filter: form.user_filter,
+      external_id_attribute: form.external_id_attribute,
+      email_attribute: form.email_attribute,
+      first_name_attribute: form.first_name_attribute,
+      last_name_attribute: form.last_name_attribute,
+      account_control_attribute: form.account_control_attribute,
+      connect_timeout: form.connect_timeout,
+      operation_timeout: form.operation_timeout,
+    };
+    if (form.bind_password) payload.bind_password = form.bind_password;
+    return payload;
+  }
+
   function normalizeLdapDiagnosticResult(value: unknown): LdapDiagnosticResult | null {
     if (!value || typeof value !== "object" || Array.isArray(value)) return null;
     const source = value as Record<string, unknown>;
@@ -479,6 +577,67 @@ export function useSettings(deps: SettingsDeps) {
     }
   }
 
+  async function loadLdapConfiguration(version = deps.beginLoad()): Promise<boolean> {
+    if (!deps.can("organization.manage")) {
+      ldapConfiguration.value = null;
+      ldapConfigurationError.value = "";
+      return false;
+    }
+    const requestId = ++ldapConfigurationRequestId.value;
+    ldapConfigurationLoading.value = true;
+    ldapConfigurationError.value = "";
+    try {
+      const result = await deps.request<LdapConfiguration>("/auth/ldap/config/");
+      if (result == null || requestId !== ldapConfigurationRequestId.value || !deps.isCurrentLoad(version)) return false;
+      ldapConfiguration.value = result;
+      syncLdapConfigurationForm(result);
+      return true;
+    } catch (error) {
+      if (requestId === ldapConfigurationRequestId.value && deps.isCurrentLoad(version) && !isAbortError(error)) {
+        ldapConfigurationError.value = errorMessage(error, tr("settings.ldapConfigurationLoadFailed"));
+      }
+      return false;
+    } finally {
+      if (requestId === ldapConfigurationRequestId.value) ldapConfigurationLoading.value = false;
+    }
+  }
+
+  function resetLdapConfigurationForm(): void {
+    if (ldapConfiguration.value) syncLdapConfigurationForm(ldapConfiguration.value);
+    ldapConfigurationFormErrors.value = {};
+  }
+
+  async function saveLdapConfiguration(): Promise<boolean> {
+    if (ldapConfigurationSaving.value || !deps.can("organization.manage")) return false;
+    ldapConfigurationSaving.value = true;
+    ldapConfigurationError.value = "";
+    ldapConfigurationFormErrors.value = {};
+    try {
+      const result = await deps.request<LdapConfiguration>("/auth/ldap/config/", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(ldapConfigurationPayload()),
+      });
+      ldapConfiguration.value = result;
+      syncLdapConfigurationForm(result);
+      await loadLdapStatus();
+      deps.actionMessage.value = tr("settings.ldapConfigurationSaved");
+      return true;
+    } catch (error) {
+      ldapConfigurationFormErrors.value = extractFieldErrors(error, [
+        "enabled", "directory_type", "primary_host", "primary_port", "secondary_host", "secondary_port",
+        "base_dn", "bind_dn", "bind_password", "security_mode", "tls_server_name", "ca_cert_file",
+        "user_search_base", "user_login_attribute", "user_filter", "external_id_attribute",
+        "email_attribute", "first_name_attribute", "last_name_attribute", "account_control_attribute",
+        "connect_timeout", "operation_timeout",
+      ]);
+      deps.actionMessage.value = errorMessage(error, tr("settings.ldapConfigurationSaveFailed"));
+      return false;
+    } finally {
+      ldapConfigurationSaving.value = false;
+    }
+  }
+
   async function runLdapDiagnostics(): Promise<boolean> {
     if (!deps.can("organization.manage") || ldapDiagnosticLoading.value) return false;
     ldapDiagnosticLoading.value = true;
@@ -488,7 +647,7 @@ export function useSettings(deps: SettingsDeps) {
       const result = await deps.request<LdapDiagnosticResult>("/auth/ldap/diagnostics/", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({}),
+        body: JSON.stringify(ldapConfigurationPayload()),
       });
       const normalized = normalizeLdapDiagnosticResult(result);
       if (!normalized) {
@@ -524,7 +683,9 @@ export function useSettings(deps: SettingsDeps) {
       systemSettings.value = result;
       syncSystemSettingsForm(result);
       applySystemSettingsSnapshot(result);
-      if (deps.can("organization.manage")) await loadLdapStatus(version);
+      if (deps.can("organization.manage")) {
+        await Promise.all([loadLdapConfiguration(version), loadLdapStatus(version)]);
+      }
       return true;
     } catch (error) {
       if (requestId === systemSettingsRequestId.value && deps.isCurrentLoad(version) && !isAbortError(error)) {
@@ -1782,6 +1943,13 @@ export function useSettings(deps: SettingsDeps) {
     systemSettingsFormErrors,
     systemSettingsDefinitions,
     ldapStatus,
+    ldapConfiguration,
+    ldapConfigurationForm,
+    ldapConfigurationLoading,
+    ldapConfigurationSaving,
+    ldapConfigurationError,
+    ldapConfigurationFormErrors,
+    ldapConfigurationDirty,
     ldapStatusLoading,
     ldapStatusError,
     ldapDiagnosticLoading,
@@ -1886,6 +2054,10 @@ export function useSettings(deps: SettingsDeps) {
     loadSystemSettings,
     loadLdapStatus,
     retryLdapStatus: () => loadLdapStatus(),
+    loadLdapConfiguration,
+    retryLdapConfiguration: () => loadLdapConfiguration(),
+    saveLdapConfiguration,
+    resetLdapConfigurationForm,
     runLdapDiagnostics,
     retrySystemSettings,
     loadCustomFields,

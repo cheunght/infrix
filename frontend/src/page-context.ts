@@ -25,6 +25,8 @@ import type {
   FacilitySummary,
   FaultEvent,
   InventoryItem,
+  LdapConfiguration,
+  LdapConfigurationForm,
   LdapDiagnosticResult,
   LdapStatus,
   ManagedUser,
@@ -550,6 +552,13 @@ export interface SettingsContext extends CustomFieldContext, TagContext {
   resetSystemSettingsForm: () => void;
   saveSystemSettings: () => void | Promise<void>;
   ldapStatus: Ref<LdapStatus | null>;
+  ldapConfiguration: Ref<LdapConfiguration | null>;
+  ldapConfigurationForm: Ref<LdapConfigurationForm>;
+  ldapConfigurationLoading: Ref<boolean>;
+  ldapConfigurationSaving: Ref<boolean>;
+  ldapConfigurationError: Ref<string>;
+  ldapConfigurationFormErrors: Ref<Record<string, string>>;
+  ldapConfigurationDirty: ComputedRef<boolean>;
   ldapStatusLoading: Ref<boolean>;
   ldapStatusError: Ref<string>;
   ldapDiagnosticLoading: Ref<boolean>;
@@ -557,6 +566,10 @@ export interface SettingsContext extends CustomFieldContext, TagContext {
   ldapDiagnosticError: Ref<string>;
   loadLdapStatus: () => void | Promise<boolean>;
   retryLdapStatus: () => void | Promise<boolean>;
+  loadLdapConfiguration: () => void | Promise<boolean>;
+  retryLdapConfiguration: () => void | Promise<boolean>;
+  saveLdapConfiguration: () => void | Promise<boolean>;
+  resetLdapConfigurationForm: () => void;
   runLdapDiagnostics: () => void | Promise<boolean>;
   dictionarySection: Ref<string>;
   dictionaryPage: Ref<number>;
