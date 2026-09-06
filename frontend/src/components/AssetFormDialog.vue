@@ -30,6 +30,10 @@ const {
   activeDeviceTypes,
   syncAssetDeviceType,
   manufacturerOptions,
+  departments,
+  departmentLoading,
+  departmentError,
+  retryDepartments,
   activeDataCenters,
   changeAssetDataCenter,
   assetRoomOptions,
@@ -426,6 +430,26 @@ watch(() => assetForm.value.purchase_date, () => {
         <el-form-item :label="t('asset.model')" :error="fieldError('model')"><el-input v-model="assetForm.model" :placeholder="t('assetForm.modelPlaceholder')" /></el-form-item>
         <el-form-item :label="t('asset.serialNumber')" :error="fieldError('serial_number')"><el-input v-model="assetForm.serial_number" /></el-form-item>
         <el-form-item :label="t('asset.purpose')" :error="fieldError('purpose')"><el-input v-model="assetForm.purpose" /></el-form-item>
+        <el-form-item :label="t('asset.department')" :error="fieldError('department')">
+          <el-select
+            v-model="assetForm.department"
+            clearable
+            filterable
+            :loading="departmentLoading"
+            :placeholder="t('assetForm.selectDepartment')"
+          >
+            <el-option
+              v-for="item in departments"
+              :key="item.id"
+              :label="`${item.name} · ${item.code}`"
+              :value="String(item.id)"
+            />
+          </el-select>
+          <div v-if="departmentError" class="asset-form-related-state asset-form-related-state--error">
+            <span>{{ departmentError }}</span>
+            <el-button link type="primary" :disabled="departmentLoading" @click="retryDepartments">{{ t('common.retry') }}</el-button>
+          </div>
+        </el-form-item>
         </div>
       </section>
 

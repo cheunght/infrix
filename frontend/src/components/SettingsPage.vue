@@ -68,6 +68,27 @@ const {
   toggleDictionary,
   deleteDictionary,
   dictionaryItemUsed,
+  departments,
+  departmentOptions,
+  departmentCount,
+  departmentPage,
+  departmentPageSize,
+  departmentSearch,
+  departmentLoading,
+  departmentError,
+  departmentSaving,
+  departmentActionId,
+  departmentFormErrors,
+  departmentForm,
+  editingDepartment,
+  showDepartmentModal,
+  searchDepartments,
+  changeDepartmentPage,
+  changeDepartmentPageSize,
+  retryDepartments,
+  openDepartmentModal,
+  saveDepartment,
+  deleteDepartment,
   currentUsername,
   organizationLoading,
   userListError,
@@ -127,9 +148,14 @@ const dictionaryTabs = computed<PageTabItem[]>(() => [
   { label: t("settings.spareCategories"), value: "spare-categories" },
 ]);
 const organizationTabs = computed<PageTabItem[]>(() => [
-  { label: t("settings.users"), value: "users" },
-  { label: t("settings.roles"), value: "roles" },
-  { label: t("settings.ldapOrganizationTab"), value: "ldap" },
+  ...(can("organization.manage")
+    ? [
+        { label: t("settings.users"), value: "users" },
+        { label: t("settings.roles"), value: "roles" },
+        { label: t("settings.ldapOrganizationTab"), value: "ldap" },
+      ]
+    : []),
+  ...(can("settings.manage") ? [{ label: t("settings.departments"), value: "departments" }] : []),
 ]);
 const canManageCurrentDictionary = computed(() => can("settings.manage"));
 const dictionaryPrimaryLabel = computed(() => {
@@ -155,6 +181,8 @@ const localizedDictionaryLabel = computed(() => {
 });
 const hasDictionaryFilters = computed(() => Boolean(dictionarySearch.value.trim()));
 const hasUserSearch = computed(() => Boolean(userSearch.value.trim()));
+const hasDepartmentSearch = computed(() => Boolean(departmentSearch.value.trim()));
+const departmentParentOptions = computed(() => departmentOptions.value.filter((item) => item.id !== editingDepartment.value?.id));
 const userBatchFailures = computed(() =>
   (userBatchResult.value?.results || []).filter((result) => !result.success),
 );
@@ -476,7 +504,7 @@ function userDirectoryTooltip(user: { auth_source: string; directory_provider: s
       </PageContent>
     </PageContainer>
 
-    <PageContainer v-else-if="settingsSection === 'organization' && can('organization.manage')">
+    <PageContainer v-else-if="settingsSection === 'organization' && (can('organization.manage') || can('settings.manage'))">
       <template #subnav>
         <PageTabs v-model="organizationTab" :items="organizationTabs" @update:model-value="changeOrganizationTab" />
       </template>
@@ -517,9 +545,63 @@ function userDirectoryTooltip(user: { auth_source: string; directory_provider: s
               <el-button v-if="can('organization.manage')" class="page-primary-action" type="primary" :loading="userSaving" :disabled="userSaving || userBatchSaving" @click="openUserModal()">{{ t('settings.addUser') }}</el-button>
             </div>
           </template>
+          <template v-if="organizationTab === 'departments'" #search>
+            <SearchField
+              v-model="departmentSearch"
+              :loading="departmentLoading"
+              :disabled="departmentLoading"
+              :placeholder="t('settings.departmentName')"
+              :aria-label="t('settings.departments')"
+              @search="searchDepartments"
+            />
+          </template>
+          <template v-if="organizationTab === 'departments'" #primary>
+            <el-button class="page-primary-action" type="primary" :loading="departmentSaving" :disabled="departmentSaving" @click="openDepartmentModal()">
+              {{ t('settings.addDepartment') }}
+            </el-button>
+          </template>
         </PageToolbar>
       </template>
       <LdapConfigurationPage v-if="organizationTab === 'ldap'" :context="props.context" />
+      <PageContent v-else-if="organizationTab === 'departments'" surface>
+        <el-alert v-if="departmentError" :title="t('settings.departmentDataLoadFailed')" type="error" show-icon :closable="false">
+          <template #default>
+            <span>{{ departmentError }}</span>
+            <el-button link type="danger" :loading="departmentLoading" @click="retryDepartments">{{ t('common.retry') }}</el-button>
+          </template>
+        </el-alert>
+        <PagedTable
+          v-else
+          v-model:current-page="departmentPage"
+          v-model:page-size="departmentPageSize"
+          :total="departmentCount"
+          :page-sizes="[20, 50, 100]"
+          @update:current-page="changeDepartmentPage"
+          @update:page-size="changeDepartmentPageSize"
+        >
+          <el-table v-loading="departmentLoading" :data="departments" table-layout="fixed">
+            <template #empty>
+              <el-empty :image-size="56" :description="hasDepartmentSearch ? t('settings.noMatchingDepartments') : t('settings.noDepartments')">
+                <el-button v-if="hasDepartmentSearch" link type="primary" @click="departmentSearch = ''; searchDepartments()">{{ t('common.clearFilters') }}</el-button>
+              </el-empty>
+            </template>
+            <el-table-column prop="name" :label="t('settings.departmentName')" min-width="220" />
+            <el-table-column prop="code" :label="t('settings.code')" min-width="150" />
+            <el-table-column prop="parent_name" :label="t('settings.parentDepartment')" min-width="200">
+              <template #default="{ row }">{{ row.parent_name || '—' }}</template>
+            </el-table-column>
+            <el-table-column prop="assets_count" :label="t('settings.assetCount')" width="120" />
+            <el-table-column v-if="can('settings.manage')" :label="t('common.operation')" width="112" fixed="right">
+              <template #default="{ row }">
+                <div class="ep-table-actions">
+                  <TableIconButton :icon="Edit" :label="t('common.edit')" type="primary" :disabled="departmentActionId === row.id || departmentSaving" @click="openDepartmentModal(row)" />
+                  <TableIconButton :icon="Delete" :label="t('common.delete')" type="danger" :disabled="departmentActionId === row.id || departmentSaving || row.assets_count > 0" @click="deleteDepartment(row)" />
+                </div>
+              </template>
+            </el-table-column>
+          </el-table>
+        </PagedTable>
+      </PageContent>
       <PageContent v-else surface>
         <template v-if="organizationTab === 'users'">
           <el-alert v-if="userListError" :title="t('settings.userLoadFailed')" type="error" show-icon :closable="false">
@@ -767,6 +849,33 @@ function userDirectoryTooltip(user: { auth_source: string; directory_provider: s
         <el-button :disabled="userBatchSaving" @click="closeUserBatchResult">{{ t('common.close') }}</el-button>
       </template>
     </ActionDialogShell>
+
+    <el-dialog
+      v-model="showDepartmentModal"
+      :title="editingDepartment ? t('common.edit') : t('settings.addDepartment')"
+      width="520px"
+      :close-on-click-modal="!departmentSaving"
+      :close-on-press-escape="!departmentSaving"
+      :show-close="!departmentSaving"
+    >
+      <el-form :model="departmentForm" label-position="top" @submit.prevent="saveDepartment">
+        <el-form-item :label="t('settings.departmentName')" :error="departmentFormErrors.name" required>
+          <el-input v-model="departmentForm.name" :disabled="departmentSaving" maxlength="100" />
+        </el-form-item>
+        <el-form-item :label="t('settings.code')" :error="departmentFormErrors.code" required>
+          <el-input v-model="departmentForm.code" :disabled="departmentSaving" maxlength="50" />
+        </el-form-item>
+        <el-form-item :label="t('settings.parentDepartment')" :error="departmentFormErrors.parent">
+          <el-select v-model="departmentForm.parent" clearable filterable :disabled="departmentSaving" :placeholder="t('settings.parentDepartment')">
+            <el-option v-for="item in departmentParentOptions" :key="item.id" :label="`${item.name} · ${item.code}`" :value="String(item.id)" />
+          </el-select>
+        </el-form-item>
+      </el-form>
+      <template #footer>
+        <el-button :disabled="departmentSaving" @click="showDepartmentModal = false">{{ t('common.cancel') }}</el-button>
+        <el-button type="primary" :loading="departmentSaving" :disabled="departmentSaving" @click="saveDepartment">{{ t('common.save') }}</el-button>
+      </template>
+    </el-dialog>
 
     <el-dialog
       v-model="showSystemResetDialog"

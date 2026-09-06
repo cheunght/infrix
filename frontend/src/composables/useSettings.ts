@@ -12,6 +12,7 @@ import type {
   CustomField,
   CustomFieldForm,
   CustomFieldOption,
+  Department,
   DictionaryItem,
   LdapDiagnosticCheck,
   LdapDiagnosticResult,
@@ -250,6 +251,23 @@ export function useSettings(deps: SettingsDeps) {
   const dictionaryActionId = ref<number | null>(null);
   const dictionaryFormErrors = ref<FormErrors>({});
 
+  const departments = ref<Department[]>([]);
+  const departmentOptions = ref<Department[]>([]);
+  const departmentTotal = ref(0);
+  const departmentPage = ref(1);
+  const departmentPageSize = ref(50);
+  const departmentSearch = ref("");
+  const departmentLoading = ref(false);
+  const departmentError = ref("");
+  const departmentRequestId = ref(0);
+  let departmentController: AbortController | null = null;
+  const departmentSaving = ref(false);
+  const departmentActionId = ref<number | null>(null);
+  const departmentFormErrors = ref<FormErrors>({});
+  const showDepartmentModal = ref(false);
+  const editingDepartment = ref<Department | null>(null);
+  const departmentForm = ref({ name: "", code: "", parent: "" });
+
   const auditLogs = ref<AuditLog[]>([]);
   const auditCount = ref(0);
   const auditPage = ref(1);
@@ -373,6 +391,7 @@ export function useSettings(deps: SettingsDeps) {
   ]);
   watchFormFieldErrors(userResetForm, userResetFormErrors, ["new_password", "confirm_password"]);
   watchFormFieldErrors(dictionaryForm, dictionaryFormErrors, ["name", "code", "color"]);
+  watchFormFieldErrors(departmentForm, departmentFormErrors, ["name", "code", "parent"]);
   watchFormFieldErrors(systemSettingsForm, systemSettingsFormErrors, ["default_page_size", "default_asset_status"]);
 
   function dictionaryCapability(_kind = dictionarySection.value) {
@@ -805,6 +824,145 @@ export function useSettings(deps: SettingsDeps) {
         dictionaryLoading.value = false;
         if (dictionaryController === controller) dictionaryController = null;
       }
+    }
+  }
+
+  async function loadDepartments(version = deps.beginLoad(), allowPageClamp = true): Promise<boolean> {
+    if (!deps.can("settings.view") && !deps.can("settings.manage")) return false;
+    const requestId = ++departmentRequestId.value;
+    departmentController?.abort();
+    const controller = new AbortController();
+    departmentController = controller;
+    const params = new URLSearchParams({
+      page: String(departmentPage.value),
+      page_size: String(departmentPageSize.value),
+      ordering: "name",
+    });
+    if (departmentSearch.value.trim()) params.set("search", departmentSearch.value.trim());
+    departmentLoading.value = true;
+    departmentError.value = "";
+    try {
+      const [result, options] = await Promise.all([
+        deps.request<PageResult<Department> | Department[]>(`/departments/?${params.toString()}`, { signal: controller.signal }),
+        loadAllPages<Department>(
+          "/departments/?page_size=100&ordering=name",
+          version,
+          () => requestId === departmentRequestId.value,
+          controller.signal,
+        ),
+      ]);
+      if (
+        result == null ||
+        options == null ||
+        requestId !== departmentRequestId.value ||
+        !deps.isCurrentLoad(version) ||
+        controller.signal.aborted
+      ) return false;
+      const nextTotal = pageTotal(result);
+      const maxPage = totalPages(nextTotal, departmentPageSize.value);
+      if (departmentPage.value > maxPage && allowPageClamp) {
+        departmentPage.value = maxPage;
+        return await loadDepartments(version, false);
+      }
+      departments.value = pageItems(result);
+      departmentOptions.value = options;
+      departmentTotal.value = nextTotal;
+      return true;
+    } catch (error) {
+      if (requestId === departmentRequestId.value && deps.isCurrentLoad(version) && !isAbortError(error)) {
+        departmentError.value = errorMessage(error, tr("settings.departmentDataLoadFailed"));
+      }
+      return false;
+    } finally {
+      if (requestId === departmentRequestId.value) {
+        departmentLoading.value = false;
+        if (departmentController === controller) departmentController = null;
+      }
+    }
+  }
+
+  function retryDepartments() {
+    return loadDepartments();
+  }
+
+  async function searchDepartments() {
+    departmentPage.value = 1;
+    await loadDepartments();
+  }
+
+  async function changeDepartmentPage(page: number) {
+    departmentPage.value = Math.min(
+      Math.max(page, 1),
+      totalPages(departmentTotal.value, departmentPageSize.value),
+    );
+    await loadDepartments();
+  }
+
+  async function changeDepartmentPageSize(size: number) {
+    if (![20, 50, 100].includes(size)) return;
+    departmentPageSize.value = size;
+    departmentPage.value = 1;
+    await loadDepartments();
+  }
+
+  function openDepartmentModal(department?: Department) {
+    if (!deps.can("settings.manage")) return;
+    editingDepartment.value = department || null;
+    departmentFormErrors.value = {};
+    departmentForm.value = department
+      ? {
+          name: department.name,
+          code: department.code,
+          parent: department.parent ? String(department.parent) : "",
+        }
+      : { name: "", code: "", parent: "" };
+    showDepartmentModal.value = true;
+  }
+
+  async function saveDepartment() {
+    if (!deps.can("settings.manage") || departmentSaving.value) return;
+    departmentSaving.value = true;
+    departmentFormErrors.value = {};
+    const editingId = editingDepartment.value?.id;
+    try {
+      const payload = {
+        name: departmentForm.value.name.trim(),
+        code: departmentForm.value.code.trim(),
+        parent: departmentForm.value.parent ? Number(departmentForm.value.parent) : null,
+      };
+      await deps.request(editingId ? `/departments/${editingId}/` : "/departments/", {
+        method: editingId ? "PATCH" : "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+      });
+      showDepartmentModal.value = false;
+      editingDepartment.value = null;
+      setActionMessage(tr("settings.departmentSaved"));
+      await loadDepartments();
+    } catch (error) {
+      departmentFormErrors.value = extractFieldErrors(error, ["name", "code", "parent"]);
+      setActionError(error, tr("settings.departmentSaveFailed"));
+    } finally {
+      departmentSaving.value = false;
+    }
+  }
+
+  async function deleteDepartment(department: Department) {
+    if (!deps.can("settings.manage") || departmentActionId.value === department.id) return;
+    if ((department.assets_count || 0) > 0) {
+      setActionMessage(tr("settings.departmentInUse"), "error");
+      return;
+    }
+    if (!(await deps.confirmAction(tr("settings.departmentDeleteConfirm", { name: department.name })))) return;
+    departmentActionId.value = department.id;
+    try {
+      await deps.request(`/departments/${department.id}/`, { method: "DELETE" });
+      setActionMessage(tr("settings.departmentDeleted"));
+      await loadDepartments();
+    } catch (error) {
+      setActionError(error, tr("settings.departmentDeleteFailed"));
+    } finally {
+      departmentActionId.value = null;
     }
   }
 
@@ -2088,6 +2246,28 @@ export function useSettings(deps: SettingsDeps) {
     dictionarySaving,
     dictionaryActionId,
     dictionaryFormErrors,
+    departments,
+    departmentOptions,
+    departmentCount: departmentTotal,
+    departmentPage,
+    departmentPageSize,
+    departmentSearch,
+    departmentLoading,
+    departmentError,
+    departmentSaving,
+    departmentActionId,
+    departmentFormErrors,
+    departmentForm,
+    editingDepartment,
+    showDepartmentModal,
+    loadDepartments,
+    searchDepartments,
+    changeDepartmentPage,
+    changeDepartmentPageSize,
+    retryDepartments,
+    openDepartmentModal,
+    saveDepartment,
+    deleteDepartment,
     auditLogs,
     auditCount,
     auditPage,

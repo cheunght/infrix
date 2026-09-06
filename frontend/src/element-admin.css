@@ -2098,6 +2098,21 @@ body,
   color: var(--el-color-danger);
 }
 
+.asset-form-related-state {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 6px;
+  color: var(--el-text-color-secondary);
+  font-size: 12px;
+  line-height: 18px;
+}
+
+.asset-form-related-state--error {
+  color: var(--el-color-danger);
+}
+
 .asset-form-load-error {
   display: grid;
   min-height: 260px;

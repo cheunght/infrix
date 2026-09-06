@@ -27,7 +27,7 @@ from .audit import asset_audit_snapshot, write_audit_log
 from .custom_fields import validate_custom_field_value
 from .enum_contracts import ASSET_STATUS_LABELS
 from .lifecycle import validate_asset_status_transition
-from .models import Asset, CustomField, DataCenter, DeviceType, Manufacturer, Rack, ServerRoom, Tag
+from .models import Asset, CustomField, DataCenter, Department, DeviceType, Manufacturer, Rack, ServerRoom, Tag
 from .serializers import AssetWriteSerializer, LEGACY_OWNER_NAME_DEPRECATED_MESSAGE
 from .system_settings import get_system_settings
 
@@ -45,6 +45,7 @@ IMPORT_COLUMNS = (
     ("manufacturer_model", "厂商/型号", False, "厂商和型号组合显示文本；通常填写型号即可。"),
     ("serial_number", "序列号", False, "留空表示没有序列号；序列号不能与其他资产重复。"),
     ("purpose", "用途", False, "资产用途。"),
+    ("department", "部门", False, "填写现有部门名称或编码；部门不存在时导入会被拒绝。"),
     ("status", "状态", False, "可填 in_stock、in_use、idle、retired，或对应显示值在库、在用、闲置、已报废；维修中由故障流程维护。"),
     ("notes", "备注", False, "资产备注。"),
     ("asset_data_center", "未上架所属数据中心", False, "未上架资产的所属数据中心；填写启用中的数据中心名称。"),
@@ -404,6 +405,15 @@ def _prepare_payload(row, headers):
         raise DjangoValidationError({"device_type": "设备类型不能为空"})
     device_type = _named_active(DeviceType.objects, device_type_name, "device_type", "设备类型")
 
+    department_name = row.get("department", "").strip()
+    department = _named_active(
+        Department.objects,
+        department_name,
+        "department",
+        "部门",
+        allow_code=True,
+    ) if department_name else None
+
     asset_data_center_name = row.get("asset_data_center", "").strip()
     asset_data_center = _named_active(DataCenter.objects, asset_data_center_name, "asset_data_center", "数据中心") if asset_data_center_name else None
 
@@ -540,6 +550,7 @@ def _prepare_payload(row, headers):
         "manufacturer_id": manufacturer.pk if manufacturer else None,
         "device_type": device_type.pk,
         "asset_data_center": asset_data_center.pk if asset_data_center else None,
+        "department": department.pk if department else None,
         "model": row.get("model", "").strip(),
         "manufacturer_model": row.get("manufacturer_model", "").strip(),
         "serial_number": row.get("serial_number", "").strip() or None,

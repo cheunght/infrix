@@ -22,6 +22,7 @@ import type {
   CustomFieldOption,
   CustomFieldSchema,
   DataCenter,
+  Department,
   DashboardOverview,
   DictionaryItem,
   FacilitySummary,
@@ -66,6 +67,7 @@ export interface AssetFormState {
   manufacturer_model: string;
   serial_number: string;
   purpose: string;
+  department: string;
   status: AssetStatus;
   notes: string;
   rack_mounted: boolean;
@@ -124,6 +126,7 @@ export interface AssetFilters {
   manufacturer: string;
   model: string;
   dataCenter: string;
+  department: string;
   warranty: string;
 }
 
@@ -160,6 +163,10 @@ export interface AssetLedgerContext {
   manufacturers: Ref<DictionaryItem[]>;
   deviceTypes: Ref<DictionaryItem[]>;
   dataCenters: Ref<DataCenter[]>;
+  departments: Ref<Department[]>;
+  departmentLoading: Ref<boolean>;
+  departmentError: Ref<string>;
+  retryDepartments: () => void | Promise<boolean>;
   tags: Ref<Tag[]>;
   tagListLoading: Ref<boolean>;
   tagListError: Ref<string>;
@@ -222,6 +229,10 @@ export interface AssetFormContext {
   activeDeviceTypes: ComputedRef<DictionaryItem[]>;
   syncAssetDeviceType: () => void | Promise<void>;
   manufacturerOptions: ComputedRef<DictionaryItem[]>;
+  departments: Ref<Department[]>;
+  departmentLoading: Ref<boolean>;
+  departmentError: Ref<string>;
+  retryDepartments: () => void | Promise<boolean>;
   activeDataCenters: ComputedRef<DataCenter[]>;
   changeAssetDataCenter: () => void | Promise<void>;
   assetRoomOptions: Ref<ServerRoom[]>;
@@ -546,6 +557,9 @@ export interface InventoryContext {
   refreshOpenAssetDetail?: (assetId: number) => Promise<boolean | null>;
   dataCenters: Ref<DataCenter[]>;
   serverRooms: Ref<ServerRoom[]>;
+  inventoryTaskId: Ref<number | null>;
+  clearRouteQuery?: (keys: string[]) => boolean;
+  updateRouteQuery?: (updates: Record<string, string | undefined>) => boolean;
 }
 
 export interface SettingsContext extends CustomFieldContext, TagContext {
@@ -608,6 +622,28 @@ export interface SettingsContext extends CustomFieldContext, TagContext {
   toggleDictionary: (item: DictionaryItem) => void | Promise<void>;
   deleteDictionary: (item: DictionaryItem) => void | Promise<void>;
   dictionaryItemUsed: (item: DictionaryItem) => boolean;
+  departments: Ref<Department[]>;
+  departmentOptions: Ref<Department[]>;
+  departmentCount: Ref<number>;
+  departmentPage: Ref<number>;
+  departmentPageSize: Ref<number>;
+  departmentSearch: Ref<string>;
+  departmentLoading: Ref<boolean>;
+  departmentError: Ref<string>;
+  departmentSaving: Ref<boolean>;
+  departmentActionId: Ref<number | null>;
+  departmentFormErrors: Ref<Record<string, string>>;
+  departmentForm: Ref<{ name: string; code: string; parent: string }>;
+  editingDepartment: Ref<Department | null>;
+  showDepartmentModal: Ref<boolean>;
+  loadDepartments: () => void | Promise<boolean>;
+  searchDepartments: () => void | Promise<void>;
+  changeDepartmentPage: (page: number) => void | Promise<void>;
+  changeDepartmentPageSize: (size: number) => void | Promise<void>;
+  retryDepartments: () => void | Promise<boolean>;
+  openDepartmentModal: (department?: Department) => void;
+  saveDepartment: () => void | Promise<void>;
+  deleteDepartment: (department: Department) => void | Promise<void>;
   currentUsername: Ref<string>;
   organizationLoading: Ref<boolean>;
   organizationError: ComputedRef<string>;

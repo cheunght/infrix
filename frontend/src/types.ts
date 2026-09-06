@@ -67,6 +67,16 @@ export type DictionaryItem = {
   created_at?: string;
   updated_at?: string;
 };
+export type Department = {
+  id: number;
+  name: string;
+  code: string;
+  parent: number | null;
+  parent_name?: string | null;
+  assets_count?: number;
+  created_at?: string;
+  updated_at?: string;
+};
 export type SparePartCategory = DictionaryItem & { code: string; spare_parts_count: number };
 export type Manufacturer = { id: number; name: string; code: string | null; is_active: boolean };
 export type SparePartFormState = {
@@ -612,7 +622,7 @@ export type FacilitySummary = {
   rooms: Array<ServerRoom & { total_u?: number; used_u?: number }>;
   racks: Array<Rack & { room_id: number; device_count?: number }>;
 };
-export type FaultEvent = { id: number; asset: number; asset_no: string; asset_name: string; occurred_at: string; reported_at: string | null; resolved_at: string | null; reason: string; description: string; is_closed: boolean; repair: { id: number; fault: number; provider: string; started_at: string | null; finished_at: string | null; notes: string } | null };
+export type FaultEvent = { id: number; asset: number; asset_no: string; asset_name: string; occurred_at: string; reported_at: string | null; resolved_at: string | null; reason: string; description: string; is_closed: boolean; repair: { id: number; fault: number; provider: string; started_at: string | null; finished_at: string | null; cost: string | null; notes: string } | null };
 export type RepairPartUsage = {
   id: number;
   fault: number;

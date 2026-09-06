@@ -13,7 +13,7 @@ from decimal import Decimal, InvalidOperation
 from typing import Any
 import json
 import re
-from .models import AuditLog, Asset, AssetCustomValue, AssetNetworkAddress, AssetResponsibilityEvent, AssetTag, CustomField, CustomFieldOption, DataCenter, DeviceType, DirectoryIdentity, FaultEvent, InventoryItem, InventoryTask, MaintenanceContract, Manufacturer, ProcurementRecord, Rack, RackUnitAllocation, RepairPartUsage, RepairRecord, ServerRoom, SoftwareLicense, SparePart, SparePartCategory, SpareStock, SpareStockTransaction, SystemSetting, Tag, UserSecurityProfile
+from .models import AuditLog, Asset, AssetCustomValue, AssetNetworkAddress, AssetResponsibilityEvent, AssetTag, CustomField, CustomFieldOption, DataCenter, Department, DeviceType, DirectoryIdentity, FaultEvent, InventoryItem, InventoryTask, MaintenanceContract, Manufacturer, ProcurementRecord, Rack, RackUnitAllocation, RepairPartUsage, RepairRecord, ServerRoom, SoftwareLicense, SparePart, SparePartCategory, SpareStock, SpareStockTransaction, SystemSetting, Tag, UserSecurityProfile
 from .depreciation import DepreciationValidationError, calculate_asset_depreciation, validate_depreciation_configuration
 from .enum_contracts import (
     INVENTORY_ITEM_STATUS_LABELS,
@@ -359,6 +359,50 @@ class BaseDictionarySerializer(serializers.ModelSerializer):
     class Meta:
         fields = ["id", "name", "is_active", "assets_count", "created_at", "updated_at"]
         read_only_fields = ["id", "assets_count", "created_at", "updated_at"]
+
+
+class DepartmentSerializer(serializers.ModelSerializer):
+    parent_name = serializers.CharField(source="parent.name", read_only=True, allow_null=True)
+    assets_count = serializers.IntegerField(read_only=True, default=0)
+
+    def validate_name(self, value):
+        value = (value or "").strip()
+        if not value:
+            raise serializers.ValidationError("部门名称不能为空")
+        queryset = Department.objects.filter(name__iexact=value)
+        if self.instance:
+            queryset = queryset.exclude(pk=self.instance.pk)
+        if queryset.exists():
+            raise serializers.ValidationError("部门名称已存在")
+        return value
+
+    def validate_code(self, value):
+        value = (value or "").strip()
+        if not value:
+            raise serializers.ValidationError("部门编码不能为空")
+        queryset = Department.objects.filter(code__iexact=value)
+        if self.instance:
+            queryset = queryset.exclude(pk=self.instance.pk)
+        if queryset.exists():
+            raise serializers.ValidationError("部门编码已存在")
+        return value
+
+    def validate_parent(self, value):
+        if not value or not self.instance:
+            return value
+        current = value
+        visited = set()
+        while current is not None and current.pk not in visited:
+            if current.pk == self.instance.pk:
+                raise serializers.ValidationError("部门层级不能形成循环")
+            visited.add(current.pk)
+            current = current.parent
+        return value
+
+    class Meta:
+        model = Department
+        fields = ["id", "name", "code", "parent", "parent_name", "assets_count", "created_at", "updated_at"]
+        read_only_fields = ["id", "parent_name", "assets_count", "created_at", "updated_at"]
 
 
 class ManufacturerSerializer(BaseDictionarySerializer):
@@ -1329,6 +1373,8 @@ class AssetListSerializer(serializers.ModelSerializer):
     def get_responsible_user_name(self, obj) -> str:
         return _responsibility_user_name(getattr(obj, "responsible_user", None))
 
+    department_name = serializers.CharField(source="department.name", read_only=True, allow_null=True)
+
     def get_custom_values(self, obj) -> dict[str, object]:
         values = {}
         for item in getattr(obj, "list_custom_values", ()):
@@ -1344,7 +1390,7 @@ class AssetListSerializer(serializers.ModelSerializer):
             "id", "created_at", "updated_at", "asset_no", "name",
             "manufacturer", "manufacturer_name", "device_type",
             "device_type_name", "asset_data_center", "asset_data_center_name", "model", "model_name", "manufacturer_model",
-            "serial_number", "purpose", "status", "department", "responsible_user", "responsible_user_name", "owner_name", "notes",
+            "serial_number", "purpose", "status", "department", "department_name", "responsible_user", "responsible_user_name", "owner_name", "notes",
             "business_ip", "management_ip", "oob_ip", "data_center", "server_room",
             "rack_code", "u_range", "purchase_date", "supplier", "purchase_order_no",
             "maintenance_provider", "maintenance_expiry_date", "depreciation",
@@ -2193,10 +2239,6 @@ class FaultEventSerializer(serializers.ModelSerializer):
 
 class RepairRecordSerializer(serializers.ModelSerializer):
     def validate(self, attrs):
-        unsupported = {key for key in ("cost",) if key in self.initial_data}
-        if unsupported:
-            raise serializers.ValidationError({key: "维修费用暂不支持通过当前维修记录接口维护" for key in sorted(unsupported)})
-
         if self.instance is not None and self.instance.finished_at is not None and attrs:
             raise serializers.ValidationError({
                 "detail": "已完成维修不可直接修改，请先重新打开。",
@@ -2219,9 +2261,17 @@ class RepairRecordSerializer(serializers.ModelSerializer):
             })
         return attrs
 
+    cost = serializers.DecimalField(
+        max_digits=14,
+        decimal_places=2,
+        min_value=Decimal("0"),
+        required=False,
+        allow_null=True,
+    )
+
     class Meta:
         model = RepairRecord
-        fields = ["id", "fault", "provider", "started_at", "finished_at", "notes", "created_at", "updated_at"]
+        fields = ["id", "fault", "provider", "started_at", "finished_at", "cost", "notes", "created_at", "updated_at"]
         read_only_fields = ["id", "created_at", "updated_at"]
 
 

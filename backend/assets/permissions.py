@@ -61,6 +61,23 @@ class CanViewManufacturerRuntime(BasePermission):
         )
 
 
+class CanViewDepartmentRuntime(BasePermission):
+    """Allow asset workflows to read departments without granting CRUD."""
+
+    message = "当前角色没有读取部门的权限"
+
+    def has_permission(self, request, view):
+        return any(
+            user_has_capability(request.user, capability)
+            for capability in (
+                "assets.view",
+                "assets.manage",
+                "settings.view",
+                "settings.manage",
+            )
+        )
+
+
 class CanViewSparePartCategoryRuntime(BasePermission):
     """Allow spare part forms to read categories without granting dictionary CRUD."""
 

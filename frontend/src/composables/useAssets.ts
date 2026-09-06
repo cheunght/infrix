@@ -18,6 +18,7 @@ import type {
   CustomFieldFilterOperator,
   CustomFieldSchema,
   DataCenter,
+  Department,
   DictionaryItem,
   InventoryItem,
   Rack,
@@ -55,6 +56,7 @@ export type StaticAssetColumnKey =
   | "manufacturer"
   | "manufacturer_model"
   | "purpose"
+  | "department"
   | "status"
   | "serial_number"
   | "responsible_user"
@@ -299,6 +301,9 @@ export interface AssetsDeps {
   actionMessage: Ref<string>;
   actionMessageType: Ref<ActionMessageType | null>;
   dataCenters: Ref<DataCenter[]>;
+  departments: Ref<Department[]>;
+  departmentLoading: Ref<boolean>;
+  departmentError: Ref<string>;
   serverRooms: Ref<ServerRoom[]>;
   racks: Ref<Rack[]>;
   manufacturers: Ref<DictionaryItem[]>;
@@ -330,6 +335,7 @@ const defaultColumns: AssetColumnOption[] = [
   { key: "manufacturer_model", label: "型号" },
   { key: "maintenance_expiry_date", label: "保修到期" },
   { key: "purpose", label: "用途" },
+  { key: "department", label: "部门" },
   { key: "serial_number", label: "序列号" },
   { key: "responsible_user", label: "责任人", defaultVisible: true },
   { key: "business_ip", label: "业务 IP" },
@@ -379,6 +385,7 @@ function emptyAssetForm(defaultStatus = systemSettingsState.defaultAssetStatus):
     manufacturer_model: "",
     serial_number: "",
     purpose: "",
+    department: "",
     status: defaultStatus,
     notes: "",
     rack_mounted: false,
@@ -447,6 +454,7 @@ const assetFormFieldNames = new Set([
   "manufacturer_model",
   "serial_number",
   "purpose",
+  "department",
   "status",
   "notes",
   "asset_data_center",
@@ -521,6 +529,7 @@ export function useAssets(deps: AssetsDeps) {
     manufacturer: "",
     model: "",
     dataCenter: "",
+    department: "",
     warranty: "",
   });
   const assetTagFilter = computed({
@@ -580,6 +589,8 @@ export function useAssets(deps: AssetsDeps) {
   const assetFormExistingCustomFields = ref<AssetCustomFieldValue[]>([]);
   const assetFormLoading = ref(false);
   const assetFormLoadError = ref("");
+  const departmentRequestId = ref(0);
+  let departmentController: AbortController | null = null;
   const assetFormSaving = ref(false);
   const assetFormFieldErrors = ref<Record<string, string>>({});
   const assetFormRequestId = ref(0);
@@ -634,6 +645,7 @@ export function useAssets(deps: AssetsDeps) {
     "manufacturer_model",
     "serial_number",
     "purpose",
+    "department",
     "status",
     "notes",
     "rack_mounted",
@@ -759,6 +771,7 @@ export function useAssets(deps: AssetsDeps) {
       (item) => item.is_active !== false || currentIds.has(String(item.id)),
     );
   });
+  const activeDepartments = computed(() => deps.departments.value);
 
   function saveVisibleColumns() {
     localStorage.setItem(ASSET_COLUMNS_STORAGE_KEY, JSON.stringify(visibleAssetColumns.value));
@@ -904,6 +917,7 @@ export function useAssets(deps: AssetsDeps) {
       manufacturer: assetFilters.manufacturer || undefined,
       model: assetFilters.model.trim() || undefined,
       data_center: assetFilters.dataCenter || undefined,
+      department: assetFilters.department || undefined,
       warranty: assetFilters.warranty || undefined,
       ordering: assetOrderingValue(),
     };
@@ -935,6 +949,7 @@ export function useAssets(deps: AssetsDeps) {
     if (assetFilters.manufacturer) params.set("manufacturer", assetFilters.manufacturer);
     if (assetFilters.model.trim()) params.set("model", assetFilters.model.trim());
     if (assetFilters.dataCenter) params.set("data_center", assetFilters.dataCenter);
+    if (assetFilters.department) params.set("department", assetFilters.department);
     if (assetFilters.warranty) params.set("warranty", assetFilters.warranty);
     const ordering = assetOrderingValue();
     if (ordering) params.set("ordering", ordering);
@@ -950,8 +965,61 @@ export function useAssets(deps: AssetsDeps) {
     return params;
   }
 
+  async function loadDepartments(force = false): Promise<boolean> {
+    if (!deps.authenticated.value || !deps.can("assets.view")) return false;
+    if (!force && deps.departmentLoading.value) return true;
+
+    departmentController?.abort();
+    const controller = new AbortController();
+    departmentController = controller;
+    const requestId = ++departmentRequestId.value;
+    deps.departmentLoading.value = true;
+    deps.departmentError.value = "";
+    const rows: Department[] = [];
+    try {
+      let page = 1;
+      while (!controller.signal.aborted) {
+        const result = await deps.request<PageResult<Department> | Department[]>(
+          `/departments/?page_size=100&ordering=name&page=${page}`,
+          { signal: controller.signal },
+        );
+        if (requestId !== departmentRequestId.value || controller.signal.aborted || !result) return false;
+        if (Array.isArray(result)) {
+          rows.push(...result);
+          break;
+        }
+        rows.push(...(result.results || []));
+        const hasMore = result.next !== undefined
+          ? Boolean(result.next)
+          : typeof result.count === "number"
+            ? rows.length < result.count
+            : (result.results || []).length >= 100;
+        if (!(result.results || []).length || !hasMore) break;
+        page += 1;
+      }
+      if (requestId !== departmentRequestId.value || controller.signal.aborted) return false;
+      deps.departments.value = rows;
+      return true;
+    } catch (error) {
+      if (requestId === departmentRequestId.value && !isAbortError(error)) {
+        deps.departmentError.value = errorMessage(error, tr("asset.departmentLoadFailed"));
+      }
+      return false;
+    } finally {
+      if (requestId === departmentRequestId.value) {
+        deps.departmentLoading.value = false;
+        if (departmentController === controller) departmentController = null;
+      }
+    }
+  }
+
+  async function retryDepartments(): Promise<boolean> {
+    return loadDepartments(true);
+  }
+
   async function loadAssets(version = deps.beginLoad()): Promise<boolean> {
     if (!deps.authenticated.value || !deps.can("assets.view")) return false;
+    void loadDepartments();
     ensureAssetListCustomSchema();
     ensureAssetFilterCustomSchema();
     if (deps.isCurrentLoad(version)) {
@@ -1472,7 +1540,7 @@ export function useAssets(deps: AssetsDeps) {
     resetAssetCustomSchemaState();
     showAssetModal.value = true;
     try {
-      await deps.loadRackManagement();
+      await Promise.all([deps.loadRackManagement(), loadDepartments()]);
       const detail = await deps.request<AssetDetail>(`/assets/${assetId}/`);
       if (!detail || requestId !== assetFormRequestId.value) return;
       const network = (role: string) =>
@@ -1490,6 +1558,7 @@ export function useAssets(deps: AssetsDeps) {
         manufacturer_model: detail.manufacturer_model || "",
         serial_number: detail.serial_number || "",
         purpose: detail.purpose || "",
+        department: detail.department ? String(detail.department) : "",
         status: detail.status,
         notes: detail.notes || "",
         rack_mounted: Boolean(rack),
@@ -1579,7 +1648,7 @@ export function useAssets(deps: AssetsDeps) {
     showAssetModal.value = true;
     assetFormLoading.value = true;
     try {
-      await deps.loadRackManagement();
+      await Promise.all([deps.loadRackManagement(), loadDepartments()]);
       await loadAssetCustomSchema("");
     } catch (error) {
       if (requestId === assetFormRequestId.value && !isAbortError(error)) {
@@ -1708,6 +1777,7 @@ export function useAssets(deps: AssetsDeps) {
           asset_data_center: asset_data_center || null,
           manufacturer_model: model || "",
           manufacturer_id: asset.manufacturer_id ? Number(asset.manufacturer_id) : null,
+          department: asset.department ? Number(asset.department) : null,
           model: model || "",
           device_type: asset.device_type || null,
           tags: (tags || []).map((value) => Number(value)).filter((value) => Number.isFinite(value)),
@@ -1898,6 +1968,7 @@ export function useAssets(deps: AssetsDeps) {
       manufacturer: asset.manufacturer_name || "—",
       manufacturer_model: asset.model || asset.manufacturer_model || "—",
       purpose: asset.purpose || "—",
+      department: asset.department_name || "—",
       status: deps.statusLabel(asset.status),
       serial_number: asset.serial_number || "—",
       responsible_user: asset.responsible_user_name || "—",
@@ -2162,6 +2233,7 @@ export function useAssets(deps: AssetsDeps) {
     const manufacturer = queryValue(query, "manufacturer");
     const model = queryValue(query, "model");
     const dataCenter = queryValue(query, "data_center");
+    const department = queryValue(query, "department");
     const warranty = queryValue(query, "warranty");
     const tagIds = queryList(query, "tags");
     const validWarranties = new Set(["within_30_days", "expired"]);
@@ -2171,6 +2243,7 @@ export function useAssets(deps: AssetsDeps) {
     assetFilters.manufacturer = /^\d+$/.test(manufacturer) && Number(manufacturer) > 0 ? manufacturer : "";
     assetFilters.model = model;
     assetFilters.dataCenter = /^\d+$/.test(dataCenter) && Number(dataCenter) > 0 ? dataCenter : "";
+    assetFilters.department = /^\d+$/.test(department) && Number(department) > 0 ? department : "";
     assetFilters.warranty = validWarranties.has(warranty) ? warranty : "";
     assetFilters.tag = tagIds;
     const parsedOrdering = assetSortFromOrdering(queryValue(query, "ordering"));
@@ -2190,6 +2263,7 @@ export function useAssets(deps: AssetsDeps) {
     assetFilters.manufacturer = "";
     assetFilters.model = "";
     assetFilters.dataCenter = "";
+    assetFilters.department = "";
     assetFilters.warranty = "";
     draftCustomFilters.value = [];
     appliedCustomFilters.value = [];
@@ -2201,6 +2275,7 @@ export function useAssets(deps: AssetsDeps) {
       "manufacturer",
       "model",
       "data_center",
+      "department",
       "warranty",
       "tags",
     ])) return;
@@ -2316,6 +2391,11 @@ export function useAssets(deps: AssetsDeps) {
     manufacturerOptions: activeManufacturers,
     activeDeviceTypes,
     activeDataCenters,
+    activeDepartments,
+    departments: deps.departments,
+    departmentLoading: deps.departmentLoading,
+    departmentError: deps.departmentError,
+    retryDepartments,
     assetRoomOptions,
     assetRackOptions,
     loadAssets,

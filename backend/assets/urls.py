@@ -1,12 +1,13 @@
 from rest_framework.routers import DefaultRouter
 from django.urls import path
-from .views import AuditLogViewSet, AssetViewSet, CustomFieldOptionViewSet, CustomFieldViewSet, DataCenterViewSet, DeviceTypeViewSet, FaultEventViewSet, GroupViewSet, InventoryItemViewSet, InventoryTaskViewSet, ManufacturerViewSet, RackViewSet, RepairRecordViewSet, ServerRoomViewSet, SoftwareLicenseViewSet, SparePartCategoryViewSet, SparePartViewSet, SpareStockViewSet, SpareStockTransactionViewSet, TagViewSet, UserViewSet, alerts_overview, asset_inventory_records, dashboard_overview, facilities_summary, inventory_inspectors, license_export, license_summary, repair_record_export, rack_layout_export, spare_part_export, spare_transaction_export, auth_login, auth_me, auth_logout, auth_csrf, auth_change_password, auth_ldap_status, auth_ldap_config, auth_ldap_diagnostics, system_reset, system_settings, asset_import, asset_import_preview, asset_import_template, asset_export
+from .views import AuditLogViewSet, AssetViewSet, CustomFieldOptionViewSet, CustomFieldViewSet, DataCenterViewSet, DepartmentViewSet, DeviceTypeViewSet, FaultEventViewSet, GroupViewSet, InventoryItemViewSet, InventoryTaskViewSet, ManufacturerViewSet, RackViewSet, RepairRecordViewSet, ServerRoomViewSet, SoftwareLicenseViewSet, SparePartCategoryViewSet, SparePartViewSet, SpareStockViewSet, SpareStockTransactionViewSet, TagViewSet, UserViewSet, alerts_overview, asset_inventory_records, dashboard_overview, facilities_summary, inventory_inspectors, license_export, license_summary, repair_record_export, rack_layout_export, spare_part_export, spare_transaction_export, auth_login, auth_me, auth_logout, auth_csrf, auth_change_password, auth_ldap_status, auth_ldap_config, auth_ldap_diagnostics, system_reset, system_settings, asset_import, asset_import_preview, asset_import_template, asset_export
 
 router = DefaultRouter()
 router.register("assets", AssetViewSet)
 router.register("racks", RackViewSet)
 router.register("server-rooms", ServerRoomViewSet, basename="server-room")
 router.register("data-centers", DataCenterViewSet, basename="data-center")
+router.register("departments", DepartmentViewSet, basename="department")
 router.register("manufacturers", ManufacturerViewSet, basename="manufacturer")
 router.register("device-types", DeviceTypeViewSet, basename="device-type")
 router.register("spare-part-categories", SparePartCategoryViewSet, basename="spare-part-category")

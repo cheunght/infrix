@@ -55,6 +55,7 @@ const RESOURCE_LABELS: Record<string, string> = {
   custom_field: "auditLog.resources.custom_field",
   custom_field_option: "auditLog.resources.custom_field_option",
   tag: "auditLog.resources.tag",
+  department: "auditLog.resources.department",
   fault_event: "auditLog.resources.fault_event",
   repair_record: "auditLog.resources.repair_record",
   software_license: "auditLog.resources.software_license",

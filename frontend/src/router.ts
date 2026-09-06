@@ -15,7 +15,7 @@ export type SettingsSection =
   | "tags"
   | "maintenance";
 export type AssetConfigSection = "custom-fields" | "tags";
-export type OrganizationTab = "users" | "roles" | "ldap";
+export type OrganizationTab = "users" | "roles" | "ldap" | "departments";
 
 export type RackSection = "locations" | "view";
 export type LocationTypeFilter = "" | "data-center" | "room";
@@ -162,6 +162,9 @@ const pageComponents: Partial<Record<Page, () => Promise<Component>>> = {
     "ElDivider",
     "ElDrawer",
     "ElEmpty",
+    "ElForm",
+    "ElFormItem",
+    "ElInput",
     "ElInputNumber",
     "ElOption",
     "ElPagination",
