@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, toRefs } from "vue";
 import { useI18n } from "vue-i18n";
-import { formatSystemDate, formatSystemDateTime } from "../system-settings";
+import { formatSystemDate, formatSystemDateTime, systemDateKey } from "../system-settings";
 import type {
   AssetInventoryHistoryContext,
   AssetResponsibilityContext,
@@ -265,11 +265,11 @@ function maintenanceStateFor(expiry: unknown): MaintenanceState | null {
   if (!hasContent(expiry)) return null;
   const dateText = String(expiry).slice(0, 10);
   if (!/^\d{4}-\d{2}-\d{2}$/.test(dateText)) return null;
-  const expiryDate = new Date(`${dateText}T00:00:00`);
-  if (Number.isNaN(expiryDate.getTime())) return null;
-  const today = new Date();
-  const todayStart = new Date(today.getFullYear(), today.getMonth(), today.getDate());
-  const daysRemaining = Math.ceil((expiryDate.getTime() - todayStart.getTime()) / 86400000);
+  const expiryDate = new Date(`${dateText}T00:00:00Z`);
+  const todayKey = systemDateKey();
+  const todayStart = todayKey ? new Date(`${todayKey}T00:00:00Z`) : null;
+  if (Number.isNaN(expiryDate.getTime()) || !todayStart || Number.isNaN(todayStart.getTime())) return null;
+  const daysRemaining = Math.round((expiryDate.getTime() - todayStart.getTime()) / 86400000);
   if (daysRemaining < 0) return { label: t("status.expired"), status: "expired", type: "danger" };
   if (daysRemaining <= 30) return { label: t("status.expiring"), status: "expiring", type: "warning" };
   return { label: t("status.normal"), status: "normal", type: "success" };

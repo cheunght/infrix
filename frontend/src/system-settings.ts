@@ -52,6 +52,12 @@ function dateParts(value: string | number | Date, includeTime: boolean) {
   return values;
 }
 
+export function systemDateKey(value: string | number | Date = new Date()): string {
+  const parts = dateParts(value, false);
+  if (!parts?.year || !parts.month || !parts.day) return "";
+  return `${parts.year}-${parts.month}-${parts.day}`;
+}
+
 export function formatSystemDate(value: string | number | Date | null | undefined): string {
   if (value === null || value === undefined || String(value).trim() === "") return "";
   const parts = dateParts(value, false);
