@@ -13,6 +13,7 @@ import { statusTone } from "../status";
 import { businessOptionLabel, LICENSE_STATUS_OPTIONS } from "../business-enums";
 import ResourceState from "./ResourceState.vue";
 import TableIconButton from "./TableIconButton.vue";
+import { formatSystemDate } from "../system-settings";
 
 const props = defineProps<{ context: LicenseContext }>();
 const { t } = useI18n();
@@ -43,6 +44,11 @@ const {
 const licenseHasFilters = computed(
   () => Boolean(licenseKeyword.value.trim() || licenseStatus.value || licenseManufacturer.value),
 );
+
+function formatLicenseExpiry(value: string | null | undefined): string {
+  if (!value) return t("license.longTermValid");
+  return formatSystemDate(value) || t("common.notAvailable");
+}
 </script>
 
 <template>
@@ -137,7 +143,7 @@ const licenseHasFilters = computed(
             </template>
           </el-table-column>
           <el-table-column :label="t('license.expiryDate')" width="135">
-            <template #default="{ row }">{{ row.expiry_date || t('license.longTermValid') }}</template>
+            <template #default="{ row }">{{ formatLicenseExpiry(row.expiry_date) }}</template>
           </el-table-column>
           <el-table-column :label="t('common.status')" width="110">
             <template #default="{ row }">

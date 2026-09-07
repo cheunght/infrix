@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, nextTick, ref, watch } from "vue";
 import { useI18n } from "vue-i18n";
+import { formatSystemDateTime } from "../system-settings";
 import type { FormInstance, FormRules } from "element-plus";
 import { Delete, Download, Edit, Operation, Switch, Tickets, TopRight, Upload } from "@element-plus/icons-vue";
 import PagedTable from "./PagedTable.vue";
@@ -25,7 +26,6 @@ import {
   spareUnitLabel,
   stockOperationTone,
 } from "../business-enums";
-import { formatSystemDateTime } from "../system-settings";
 
 const props = defineProps<{ context: SpareContext }>();
 const { t } = useI18n();
@@ -286,7 +286,7 @@ watch(showSpareOperationModal, (open, wasOpen) => { if (!open && wasOpen) refres
                   <div v-else-if="stockLocationErrorByPart[row.id]" class="spare-inline-error" role="alert"><span>{{ t('spare.stockLocationLoadFailed') }}: {{ stockLocationErrorByPart[row.id] }}</span><el-button link type="primary" @click="stockLocationRetry(row.id)">{{ t('common.retry') }}</el-button></div>
                   <div v-else-if="stockLocationLoadedByPart[row.id] && stocksFor(row).length" class="spare-location-list">
                     <div v-for="stock in stocksFor(row)" :key="stock.id" class="spare-location-row">
-                      <div class="spare-location-main"><strong>{{ stockLocationLabel(stock) }}</strong><span class="form-hint">{{ t('spare.updatedAt') }}: {{ stock.updated_at || t('common.notAvailable') }}</span></div>
+                      <div class="spare-location-main"><strong>{{ stockLocationLabel(stock) }}</strong><span class="form-hint">{{ t('spare.updatedAt') }}: {{ stock.updated_at ? (formatSystemDateTime(stock.updated_at) || t('common.notAvailable')) : t('common.notAvailable') }}</span></div>
                       <el-tag :type="stock.quantity > 0 ? 'success' : 'info'" class="spare-location-quantity">{{ stock.quantity }} {{ spareUnitLabel(row.unit) }}</el-tag>
                       <div class="ep-table-actions">
                         <TableIconButton v-if="can('spares.manage')" :icon="Upload" :label="t('spare.inbound')" type="primary" @click="openLocationOperation(row, 'inbound', stock)" />
