@@ -5,9 +5,10 @@ import { InfoFilled } from "@element-plus/icons-vue";
 import PageContent from "./page/PageContent.vue";
 import StatusTag from "./StatusTag.vue";
 import type { SettingsContext } from "../page-context";
+import { formatSystemDateTime } from "../system-settings";
 
 const props = defineProps<{ context: SettingsContext }>();
-const { t, locale } = useI18n();
+const { t } = useI18n();
 const {
   ldapConfiguration,
   ldapConfigurationForm,
@@ -149,16 +150,7 @@ function statusDotClass(status: { tone: "success" | "warning" | "danger" | "info
 
 function formatLdapDiagnosticAt(value?: string | null) {
   if (!value) return "";
-  const date = new Date(value);
-  if (Number.isNaN(date.getTime())) return value;
-  return date.toLocaleString(locale.value, {
-    year: "numeric",
-    month: "2-digit",
-    day: "2-digit",
-    hour: "2-digit",
-    minute: "2-digit",
-    second: "2-digit",
-  });
+  return formatSystemDateTime(value, true) || value;
 }
 </script>
 

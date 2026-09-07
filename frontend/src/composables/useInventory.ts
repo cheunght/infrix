@@ -1,7 +1,8 @@
 import { computed, onBeforeUnmount, ref, watch, type Ref } from "vue";
 import { ElMessage } from "element-plus/es/components/message/index.mjs";
 import { ElMessageBox } from "element-plus/es/components/message-box/index.mjs";
-import { currentLocale, i18n } from "../i18n";
+import { i18n } from "../i18n";
+import { formatSystemDateTime } from "../system-settings";
 import { buildExportQuery, pageItems, pageTotal, type PageResult } from "../api";
 import type {
   Asset,
@@ -253,7 +254,7 @@ export function useInventory(context: InventoryContext) {
     return businessOptionLabel(INVENTORY_TASK_STATUS_OPTIONS, status);
   }
   function formatDateTime(value?: string | null) {
-    return value ? new Date(value).toLocaleString(currentLocale.value) : "—";
+    return value ? formatSystemDateTime(value) || "—" : "—";
   }
   function locationText(item: InventoryItem, actual = false) {
     const dc = actual ? item.actual_data_center : item.system_data_center;

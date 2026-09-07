@@ -36,21 +36,78 @@ export type Page =
   | "settings"
   | "placeholder";
 
-export type SystemSettingKey = "default_page_size" | "default_asset_status";
-export type SystemSettingOption = { value: string | number; label: string };
+export type SystemLocale = "zh-CN" | "en-US";
+export type CurrencyCode = "CNY" | "USD" | "EUR" | "GBP" | "JPY" | "HKD";
+export type DateFormat = "YYYY-MM-DD" | "DD/MM/YYYY" | "MM/DD/YYYY";
+export type SmtpSecurityMode = "none" | "starttls" | "ssl";
+export type SystemSettingKey =
+  | "default_page_size"
+  | "default_asset_status"
+  | "default_locale"
+  | "timezone"
+  | "date_format"
+  | "currency"
+  | "password_min_length"
+  | "password_expiry_days"
+  | "login_max_attempts"
+  | "login_window_seconds"
+  | "login_lock_seconds"
+  | "smtp_enabled"
+  | "smtp_host"
+  | "smtp_port"
+  | "smtp_security_mode"
+  | "smtp_username"
+  | "smtp_from_email"
+  | "smtp_from_name"
+  | "smtp_timeout"
+  | "notify_maintenance"
+  | "maintenance_expiry_days"
+  | "notify_license_expiry"
+  | "license_expiry_days"
+  | "notify_open_faults"
+  | "notify_overdue_inventory"
+  | "notify_low_spare_stock";
+export type SystemSettingOption = { value: string | number | boolean; label: string };
 export type SystemSettingDefinition = {
   key: SystemSettingKey;
   label: string;
-  type: "integer" | "enum";
-  default: string | number;
+  type: "integer" | "enum" | "boolean" | "string" | "email" | "timezone";
+  section: "general" | "localization" | "security" | "smtp" | "notifications";
+  default: string | number | boolean;
   options: SystemSettingOption[];
   help_text: string;
 };
 export type SystemSettingsForm = {
   default_page_size: number;
   default_asset_status: AssetStatus;
+  default_locale: SystemLocale;
+  timezone: string;
+  date_format: DateFormat;
+  currency: CurrencyCode;
+  password_min_length: number;
+  password_expiry_days: number;
+  login_max_attempts: number;
+  login_window_seconds: number;
+  login_lock_seconds: number;
+  smtp_enabled: boolean;
+  smtp_host: string;
+  smtp_port: number;
+  smtp_security_mode: SmtpSecurityMode;
+  smtp_username: string;
+  smtp_password: string;
+  smtp_from_email: string;
+  smtp_from_name: string;
+  smtp_timeout: number;
+  notify_maintenance: boolean;
+  maintenance_expiry_days: number;
+  notify_license_expiry: boolean;
+  license_expiry_days: number;
+  notify_open_faults: boolean;
+  notify_overdue_inventory: boolean;
+  notify_low_spare_stock: boolean;
 };
-export type SystemSettings = SystemSettingsForm & {
+export type SystemSettings = Omit<SystemSettingsForm, "smtp_password"> & {
+  smtp_password_configured: boolean;
   definitions: SystemSettingDefinition[];
 };
 

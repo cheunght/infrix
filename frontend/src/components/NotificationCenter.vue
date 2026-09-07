@@ -2,7 +2,7 @@
 import { computed, onMounted, ref } from "vue";
 import { useI18n } from "vue-i18n";
 import { Bell, Refresh } from "@element-plus/icons-vue";
-import { currentLocale } from "../i18n";
+import { formatSystemDate, formatSystemDateTime } from "../system-settings";
 import { useNotifications } from "../composables/useNotifications";
 import type { OperationalAlert } from "../types";
 import type { CapabilityFn, RequestFn } from "../page-context";
@@ -64,16 +64,7 @@ function alertSubject(alert: OperationalAlert) {
 
 function formatDate(value: string | undefined) {
   if (!value) return "";
-  const date = /^\d{4}-\d{2}-\d{2}$/.test(value)
-    ? new Date(`${value}T00:00:00`)
-    : new Date(value);
-  if (Number.isNaN(date.getTime())) return value;
-  return new Intl.DateTimeFormat(currentLocale.value, {
-    month: "2-digit",
-    day: "2-digit",
-    hour: value.includes("T") ? "2-digit" : undefined,
-    minute: value.includes("T") ? "2-digit" : undefined,
-  }).format(date);
+  return value.includes("T") ? formatSystemDateTime(value) : formatSystemDate(value);
 }
 
 function alertMeta(alert: OperationalAlert) {

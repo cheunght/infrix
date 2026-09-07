@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed } from "vue";
 import { useI18n } from "vue-i18n";
-import { currentLocale } from "../i18n";
+import { formatSystemDateTime } from "../system-settings";
 import type { AssetResponsibilityHistoryContext } from "../page-context";
 import DetailSection from "./DetailSection.vue";
 import PagedTable from "./PagedTable.vue";
@@ -25,16 +25,7 @@ const total = computed(() => context.responsibilityHistoryTotal.value);
 const empty = computed(() => !loading.value && !error.value && total.value === 0);
 
 function formatDateTime(value: string): string {
-  const date = new Date(value);
-  return Number.isNaN(date.getTime())
-    ? value
-    : date.toLocaleString(currentLocale.value, {
-        year: "numeric",
-        month: "2-digit",
-        day: "2-digit",
-        hour: "2-digit",
-        minute: "2-digit",
-      });
+  return formatSystemDateTime(value) || value;
 }
 
 function actionLabel(action: string): string {

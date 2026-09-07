@@ -576,10 +576,13 @@ export interface SettingsContext extends CustomFieldContext, TagContext {
   systemSettingsError: Ref<string>;
   systemSettingsFormErrors: Ref<Record<string, string>>;
   systemSettingsDirty: ComputedRef<boolean>;
+  systemSmtpTesting: Ref<boolean>;
+  systemSmtpTestRecipient: Ref<string>;
   loadSystemSettings: () => void | Promise<boolean>;
   retrySystemSettings: () => void | Promise<boolean>;
   resetSystemSettingsForm: () => void;
   saveSystemSettings: () => void | Promise<void>;
+  testSystemSmtp: () => void | Promise<void>;
   ldapStatus: Ref<LdapStatus | null>;
   ldapConfiguration: Ref<LdapConfiguration | null>;
   ldapConfigurationForm: Ref<LdapConfigurationForm>;

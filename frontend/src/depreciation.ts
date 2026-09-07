@@ -1,5 +1,6 @@
 import type { DepreciationStatus } from "./types";
 import { i18n } from "./i18n";
+import { currencySymbol } from "./system-settings";
 
 export const DEPRECIATION_METHOD_STRAIGHT_LINE = "straight_line" as const;
 
@@ -82,7 +83,7 @@ export function formatMoneyDecimalString(value: unknown): string {
   const integer = match[2].replace(/^0+(?=\d)/, "") || "0";
   const grouped = integer.replace(/\B(?=(\d{3})+(?!\d))/g, ",");
   const fraction = `${match[3] || ""}00`.slice(0, 2);
-  return `${match[1] === "-" ? "-" : ""}¥${grouped}.${fraction}`;
+  return `${match[1] === "-" ? "-" : ""}${currencySymbol()}${grouped}.${fraction}`;
 }
 
 function fractionPercentageText(value: unknown): string | null {

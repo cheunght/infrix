@@ -30,8 +30,12 @@ import type {
 } from "../types";
 import type { SettingsSection } from "../router";
 import type { CapabilityFn, RequestFn } from "../page-context";
-import { applySystemSettings as applySystemSettingsSnapshot } from "../system-settings";
-import { currentLocale, i18n } from "../i18n";
+import {
+  applySystemSettings as applySystemSettingsSnapshot,
+  systemSettingsState,
+} from "../system-settings";
+import { i18n } from "../i18n";
+import { formatSystemDateTime } from "../system-settings";
 
 const tr = (key: string, params?: Record<string, unknown>): string =>
   String(params ? i18n.global.t(key, params) : i18n.global.t(key));
@@ -59,6 +63,65 @@ type CustomFieldOptionForm = {
 };
 
 type FormErrors = Record<string, string>;
+
+const DEFAULT_SYSTEM_SETTINGS_FORM: SystemSettingsForm = {
+  default_page_size: 50,
+  default_asset_status: "in_stock",
+  default_locale: "zh-CN",
+  timezone: "Asia/Shanghai",
+  date_format: "YYYY-MM-DD",
+  currency: "CNY",
+  password_min_length: 8,
+  password_expiry_days: 0,
+  login_max_attempts: 5,
+  login_window_seconds: 900,
+  login_lock_seconds: 900,
+  smtp_enabled: false,
+  smtp_host: "",
+  smtp_port: 587,
+  smtp_security_mode: "starttls",
+  smtp_username: "",
+  smtp_password: "",
+  smtp_from_email: "",
+  smtp_from_name: "",
+  smtp_timeout: 10,
+  notify_maintenance: true,
+  maintenance_expiry_days: 30,
+  notify_license_expiry: true,
+  license_expiry_days: 30,
+  notify_open_faults: true,
+  notify_overdue_inventory: true,
+  notify_low_spare_stock: true,
+};
+
+const SYSTEM_SETTINGS_VALUE_KEYS: Array<keyof Omit<SystemSettingsForm, "smtp_password">> = [
+  "default_page_size",
+  "default_asset_status",
+  "default_locale",
+  "timezone",
+  "date_format",
+  "currency",
+  "password_min_length",
+  "password_expiry_days",
+  "login_max_attempts",
+  "login_window_seconds",
+  "login_lock_seconds",
+  "smtp_enabled",
+  "smtp_host",
+  "smtp_port",
+  "smtp_security_mode",
+  "smtp_username",
+  "smtp_from_email",
+  "smtp_from_name",
+  "smtp_timeout",
+  "notify_maintenance",
+  "maintenance_expiry_days",
+  "notify_license_expiry",
+  "license_expiry_days",
+  "notify_open_faults",
+  "notify_overdue_inventory",
+  "notify_low_spare_stock",
+];
 
 const LDAP_CONFIGURATION_FIELDS = [
   "enabled", "directory_type", "primary_host", "primary_port", "secondary_host", "secondary_port",
@@ -197,7 +260,9 @@ export function useSettings(deps: SettingsDeps) {
         validator: (_rule, value, callback) => {
           const password = String(value || "");
           if (!editingUser.value && !password) callback(new Error(tr("settings.passwordRequired")));
-          else if (password && password.length < 8) callback(new Error(tr("validation.passwordMin")));
+          else if (password && password.length < systemSettingsState.passwordMinLength) {
+            callback(new Error(tr("validation.passwordMin", { min: systemSettingsState.passwordMinLength })));
+          }
           else callback();
         },
         trigger: ["blur", "change"],
@@ -220,7 +285,17 @@ export function useSettings(deps: SettingsDeps) {
   const userResetFormRules = computed<FormRules>(() => ({
     new_password: [
       { required: true, message: tr("settings.newPasswordRequired"), trigger: "blur" },
-      { min: 8, message: tr("validation.passwordMin"), trigger: ["blur", "change"] },
+      {
+        validator: (_rule, value, callback) => {
+          const password = String(value || "");
+          if (password && password.length < systemSettingsState.passwordMinLength) {
+            callback(new Error(tr("validation.passwordMin", { min: systemSettingsState.passwordMinLength })));
+          } else {
+            callback();
+          }
+        },
+        trigger: ["blur", "change"],
+      },
     ],
     confirm_password: [
       { required: true, message: tr("settings.confirmNewPasswordRequired"), trigger: "blur" },
@@ -284,15 +359,14 @@ export function useSettings(deps: SettingsDeps) {
   const auditListError = ref("");
   const auditRequestId = ref(0);
   const systemSettings = ref<SystemSettings | null>(null);
-  const systemSettingsForm = ref<SystemSettingsForm>({
-    default_page_size: 50,
-    default_asset_status: "in_stock",
-  });
+  const systemSettingsForm = ref<SystemSettingsForm>({ ...DEFAULT_SYSTEM_SETTINGS_FORM });
   const systemSettingsLoading = ref(false);
   const systemSettingsSaving = ref(false);
   const systemSettingsError = ref("");
   const systemSettingsFormErrors = ref<FormErrors>({});
   const systemSettingsRequestId = ref(0);
+  const systemSmtpTesting = ref(false);
+  const systemSmtpTestRecipient = ref("");
   const ldapStatus = ref<LdapStatus | null>(null);
   const ldapConfiguration = ref<LdapConfiguration | null>(null);
   const ldapConfigurationForm = ref<LdapConfigurationForm>({
@@ -335,10 +409,9 @@ export function useSettings(deps: SettingsDeps) {
   );
   const systemSettingsDirty = computed(() => {
     if (!systemSettings.value) return false;
-    return (
-      systemSettingsForm.value.default_page_size !== systemSettings.value.default_page_size
-      || systemSettingsForm.value.default_asset_status !== systemSettings.value.default_asset_status
-    );
+    return SYSTEM_SETTINGS_VALUE_KEYS.some((key) =>
+      systemSettingsForm.value[key] !== systemSettings.value?.[key]
+    ) || Boolean(systemSettingsForm.value.smtp_password);
   });
   const showSystemResetDialog = ref(false);
   const systemResetConfirmation = ref("");
@@ -392,7 +465,10 @@ export function useSettings(deps: SettingsDeps) {
   watchFormFieldErrors(userResetForm, userResetFormErrors, ["new_password", "confirm_password"]);
   watchFormFieldErrors(dictionaryForm, dictionaryFormErrors, ["name", "code", "color"]);
   watchFormFieldErrors(departmentForm, departmentFormErrors, ["name", "code", "parent"]);
-  watchFormFieldErrors(systemSettingsForm, systemSettingsFormErrors, ["default_page_size", "default_asset_status"]);
+  watchFormFieldErrors(systemSettingsForm, systemSettingsFormErrors, [
+    ...SYSTEM_SETTINGS_VALUE_KEYS,
+    "smtp_password",
+  ]);
 
   function dictionaryCapability(_kind = dictionarySection.value) {
     return "settings.manage";
@@ -518,6 +594,31 @@ export function useSettings(deps: SettingsDeps) {
     systemSettingsForm.value = {
       default_page_size: value.default_page_size,
       default_asset_status: value.default_asset_status,
+      default_locale: value.default_locale,
+      timezone: value.timezone,
+      date_format: value.date_format,
+      currency: value.currency,
+      password_min_length: value.password_min_length,
+      password_expiry_days: value.password_expiry_days,
+      login_max_attempts: value.login_max_attempts,
+      login_window_seconds: value.login_window_seconds,
+      login_lock_seconds: value.login_lock_seconds,
+      smtp_enabled: value.smtp_enabled,
+      smtp_host: value.smtp_host,
+      smtp_port: value.smtp_port,
+      smtp_security_mode: value.smtp_security_mode,
+      smtp_username: value.smtp_username,
+      smtp_password: "",
+      smtp_from_email: value.smtp_from_email,
+      smtp_from_name: value.smtp_from_name,
+      smtp_timeout: value.smtp_timeout,
+      notify_maintenance: value.notify_maintenance,
+      maintenance_expiry_days: value.maintenance_expiry_days,
+      notify_license_expiry: value.notify_license_expiry,
+      license_expiry_days: value.license_expiry_days,
+      notify_open_faults: value.notify_open_faults,
+      notify_overdue_inventory: value.notify_overdue_inventory,
+      notify_low_spare_stock: value.notify_low_spare_stock,
     };
   }
 
@@ -1945,7 +2046,7 @@ export function useSettings(deps: SettingsDeps) {
     }
   }
   function formatDateTime(value: string | null) {
-    return value ? new Date(value).toLocaleString(currentLocale.value) : tr("common.notAvailable");
+    return value ? formatSystemDateTime(value) || tr("common.notAvailable") : tr("common.notAvailable");
   }
   function retryOrganization() {
     return loadOrganization();
@@ -2070,13 +2171,14 @@ export function useSettings(deps: SettingsDeps) {
     systemSettingsSaving.value = true;
     systemSettingsFormErrors.value = {};
     try {
+      const smtp_password = systemSettingsForm.value.smtp_password;
+      const settingsPayload: Record<string, unknown> = { ...systemSettingsForm.value };
+      delete settingsPayload.smtp_password;
+      if (smtp_password) settingsPayload.smtp_password = smtp_password;
       const result = await deps.request<SystemSettings>("/system/settings/", {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          default_page_size: systemSettingsForm.value.default_page_size,
-          default_asset_status: systemSettingsForm.value.default_asset_status,
-        }),
+        body: JSON.stringify(settingsPayload),
       });
       systemSettings.value = result;
       syncSystemSettingsForm(result);
@@ -2085,7 +2187,7 @@ export function useSettings(deps: SettingsDeps) {
     } catch (error) {
       systemSettingsFormErrors.value = extractFieldErrors(
         error,
-        ["default_page_size", "default_asset_status"],
+        [...SYSTEM_SETTINGS_VALUE_KEYS, "smtp_password"],
       );
       setActionError(error, tr("settings.settingsSaveFailed"));
     } finally {
@@ -2095,6 +2197,36 @@ export function useSettings(deps: SettingsDeps) {
 
   function retrySystemSettings(): Promise<boolean> {
     return loadSystemSettings();
+  }
+
+  async function testSystemSmtp(): Promise<void> {
+    if (systemSmtpTesting.value) return;
+    if (!deps.can("settings.manage")) {
+      setActionMessage(tr("settings.settingsPermissionDenied"), "error");
+      return;
+    }
+    const recipient = systemSmtpTestRecipient.value.trim();
+    if (!recipient) {
+      setActionMessage(tr("settings.smtpTestRecipientRequired"), "error");
+      return;
+    }
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(recipient)) {
+      setActionMessage(tr("validation.invalidEmail"), "error");
+      return;
+    }
+    systemSmtpTesting.value = true;
+    try {
+      await deps.request("/system/settings/smtp/test/", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ recipient }),
+      });
+      setActionMessage(tr("settings.smtpTestSent"));
+    } catch (error) {
+      setActionError(error, tr("settings.smtpTestFailed"));
+    } finally {
+      systemSmtpTesting.value = false;
+    }
   }
 
   function openSystemResetDialog() {
@@ -2145,6 +2277,8 @@ export function useSettings(deps: SettingsDeps) {
     systemSettingsError,
     systemSettingsFormErrors,
     systemSettingsDefinitions,
+    systemSmtpTesting,
+    systemSmtpTestRecipient,
     ldapStatus,
     ldapConfiguration,
     ldapConfigurationForm,
@@ -2350,6 +2484,7 @@ export function useSettings(deps: SettingsDeps) {
     searchAuditLogs,
     resetSystemSettingsForm,
     saveSystemSettings,
+    testSystemSmtp,
     showSystemResetDialog,
     systemResetConfirmation,
     systemResetConfirmationToken,

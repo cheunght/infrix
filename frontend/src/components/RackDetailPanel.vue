@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed } from "vue";
 import { useI18n } from "vue-i18n";
-import { currentLocale } from "../i18n";
+import { formatSystemDate } from "../system-settings";
 import type { Rack } from "../types";
 import { rackStatusLabel, rackStatusTone, rackStatusValue } from "../business-enums";
 import StatusTag from "./StatusTag.vue";
@@ -29,8 +29,7 @@ function displayValue(value?: string | null) {
 
 function formatDate(value?: string) {
   if (!value) return t("common.notAvailable");
-  const date = new Date(value);
-  return Number.isNaN(date.getTime()) ? t("common.notAvailable") : date.toLocaleDateString(currentLocale.value);
+  return formatSystemDate(value) || t("common.notAvailable");
 }
 </script>
 

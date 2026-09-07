@@ -1,6 +1,7 @@
 import type { AuditLog } from "./types";
 import { depreciationMethodLabel, formatResidualRate } from "./depreciation";
-import { currentLocale, i18n } from "./i18n";
+import { i18n } from "./i18n";
+import { formatSystemDate, formatSystemDateTime } from "./system-settings";
 import {
   businessOptionLabel,
   INVENTORY_RESOLUTION_ACTION_OPTIONS,
@@ -201,18 +202,9 @@ function isSensitiveKey(key: string): boolean {
   return SENSITIVE_KEYS.has(normalized) || /(password|token|session|cookie|csrf|secret|authorization)/.test(normalized);
 }
 
-function pad(value: number): string {
-  return String(value).padStart(2, "0");
-}
-
 function formatDateValue(value: string): string {
-  if (/^\d{4}-\d{2}-\d{2}$/.test(value)) return value;
-  const parsed = new Date(value);
-  if (Number.isNaN(parsed.getTime())) return value;
-  const date = `${parsed.getFullYear()}-${pad(parsed.getMonth() + 1)}-${pad(parsed.getDate())}`;
   const hasTime = /T\d{2}:\d{2}|\s\d{2}:\d{2}/.test(value);
-  if (!hasTime) return date;
-  return `${date} ${pad(parsed.getHours())}:${pad(parsed.getMinutes())}:${pad(parsed.getSeconds())}`;
+  return hasTime ? formatSystemDateTime(value, true) || value : formatSystemDate(value) || value;
 }
 
 function isDateKey(key: string): boolean {

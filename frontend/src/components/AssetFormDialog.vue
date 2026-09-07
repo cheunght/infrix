@@ -512,7 +512,7 @@ watch(() => assetForm.value.purchase_date, () => {
         <el-form-item :label="t('asset.supplier')" :error="fieldError('supplier')"><el-input v-model="assetForm.supplier" /></el-form-item>
         <el-form-item :label="t('asset.purchaseOrder')" :error="fieldError('purchase_order_no')"><el-input v-model="assetForm.purchase_order_no" /></el-form-item>
         <el-form-item :label="t('asset.purchaseAmount')" prop="purchase_amount" :error="fieldError('purchase_amount')">
-          <MoneyInput v-model="purchaseAmountValue" currency="CNY" :placeholder="t('assetForm.purchaseAmountPlaceholder')" />
+          <MoneyInput v-model="purchaseAmountValue" :placeholder="t('assetForm.purchaseAmountPlaceholder')" />
         </el-form-item>
         <el-form-item :label="t('asset.procurementNotes')" :error="fieldError('procurement_notes')"><el-input v-model="assetForm.procurement_notes" type="textarea" :rows="2" /></el-form-item>
         <el-form-item :label="t('asset.maintenanceProvider')" :error="fieldError('maintenance_provider')"><el-input v-model="assetForm.maintenance_provider" /></el-form-item>

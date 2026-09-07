@@ -13,9 +13,10 @@ import TableIconButton from "./TableIconButton.vue";
 import { statusTone } from "../status";
 import type { FaultEvent } from "../types";
 import type { RepairContext } from "../page-context";
+import { formatSystemDateTime } from "../system-settings";
 
 const props = defineProps<{ context: RepairContext }>();
-const { t, locale } = useI18n();
+const { t } = useI18n();
 const context = props.context;
 const {
   repairListLoading,
@@ -53,8 +54,7 @@ function faultSummary(fault: FaultEvent): string {
 
 function formatRepairDateTime(value: string | null | undefined): string {
   if (!value) return t("common.notAvailable");
-  const date = new Date(value);
-  return Number.isNaN(date.getTime()) ? t("common.notAvailable") : date.toLocaleString(locale.value);
+  return formatSystemDateTime(value) || t("common.notAvailable");
 }
 
 function formatRepairCost(fault: FaultEvent): string {

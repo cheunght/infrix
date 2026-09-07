@@ -45,9 +45,12 @@ const {
   systemSettingsError,
   systemSettingsFormErrors,
   systemSettingsDirty,
+  systemSmtpTesting,
+  systemSmtpTestRecipient,
   retrySystemSettings,
   resetSystemSettingsForm,
   saveSystemSettings,
+  testSystemSmtp,
   dictionarySection,
   dictionaryPage,
   dictionaryPageSize,
@@ -158,6 +161,10 @@ const organizationTabs = computed<PageTabItem[]>(() => [
   ...(can("settings.manage") ? [{ label: t("settings.departments"), value: "departments" }] : []),
 ]);
 const canManageCurrentDictionary = computed(() => can("settings.manage"));
+const smtpTestRecipientError = computed(() => {
+  const value = systemSmtpTestRecipient.value.trim();
+  return value && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(value) ? t("validation.invalidEmail") : "";
+});
 const dictionaryPrimaryLabel = computed(() => {
   if (dictionarySection.value === "manufacturers") return t("settings.addManufacturer");
   if (dictionarySection.value === "device-types" || dictionarySection.value === "spare-categories") return t("settings.addType");
@@ -280,6 +287,30 @@ function systemSettingLabel(key: string) {
   const labels: Record<string, string> = {
     default_page_size: "settings.defaultPageSize",
     default_asset_status: "settings.defaultAssetStatus",
+    default_locale: "settings.defaultLocale",
+    timezone: "settings.timezone",
+    date_format: "settings.dateFormat",
+    currency: "settings.currency",
+    password_min_length: "settings.passwordMinLength",
+    password_expiry_days: "settings.passwordExpiryDays",
+    login_max_attempts: "settings.loginMaxAttempts",
+    login_window_seconds: "settings.loginWindowSeconds",
+    login_lock_seconds: "settings.loginLockSeconds",
+    smtp_enabled: "settings.smtpEnabled",
+    smtp_host: "settings.smtpHost",
+    smtp_port: "settings.smtpPort",
+    smtp_security_mode: "settings.smtpSecurityMode",
+    smtp_username: "settings.smtpUsername",
+    smtp_from_email: "settings.smtpFromEmail",
+    smtp_from_name: "settings.smtpFromName",
+    smtp_timeout: "settings.smtpTimeout",
+    notify_maintenance: "settings.notifyMaintenance",
+    maintenance_expiry_days: "settings.maintenanceExpiryDays",
+    notify_license_expiry: "settings.notifyLicenseExpiry",
+    license_expiry_days: "settings.licenseExpiryDays",
+    notify_open_faults: "settings.notifyOpenFaults",
+    notify_overdue_inventory: "settings.notifyOverdueInventory",
+    notify_low_spare_stock: "settings.notifyLowSpareStock",
   };
   return labels[key] ? t(labels[key]) : systemSettingDefinition(key)?.label || key;
 }
@@ -288,12 +319,54 @@ function systemSettingHelp(key: string) {
   const helpKeys: Record<string, string> = {
     default_page_size: "settings.defaultPageSizeHelp",
     default_asset_status: "settings.defaultAssetStatusHelp",
+    default_locale: "settings.defaultLocaleHelp",
+    timezone: "settings.timezoneHelp",
+    date_format: "settings.dateFormatHelp",
+    currency: "settings.currencyHelp",
+    password_min_length: "settings.passwordMinLengthHelp",
+    password_expiry_days: "settings.passwordExpiryDaysHelp",
+    login_max_attempts: "settings.loginMaxAttemptsHelp",
+    login_window_seconds: "settings.loginWindowSecondsHelp",
+    login_lock_seconds: "settings.loginLockSecondsHelp",
+    smtp_enabled: "settings.smtpEnabledHelp",
+    smtp_host: "settings.smtpHostHelp",
+    smtp_port: "settings.smtpPortHelp",
+    smtp_security_mode: "settings.smtpSecurityModeHelp",
+    smtp_username: "settings.smtpUsernameHelp",
+    smtp_from_email: "settings.smtpFromEmailHelp",
+    smtp_from_name: "settings.smtpFromNameHelp",
+    smtp_timeout: "settings.smtpTimeoutHelp",
+    notify_maintenance: "settings.notifyMaintenanceHelp",
+    maintenance_expiry_days: "settings.maintenanceExpiryDaysHelp",
+    notify_license_expiry: "settings.notifyLicenseExpiryHelp",
+    license_expiry_days: "settings.licenseExpiryDaysHelp",
+    notify_open_faults: "settings.notifyOpenFaultsHelp",
+    notify_overdue_inventory: "settings.notifyOverdueInventoryHelp",
+    notify_low_spare_stock: "settings.notifyLowSpareStockHelp",
   };
   return helpKeys[key] ? t(helpKeys[key]) : systemSettingDefinition(key)?.help_text || "";
 }
 
-function systemSettingOptionLabel(key: string, option: { value: string | number; label: string }) {
+function systemSettingOptionLabel(key: string, option: { value: string | number | boolean; label: string }) {
   if (key === "default_asset_status") return businessOptionLabel(ASSET_STATUS_OPTIONS, String(option.value));
+  const optionLabels: Record<string, string> = {
+    "default_locale:zh-CN": "settings.localeZhCN",
+    "default_locale:en-US": "settings.localeEnUS",
+    "date_format:YYYY-MM-DD": "settings.dateFormatYmd",
+    "date_format:DD/MM/YYYY": "settings.dateFormatDmy",
+    "date_format:MM/DD/YYYY": "settings.dateFormatMdy",
+    "currency:CNY": "settings.currencyCny",
+    "currency:USD": "settings.currencyUsd",
+    "currency:EUR": "settings.currencyEur",
+    "currency:GBP": "settings.currencyGbp",
+    "currency:JPY": "settings.currencyJpy",
+    "currency:HKD": "settings.currencyHkd",
+    "smtp_security_mode:none": "settings.smtpSecurityNone",
+    "smtp_security_mode:starttls": "settings.smtpSecurityStarttls",
+    "smtp_security_mode:ssl": "settings.smtpSecuritySsl",
+  };
+  const translationKey = optionLabels[`${key}:${String(option.value)}`];
+  if (translationKey) return t(translationKey);
   return String(option.label);
 }
 
@@ -358,48 +431,176 @@ function userDirectoryTooltip(user: { auth_source: string; directory_provider: s
               :closable="false"
             />
 
-            <el-form class="settings-system__form" label-position="top" @submit.prevent="saveSystemSettings">
-              <el-form-item
-                :label="systemSettingLabel('default_page_size')"
-                :error="systemSettingsFormErrors.default_page_size"
-              >
-                <el-select
-                  v-model="systemSettingsForm.default_page_size"
-                  :disabled="!can('settings.manage') || systemSettingsSaving"
-                  class="settings-system__control"
-                >
-                  <el-option
-                    v-for="option in (systemSettingDefinition('default_page_size')?.options || [])"
-                    :key="String(option.value)"
-                    :label="systemSettingOptionLabel('default_page_size', option)"
-                    :value="option.value"
-                  />
-                </el-select>
-                <div v-if="systemSettingHelp('default_page_size')" class="settings-system__help">
-                  {{ systemSettingHelp('default_page_size') }}
+            <el-form label-position="top" @submit.prevent="saveSystemSettings">
+              <section>
+                <h3>{{ t('settings.generalSection') }}</h3>
+                <p class="settings-system__help">{{ t('settings.generalSectionDescription') }}</p>
+                <div class="settings-system__form">
+                  <el-form-item :label="systemSettingLabel('default_page_size')" :error="systemSettingsFormErrors.default_page_size">
+                    <el-select v-model="systemSettingsForm.default_page_size" :disabled="!can('settings.manage') || systemSettingsSaving" class="settings-system__control">
+                      <el-option v-for="option in (systemSettingDefinition('default_page_size')?.options || [])" :key="String(option.value)" :label="systemSettingOptionLabel('default_page_size', option)" :value="option.value" />
+                    </el-select>
+                    <div class="settings-system__help">{{ systemSettingHelp('default_page_size') }}</div>
+                  </el-form-item>
+                  <el-form-item :label="systemSettingLabel('default_asset_status')" :error="systemSettingsFormErrors.default_asset_status">
+                    <el-select v-model="systemSettingsForm.default_asset_status" :disabled="!can('settings.manage') || systemSettingsSaving" class="settings-system__control">
+                      <el-option v-for="option in (systemSettingDefinition('default_asset_status')?.options || [])" :key="String(option.value)" :label="systemSettingOptionLabel('default_asset_status', option)" :value="option.value" />
+                    </el-select>
+                    <div class="settings-system__help">{{ systemSettingHelp('default_asset_status') }}</div>
+                  </el-form-item>
                 </div>
-              </el-form-item>
+              </section>
 
-              <el-form-item
-                :label="systemSettingLabel('default_asset_status')"
-                :error="systemSettingsFormErrors.default_asset_status"
-              >
-                <el-select
-                  v-model="systemSettingsForm.default_asset_status"
-                  :disabled="!can('settings.manage') || systemSettingsSaving"
-                  class="settings-system__control"
-                >
-                  <el-option
-                    v-for="option in (systemSettingDefinition('default_asset_status')?.options || [])"
-                    :key="String(option.value)"
-                    :label="systemSettingOptionLabel('default_asset_status', option)"
-                    :value="option.value"
-                  />
-                </el-select>
-                <div v-if="systemSettingHelp('default_asset_status')" class="settings-system__help">
-                  {{ systemSettingHelp('default_asset_status') }}
+              <el-divider />
+
+              <section>
+                <h3>{{ t('settings.localizationSection') }}</h3>
+                <p class="settings-system__help">{{ t('settings.localizationSectionDescription') }}</p>
+                <div class="settings-system__form">
+                  <el-form-item :label="systemSettingLabel('default_locale')" :error="systemSettingsFormErrors.default_locale">
+                    <el-select v-model="systemSettingsForm.default_locale" :disabled="!can('settings.manage') || systemSettingsSaving" class="settings-system__control">
+                      <el-option v-for="option in (systemSettingDefinition('default_locale')?.options || [])" :key="String(option.value)" :label="systemSettingOptionLabel('default_locale', option)" :value="option.value" />
+                    </el-select>
+                    <div class="settings-system__help">{{ systemSettingHelp('default_locale') }}</div>
+                  </el-form-item>
+                  <el-form-item :label="systemSettingLabel('timezone')" :error="systemSettingsFormErrors.timezone">
+                    <el-select v-model="systemSettingsForm.timezone" filterable allow-create default-first-option :disabled="!can('settings.manage') || systemSettingsSaving" class="settings-system__control">
+                      <el-option v-for="option in (systemSettingDefinition('timezone')?.options || [])" :key="String(option.value)" :label="String(option.label)" :value="option.value" />
+                    </el-select>
+                    <div class="settings-system__help">{{ systemSettingHelp('timezone') }}</div>
+                  </el-form-item>
+                  <el-form-item :label="systemSettingLabel('date_format')" :error="systemSettingsFormErrors.date_format">
+                    <el-select v-model="systemSettingsForm.date_format" :disabled="!can('settings.manage') || systemSettingsSaving" class="settings-system__control">
+                      <el-option v-for="option in (systemSettingDefinition('date_format')?.options || [])" :key="String(option.value)" :label="systemSettingOptionLabel('date_format', option)" :value="option.value" />
+                    </el-select>
+                    <div class="settings-system__help">{{ systemSettingHelp('date_format') }}</div>
+                  </el-form-item>
+                  <el-form-item :label="systemSettingLabel('currency')" :error="systemSettingsFormErrors.currency">
+                    <el-select v-model="systemSettingsForm.currency" :disabled="!can('settings.manage') || systemSettingsSaving" class="settings-system__control">
+                      <el-option v-for="option in (systemSettingDefinition('currency')?.options || [])" :key="String(option.value)" :label="systemSettingOptionLabel('currency', option)" :value="option.value" />
+                    </el-select>
+                    <div class="settings-system__help">{{ systemSettingHelp('currency') }}</div>
+                  </el-form-item>
                 </div>
-              </el-form-item>
+              </section>
+
+              <el-divider />
+
+              <section>
+                <h3>{{ t('settings.securitySection') }}</h3>
+                <p class="settings-system__help">{{ t('settings.securitySectionDescription') }}</p>
+                <div class="settings-system__form">
+                  <el-form-item :label="systemSettingLabel('password_min_length')" :error="systemSettingsFormErrors.password_min_length">
+                    <el-input-number v-model="systemSettingsForm.password_min_length" :min="8" :max="128" :step="1" :disabled="!can('settings.manage') || systemSettingsSaving" class="settings-system__control" />
+                    <div class="settings-system__help">{{ systemSettingHelp('password_min_length') }}</div>
+                  </el-form-item>
+                  <el-form-item :label="systemSettingLabel('password_expiry_days')" :error="systemSettingsFormErrors.password_expiry_days">
+                    <el-input-number v-model="systemSettingsForm.password_expiry_days" :min="0" :max="3650" :step="1" :disabled="!can('settings.manage') || systemSettingsSaving" class="settings-system__control" />
+                    <div class="settings-system__help">{{ systemSettingHelp('password_expiry_days') }}</div>
+                  </el-form-item>
+                  <el-form-item :label="systemSettingLabel('login_max_attempts')" :error="systemSettingsFormErrors.login_max_attempts">
+                    <el-input-number v-model="systemSettingsForm.login_max_attempts" :min="1" :max="100" :step="1" :disabled="!can('settings.manage') || systemSettingsSaving" class="settings-system__control" />
+                    <div class="settings-system__help">{{ systemSettingHelp('login_max_attempts') }}</div>
+                  </el-form-item>
+                  <el-form-item :label="systemSettingLabel('login_window_seconds')" :error="systemSettingsFormErrors.login_window_seconds">
+                    <el-input-number v-model="systemSettingsForm.login_window_seconds" :min="1" :max="86400" :step="60" :disabled="!can('settings.manage') || systemSettingsSaving" class="settings-system__control" />
+                    <div class="settings-system__help">{{ systemSettingHelp('login_window_seconds') }}</div>
+                  </el-form-item>
+                  <el-form-item :label="systemSettingLabel('login_lock_seconds')" :error="systemSettingsFormErrors.login_lock_seconds">
+                    <el-input-number v-model="systemSettingsForm.login_lock_seconds" :min="1" :max="86400" :step="60" :disabled="!can('settings.manage') || systemSettingsSaving" class="settings-system__control" />
+                    <div class="settings-system__help">{{ systemSettingHelp('login_lock_seconds') }}</div>
+                  </el-form-item>
+                </div>
+              </section>
+
+              <el-divider />
+
+              <section>
+                <h3>{{ t('settings.smtpSection') }}</h3>
+                <p class="settings-system__help">{{ t('settings.smtpSectionDescription') }}</p>
+                <div class="settings-system__form">
+                  <el-form-item :label="systemSettingLabel('smtp_enabled')" :error="systemSettingsFormErrors.smtp_enabled">
+                    <el-switch v-model="systemSettingsForm.smtp_enabled" :disabled="!can('settings.manage') || systemSettingsSaving" />
+                    <div class="settings-system__help">{{ systemSettingHelp('smtp_enabled') }}</div>
+                  </el-form-item>
+                  <el-form-item :label="systemSettingLabel('smtp_security_mode')" :error="systemSettingsFormErrors.smtp_security_mode">
+                    <el-select v-model="systemSettingsForm.smtp_security_mode" :disabled="!can('settings.manage') || systemSettingsSaving" class="settings-system__control">
+                      <el-option v-for="option in (systemSettingDefinition('smtp_security_mode')?.options || [])" :key="String(option.value)" :label="systemSettingOptionLabel('smtp_security_mode', option)" :value="option.value" />
+                    </el-select>
+                    <div class="settings-system__help">{{ systemSettingHelp('smtp_security_mode') }}</div>
+                  </el-form-item>
+                  <el-form-item :label="systemSettingLabel('smtp_host')" :error="systemSettingsFormErrors.smtp_host">
+                    <el-input v-model="systemSettingsForm.smtp_host" :disabled="!can('settings.manage') || systemSettingsSaving" autocomplete="off" />
+                    <div class="settings-system__help">{{ systemSettingHelp('smtp_host') }}</div>
+                  </el-form-item>
+                  <el-form-item :label="systemSettingLabel('smtp_port')" :error="systemSettingsFormErrors.smtp_port">
+                    <el-input-number v-model="systemSettingsForm.smtp_port" :min="1" :max="65535" :step="1" :disabled="!can('settings.manage') || systemSettingsSaving" class="settings-system__control" />
+                    <div class="settings-system__help">{{ systemSettingHelp('smtp_port') }}</div>
+                  </el-form-item>
+                  <el-form-item :label="systemSettingLabel('smtp_username')" :error="systemSettingsFormErrors.smtp_username">
+                    <el-input v-model="systemSettingsForm.smtp_username" :disabled="!can('settings.manage') || systemSettingsSaving" autocomplete="username" />
+                    <div class="settings-system__help">{{ systemSettingHelp('smtp_username') }}</div>
+                  </el-form-item>
+                  <el-form-item :label="t('settings.smtpPassword')" :error="systemSettingsFormErrors.smtp_password">
+                    <el-input v-model="systemSettingsForm.smtp_password" type="password" show-password :disabled="!can('settings.manage') || systemSettingsSaving" autocomplete="new-password" :placeholder="systemSettings.smtp_password_configured ? t('settings.smtpPasswordKeep') : t('settings.smtpPasswordPlaceholder')" />
+                    <div class="settings-system__help">{{ systemSettings.smtp_password_configured ? t('settings.smtpPasswordConfigured') : t('settings.smtpPasswordNotConfigured') }}</div>
+                  </el-form-item>
+                  <el-form-item :label="systemSettingLabel('smtp_from_email')" :error="systemSettingsFormErrors.smtp_from_email">
+                    <el-input v-model="systemSettingsForm.smtp_from_email" :disabled="!can('settings.manage') || systemSettingsSaving" autocomplete="email" />
+                    <div class="settings-system__help">{{ systemSettingHelp('smtp_from_email') }}</div>
+                  </el-form-item>
+                  <el-form-item :label="systemSettingLabel('smtp_from_name')" :error="systemSettingsFormErrors.smtp_from_name">
+                    <el-input v-model="systemSettingsForm.smtp_from_name" :disabled="!can('settings.manage') || systemSettingsSaving" />
+                    <div class="settings-system__help">{{ systemSettingHelp('smtp_from_name') }}</div>
+                  </el-form-item>
+                  <el-form-item :label="systemSettingLabel('smtp_timeout')" :error="systemSettingsFormErrors.smtp_timeout">
+                    <el-input-number v-model="systemSettingsForm.smtp_timeout" :min="1" :max="120" :step="1" :disabled="!can('settings.manage') || systemSettingsSaving" class="settings-system__control" />
+                    <div class="settings-system__help">{{ systemSettingHelp('smtp_timeout') }}</div>
+                  </el-form-item>
+                  <el-form-item :label="t('settings.smtpTestRecipient')" :error="smtpTestRecipientError">
+                    <el-input v-model="systemSmtpTestRecipient" type="email" :disabled="!can('settings.manage') || systemSmtpTesting" autocomplete="email" :placeholder="t('settings.smtpTestRecipientPlaceholder')" />
+                    <div class="settings-system__help">{{ t('settings.smtpTestRecipientHelp') }}</div>
+                    <el-button v-if="can('settings.manage')" type="primary" plain :loading="systemSmtpTesting" :disabled="systemSmtpTesting" @click="testSystemSmtp">{{ t('settings.smtpTest') }}</el-button>
+                  </el-form-item>
+                </div>
+              </section>
+
+              <el-divider />
+
+              <section>
+                <h3>{{ t('settings.notificationsSection') }}</h3>
+                <p class="settings-system__help">{{ t('settings.notificationsSectionDescription') }}</p>
+                <div class="settings-system__form">
+                  <el-form-item :label="systemSettingLabel('notify_maintenance')" :error="systemSettingsFormErrors.notify_maintenance">
+                    <el-switch v-model="systemSettingsForm.notify_maintenance" :disabled="!can('settings.manage') || systemSettingsSaving" />
+                    <div class="settings-system__help">{{ systemSettingHelp('notify_maintenance') }}</div>
+                  </el-form-item>
+                  <el-form-item :label="systemSettingLabel('maintenance_expiry_days')" :error="systemSettingsFormErrors.maintenance_expiry_days">
+                    <el-input-number v-model="systemSettingsForm.maintenance_expiry_days" :min="0" :max="3650" :step="1" :disabled="!can('settings.manage') || systemSettingsSaving" class="settings-system__control" />
+                    <div class="settings-system__help">{{ systemSettingHelp('maintenance_expiry_days') }}</div>
+                  </el-form-item>
+                  <el-form-item :label="systemSettingLabel('notify_license_expiry')" :error="systemSettingsFormErrors.notify_license_expiry">
+                    <el-switch v-model="systemSettingsForm.notify_license_expiry" :disabled="!can('settings.manage') || systemSettingsSaving" />
+                    <div class="settings-system__help">{{ systemSettingHelp('notify_license_expiry') }}</div>
+                  </el-form-item>
+                  <el-form-item :label="systemSettingLabel('license_expiry_days')" :error="systemSettingsFormErrors.license_expiry_days">
+                    <el-input-number v-model="systemSettingsForm.license_expiry_days" :min="0" :max="3650" :step="1" :disabled="!can('settings.manage') || systemSettingsSaving" class="settings-system__control" />
+                    <div class="settings-system__help">{{ systemSettingHelp('license_expiry_days') }}</div>
+                  </el-form-item>
+                  <el-form-item :label="systemSettingLabel('notify_open_faults')" :error="systemSettingsFormErrors.notify_open_faults">
+                    <el-switch v-model="systemSettingsForm.notify_open_faults" :disabled="!can('settings.manage') || systemSettingsSaving" />
+                    <div class="settings-system__help">{{ systemSettingHelp('notify_open_faults') }}</div>
+                  </el-form-item>
+                  <el-form-item :label="systemSettingLabel('notify_overdue_inventory')" :error="systemSettingsFormErrors.notify_overdue_inventory">
+                    <el-switch v-model="systemSettingsForm.notify_overdue_inventory" :disabled="!can('settings.manage') || systemSettingsSaving" />
+                    <div class="settings-system__help">{{ systemSettingHelp('notify_overdue_inventory') }}</div>
+                  </el-form-item>
+                  <el-form-item :label="systemSettingLabel('notify_low_spare_stock')" :error="systemSettingsFormErrors.notify_low_spare_stock">
+                    <el-switch v-model="systemSettingsForm.notify_low_spare_stock" :disabled="!can('settings.manage') || systemSettingsSaving" />
+                    <div class="settings-system__help">{{ systemSettingHelp('notify_low_spare_stock') }}</div>
+                  </el-form-item>
+                </div>
+              </section>
             </el-form>
           </template>
 

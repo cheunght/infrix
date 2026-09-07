@@ -3,7 +3,8 @@ import { isAbortError } from "../api";
 import type { DashboardOverview } from "../types";
 import type { CapabilityFn } from "../page-context";
 import { normalizeApiError } from "../error-handling";
-import { currentLocale, i18n } from "../i18n";
+import { i18n } from "../i18n";
+import { formatSystemDate, formatSystemDateTime } from "../system-settings";
 
 export interface DashboardApi {
   request: <T>(path: string, options?: RequestInit) => Promise<T>;
@@ -64,16 +65,11 @@ export function useDashboard(api: DashboardApi) {
   }
 
   function dashboardDate(value: string) {
-    return new Date(value).toLocaleDateString(currentLocale.value);
+    return formatSystemDate(value);
   }
 
   function dashboardDateTime(value: string) {
-    return new Date(value).toLocaleString(currentLocale.value, {
-      month: "2-digit",
-      day: "2-digit",
-      hour: "2-digit",
-      minute: "2-digit",
-    });
+    return formatSystemDateTime(value);
   }
 
   function dashboardAlertLevel(level: string) {

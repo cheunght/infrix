@@ -25,9 +25,10 @@ import {
   spareUnitLabel,
   stockOperationTone,
 } from "../business-enums";
+import { formatSystemDateTime } from "../system-settings";
 
 const props = defineProps<{ context: SpareContext }>();
-const { t, locale } = useI18n();
+const { t } = useI18n();
 const context = props.context;
 const {
   can, spareParts, sparePartCount, sparePage, sparePageSize, spareSearch, spareCategory, spareManufacturer, spareCategories,
@@ -185,7 +186,7 @@ function transactionQuantityLabel(row: SpareTransaction) {
   return `${delta > 0 ? "+" : ""}${delta} ${spareUnitLabel(row.unit)}`;
 }
 function transactionDateTime(value: string) {
-  return value ? new Date(value).toLocaleString(locale.value) : t("common.notAvailable");
+  return value ? formatSystemDateTime(value) || t("common.notAvailable") : t("common.notAvailable");
 }
 function applyTransactionFilters() {
   transactionPage.value = 1;

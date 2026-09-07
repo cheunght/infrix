@@ -2,17 +2,8 @@
 import { computed } from "vue";
 import { useI18n } from "vue-i18n";
 import { Money } from "@element-plus/icons-vue";
-
-type CurrencyCode = "CNY" | "USD" | "EUR" | "GBP" | "JPY" | "HKD";
-
-const currencySymbols: Record<CurrencyCode, string> = {
-  CNY: "¥",
-  USD: "$",
-  EUR: "€",
-  GBP: "£",
-  JPY: "¥",
-  HKD: "HK$",
-};
+import type { CurrencyCode } from "../types";
+import { currencySymbol, systemSettingsState } from "../system-settings";
 
 const props = withDefaults(
   defineProps<{
@@ -30,7 +21,7 @@ const props = withDefaults(
     placeholder: "",
     disabled: false,
     readonly: false,
-    currency: "CNY",
+    currency: undefined,
     symbol: "",
     suffix: "",
     maxlength: undefined,
@@ -46,7 +37,7 @@ function handleUpdate(value: string) {
   emit("update:modelValue", value === "" ? null : value);
 }
 
-const currencySymbol = computed(() => props.symbol || currencySymbols[props.currency]);
+const displayedCurrencySymbol = computed(() => props.symbol || currencySymbol(props.currency || systemSettingsState.currency));
 </script>
 
 <template>
@@ -64,7 +55,7 @@ const currencySymbol = computed(() => props.symbol || currencySymbols[props.curr
   >
     <template #prefix>
       <el-icon aria-hidden="true"><Money /></el-icon>
-      <span :aria-label="`${t('common.currency')} ${currencySymbol}`">{{ currencySymbol }}</span>
+      <span :aria-label="`${t('common.currency')} ${displayedCurrencySymbol}`">{{ displayedCurrencySymbol }}</span>
     </template>
     <template v-if="suffix" #suffix><span aria-hidden="true">{{ suffix }}</span></template>
   </el-input>

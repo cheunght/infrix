@@ -21,7 +21,8 @@ import StatusTag from "../StatusTag.vue";
 import type { Asset, AssetDetail, Page } from "../../types";
 import type { AssetFormContext, PageContext, RequestFn } from "../../page-context";
 import { statusTone } from "../../status";
-import { currentLocale, type Locale } from "../../i18n";
+import { type Locale } from "../../i18n";
+import { formatSystemDateTime, systemSettingsState } from "../../system-settings";
 import { useI18n } from "vue-i18n";
 import {
   businessOptionLabel,
@@ -469,14 +470,12 @@ function repairPartUsageOrigin(row: {
 
 function formatRepairPartUsageDateTime(value: string | null | undefined): string {
   if (!value) return t("common.notAvailable");
-  const date = new Date(value);
-  return Number.isNaN(date.getTime()) ? t("common.notAvailable") : date.toLocaleString(currentLocale.value);
+  return formatSystemDateTime(value) || t("common.notAvailable");
 }
 
 function formatRepairDateTime(value: string | null | undefined): string {
   if (!value) return t("common.notAvailable");
-  const date = new Date(value);
-  return Number.isNaN(date.getTime()) ? t("common.notAvailable") : date.toLocaleString(currentLocale.value);
+  return formatSystemDateTime(value) || t("common.notAvailable");
 }
 
 const {
@@ -550,8 +549,8 @@ const expiryDateHelp = computed(() => t("overlay.expiryDateHelp"));
 const userResetPasswordHelp = computed(() => t("overlay.userResetPasswordHelp"));
 const repairFinishedAtHelp = computed(() => t("overlay.repairFinishedAtHelp"));
 const passwordChangeHelp = computed(() => passwordChangeRequired.value
-  ? `${t("auth.passwordHint")} ${t("auth.firstLoginHint")}`
-  : t("auth.passwordHint"));
+  ? `${t("auth.passwordHint", { min: systemSettingsState.passwordMinLength })} ${t("auth.firstLoginHint")}`
+  : t("auth.passwordHint", { min: systemSettingsState.passwordMinLength }));
 
 const dictionaryFormRef = ref<FormInstance>();
 const dataCenterFormRef = ref<FormInstance>();
@@ -606,7 +605,9 @@ const passwordFormRules = computed<FormRules>(() => ({
     {
       validator: (_rule, value, callback) => {
         const password = String(value || "");
-        if (password && password.length < 8) callback(new Error(t("validation.passwordMin")));
+        if (password && password.length < systemSettingsState.passwordMinLength) {
+          callback(new Error(t("validation.passwordMin", { min: systemSettingsState.passwordMinLength })));
+        }
         else callback();
       },
       trigger: ["blur", "change"],
@@ -635,8 +636,7 @@ const profileFormRules = computed<FormRules>(() => ({
 
 function formatProfileDateTime(value: string | null) {
   if (!value) return t("overlay.noRecords");
-  const date = new Date(value);
-  return Number.isNaN(date.getTime()) ? value : date.toLocaleString(currentLocale.value);
+  return formatSystemDateTime(value) || value;
 }
 
 async function submitDictionary() {
@@ -750,7 +750,7 @@ function importRowErrorText(row: { errors: Array<{ label: string; message: strin
         <h3 class="form-dialog__section-title">{{ t('overlay.initialPassword') }}</h3>
         <div class="horizontal-form__rows">
           <el-form-item :label="t('overlay.initialPassword')" prop="password" required :error="userFormErrors.password">
-            <el-input v-model="userForm.password" type="password" show-password autocomplete="new-password" :validate-event="false" :prefix-icon="Lock" :placeholder="t('overlay.enterPasswordMin')" />
+            <el-input v-model="userForm.password" type="password" show-password autocomplete="new-password" :validate-event="false" :prefix-icon="Lock" :placeholder="t('overlay.enterPasswordMin', { min: systemSettingsState.passwordMinLength })" />
           </el-form-item>
           <el-form-item :label="t('auth.confirmPassword')" prop="confirm_password" required>
             <el-input v-model="userForm.confirm_password" type="password" show-password autocomplete="new-password" :validate-event="false" :prefix-icon="Lock" :placeholder="t('overlay.enterPasswordAgain')" />
@@ -1148,7 +1148,7 @@ function importRowErrorText(row: { errors: Array<{ label: string; message: strin
         <FieldHelp v-if="!repairReadOnly" :text="repairFinishedAtHelp" />
       </el-form-item>
       <el-form-item :label="t('overlay.repairCost')" :error="repairFormErrors.cost">
-        <MoneyInput v-model="repairCostValue" currency="CNY" :readonly="repairReadOnly" :placeholder="t('overlay.repairCostPlaceholder')" />
+        <MoneyInput v-model="repairCostValue" :readonly="repairReadOnly" :placeholder="t('overlay.repairCostPlaceholder')" />
       </el-form-item>
       <el-form-item :label="t('common.notes')" :error="repairFormErrors.notes"><el-input v-model="repairForm.notes" type="textarea" :rows="4" :readonly="repairReadOnly" :placeholder="t('overlay.repairNotesPlaceholder')" /></el-form-item>
     </el-form>

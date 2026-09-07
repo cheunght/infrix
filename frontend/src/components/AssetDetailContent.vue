@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, toRefs } from "vue";
 import { useI18n } from "vue-i18n";
-import { currentLocale } from "../i18n";
+import { formatSystemDate, formatSystemDateTime } from "../system-settings";
 import type {
   AssetInventoryHistoryContext,
   AssetResponsibilityContext,
@@ -115,21 +115,12 @@ function makeField(
 
 function formatDate(value: unknown): string {
   if (!hasContent(value)) return t("common.notAvailable");
-  const text = String(value);
-  return text.match(/^\d{4}-\d{2}-\d{2}/)?.[0] || text;
+  return formatSystemDate(String(value)) || t("common.notAvailable");
 }
 
 function formatDateTime(value: unknown): string {
   if (!hasContent(value)) return t("common.notAvailable");
-  const date = new Date(String(value));
-  if (Number.isNaN(date.getTime())) return String(value);
-  return date.toLocaleString(currentLocale.value, {
-    year: "numeric",
-    month: "2-digit",
-    day: "2-digit",
-    hour: "2-digit",
-    minute: "2-digit",
-  });
+  return formatSystemDateTime(String(value)) || String(value);
 }
 
 function formatU(value: unknown): string {

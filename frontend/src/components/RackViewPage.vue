@@ -16,9 +16,10 @@ import PageToolbar from "./page/PageToolbar.vue";
 import type { Rack, RackStatus, ServerRoom } from "../types";
 import type { RackSharedContext } from "../page-context";
 import { rackStatusValue } from "../business-enums";
+import { formatSystemDate } from "../system-settings";
 
 const props = defineProps<{ context: RackSharedContext }>();
-const { t, locale } = useI18n();
+const { t } = useI18n();
 const context = props.context;
 const rackSection = context.rackSection;
 const serverRooms = context.serverRooms;
@@ -95,8 +96,7 @@ function rackLocationLabel(rack: Rack | null) {
 
 function formatRackDate(value?: string) {
   if (!value) return "—";
-  const date = new Date(value);
-  return Number.isNaN(date.getTime()) ? t("common.notAvailable") : date.toLocaleDateString(locale.value);
+  return formatSystemDate(value) || t("common.notAvailable");
 }
 
 watch(currentRack, () => {
