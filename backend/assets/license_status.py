@@ -3,9 +3,8 @@
 from datetime import timedelta
 
 from django.db.models import Case, CharField, Count, F, Q, Value, When
-from django.utils import timezone
-
 from .models import SoftwareLicense
+from .system_settings import system_localdate
 
 LICENSE_STATUS_KEYS = ("normal", "expiring", "expired")
 LICENSE_STATUS_LABELS = {
@@ -17,7 +16,7 @@ LICENSE_STATUS_LABELS = {
 
 def license_status_value(obj, today=None):
     """Return the mutually-exclusive status used by the license UI."""
-    today = today or timezone.localdate()
+    today = today or system_localdate()
     if obj.expiry_date and obj.expiry_date < today:
         return "expired"
     if obj.expiry_date and obj.expiry_date <= today + timedelta(days=90):
@@ -27,7 +26,7 @@ def license_status_value(obj, today=None):
 
 def license_status_expression(today=None):
     """Build the database expression matching :func:`license_status_value`."""
-    today = today or timezone.localdate()
+    today = today or system_localdate()
     expiry_limit = today + timedelta(days=90)
     return Case(
         When(expiry_date__lt=today, then=Value("expired")),
@@ -43,7 +42,7 @@ def license_status_expression(today=None):
 
 def filter_licenses_by_status(queryset, status, today=None):
     """Apply the same status semantics as the serialized license status."""
-    today = today or timezone.localdate()
+    today = today or system_localdate()
     expiry_limit = today + timedelta(days=90)
     within_limit = Q(used_count__lte=F("authorized_count"))
     if status and status not in LICENSE_STATUS_KEYS:

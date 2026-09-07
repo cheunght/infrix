@@ -5,7 +5,6 @@ from django.db.models import Count, Q, Sum
 from rest_framework import serializers
 from rest_framework.exceptions import ValidationError as DRFValidationError
 from django.contrib.auth.models import Group, User
-from django.utils import timezone
 from drf_spectacular.utils import extend_schema_field
 from datetime import date
 from decimal import Decimal, InvalidOperation
@@ -41,6 +40,7 @@ from .system_reset import SYSTEM_RESET_CONFIRMATION
 from .system_settings import (
     SETTING_METADATA,
     get_system_settings,
+    system_localdate,
     system_setting_definitions,
     validate_local_password,
 )
@@ -1027,8 +1027,12 @@ class SoftwareLicenseSerializer(serializers.ModelSerializer):
     status_label = serializers.SerializerMethodField()
     days_remaining = serializers.SerializerMethodField()
 
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self._system_today = system_localdate()
+
     def _status(self, obj):
-        return license_status_value(obj)
+        return license_status_value(obj, today=self._system_today)
 
     def get_utilization(self, obj) -> float:
         if not obj.authorized_count:
@@ -1045,7 +1049,7 @@ class SoftwareLicenseSerializer(serializers.ModelSerializer):
         return LICENSE_STATUS_LABELS[self._status(obj)]
 
     def get_days_remaining(self, obj) -> int | None:
-        return (obj.expiry_date - timezone.localdate()).days if obj.expiry_date else None
+        return (obj.expiry_date - self._system_today).days if obj.expiry_date else None
 
     def validate(self, attrs):
         authorized_count = attrs.get("authorized_count", self.instance.authorized_count if self.instance else 0)
@@ -1364,7 +1368,7 @@ class AssetListSerializer(serializers.ModelSerializer):
 
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
-        self._depreciation_as_of_date = timezone.localdate()
+        self._depreciation_as_of_date = system_localdate()
         if not self.context.get("requested_custom_columns"):
             self.fields.pop("custom_values", None)
 
@@ -1515,6 +1519,10 @@ class AssetDetailSerializer(serializers.ModelSerializer):
     depreciation = serializers.SerializerMethodField()
     allowed_statuses = serializers.SerializerMethodField()
 
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self._depreciation_as_of_date = system_localdate()
+
     def get_inventory_records_count(self, obj) -> int:
         return obj.inventory_items.count()
 
@@ -1550,7 +1558,7 @@ class AssetDetailSerializer(serializers.ModelSerializer):
 
     @extend_schema_field(DepreciationResponseSerializer)
     def get_depreciation(self, obj) -> dict[str, object]:
-        return calculate_asset_depreciation(obj)
+        return calculate_asset_depreciation(obj, as_of_date=self._depreciation_as_of_date)
 
     def get_allowed_statuses(self, obj) -> list[str]:
         return list(allowed_asset_status_values(obj))

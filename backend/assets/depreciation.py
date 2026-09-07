@@ -9,7 +9,7 @@ from dataclasses import dataclass
 from datetime import date
 from decimal import Decimal, InvalidOperation, ROUND_HALF_UP
 
-from django.utils import timezone
+from .system_settings import system_localdate
 
 
 DEPRECIATION_METHOD_STRAIGHT_LINE = "straight_line"
@@ -201,7 +201,7 @@ def calculate_depreciation(
 
     if not isinstance(depreciation_start_date, date):
         return _unconfigured()
-    as_of = as_of_date or timezone.localdate()
+    as_of = as_of_date or system_localdate()
     if not isinstance(as_of, date):
         return _unconfigured()
 

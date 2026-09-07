@@ -13,6 +13,7 @@ from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 from django.conf import settings
 from django.contrib.auth.password_validation import validate_password
 from django.core.exceptions import ValidationError as DjangoValidationError
+from django.db import OperationalError, ProgrammingError
 from django.utils import timezone as django_timezone
 
 from .models import DirectoryIdentity, SystemSetting, UserSecurityProfile
@@ -221,6 +222,42 @@ def get_system_settings():
         pk=SystemSetting.SINGLETON_ID,
         defaults=_deployment_defaults(),
     )[0]
+
+
+def system_timezone(setting=None):
+    """Return the configured application timezone with a migration-safe fallback."""
+
+    if setting is None:
+        try:
+            setting = get_system_settings()
+        except (OperationalError, ProgrammingError):
+            return django_timezone.get_current_timezone()
+    candidate = str(getattr(setting, "timezone", "") or "").strip()
+    try:
+        return ZoneInfo(candidate)
+    except (ZoneInfoNotFoundError, ValueError):
+        return django_timezone.get_current_timezone()
+
+
+def system_now(setting=None):
+    """Return the current instant represented in the configured timezone."""
+
+    return django_timezone.now().astimezone(system_timezone(setting))
+
+
+def system_localdate(setting=None):
+    """Return today's date according to the configured application timezone."""
+
+    return system_now(setting).date()
+
+
+def system_localtime(value=None, setting=None):
+    """Represent an aware datetime in the configured application timezone."""
+
+    value = value or django_timezone.now()
+    if django_timezone.is_naive(value):
+        value = django_timezone.make_aware(value, system_timezone(setting))
+    return django_timezone.localtime(value, system_timezone(setting))
 
 
 def system_settings_snapshot(setting):

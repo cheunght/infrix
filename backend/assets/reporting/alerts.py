@@ -2,8 +2,6 @@
 
 from collections import Counter
 from datetime import timedelta
-from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
-
 from django.db.models import Count, F, Q, Sum
 from django.db.models.functions import Coalesce
 from django.utils import timezone
@@ -15,7 +13,7 @@ from ..models import (
     SoftwareLicense,
     SparePart,
 )
-from ..system_settings import get_system_settings
+from ..system_settings import get_system_settings, system_now
 
 
 ALERT_EXPIRY_DAYS = 30
@@ -26,11 +24,7 @@ _LEVEL_ORDER = {"critical": 0, "warning": 1, "notice": 2}
 def _system_now(setting):
     """Use the configured system timezone for alert date boundaries."""
 
-    try:
-        timezone_name = str(getattr(setting, "timezone", "") or "").strip()
-        return timezone.now().astimezone(ZoneInfo(timezone_name))
-    except (ZoneInfoNotFoundError, ValueError, TypeError):
-        return timezone.localtime()
+    return system_now(setting)
 
 
 def _alert_sort_key(alert):

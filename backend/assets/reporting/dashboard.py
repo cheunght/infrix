@@ -9,10 +9,9 @@ from collections import defaultdict
 from datetime import timedelta
 
 from django.db.models import Count
-from django.utils import timezone
-
 from ..license_status import license_status_counts
 from ..models import AuditLog, FaultEvent, InventoryTask, MaintenanceContract, Rack
+from ..system_settings import system_localdate
 from .capacity import build_dashboard_capacity
 from .constants import (
     AUDIT_ACTION_LABELS,
@@ -25,9 +24,10 @@ from .constants import (
 
 def build_dashboard_payload(scope, *, include_faults=True, include_licenses=True):
     """Build the complete dashboard response."""
+    today = system_localdate()
     asset_distributions = _build_asset_distributions(scope)
     capacity = build_dashboard_capacity(scope)
-    expiry = _build_expiry_data(scope)
+    expiry = _build_expiry_data(scope, today=today)
     inventory_summary = _build_inventory_summary(scope)
     recent_changes = _build_recent_changes(scope)
 
@@ -67,7 +67,7 @@ def build_dashboard_payload(scope, *, include_faults=True, include_licenses=True
         payload["alerts"] = {"open_faults": alerts["open_faults"]}
         payload["recent_alerts"] = alerts["recent_alerts"]
     if include_licenses:
-        payload["licenses"] = license_status_counts()
+        payload["licenses"] = license_status_counts(today=today)
     return payload
 
 
@@ -111,8 +111,8 @@ def _build_asset_distributions(scope):
     }
 
 
-def _build_expiry_data(scope):
-    today = timezone.localdate()
+def _build_expiry_data(scope, *, today=None):
+    today = today or system_localdate()
     contracts = MaintenanceContract.objects.filter(asset_id__in=scope.asset_ids)
     expiry_30 = today + timedelta(days=EXPIRY_WINDOWS["within_30_days"])
     expiry_60 = today + timedelta(days=EXPIRY_WINDOWS["within_60_days"])

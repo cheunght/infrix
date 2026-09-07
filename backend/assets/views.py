@@ -108,6 +108,8 @@ from .system_settings import (
     get_local_account_security_policy,
     get_system_settings,
     local_password_expired,
+    system_localdate,
+    system_localtime,
     system_settings_snapshot,
     validate_local_password,
 )
@@ -119,7 +121,7 @@ logger = logging.getLogger(__name__)
 
 
 def _export_timestamp():
-    return timezone.localtime().strftime("%Y%m%d_%H%M%S")
+    return system_localtime().strftime("%Y%m%d_%H%M%S")
 
 
 def _excel_value(value):
@@ -489,13 +491,13 @@ class AssetViewSet(AuditedModelViewSetMixin, viewsets.ModelViewSet):
             ).distinct()
         warranty = self.request.query_params.get("warranty", "").strip()
         if warranty == "within_30_days":
-            today = timezone.localdate()
+            today = system_localdate()
             queryset = queryset.filter(
                 maintenance_contracts__expiry_date__gte=today,
                 maintenance_contracts__expiry_date__lte=today + timedelta(days=30),
             ).distinct()
         elif warranty == "expired":
-            today = timezone.localdate()
+            today = system_localdate()
             queryset = queryset.filter(maintenance_contracts__expiry_date__lt=today).distinct()
         for field, operator, value in self._validated_custom_filters():
             values = AssetCustomValue.objects.filter(
@@ -2316,13 +2318,13 @@ class InventoryTaskViewSet(AuditedModelViewSetMixin, viewsets.ModelViewSet):
                 item.actual_rack.room.data_center.name if item.actual_rack_id else "",
                 item.actual_rack.room.name if item.actual_rack_id else "",
                 item.actual_rack.code if item.actual_rack_id else "", actual_u,
-                timezone.localtime(item.checked_at).replace(tzinfo=None) if item.checked_at else "",
+                system_localtime(item.checked_at).replace(tzinfo=None) if item.checked_at else "",
                 item.checked_by.get_full_name() or item.checked_by.username if item.checked_by_id else "",
                 item.notes,
                 INVENTORY_RESOLUTION_STATUS_LABELS.get(item.resolution_status, item.resolution_status),
                 INVENTORY_RESOLUTION_ACTION_LABELS.get(item.resolution_action, "") if item.resolution_action else "",
                 item.resolved_by.get_full_name() or item.resolved_by.username if item.resolved_by_id else "",
-                timezone.localtime(item.resolved_at).replace(tzinfo=None) if item.resolved_at else "",
+                system_localtime(item.resolved_at).replace(tzinfo=None) if item.resolved_at else "",
                 item.resolution_note,
             ])
         _style_export_sheet(sheet, max_width=32)
@@ -3446,7 +3448,7 @@ def asset_import(request):
 @api_view(["GET"])
 @permission_classes([CanExportAssets])
 def asset_export(request):
-    as_of_date = timezone.localdate()
+    as_of_date = system_localdate()
     queryset = _filtered_view_queryset(
         AssetViewSet,
         request,
@@ -3560,11 +3562,11 @@ def repair_record_export(request):
     for fault in queryset:
         repair = getattr(fault, "repair", None)
         _append_excel_row(sheet, [
-            fault.asset.asset_no, fault.asset.name, timezone.localtime(fault.occurred_at).replace(tzinfo=None),
+            fault.asset.asset_no, fault.asset.name, system_localtime(fault.occurred_at).replace(tzinfo=None),
             fault.reason, fault.description, "是" if fault.is_closed else "否",
             repair.provider if repair else "",
-            timezone.localtime(repair.started_at).replace(tzinfo=None) if repair and repair.started_at else "",
-            timezone.localtime(repair.finished_at).replace(tzinfo=None) if repair and repair.finished_at else "",
+            system_localtime(repair.started_at).replace(tzinfo=None) if repair and repair.started_at else "",
+            system_localtime(repair.finished_at).replace(tzinfo=None) if repair and repair.finished_at else "",
             repair.cost if repair and repair.cost is not None else "",
             repair.notes if repair else "",
         ])
@@ -3576,7 +3578,7 @@ def repair_record_export(request):
 @api_view(["GET"])
 @permission_classes([CanViewLicenses])
 def license_summary(request):
-    counts = license_status_counts()
+    counts = license_status_counts(today=system_localdate())
     return Response(counts)
 
 
@@ -3613,8 +3615,9 @@ def license_export(request):
     _append_excel_row(sheet, [
         "软件名称", "厂商", "许可类型", "授权数量", "已用数量", "剩余数量", "状态", "到期日", "备注",
     ])
+    today = system_localdate()
     for license_row in queryset:
-        status = license_status_value(license_row)
+        status = license_status_value(license_row, today=today)
         _append_excel_row(sheet, [
             license_row.name, license_row.manufacturer.name if license_row.manufacturer_id else "", license_row.license_type,
             license_row.authorized_count, license_row.used_count,
@@ -3715,7 +3718,7 @@ def spare_transaction_export(request):
             row.target_server_room.name if row.target_server_room_id else "",
             row.before_quantity, row.after_quantity,
             row.operator.get_full_name() or row.operator.username if row.operator_id else "已删除账号",
-            row.reference, row.notes, timezone.localtime(row.created_at).replace(tzinfo=None),
+            row.reference, row.notes, system_localtime(row.created_at).replace(tzinfo=None),
         ])
     _style_export_sheet(sheet, max_width=40)
     return _xlsx_response(book, f"备件流水_{_export_timestamp()}.xlsx")
@@ -4033,6 +4036,6 @@ def rack_layout_export(request):
     if not racks:
         book.create_sheet("无机柜数据")["A1"] = "暂无机柜数据"
     response = HttpResponse(content_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
-    response["Content-Disposition"] = f'attachment; filename="infrix-rack-layout-{timezone.localdate().isoformat()}.xlsx"'
+    response["Content-Disposition"] = f'attachment; filename="infrix-rack-layout-{system_localdate().isoformat()}.xlsx"'
     book.save(response)
     return response
