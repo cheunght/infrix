@@ -33,9 +33,16 @@ function safeTimeZone(value: string): string {
 }
 
 function dateParts(value: string | number | Date, includeTime: boolean) {
+  const dateOnly = typeof value === "string" && /^(\d{4})-(\d{2})-(\d{2})$/.exec(value);
+  if (dateOnly && !includeTime) {
+    // Date-only API values are calendar dates, not UTC instants.  Reading
+    // them through `new Date()` would roll the displayed day for valid
+    // positive-offset zones such as Pacific/Kiritimati.
+    return { year: dateOnly[1], month: dateOnly[2], day: dateOnly[3] };
+  }
   const source = value instanceof Date
     ? value
-    : typeof value === "string" && /^\d{4}-\d{2}-\d{2}$/.test(value)
+    : dateOnly
       ? new Date(`${value}T12:00:00Z`)
       : new Date(value);
   if (Number.isNaN(source.getTime())) return null;
