@@ -108,6 +108,7 @@ from .system_settings import (
     get_local_account_security_policy,
     get_system_settings,
     local_password_expired,
+    system_date_bounds,
     system_localdate,
     system_localtime,
     system_settings_snapshot,
@@ -275,6 +276,22 @@ def _date_filter_errors(request, fields):
             except ValueError:
                 return {field: "日期必须使用 YYYY-MM-DD 格式"}
     return None
+
+
+def _filter_system_date_range(queryset, field_name, start_value, end_value):
+    """Filter a timestamp field by dates in the configured system timezone."""
+
+    try:
+        start = date.fromisoformat(start_value) if start_value else None
+        end = date.fromisoformat(end_value) if end_value else None
+    except ValueError:
+        return queryset.none()
+    start_at, end_at = system_date_bounds(start, end)
+    if start_at is not None:
+        queryset = queryset.filter(**{f"{field_name}__gte": start_at})
+    if end_at is not None:
+        queryset = queryset.filter(**{f"{field_name}__lt": end_at})
+    return queryset
 
 
 CUSTOM_FILTER_MAX_CONDITIONS = 8
@@ -1614,17 +1631,7 @@ class SpareStockTransactionViewSet(viewsets.ModelViewSet):
         queryset = super().get_queryset()
         start = self.request.query_params.get("start", "").strip()
         end = self.request.query_params.get("end", "").strip()
-        if start:
-            try:
-                queryset = queryset.filter(created_at__date__gte=date.fromisoformat(start))
-            except ValueError:
-                return queryset.none()
-        if end:
-            try:
-                queryset = queryset.filter(created_at__date__lte=date.fromisoformat(end))
-            except ValueError:
-                return queryset.none()
-        return queryset
+        return _filter_system_date_range(queryset, "created_at", start, end)
 
     def list(self, request, *args, **kwargs):
         errors = _date_filter_errors(request, ("start", "end"))
@@ -1906,11 +1913,7 @@ class FaultEventViewSet(AuditedModelViewSetMixin, viewsets.ModelViewSet):
         queryset = super().get_queryset()
         start = self.request.query_params.get("start")
         end = self.request.query_params.get("end")
-        if start:
-            queryset = queryset.filter(occurred_at__date__gte=start)
-        if end:
-            queryset = queryset.filter(occurred_at__date__lte=end)
-        return queryset
+        return _filter_system_date_range(queryset, "occurred_at", start, end)
 
     def list(self, request, *args, **kwargs):
         errors = _date_filter_errors(request, ("start", "end"))
@@ -2640,19 +2643,7 @@ class AuditLogViewSet(viewsets.ReadOnlyModelViewSet):
         queryset = super().get_queryset()
         start = self.request.query_params.get("start")
         end = self.request.query_params.get("end")
-        if start:
-            try:
-                start = date.fromisoformat(start)
-            except ValueError:
-                return queryset.none()
-            queryset = queryset.filter(created_at__date__gte=start)
-        if end:
-            try:
-                end = date.fromisoformat(end)
-            except ValueError:
-                return queryset.none()
-            queryset = queryset.filter(created_at__date__lte=end)
-        return queryset
+        return _filter_system_date_range(queryset, "created_at", start, end)
 
     def list(self, request, *args, **kwargs):
         errors = _date_filter_errors(request, ("start", "end"))

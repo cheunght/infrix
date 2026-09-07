@@ -45,7 +45,7 @@ function dateParts(value: string | number | Date, includeTime: boolean) {
     month: "2-digit",
     day: "2-digit",
     ...(includeTime
-      ? { hour: "2-digit", minute: "2-digit", second: "2-digit", hour12: false }
+      ? { hour: "2-digit", minute: "2-digit", second: "2-digit", hour12: false, hourCycle: "h23" }
       : {}),
   }).formatToParts(source);
   const values = Object.fromEntries(parts.map((part) => [part.type, part.value]));
@@ -79,6 +79,15 @@ export function formatSystemDateTime(
   const parts = dateParts(value, includeSeconds);
   if (!parts) return String(value);
   return `${formatSystemDate(value)} ${parts.hour}:${parts.minute}${includeSeconds ? `:${parts.second}` : ""}`;
+}
+
+export function systemDateTimeInputValue(
+  value: string | number | Date = new Date(),
+  includeSeconds = false,
+): string {
+  const parts = dateParts(value, true);
+  if (!parts?.year || !parts.month || !parts.day || !parts.hour || !parts.minute) return "";
+  return `${parts.year}-${parts.month}-${parts.day}T${parts.hour}:${parts.minute}${includeSeconds ? `:${parts.second}` : ""}`;
 }
 
 export function systemDatePickerFormat(

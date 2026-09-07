@@ -2,11 +2,13 @@ from django.core.exceptions import ValidationError as DjangoValidationError
 from django.db import IntegrityError, transaction
 from collections import Counter
 from django.db.models import Count, Q, Sum
+from django.utils import timezone as django_timezone
+from django.utils.dateparse import parse_datetime
 from rest_framework import serializers
 from rest_framework.exceptions import ValidationError as DRFValidationError
 from django.contrib.auth.models import Group, User
 from drf_spectacular.utils import extend_schema_field
-from datetime import date
+from datetime import date, datetime
 from decimal import Decimal, InvalidOperation
 from typing import Any
 import json
@@ -41,9 +43,22 @@ from .system_settings import (
     SETTING_METADATA,
     get_system_settings,
     system_localdate,
+    system_timezone,
     system_setting_definitions,
     validate_local_password,
 )
+
+
+class SystemDateTimeInputField(serializers.DateTimeField):
+    """Interpret timezone-less client datetimes in the configured system timezone."""
+
+    def to_internal_value(self, value):
+        parsed = parse_datetime(value) if isinstance(value, str) else value
+        if isinstance(value, str) and parsed is None:
+            return super().to_internal_value(value)
+        if isinstance(parsed, datetime) and django_timezone.is_naive(parsed):
+            parsed = django_timezone.make_aware(parsed, system_timezone())
+        return super().to_internal_value(parsed)
 
 
 class GroupSerializer(serializers.ModelSerializer):
@@ -2114,6 +2129,8 @@ class InventoryItemPageSerializer(serializers.Serializer):
 
 
 class InventoryTaskSerializer(serializers.ModelSerializer):
+    start_at = SystemDateTimeInputField()
+    end_at = SystemDateTimeInputField()
     inspector = serializers.PrimaryKeyRelatedField(queryset=User.objects.filter(is_active=True), required=False)
     data_center_name = serializers.CharField(source="data_center.name", read_only=True)
     server_room_name = serializers.CharField(source="server_room.name", read_only=True, allow_null=True)
@@ -2291,6 +2308,8 @@ class AuditLogSerializer(serializers.ModelSerializer):
 
 
 class FaultEventSerializer(serializers.ModelSerializer):
+    occurred_at = SystemDateTimeInputField()
+    reported_at = SystemDateTimeInputField(required=False, allow_null=True)
     asset_no = serializers.CharField(source="asset.asset_no", read_only=True)
     asset_name = serializers.CharField(source="asset.name", read_only=True)
     repair = serializers.SerializerMethodField()
@@ -2324,6 +2343,9 @@ class FaultEventSerializer(serializers.ModelSerializer):
 
 
 class RepairRecordSerializer(serializers.ModelSerializer):
+    started_at = SystemDateTimeInputField(required=False, allow_null=True)
+    finished_at = SystemDateTimeInputField(required=False, allow_null=True)
+
     def validate(self, attrs):
         if self.instance is not None and self.instance.finished_at is not None and attrs:
             raise serializers.ValidationError({

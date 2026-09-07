@@ -7,7 +7,7 @@ environment configuration and never cross the API boundary.
 
 from __future__ import annotations
 
-from datetime import timedelta
+from datetime import date, datetime, time, timedelta
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from django.conf import settings
@@ -258,6 +258,31 @@ def system_localtime(value=None, setting=None):
     if django_timezone.is_naive(value):
         value = django_timezone.make_aware(value, system_timezone(setting))
     return django_timezone.localtime(value, system_timezone(setting))
+
+
+def system_date_bounds(start: date | None = None, end: date | None = None, setting=None):
+    """Return an inclusive system-date range as aware datetime boundaries.
+
+    Timestamp filters must use the configured system timezone instead of the
+    deployment ``TIME_ZONE`` used by Django's ``__date`` lookup. The upper
+    bound is exclusive so an ``end`` date includes its entire local day.
+    """
+
+    timezone = system_timezone(setting)
+    start_at = (
+        django_timezone.make_aware(datetime.combine(start, time.min), timezone)
+        if start is not None
+        else None
+    )
+    end_at = (
+        django_timezone.make_aware(
+            datetime.combine(end + timedelta(days=1), time.min),
+            timezone,
+        )
+        if end is not None
+        else None
+    )
+    return start_at, end_at
 
 
 def system_settings_snapshot(setting):

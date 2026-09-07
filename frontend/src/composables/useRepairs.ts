@@ -13,6 +13,7 @@ import type {
 import type { CapabilityFn, RequestFn } from "../page-context";
 import { REPAIR_PART_USAGE_SOURCE_OPTIONS, type RepairPartUsageSource } from "../business-enums";
 import { i18n } from "../i18n";
+import { systemDateTimeInputValue } from "../system-settings";
 import {
   clearFieldError,
   fieldErrorsToText,
@@ -39,15 +40,10 @@ export interface RepairsDeps {
 }
 
 function nowDateTimeLocal() {
-  const date = new Date();
-  const pad = (value: number) => String(value).padStart(2, "0");
-  return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}T${pad(date.getHours())}:${pad(date.getMinutes())}`;
+  return systemDateTimeInputValue();
 }
 function toDateTimeLocal(value: string | null) {
-  if (!value) return "";
-  const date = new Date(value);
-  const pad = (item: number) => String(item).padStart(2, "0");
-  return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}T${pad(date.getHours())}:${pad(date.getMinutes())}`;
+  return value ? systemDateTimeInputValue(value) : "";
 }
 
 function emptyRepairPartUsageForm(): RepairPartUsageFormState {
