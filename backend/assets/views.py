@@ -10,7 +10,6 @@ import re
 from decimal import Decimal, InvalidOperation
 from types import SimpleNamespace
 from django.contrib.auth import authenticate, login, logout, update_session_auth_hash
-from django.contrib.auth.password_validation import validate_password
 from django.core.exceptions import ValidationError as DjangoValidationError
 from django.middleware.csrf import get_token
 from django.contrib.auth.models import Group, User
@@ -46,7 +45,7 @@ from .enum_contracts import (
     STOCK_OPERATION_TYPE_LABELS,
     STOCK_OPERATION_TYPE_VALUES,
 )
-from .serializers import AdminPasswordResetSerializer, AssetBatchDeleteResponseSerializer, AssetBatchDeleteSerializer, AssetDetailSerializer, AssetListSerializer, AssetResponsibilityEventSerializer, AssetResponsibilityReturnSerializer, AssetResponsibilityTargetSerializer, AssetResponsibilityUserSerializer, AssetSerializer, AssetWriteSerializer, AuditLogSerializer, CurrentUserProfileSerializer, CustomFieldOptionSerializer, CustomFieldRuntimeSchemaSerializer, CustomFieldSerializer, DataCenterSerializer, DepartmentSerializer, DeviceTypeSerializer, FaultEventSerializer, GroupSerializer, InventoryBulkNormalResponseSerializer, InventoryBulkNormalSerializer, InventoryBulkResolutionResponseSerializer, InventoryBulkResolutionSerializer, InventoryInspectorSerializer, InventoryItemPageSerializer, InventoryItemSerializer, InventoryResolutionSerializer, InventoryScopePreviewQuerySerializer, InventoryScopePreviewSerializer, InventoryTaskSerializer, LdapConfigurationUpdateSerializer, ManufacturerSerializer, RackSerializer, RepairPartUsageCreateSerializer, RepairPartUsageSerializer, RepairRecordSerializer, ServerRoomSerializer, SoftwareLicenseSerializer, SparePartCategorySerializer, SparePartDetailSerializer, SparePartSerializer, SpareStockSerializer, SpareStockTransactionSerializer, SystemResetSerializer, SystemSettingsSerializer, TagSerializer, UserBatchStatusResponseSerializer, UserBatchStatusSerializer, UserSerializer, _default_references_option, _responsibility_user_name
+from .serializers import AdminPasswordResetSerializer, AssetBatchDeleteResponseSerializer, AssetBatchDeleteSerializer, AssetDetailSerializer, AssetListSerializer, AssetResponsibilityEventSerializer, AssetResponsibilityReturnSerializer, AssetResponsibilityTargetSerializer, AssetResponsibilityUserSerializer, AssetSerializer, AssetWriteSerializer, AuditLogSerializer, CurrentUserProfileSerializer, CustomFieldOptionSerializer, CustomFieldRuntimeSchemaSerializer, CustomFieldSerializer, DataCenterSerializer, DepartmentSerializer, DeviceTypeSerializer, FaultEventSerializer, GroupSerializer, InventoryBulkNormalResponseSerializer, InventoryBulkNormalSerializer, InventoryBulkResolutionResponseSerializer, InventoryBulkResolutionSerializer, InventoryInspectorSerializer, InventoryItemPageSerializer, InventoryItemSerializer, InventoryResolutionSerializer, InventoryScopePreviewQuerySerializer, InventoryScopePreviewSerializer, InventoryTaskSerializer, LdapConfigurationUpdateSerializer, ManufacturerSerializer, RackSerializer, RepairPartUsageCreateSerializer, RepairPartUsageSerializer, RepairRecordSerializer, ServerRoomSerializer, SoftwareLicenseSerializer, SparePartCategorySerializer, SparePartDetailSerializer, SparePartSerializer, SpareStockSerializer, SpareStockTransactionSerializer, SmtpTestEmailSerializer, SystemResetSerializer, SystemSettingsSerializer, TagSerializer, UserBatchStatusResponseSerializer, UserBatchStatusSerializer, UserSerializer, _default_references_option, _responsibility_user_name
 from .services import (
     apply_spare_stock_transaction,
     confirm_inventory_item_normal,
@@ -90,6 +89,8 @@ from .ldap_configuration import (
     public_configuration,
     save_configuration,
 )
+from .configuration_secrets import encrypt_secret
+from .smtp import SmtpConfigurationError, send_smtp_test_email
 from .permissions import BusinessRolePermission, CanExportAssets, CanExportFaults, CanExportInventory, CanExportLicenses, CanExportRacks, CanExportSpares, CanImportAssets, CanManageInventory, CanManageSystemSettings, CanResetSystem, CanViewAssetCustomFieldSchema, CanViewAssetTagsRuntime, CanViewAuditLog, CanViewDashboard, CanViewDepartmentRuntime, CanViewInventory, CanViewLicenses, CanViewManufacturerRuntime, CanViewSparePartCategoryRuntime, IsSystemAdministrator
 from .roles import ROLE_DEFINITIONS, ROLE_NAME_TO_CODE, user_capabilities, user_has_capability, user_role_code, user_role_codes
 from .reporting import (
@@ -103,7 +104,13 @@ from .reporting import (
 from .reporting.constants import RACK_LAYOUT_EXPORT_MAX_RACKS, RACK_LAYOUT_EXPORT_MAX_U_POSITIONS
 from .pagination import StandardPagination
 from .system_reset import reset_system
-from .system_settings import get_system_settings, system_settings_snapshot
+from .system_settings import (
+    get_local_account_security_policy,
+    get_system_settings,
+    local_password_expired,
+    system_settings_snapshot,
+    validate_local_password,
+)
 
 
 EXPORT_MAX_ROWS = 10_000
@@ -2658,7 +2665,10 @@ LOGIN_USERNAME_MAX_LENGTH = User._meta.get_field(User.USERNAME_FIELD).max_length
 def _security_profile(user):
     profile, _ = UserSecurityProfile.objects.get_or_create(
         user=user,
-        defaults={"must_change_password": False},
+        defaults={
+            "must_change_password": False,
+            "locale": get_system_settings().default_locale,
+        },
     )
     return profile
 
@@ -2751,9 +2761,10 @@ def _register_login_failure(
 ):
     now = timezone.now()
     ip = _login_ip(request)
-    window = timedelta(seconds=max(1, settings.AUTH_LOGIN_WINDOW_SECONDS))
-    lock_duration = timedelta(seconds=max(1, settings.AUTH_LOGIN_LOCK_SECONDS))
-    max_attempts = max(1, settings.AUTH_LOGIN_MAX_ATTEMPTS)
+    policy = get_local_account_security_policy()
+    window = timedelta(seconds=max(1, policy["login_window_seconds"]))
+    lock_duration = timedelta(seconds=max(1, policy["login_lock_seconds"]))
+    max_attempts = max(1, policy["login_max_attempts"])
     with transaction.atomic():
         states = [_throttle_state("account", _login_account_key(username), now), _throttle_state("ip", ip, now)]
         locked_until = None
@@ -2931,6 +2942,11 @@ def auth_login(request):
         return Response({"detail": "用户名或密码错误"}, status=400)
     user = authentication.user
     _clear_login_throttle(username, ip)
+    if authentication.auth_source == AUTH_SOURCE_LOCAL:
+        profile = _security_profile(user)
+        if not profile.must_change_password and local_password_expired(user, profile=profile):
+            profile.must_change_password = True
+            profile.save(update_fields=["must_change_password", "updated_at"])
     if authentication.auth_source == AUTH_SOURCE_LDAP:
         login(request, user, backend=LDAP_MODEL_BACKEND)
     else:
@@ -3251,7 +3267,7 @@ def auth_change_password(request):
     if request.user.check_password(new_password):
         return Response({"new_password": ["新密码不能与当前密码相同"]}, status=400)
     try:
-        validate_password(new_password, user=request.user)
+        validate_local_password(new_password, user=request.user)
     except DjangoValidationError as exc:
         return Response({"new_password": list(exc.messages)}, status=400)
     request.user.set_password(new_password)
@@ -3287,24 +3303,92 @@ def system_settings(request):
     if request.method == "GET":
         return Response(SystemSettingsSerializer(get_system_settings()).data)
 
-    with transaction.atomic():
-        setting = get_system_settings()
-        setting = SystemSetting.objects.select_for_update().get(pk=setting.pk)
-        before = system_settings_snapshot(setting)
-        serializer = SystemSettingsSerializer(setting, data=request.data, partial=True)
-        serializer.is_valid(raise_exception=True)
-        setting = serializer.save()
-        after = system_settings_snapshot(setting)
-        if before != after:
-            write_audit_log(
-                request,
-                action="update",
-                resource_type="system_settings",
-                resource_id="system",
-                before=before,
-                after=after,
+    try:
+        with transaction.atomic():
+            setting = get_system_settings()
+            setting = SystemSetting.objects.select_for_update().get(pk=setting.pk)
+            before = system_settings_snapshot(setting)
+            serializer = SystemSettingsSerializer(setting, data=request.data, partial=True)
+            serializer.is_valid(raise_exception=True)
+            smtp_password = serializer.validated_data.pop("smtp_password", "")
+            encrypted_smtp_password = (
+                encrypt_secret(smtp_password, field_name="SMTP 密码")
+                if smtp_password
+                else None
             )
+            setting = serializer.save()
+            if encrypted_smtp_password is not None:
+                setting.smtp_password_encrypted = encrypted_smtp_password
+                setting.save(update_fields=["smtp_password_encrypted", "updated_at"])
+            after = system_settings_snapshot(setting)
+            changed_fields = [
+                key for key in after
+                if before.get(key) != after.get(key)
+            ]
+            if smtp_password:
+                changed_fields.append("smtp_password")
+            if changed_fields:
+                write_audit_log(
+                    request,
+                    action="update",
+                    resource_type="system_settings",
+                    resource_id="system",
+                    before=before,
+                    after=after,
+                    extra={"changed_fields": sorted(set(changed_fields))},
+                )
+    except ConfigurationSecretError as exc:
+        return Response({"smtp_password": [str(exc)]}, status=400)
     return Response(SystemSettingsSerializer(setting).data)
+
+
+@extend_schema(request=SmtpTestEmailSerializer, responses=OpenApiTypes.OBJECT)
+@api_view(["POST"])
+@permission_classes([CanManageSystemSettings])
+def smtp_test_email(request):
+    serializer = SmtpTestEmailSerializer(data=request.data)
+    serializer.is_valid(raise_exception=True)
+    setting = get_system_settings()
+    try:
+        send_smtp_test_email(setting, serializer.validated_data["recipient"])
+    except SmtpConfigurationError as exc:
+        write_audit_log(
+            request,
+            action="smtp_test",
+            resource_type="system_settings",
+            resource_id="smtp",
+            extra={"success": False, "code": exc.code},
+        )
+        status = 400 if exc.code in {
+            "smtp_disabled",
+            "smtp_incomplete",
+            "password_missing",
+            "secret_unavailable",
+        } else 502
+        return Response({"detail": exc.detail, "code": exc.code}, status=status)
+    except Exception:
+        write_audit_log(
+            request,
+            action="smtp_test",
+            resource_type="system_settings",
+            resource_id="smtp",
+            extra={"success": False, "code": "delivery_failed"},
+        )
+        return Response(
+            {
+                "detail": "无法发送测试邮件，请检查 SMTP 配置",
+                "code": "delivery_failed",
+            },
+            status=502,
+        )
+    write_audit_log(
+        request,
+        action="smtp_test",
+        resource_type="system_settings",
+        resource_id="smtp",
+        extra={"success": True},
+    )
+    return Response({"ok": True, "detail": "测试邮件已发送"})
 
 
 @extend_schema(responses=OpenApiTypes.BINARY)

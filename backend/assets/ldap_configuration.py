@@ -13,10 +13,9 @@ import os
 import re
 from typing import Any
 
-from cryptography.fernet import Fernet, InvalidToken
-from django.conf import settings
 from django.db import transaction
 
+from .configuration_secrets import ConfigurationSecretError, decrypt_secret, encrypt_secret
 from .models import DirectoryIdentity, DirectoryServiceConfiguration
 
 
@@ -53,10 +52,6 @@ DEFAULT_DIRECTORY_VALUES = {
 }
 DIRECTORY_PROVIDER = "ldap"
 AD_STABLE_ID_ATTRIBUTE = "objectGUID"
-
-
-class ConfigurationSecretError(Exception):
-    """Raised when the deployment key cannot decrypt a stored secret."""
 
 
 class ConfigurationIdentityError(Exception):
@@ -108,10 +103,6 @@ class EffectiveLDAPConfiguration:
         return tuple(values)
 
 
-def _as_text(value: Any) -> str:
-    return "" if value is None else str(value).strip()
-
-
 def _as_int(value: Any) -> int | None:
     if value in (None, ""):
         return None
@@ -121,31 +112,16 @@ def _as_int(value: Any) -> int | None:
         return None
 
 
-def _fernet() -> Fernet:
-    key = _as_text(getattr(settings, "INFRIX_CONFIG_ENCRYPTION_KEY", ""))
-    if not key:
-        raise ConfigurationSecretError("configuration encryption key is not configured")
-    try:
-        return Fernet(key.encode("ascii"))
-    except (ValueError, TypeError) as exc:
-        raise ConfigurationSecretError("configuration encryption key is invalid") from exc
-
-
 def encrypt_bind_password(password: str) -> str:
-    if not password:
-        return ""
-    try:
-        return _fernet().encrypt(password.encode("utf-8")).decode("ascii")
-    except UnicodeEncodeError as exc:
-        raise ConfigurationSecretError("bind password is not valid UTF-8") from exc
+    return encrypt_secret(password, field_name="bind password")
 
 
 def _decrypt_bind_password(token: str) -> tuple[str, bool, str | None]:
     if not token:
         return "", False, None
     try:
-        value = _fernet().decrypt(token.encode("ascii")).decode("utf-8")
-    except (ConfigurationSecretError, InvalidToken, UnicodeDecodeError, UnicodeEncodeError):
+        value = decrypt_secret(token)
+    except ConfigurationSecretError:
         return "", True, "secret_unavailable"
     return value, True, None
 

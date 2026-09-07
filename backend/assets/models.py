@@ -444,6 +444,30 @@ DEFAULT_ASSET_STATUS_CHOICES = tuple(
 )
 
 
+SYSTEM_LOCALE_CHOICES = (
+    ("zh-CN", "简体中文"),
+    ("en-US", "English"),
+)
+SYSTEM_DATE_FORMAT_CHOICES = (
+    ("YYYY-MM-DD", "YYYY-MM-DD"),
+    ("DD/MM/YYYY", "DD/MM/YYYY"),
+    ("MM/DD/YYYY", "MM/DD/YYYY"),
+)
+SYSTEM_CURRENCY_CHOICES = (
+    ("CNY", "CNY (¥)"),
+    ("USD", "USD ($)"),
+    ("EUR", "EUR (€)"),
+    ("GBP", "GBP (£)"),
+    ("JPY", "JPY (¥)"),
+    ("HKD", "HKD (HK$)"),
+)
+SMTP_SECURITY_MODE_CHOICES = (
+    ("none", "None"),
+    ("starttls", "STARTTLS"),
+    ("ssl", "SSL/TLS"),
+)
+
+
 class SystemSetting(Timestamped):
     """The singleton row for runtime-adjustable application defaults.
 
@@ -469,6 +493,47 @@ class SystemSetting(Timestamped):
         choices=DEFAULT_ASSET_STATUS_CHOICES,
         default="in_stock",
     )
+    default_locale = models.CharField(
+        max_length=10,
+        choices=SYSTEM_LOCALE_CHOICES,
+        default="zh-CN",
+    )
+    timezone = models.CharField(max_length=64, default="Asia/Shanghai")
+    date_format = models.CharField(
+        max_length=20,
+        choices=SYSTEM_DATE_FORMAT_CHOICES,
+        default="YYYY-MM-DD",
+    )
+    currency = models.CharField(
+        max_length=3,
+        choices=SYSTEM_CURRENCY_CHOICES,
+        default="CNY",
+    )
+    password_min_length = models.PositiveSmallIntegerField(default=8)
+    password_expiry_days = models.PositiveIntegerField(default=0)
+    login_max_attempts = models.PositiveSmallIntegerField(default=5)
+    login_window_seconds = models.PositiveIntegerField(default=900)
+    login_lock_seconds = models.PositiveIntegerField(default=900)
+    smtp_enabled = models.BooleanField(default=False)
+    smtp_host = models.CharField(max_length=255, blank=True, default="")
+    smtp_port = models.PositiveIntegerField(default=587)
+    smtp_security_mode = models.CharField(
+        max_length=10,
+        choices=SMTP_SECURITY_MODE_CHOICES,
+        default="starttls",
+    )
+    smtp_username = models.CharField(max_length=255, blank=True, default="")
+    smtp_password_encrypted = models.TextField(blank=True, default="")
+    smtp_from_email = models.EmailField(max_length=254, blank=True, default="")
+    smtp_from_name = models.CharField(max_length=150, blank=True, default="")
+    smtp_timeout = models.PositiveSmallIntegerField(default=10)
+    notify_maintenance = models.BooleanField(default=True)
+    maintenance_expiry_days = models.PositiveSmallIntegerField(default=30)
+    notify_license_expiry = models.BooleanField(default=True)
+    license_expiry_days = models.PositiveSmallIntegerField(default=30)
+    notify_open_faults = models.BooleanField(default=True)
+    notify_overdue_inventory = models.BooleanField(default=True)
+    notify_low_spare_stock = models.BooleanField(default=True)
 
     def __str__(self):
         return "系统设置"

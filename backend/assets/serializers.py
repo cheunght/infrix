@@ -5,7 +5,6 @@ from django.db.models import Count, Q, Sum
 from rest_framework import serializers
 from rest_framework.exceptions import ValidationError as DRFValidationError
 from django.contrib.auth.models import Group, User
-from django.contrib.auth.password_validation import validate_password
 from django.utils import timezone
 from drf_spectacular.utils import extend_schema_field
 from datetime import date
@@ -13,6 +12,7 @@ from decimal import Decimal, InvalidOperation
 from typing import Any
 import json
 import re
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 from .models import AuditLog, Asset, AssetCustomValue, AssetNetworkAddress, AssetResponsibilityEvent, AssetTag, CustomField, CustomFieldOption, DataCenter, Department, DeviceType, DirectoryIdentity, FaultEvent, InventoryItem, InventoryTask, MaintenanceContract, Manufacturer, ProcurementRecord, Rack, RackUnitAllocation, RepairPartUsage, RepairRecord, ServerRoom, SoftwareLicense, SparePart, SparePartCategory, SpareStock, SpareStockTransaction, SystemSetting, Tag, UserSecurityProfile
 from .depreciation import DepreciationValidationError, calculate_asset_depreciation, validate_depreciation_configuration
 from .enum_contracts import (
@@ -38,7 +38,12 @@ from .roles import ROLE_AUDITOR, ROLE_DEFINITIONS, ROLE_NAME_TO_CODE, preset_gro
 from .ldap_auth import AUTH_SOURCE_LDAP, AUTH_SOURCE_LOCAL
 from .ldap_configuration import DIRECTORY_TYPE_CHOICES, SECURITY_MODE_CHOICES
 from .system_reset import SYSTEM_RESET_CONFIRMATION
-from .system_settings import get_system_settings, system_setting_definitions
+from .system_settings import (
+    SETTING_METADATA,
+    get_system_settings,
+    system_setting_definitions,
+    validate_local_password,
+)
 
 
 class GroupSerializer(serializers.ModelSerializer):
@@ -64,8 +69,6 @@ class UserSerializer(serializers.ModelSerializer):
     password = serializers.CharField(
         write_only=True,
         required=False,
-        min_length=8,
-        error_messages={"min_length": "密码至少需要 8 位"},
     )
     groups = serializers.PrimaryKeyRelatedField(many=True, read_only=True)
     role_code = serializers.ChoiceField(
@@ -129,12 +132,13 @@ class UserSerializer(serializers.ModelSerializer):
         if self.instance is not None and "password" in attrs:
             raise serializers.ValidationError({"password": "请使用独立的重置密码操作"})
         if self.instance is None and not attrs.get("password"):
-            raise serializers.ValidationError({"password": "新用户必须设置至少 8 位密码"})
+            minimum = get_system_settings().password_min_length
+            raise serializers.ValidationError({"password": f"新用户必须设置至少 {minimum} 位密码"})
         password = attrs.get("password")
         if password:
             password_user = self.instance or User(username=attrs.get("username", ""))
             try:
-                validate_password(password, user=password_user)
+                validate_local_password(password, user=password_user)
             except DjangoValidationError as exc:
                 raise serializers.ValidationError({"password": list(exc.messages)})
         return attrs
@@ -182,14 +186,14 @@ class CurrentUserProfileSerializer(serializers.Serializer):
 
 
 class AdminPasswordResetSerializer(serializers.Serializer):
-    new_password = serializers.CharField(write_only=True, min_length=8, trim_whitespace=False)
+    new_password = serializers.CharField(write_only=True, trim_whitespace=False)
     confirm_password = serializers.CharField(write_only=True, trim_whitespace=False)
 
     def validate(self, attrs):
         if attrs["new_password"] != attrs["confirm_password"]:
             raise serializers.ValidationError({"confirm_password": "两次输入的密码不一致"})
         try:
-            validate_password(attrs["new_password"], user=self.context.get("user"))
+            validate_local_password(attrs["new_password"], user=self.context.get("user"))
         except DjangoValidationError as exc:
             raise serializers.ValidationError({"new_password": list(exc.messages)})
         return attrs
@@ -215,14 +219,46 @@ class SystemSettingsSerializer(serializers.ModelSerializer):
     """Serialize the fixed, editable system-settings contract."""
 
     definitions = serializers.SerializerMethodField()
-    EDITABLE_FIELDS = frozenset({"default_page_size", "default_asset_status"})
+    smtp_password = serializers.CharField(
+        write_only=True,
+        required=False,
+        allow_blank=True,
+        trim_whitespace=False,
+    )
+    smtp_password_configured = serializers.SerializerMethodField()
+    EDITABLE_FIELDS = frozenset(SETTING_METADATA) | {"smtp_password"}
+    password_min_length = serializers.IntegerField(required=False, min_value=8, max_value=128)
+    password_expiry_days = serializers.IntegerField(required=False, min_value=0, max_value=3650)
+    login_max_attempts = serializers.IntegerField(required=False, min_value=1, max_value=100)
+    login_window_seconds = serializers.IntegerField(required=False, min_value=1, max_value=86400)
+    login_lock_seconds = serializers.IntegerField(required=False, min_value=1, max_value=86400)
+    smtp_port = serializers.IntegerField(required=False, min_value=1, max_value=65535)
+    smtp_timeout = serializers.IntegerField(required=False, min_value=1, max_value=120)
+    maintenance_expiry_days = serializers.IntegerField(required=False, min_value=0, max_value=3650)
+    license_expiry_days = serializers.IntegerField(required=False, min_value=0, max_value=3650)
 
     class Meta:
         model = SystemSetting
-        fields = ["default_page_size", "default_asset_status", "definitions"]
+        fields = [
+            *SETTING_METADATA,
+            "smtp_password",
+            "smtp_password_configured",
+            "definitions",
+        ]
 
     def get_definitions(self, _obj):
         return system_setting_definitions()
+
+    def get_smtp_password_configured(self, obj):
+        return bool(obj.smtp_password_encrypted)
+
+    def validate_timezone(self, value):
+        candidate = value.strip()
+        try:
+            ZoneInfo(candidate)
+        except (ZoneInfoNotFoundError, ValueError):
+            raise serializers.ValidationError("请输入有效的 IANA 时区名称")
+        return candidate
 
     def validate(self, attrs):
         unknown = sorted(set(self.initial_data.keys()) - self.EDITABLE_FIELDS)
@@ -230,7 +266,49 @@ class SystemSettingsSerializer(serializers.ModelSerializer):
             raise serializers.ValidationError(
                 {key: "该系统设置不支持通过当前接口修改" for key in unknown}
             )
+
+        header_errors = {
+            key: "该字段不能包含换行符"
+            for key in ("smtp_host", "smtp_username", "smtp_from_email", "smtp_from_name")
+            if key in attrs and any(char in str(attrs[key]) for char in ("\r", "\n"))
+        }
+        if header_errors:
+            raise serializers.ValidationError(header_errors)
+        if "smtp_host" in attrs:
+            host = str(attrs["smtp_host"] or "").strip()
+            if host and ("://" in host or any(char.isspace() for char in host)):
+                raise serializers.ValidationError(
+                    {"smtp_host": "请输入主机名或 IP，不要包含协议前缀或空格"}
+                )
+
+        current = self.instance
+        values = {
+            key: getattr(current, key)
+            for key in SETTING_METADATA
+            if current is not None
+        }
+        values.update({key: value for key, value in attrs.items() if key in SETTING_METADATA})
+        password_value = attrs.get("smtp_password", "")
+        password_configured = bool(password_value) or bool(
+            current is not None and current.smtp_password_encrypted
+        )
+        if values.get("smtp_enabled"):
+            errors = {}
+            if not str(values.get("smtp_host") or "").strip():
+                errors["smtp_host"] = "启用 SMTP 前必须填写服务端"
+            if not str(values.get("smtp_from_email") or "").strip():
+                errors["smtp_from_email"] = "启用 SMTP 前必须填写发件人邮箱"
+            if str(values.get("smtp_username") or "").strip() and not password_configured:
+                errors["smtp_password"] = "已填写 SMTP 用户名，请配置密码"
+            if password_value and not str(values.get("smtp_username") or "").strip():
+                errors["smtp_username"] = "配置 SMTP 密码前必须填写用户名"
+            if errors:
+                raise serializers.ValidationError(errors)
         return attrs
+
+
+class SmtpTestEmailSerializer(serializers.Serializer):
+    recipient = serializers.EmailField(required=True, max_length=254)
 
 
 class LdapConfigurationUpdateSerializer(serializers.Serializer):

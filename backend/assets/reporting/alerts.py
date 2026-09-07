@@ -2,6 +2,7 @@
 
 from collections import Counter
 from datetime import timedelta
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from django.db.models import Count, F, Q, Sum
 from django.db.models.functions import Coalesce
@@ -14,11 +15,22 @@ from ..models import (
     SoftwareLicense,
     SparePart,
 )
+from ..system_settings import get_system_settings
 
 
 ALERT_EXPIRY_DAYS = 30
 ALERT_LIMIT = 100
 _LEVEL_ORDER = {"critical": 0, "warning": 1, "notice": 2}
+
+
+def _system_now(setting):
+    """Use the configured system timezone for alert date boundaries."""
+
+    try:
+        timezone_name = str(getattr(setting, "timezone", "") or "").strip()
+        return timezone.now().astimezone(ZoneInfo(timezone_name))
+    except (ZoneInfoNotFoundError, ValueError, TypeError):
+        return timezone.localtime()
 
 
 def _alert_sort_key(alert):
@@ -35,8 +47,8 @@ def _due_alert_state(expiry_date, today):
     return "expiring", "warning"
 
 
-def _maintenance_alerts(today):
-    expiry_limit = today + timedelta(days=ALERT_EXPIRY_DAYS)
+def _maintenance_alerts(today, expiry_days=ALERT_EXPIRY_DAYS):
+    expiry_limit = today + timedelta(days=max(0, int(expiry_days)))
     alerts = []
     contracts = (
         MaintenanceContract.objects.select_related("asset")
@@ -64,13 +76,13 @@ def _maintenance_alerts(today):
     return alerts
 
 
-def _license_alerts(today):
-    expiry_limit = today + timedelta(days=ALERT_EXPIRY_DAYS)
+def _license_alerts(today, expiry_days=ALERT_EXPIRY_DAYS, include_expiry=True):
+    expiry_limit = today + timedelta(days=max(0, int(expiry_days)))
     alerts = []
-    licenses = SoftwareLicense.objects.filter(
-        Q(expiry_date__isnull=False, expiry_date__lte=expiry_limit)
-        | Q(used_count__gt=F("authorized_count"))
-    ).order_by("expiry_date", "name", "id")
+    license_filter = Q(used_count__gt=F("authorized_count"))
+    if include_expiry:
+        license_filter |= Q(expiry_date__isnull=False, expiry_date__lte=expiry_limit)
+    licenses = SoftwareLicense.objects.filter(license_filter).order_by("expiry_date", "name", "id")
     for license_row in licenses:
         if license_row.used_count > license_row.authorized_count:
             alerts.append(
@@ -87,7 +99,7 @@ def _license_alerts(today):
                     "sort_key": "0000-00-00",
                 }
             )
-        if license_row.expiry_date and license_row.expiry_date <= expiry_limit:
+        if include_expiry and license_row.expiry_date and license_row.expiry_date <= expiry_limit:
             state, level = _due_alert_state(license_row.expiry_date, today)
             alerts.append(
                 {
@@ -143,6 +155,7 @@ def _inventory_alerts(now):
         .order_by("end_at", "id")
     )
     for task in tasks:
+        task_end_date = timezone.localtime(task.end_at, now.tzinfo).date()
         alerts.append(
             {
                 "id": f"inventory:{task.id}",
@@ -153,7 +166,7 @@ def _inventory_alerts(now):
                 "name": task.name,
                 "reference": task.name,
                 "due_at": task.end_at.isoformat(),
-                "days_overdue": max((now.date() - task.end_at.date()).days, 0),
+                "days_overdue": max((now.date() - task_end_date).days, 0),
                 "pending_count": task.pending_count,
                 "sort_key": task.end_at.isoformat(),
             }
@@ -195,6 +208,7 @@ def build_alerts_payload(
     include_faults=True,
     include_inventory=True,
     include_spares=True,
+    setting=None,
 ):
     """Return active alerts while keeping source records unchanged.
 
@@ -202,18 +216,25 @@ def build_alerts_payload(
     that can see the dashboard but not a particular module from receiving
     identifiers from that module.
     """
-    today = timezone.localdate()
-    now = timezone.now()
+    setting = setting or get_system_settings()
+    now = _system_now(setting)
+    today = now.date()
     alerts = []
-    if include_assets:
-        alerts.extend(_maintenance_alerts(today))
+    if include_assets and setting.notify_maintenance:
+        alerts.extend(_maintenance_alerts(today, setting.maintenance_expiry_days))
     if include_licenses:
-        alerts.extend(_license_alerts(today))
-    if include_faults:
+        alerts.extend(
+            _license_alerts(
+                today,
+                setting.license_expiry_days,
+                include_expiry=setting.notify_license_expiry,
+            )
+        )
+    if include_faults and setting.notify_open_faults:
         alerts.extend(_fault_alerts())
-    if include_inventory:
+    if include_inventory and setting.notify_overdue_inventory:
         alerts.extend(_inventory_alerts(now))
-    if include_spares:
+    if include_spares and setting.notify_low_spare_stock:
         alerts.extend(_spare_alerts())
 
     alerts.sort(key=_alert_sort_key)

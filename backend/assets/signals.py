@@ -5,6 +5,7 @@ from django.dispatch import receiver
 
 from .models import UserSecurityProfile
 from .roles import ROLE_NAME_TO_CODE
+from .system_settings import get_system_settings
 
 
 @receiver(pre_save, sender=Group)
@@ -39,7 +40,10 @@ def detect_user_password_change(sender, instance, **kwargs):
 def ensure_user_security_profile(sender, instance, created, **kwargs):
     profile, profile_created = UserSecurityProfile.objects.get_or_create(
         user=instance,
-        defaults={"must_change_password": bool(created)},
+        defaults={
+            "must_change_password": bool(created),
+            "locale": get_system_settings().default_locale,
+        },
     )
     if not profile_created and getattr(instance, "_password_changed", False):
         profile.must_change_password = True
