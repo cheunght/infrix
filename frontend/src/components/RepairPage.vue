@@ -13,7 +13,7 @@ import TableIconButton from "./TableIconButton.vue";
 import { statusTone } from "../status";
 import type { FaultEvent } from "../types";
 import type { RepairContext } from "../page-context";
-import { formatSystemDateTime } from "../system-settings";
+import { currencySymbol, formatSystemDateTime } from "../system-settings";
 
 const props = defineProps<{ context: RepairContext }>();
 const { t } = useI18n();
@@ -59,7 +59,7 @@ function formatRepairDateTime(value: string | null | undefined): string {
 
 function formatRepairCost(fault: FaultEvent): string {
   const cost = fault.repair?.cost;
-  return cost || t("common.notAvailable");
+  return cost ? `${currencySymbol()}${cost}` : t("common.notAvailable");
 }
 
 function repairStage(fault: FaultEvent) {
