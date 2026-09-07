@@ -3185,8 +3185,8 @@ def auth_ldap_diagnostics(request):
             else LDAPDirectoryClient().diagnose()
         )
         payload = _safe_ldap_diagnostic_payload(result)
-    except Exception:
-        logger.exception("LDAP diagnostic endpoint failed")
+    except Exception as exc:
+        logger.error("LDAP diagnostic endpoint failed (%s)", type(exc).__name__)
         payload = _safe_ldap_diagnostic_payload({
             "success": False,
             "stage": "configuration",

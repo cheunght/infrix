@@ -458,8 +458,12 @@ class LDAPDirectoryClient:
                 "search": "search_error",
             }
             return self._diagnostic_failure(stage, checks, code_by_stage.get(stage, "unexpected_error"))
-        except Exception:
-            logger.exception("LDAP diagnostic failed at stage %s", stage)
+        except Exception as exc:
+            logger.error(
+                "LDAP diagnostic failed at stage %s (%s)",
+                stage,
+                type(exc).__name__,
+            )
             return self._diagnostic_failure(stage, checks, "unexpected_error")
         finally:
             if connection is not None:
