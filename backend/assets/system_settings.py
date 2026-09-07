@@ -248,6 +248,15 @@ def system_now(setting=None):
 def system_localdate(setting=None):
     """Return today's date according to the configured application timezone."""
 
+    configured_timezone = system_timezone(setting)
+    current_timezone = django_timezone.get_current_timezone()
+    # Keep Django's established localdate path when the application setting
+    # and deployment timezone agree. Besides avoiding needless conversion,
+    # this preserves existing callers' timezone.localdate observation and
+    # keeps their behavior unchanged. A web-configured timezone still takes
+    # precedence whenever it differs from the deployment timezone.
+    if configured_timezone == current_timezone:
+        return django_timezone.localdate()
     return system_now(setting).date()
 
 
