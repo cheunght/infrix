@@ -33,6 +33,7 @@ import { ElMessageBox } from "element-plus/es/components/message-box/index.mjs";
 import type { FormInstance, FormRules } from "element-plus";
 import type { InventoryItem } from "../types";
 import type { InventoryContext } from "../page-context";
+import { systemDatePickerFormat } from "../system-settings";
 import { useInventory } from "../composables/useInventory";
 import { businessOptionLabel, INVENTORY_ITEM_STATUS_OPTIONS } from "../business-enums";
 
@@ -816,8 +817,8 @@ onMounted(async () => {
         </section>
         <div class="horizontal-form__rows">
           <el-form-item :label="t('inventory.inspector')" :error="taskFormErrors.inspector"><el-select v-model="taskForm.inspector" clearable :loading="auxLoading" :disabled="Boolean(taskAuxError)" :placeholder="t('inventory.defaultCurrentUser')"><el-option v-for="person in inspectors" :key="person.id" :label="person.display_name" :value="String(person.id)" /></el-select></el-form-item>
-          <el-form-item :label="t('inventory.startTime')" prop="start_at" :error="taskFormErrors.start_at"><el-date-picker v-model="taskForm.start_at" type="datetime" value-format="YYYY-MM-DDTHH:mm:ss" /></el-form-item>
-          <el-form-item :label="t('inventory.endTime')" prop="end_at" :error="taskFormErrors.end_at"><el-date-picker v-model="taskForm.end_at" type="datetime" value-format="YYYY-MM-DDTHH:mm:ss" /></el-form-item>
+          <el-form-item :label="t('inventory.startTime')" prop="start_at" :error="taskFormErrors.start_at"><el-date-picker v-model="taskForm.start_at" type="datetime" :format="systemDatePickerFormat(true, true)" value-format="YYYY-MM-DDTHH:mm:ss" /></el-form-item>
+          <el-form-item :label="t('inventory.endTime')" prop="end_at" :error="taskFormErrors.end_at"><el-date-picker v-model="taskForm.end_at" type="datetime" :format="systemDatePickerFormat(true, true)" value-format="YYYY-MM-DDTHH:mm:ss" /></el-form-item>
           <el-form-item :label="t('common.notes')" :error="taskFormErrors.notes"><el-input v-model="taskForm.notes" type="textarea" :rows="3" /></el-form-item>
         </div>
       </el-form>

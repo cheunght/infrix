@@ -2,6 +2,7 @@
 import { computed } from "vue";
 import { useI18n } from "vue-i18n";
 import type { CustomFieldSchema } from "../../types";
+import { systemDatePickerFormat } from "../../system-settings";
 
 const props = defineProps<{
   field: CustomFieldSchema;
@@ -48,6 +49,7 @@ function update(value: unknown) {
     v-else-if="field.field_type === 'date'"
     :model-value="modelValue || null"
     type="date"
+    :format="systemDatePickerFormat()"
     value-format="YYYY-MM-DD"
     :placeholder="t('common.selectDate')"
     clearable

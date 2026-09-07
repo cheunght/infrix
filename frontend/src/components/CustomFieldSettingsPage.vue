@@ -13,6 +13,7 @@ import PagedTable from "./PagedTable.vue";
 import FieldHelp from "./FieldHelp.vue";
 import FormDialogShell from "./FormDialogShell.vue";
 import TableIconButton from "./TableIconButton.vue";
+import { systemDatePickerFormat } from "../system-settings";
 
 const props = defineProps<{ context: CustomFieldContext }>();
 const { t } = useI18n();
@@ -407,8 +408,8 @@ async function submitCustomFieldOption() {
               <el-input-number v-model="precisionValue" :min="0" :max="6" :step="1" :precision="0" :value-on-clear="null" :placeholder="t('customField.precision')" :aria-label="t('customField.precision')" />
             </div>
             <div v-else-if="c.customFieldForm.field_type === 'date'" class="custom-field-validation-grid">
-              <el-date-picker v-model="validationConfig.min_date" type="date" value-format="YYYY-MM-DD" :placeholder="t('customField.earliestDate')" />
-              <el-date-picker v-model="validationConfig.max_date" type="date" value-format="YYYY-MM-DD" :placeholder="t('customField.latestDate')" />
+              <el-date-picker v-model="validationConfig.min_date" type="date" :format="systemDatePickerFormat()" value-format="YYYY-MM-DD" :placeholder="t('customField.earliestDate')" />
+              <el-date-picker v-model="validationConfig.max_date" type="date" :format="systemDatePickerFormat()" value-format="YYYY-MM-DD" :placeholder="t('customField.latestDate')" />
             </div>
             <div v-else class="custom-field-validation-grid">
               <el-input-number v-model="minItemsValue" :min="0" :step="1" :precision="0" :value-on-clear="null" :placeholder="t('customField.minItems')" :aria-label="t('customField.minItems')" />

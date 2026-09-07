@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, nextTick, ref, watch } from "vue";
 import { useI18n } from "vue-i18n";
-import { formatSystemDateTime } from "../system-settings";
+import { formatSystemDateTime, systemDatePickerFormat } from "../system-settings";
 import type { FormInstance, FormRules } from "element-plus";
 import { Delete, Download, Edit, Operation, Switch, Tickets, TopRight, Upload } from "@element-plus/icons-vue";
 import PagedTable from "./PagedTable.vue";
@@ -456,7 +456,7 @@ watch(showSpareOperationModal, (open, wasOpen) => { if (!open && wasOpen) refres
           <el-option :label="t('spare.allStockTypes')" value="" />
           <el-option v-for="option in STOCK_OPERATION_OPTIONS" :key="option.value" :label="spareOperationLabel(option.value)" :value="option.value" />
         </el-select>
-        <el-date-picker v-model="transactionDateRange" class="spare-transaction-date-filter" type="daterange" value-format="YYYY-MM-DD" :start-placeholder="t('spare.startDate')" :end-placeholder="t('spare.endDate')" :range-separator="t('spare.to')" clearable />
+        <el-date-picker v-model="transactionDateRange" class="spare-transaction-date-filter" type="daterange" :format="systemDatePickerFormat()" value-format="YYYY-MM-DD" :start-placeholder="t('spare.startDate')" :end-placeholder="t('spare.endDate')" :range-separator="t('spare.to')" clearable />
         <el-button v-if="spareTransactionFilters.operation_type || spareTransactionFilters.start || spareTransactionFilters.end" link type="primary" @click="resetTransactionFilters">{{ t('common.reset') }}</el-button>
       </div>
       <ResourceState :loading="transactionLoading" :error="transactionError" :empty="transactionEmpty" :empty-text="t('spare.noTransactions')" @retry="retryTransactions">

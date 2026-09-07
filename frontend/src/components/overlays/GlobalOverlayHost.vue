@@ -22,7 +22,7 @@ import type { Asset, AssetDetail, Page } from "../../types";
 import type { AssetFormContext, PageContext, RequestFn } from "../../page-context";
 import { statusTone } from "../../status";
 import { type Locale } from "../../i18n";
-import { formatSystemDateTime, systemSettingsState } from "../../system-settings";
+import { formatSystemDateTime, systemDatePickerFormat, systemSettingsState } from "../../system-settings";
 import { useI18n } from "vue-i18n";
 import {
   businessOptionLabel,
@@ -968,7 +968,7 @@ function importRowErrorText(row: { errors: Array<{ label: string; message: strin
             <el-input v-model="licenseForm.license_type" maxlength="80" :placeholder="t('overlay.licenseTypePlaceholder')" :validate-event="false" />
           </el-form-item>
           <el-form-item :label="t('license.expiryDate')" prop="expiry_date" :error="licenseFormErrors.expiry_date">
-            <el-date-picker v-model="licenseForm.expiry_date" type="date" value-format="YYYY-MM-DD" :validate-event="false" />
+            <el-date-picker v-model="licenseForm.expiry_date" type="date" :format="systemDatePickerFormat()" value-format="YYYY-MM-DD" :validate-event="false" />
             <FieldHelp :text="expiryDateHelp" />
           </el-form-item>
           <el-form-item :label="t('common.notes')" prop="notes" :error="licenseFormErrors.notes">
@@ -1034,7 +1034,7 @@ function importRowErrorText(row: { errors: Array<{ label: string; message: strin
             :placeholder="t('assetSelect.placeholder')"
           />
         </el-form-item>
-        <el-form-item :label="t('repair.occurredAt')" prop="occurred_at" required :validate-event="false" :error="faultFormErrors.occurred_at"><el-date-picker v-model="faultForm.occurred_at" type="datetime" value-format="YYYY-MM-DDTHH:mm" /></el-form-item>
+        <el-form-item :label="t('repair.occurredAt')" prop="occurred_at" required :validate-event="false" :error="faultFormErrors.occurred_at"><el-date-picker v-model="faultForm.occurred_at" type="datetime" :format="systemDatePickerFormat(true)" value-format="YYYY-MM-DDTHH:mm" /></el-form-item>
         <el-form-item :label="t('overlay.faultReason')" :error="faultFormErrors.reason"><el-input v-model="faultForm.reason" :placeholder="t('overlay.faultReasonPlaceholder')" /></el-form-item>
         <el-form-item :label="t('overlay.faultDescription')" :error="faultFormErrors.description"><el-input v-model="faultForm.description" type="textarea" :rows="4" :placeholder="t('overlay.faultDescriptionPlaceholder')" /></el-form-item>
       </div>
@@ -1142,9 +1142,9 @@ function importRowErrorText(row: { errors: Array<{ label: string; message: strin
         <el-empty v-else-if="!repairPartUsageError" :description="t('repair.noPartUsage')" :image-size="56" />
       </section>
       <el-form-item :label="t('overlay.repairProvider')" :error="repairFormErrors.provider"><el-input v-model="repairForm.provider" :readonly="repairReadOnly" :placeholder="t('overlay.repairProviderPlaceholder')" /></el-form-item>
-      <el-form-item :label="t('overlay.repairStartedAt')" prop="started_at" :error="repairFormErrors.started_at"><el-date-picker v-model="repairForm.started_at" type="datetime" value-format="YYYY-MM-DDTHH:mm" :disabled="repairReadOnly" /></el-form-item>
+      <el-form-item :label="t('overlay.repairStartedAt')" prop="started_at" :error="repairFormErrors.started_at"><el-date-picker v-model="repairForm.started_at" type="datetime" :format="systemDatePickerFormat(true)" value-format="YYYY-MM-DDTHH:mm" :disabled="repairReadOnly" /></el-form-item>
       <el-form-item :label="t('overlay.repairFinishedAt')" prop="finished_at" :error="repairFormErrors.finished_at">
-        <el-date-picker v-model="repairForm.finished_at" type="datetime" value-format="YYYY-MM-DDTHH:mm" :disabled="repairReadOnly" />
+        <el-date-picker v-model="repairForm.finished_at" type="datetime" :format="systemDatePickerFormat(true)" value-format="YYYY-MM-DDTHH:mm" :disabled="repairReadOnly" />
         <FieldHelp v-if="!repairReadOnly" :text="repairFinishedAtHelp" />
       </el-form-item>
       <el-form-item :label="t('overlay.repairCost')" :error="repairFormErrors.cost">

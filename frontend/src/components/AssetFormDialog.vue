@@ -11,6 +11,7 @@ import FieldHelp from "./FieldHelp.vue";
 import FormDialogShell from "./FormDialogShell.vue";
 import MoneyInput from "./MoneyInput.vue";
 import { businessOptionLabel } from "../business-enums";
+import { systemDatePickerFormat } from "../system-settings";
 
 const props = defineProps<{ context: AssetFormContext }>();
 const { t } = useI18n();
@@ -508,7 +509,7 @@ watch(() => assetForm.value.purchase_date, () => {
       <section class="form-dialog__section">
         <h3 class="form-dialog__section-title">{{ t('assetForm.procurementMaintenanceDepreciation') }}</h3>
         <div class="horizontal-form__rows">
-        <el-form-item :label="t('asset.purchaseDate')" prop="purchase_date" :error="fieldError('purchase_date')"><el-date-picker v-model="assetForm.purchase_date" type="date" value-format="YYYY-MM-DD" /></el-form-item>
+        <el-form-item :label="t('asset.purchaseDate')" prop="purchase_date" :error="fieldError('purchase_date')"><el-date-picker v-model="assetForm.purchase_date" type="date" :format="systemDatePickerFormat()" value-format="YYYY-MM-DD" /></el-form-item>
         <el-form-item :label="t('asset.supplier')" :error="fieldError('supplier')"><el-input v-model="assetForm.supplier" /></el-form-item>
         <el-form-item :label="t('asset.purchaseOrder')" :error="fieldError('purchase_order_no')"><el-input v-model="assetForm.purchase_order_no" /></el-form-item>
         <el-form-item :label="t('asset.purchaseAmount')" prop="purchase_amount" :error="fieldError('purchase_amount')">
@@ -517,8 +518,8 @@ watch(() => assetForm.value.purchase_date, () => {
         <el-form-item :label="t('asset.procurementNotes')" :error="fieldError('procurement_notes')"><el-input v-model="assetForm.procurement_notes" type="textarea" :rows="2" /></el-form-item>
         <el-form-item :label="t('asset.maintenanceProvider')" :error="fieldError('maintenance_provider')"><el-input v-model="assetForm.maintenance_provider" /></el-form-item>
         <el-form-item :label="t('asset.maintenanceContract')" :error="fieldError('maintenance_contract_no')"><el-input v-model="assetForm.maintenance_contract_no" /></el-form-item>
-        <el-form-item :label="t('asset.maintenanceStart')" prop="maintenance_start_date" :error="fieldError('maintenance_start_date')"><el-date-picker v-model="assetForm.maintenance_start_date" type="date" value-format="YYYY-MM-DD" /></el-form-item>
-        <el-form-item :label="t('asset.maintenanceExpiry')" prop="maintenance_expiry_date" :error="fieldError('maintenance_expiry_date')"><el-date-picker v-model="assetForm.maintenance_expiry_date" type="date" value-format="YYYY-MM-DD" /></el-form-item>
+        <el-form-item :label="t('asset.maintenanceStart')" prop="maintenance_start_date" :error="fieldError('maintenance_start_date')"><el-date-picker v-model="assetForm.maintenance_start_date" type="date" :format="systemDatePickerFormat()" value-format="YYYY-MM-DD" /></el-form-item>
+        <el-form-item :label="t('asset.maintenanceExpiry')" prop="maintenance_expiry_date" :error="fieldError('maintenance_expiry_date')"><el-date-picker v-model="assetForm.maintenance_expiry_date" type="date" :format="systemDatePickerFormat()" value-format="YYYY-MM-DD" /></el-form-item>
         <el-form-item :label="t('asset.maintenanceNotes')" :error="fieldError('maintenance_notes')"><el-input v-model="assetForm.maintenance_notes" type="textarea" :rows="2" /></el-form-item>
         <el-form-item :label="t('common.notes')" :error="fieldError('notes')"><el-input v-model="assetForm.notes" type="textarea" :rows="2" /></el-form-item>
         </div>
@@ -535,7 +536,7 @@ watch(() => assetForm.value.purchase_date, () => {
           </div>
           <div v-if="assetForm.depreciation_enabled" class="horizontal-form__rows">
             <el-form-item :label="t('assetForm.depreciationStart')" prop="depreciation_start_date" :error="fieldError('depreciation_start_date')">
-              <el-date-picker v-model="assetForm.depreciation_start_date" type="date" value-format="YYYY-MM-DD" @change="markDepreciationStartTouched" />
+              <el-date-picker v-model="assetForm.depreciation_start_date" type="date" :format="systemDatePickerFormat()" value-format="YYYY-MM-DD" @change="markDepreciationStartTouched" />
             </el-form-item>
             <el-form-item :label="t('asset.depreciationYears')" prop="depreciation_years" :error="fieldError('depreciation_years')">
               <el-input-number v-model="assetForm.depreciation_years" :min="1" :step="1" :precision="0" :value-on-clear="null" :placeholder="t('assetForm.yearsPlaceholder')" :aria-label="t('asset.depreciationYears')">

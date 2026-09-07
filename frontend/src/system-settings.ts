@@ -81,6 +81,15 @@ export function formatSystemDateTime(
   return `${formatSystemDate(value)} ${parts.hour}:${parts.minute}${includeSeconds ? `:${parts.second}` : ""}`;
 }
 
+export function systemDatePickerFormat(
+  includeTime = false,
+  includeSeconds = false,
+): string {
+  const dateFormat = systemSettingsState.dateFormat;
+  if (!includeTime) return dateFormat;
+  return `${dateFormat} HH:mm${includeSeconds ? ":ss" : ""}`;
+}
+
 export function currencySymbol(value: CurrencyCode = systemSettingsState.currency): string {
   return currencySymbols[value] || currencySymbols.CNY;
 }
