@@ -137,6 +137,12 @@ header.page-header.page-header--compact {
   margin: 0;
 }
 
+.page-tabs__label {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-sm);
+}
+
 /* Keep search/filters and actions in two flexible rails.  The rails stay on a
    single line when the page has room and can wrap as complete groups when it
    does not. Element Plus remains responsible for control geometry. */

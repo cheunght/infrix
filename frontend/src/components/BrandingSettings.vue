@@ -6,6 +6,7 @@ import type { UploadFile } from "element-plus";
 import type { SettingsContext } from "../page-context";
 import { applyBranding, type Branding } from "../branding";
 import { normalizeApiError } from "../error-handling";
+import { isAbortError } from "../api";
 
 const props = defineProps<{ context: SettingsContext }>();
 const { t } = useI18n();
@@ -18,7 +19,11 @@ const files = ref<Partial<Record<string, File>>>({});
 const kinds = ["logo", "compact_logo", "favicon"] as const;
 const uploadKey = ref(0);
 let generation = 0;
-onBeforeUnmount(() => { generation += 1; });
+let loadController: AbortController | null = null;
+onBeforeUnmount(() => {
+  generation += 1;
+  loadController?.abort();
+});
 function accept(value: Branding) {
   saved.value = value;
   name.value = value.display_name;
@@ -27,15 +32,23 @@ function accept(value: Branding) {
 }
 async function load() {
   const current = ++generation;
+  loadController?.abort();
+  const controller = new AbortController();
+  loadController = controller;
   error.value = "";
   busy.value = true;
   try {
-    const value = await props.context.request<Branding>("/system/settings/branding/");
+    // Tab query navigation can restart page loads after this component mounts.
+    // Keep this read scoped to the component instead of the page load signal.
+    const value = await props.context.request<Branding>("/system/settings/branding/", { signal: controller.signal });
     if (current === generation) accept(value);
   } catch (cause) {
-    if (current === generation) error.value = normalizeApiError(cause).message;
+    if (current === generation && !isAbortError(cause)) error.value = normalizeApiError(cause).message;
   } finally {
-    if (current === generation) busy.value = false;
+    if (current === generation) {
+      busy.value = false;
+      loadController = null;
+    }
   }
 }
 function select(kind: string, file: UploadFile) {

@@ -120,6 +120,11 @@ body {
   --el-menu-active-color: var(--infrix-primary-blue);
   border-right: 0;
 }
+.ep-sidebar-menu .el-menu-item.is-active,
+.ep-sidebar-menu .el-menu-item.is-active:hover {
+  background-color: var(--el-color-primary-light-9);
+  color: var(--el-color-primary);
+}
 .ep-main {
   min-width: 0;
   padding: 0;

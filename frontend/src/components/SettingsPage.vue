@@ -151,19 +151,19 @@ const {
 
 const userTableRef = ref<{ clearSelection: () => void } | null>(null);
 const dictionaryTabs = computed<PageTabItem[]>(() => [
-  { label: t("settings.manufacturers"), value: "manufacturers" },
-  { label: t("settings.deviceTypes"), value: "device-types" },
-  { label: t("settings.spareCategories"), value: "spare-categories" },
+  { label: t("settings.manufacturersTab"), value: "manufacturers" },
+  { label: t("settings.deviceTypesTab"), value: "device-types" },
+  { label: t("settings.spareCategoriesTab"), value: "spare-categories" },
 ]);
 const organizationTabs = computed<PageTabItem[]>(() => [
   ...(can("organization.manage")
     ? [
-        { label: t("settings.users"), value: "users" },
-        { label: t("settings.roles"), value: "roles" },
+        { label: t("settings.usersTab"), value: "users" },
+        { label: t("settings.rolesTab"), value: "roles" },
         { label: t("settings.ldapOrganizationTab"), value: "ldap" },
       ]
     : []),
-  ...(can("settings.manage") ? [{ label: t("settings.departments"), value: "departments" }] : []),
+  ...(can("settings.manage") ? [{ label: t("settings.departmentsTab"), value: "departments" }] : []),
 ]);
 const canManageCurrentDictionary = computed(() => can("settings.manage"));
 const smtpTestRecipientError = computed(() => {
@@ -218,6 +218,15 @@ function systemSettingsCategoryStatus(category: SystemSettingsTab) {
   if (systemSettingsCategoryDirty.value[category]) return t("settings.categoryHasUnsavedChanges");
   return "";
 }
+const systemSettingsTabItems = computed<PageTabItem[]>(() => systemSettingsCategories.value.map((category) => ({
+  ...category,
+  status: systemSettingsCategoryErrors.value[category.value]
+    ? "error"
+    : systemSettingsCategoryDirty.value[category.value]
+      ? "warning"
+      : undefined,
+  statusLabel: systemSettingsCategoryStatus(category.value) || undefined,
+})));
 const dictionaryPrimaryLabel = computed(() => {
   if (dictionarySection.value === "manufacturers") return t("settings.addManufacturer");
   if (dictionarySection.value === "device-types" || dictionarySection.value === "spare-categories") return t("settings.addType");
@@ -439,7 +448,28 @@ function userDirectoryTooltip(user: { auth_source: string; directory_provider: s
     <CustomFieldSettingsPage v-if="settingsSection === 'custom-fields'" :context="props.context" />
     <TagSettingsPage v-else-if="settingsSection === 'tags'" :context="props.context" />
 
-    <PageContainer v-else-if="settingsSection === 'system' && can('settings.view')" content-class="settings-system-container">
+    <PageContainer v-else-if="settingsSection === 'system' && can('settings.view')">
+      <template #subnav>
+        <PageTabs v-model="systemSettingsTab" :items="systemSettingsTabItems" @update:model-value="changeSystemSettingsTab" />
+      </template>
+      <template #toolbar>
+        <PageToolbar>
+          <template #primary>
+            <div class="settings-system__actions">
+              <el-button :disabled="!systemSettingsDirty || systemSettingsSaving" @click="resetSystemSettingsForm">{{ t('settings.restoreUnsaved') }}</el-button>
+              <el-button
+                v-if="can('settings.manage')"
+                type="primary"
+                :loading="systemSettingsSaving"
+                :disabled="!systemSettingsDirty || systemSettingsSaving"
+                @click="saveSystemSettings"
+              >
+                {{ t('settings.saveSettings') }}
+              </el-button>
+            </div>
+          </template>
+        </PageToolbar>
+      </template>
       <PageContent surface>
         <div v-loading="systemSettingsLoading" class="settings-system">
           <el-alert
@@ -456,21 +486,6 @@ function userDirectoryTooltip(user: { auth_source: string; directory_provider: s
           </el-alert>
 
           <template v-else-if="systemSettings">
-            <div class="settings-system__heading">
-              <div class="settings-system__actions">
-                <el-button :disabled="!systemSettingsDirty || systemSettingsSaving" @click="resetSystemSettingsForm">{{ t('settings.restoreUnsaved') }}</el-button>
-                <el-button
-                  v-if="can('settings.manage')"
-                  type="primary"
-                  :loading="systemSettingsSaving"
-                  :disabled="!systemSettingsDirty || systemSettingsSaving"
-                  @click="saveSystemSettings"
-                >
-                  {{ t('settings.saveSettings') }}
-                </el-button>
-              </div>
-            </div>
-
             <el-alert
               v-if="!can('settings.manage')"
               class="settings-system__readonly-alert"
@@ -482,27 +497,7 @@ function userDirectoryTooltip(user: { auth_source: string; directory_provider: s
             />
 
             <el-form label-position="top" @submit.prevent="saveSystemSettings">
-              <el-tabs
-                v-model="systemSettingsTab"
-                class="settings-system__tabs"
-                tab-position="left"
-                @tab-change="changeSystemSettingsTab"
-              >
-                <el-tab-pane name="general">
-                  <template #label>
-                    <span class="settings-system__tab-label">
-                      <span>{{ t('settings.generalSection') }}</span>
-                      <span
-                        v-if="systemSettingsCategoryStatus('general')"
-                        class="settings-system__tab-status"
-                        :title="systemSettingsCategoryStatus('general')"
-                        :aria-label="systemSettingsCategoryStatus('general')"
-                      >
-                        <el-badge is-dot :type="systemSettingsCategoryErrors.general ? 'danger' : 'warning'" />
-                      </span>
-                    </span>
-                  </template>
-                  <section class="settings-system__section">
+              <section v-if="systemSettingsTab === 'general'" class="settings-system__section">
                 <div class="settings-system__form">
                   <el-form-item :label="systemSettingLabel('default_page_size')" :error="systemSettingsFormErrors.default_page_size">
                     <el-select v-model="systemSettingsForm.default_page_size" :disabled="!can('settings.manage') || systemSettingsSaving" class="settings-system__control">
@@ -518,23 +513,7 @@ function userDirectoryTooltip(user: { auth_source: string; directory_provider: s
                   </el-form-item>
                 </div>
                   </section>
-                </el-tab-pane>
-
-                <el-tab-pane name="localization">
-                  <template #label>
-                    <span class="settings-system__tab-label">
-                      <span>{{ t('settings.localizationSection') }}</span>
-                      <span
-                        v-if="systemSettingsCategoryStatus('localization')"
-                        class="settings-system__tab-status"
-                        :title="systemSettingsCategoryStatus('localization')"
-                        :aria-label="systemSettingsCategoryStatus('localization')"
-                      >
-                        <el-badge is-dot :type="systemSettingsCategoryErrors.localization ? 'danger' : 'warning'" />
-                      </span>
-                    </span>
-                  </template>
-                  <section class="settings-system__section">
+              <section v-else-if="systemSettingsTab === 'localization'" class="settings-system__section">
                 <div class="settings-system__form">
                   <el-form-item :label="systemSettingLabel('default_locale')" :error="systemSettingsFormErrors.default_locale">
                     <el-select v-model="systemSettingsForm.default_locale" :disabled="!can('settings.manage') || systemSettingsSaving" class="settings-system__control">
@@ -562,23 +541,7 @@ function userDirectoryTooltip(user: { auth_source: string; directory_provider: s
                   </el-form-item>
                 </div>
                   </section>
-                </el-tab-pane>
-
-                <el-tab-pane name="security">
-                  <template #label>
-                    <span class="settings-system__tab-label">
-                      <span>{{ t('settings.securitySection') }}</span>
-                      <span
-                        v-if="systemSettingsCategoryStatus('security')"
-                        class="settings-system__tab-status"
-                        :title="systemSettingsCategoryStatus('security')"
-                        :aria-label="systemSettingsCategoryStatus('security')"
-                      >
-                        <el-badge is-dot :type="systemSettingsCategoryErrors.security ? 'danger' : 'warning'" />
-                      </span>
-                    </span>
-                  </template>
-                  <section class="settings-system__section">
+              <section v-else-if="systemSettingsTab === 'security'" class="settings-system__section">
                 <div class="settings-system__form">
                   <el-form-item :label="systemSettingLabel('password_min_length')" :error="systemSettingsFormErrors.password_min_length">
                     <el-input-number v-model="systemSettingsForm.password_min_length" :min="8" :max="128" :step="1" :disabled="!can('settings.manage') || systemSettingsSaving" class="settings-system__control" />
@@ -602,23 +565,7 @@ function userDirectoryTooltip(user: { auth_source: string; directory_provider: s
                   </el-form-item>
                 </div>
                   </section>
-                </el-tab-pane>
-
-                <el-tab-pane name="smtp">
-                  <template #label>
-                    <span class="settings-system__tab-label">
-                      <span>{{ t('settings.smtpSection') }}</span>
-                      <span
-                        v-if="systemSettingsCategoryStatus('smtp')"
-                        class="settings-system__tab-status"
-                        :title="systemSettingsCategoryStatus('smtp')"
-                        :aria-label="systemSettingsCategoryStatus('smtp')"
-                      >
-                        <el-badge is-dot :type="systemSettingsCategoryErrors.smtp ? 'danger' : 'warning'" />
-                      </span>
-                    </span>
-                  </template>
-                  <section class="settings-system__section">
+              <section v-else-if="systemSettingsTab === 'smtp'" class="settings-system__section">
                 <div class="settings-system__form">
                   <el-form-item :label="systemSettingLabel('smtp_enabled')" :error="systemSettingsFormErrors.smtp_enabled">
                     <el-switch v-model="systemSettingsForm.smtp_enabled" :disabled="!can('settings.manage') || systemSettingsSaving" />
@@ -665,23 +612,7 @@ function userDirectoryTooltip(user: { auth_source: string; directory_provider: s
                   </el-form-item>
                 </div>
                   </section>
-                </el-tab-pane>
-
-                <el-tab-pane name="notifications">
-                  <template #label>
-                    <span class="settings-system__tab-label">
-                      <span>{{ t('settings.notificationsSection') }}</span>
-                      <span
-                        v-if="systemSettingsCategoryStatus('notifications')"
-                        class="settings-system__tab-status"
-                        :title="systemSettingsCategoryStatus('notifications')"
-                        :aria-label="systemSettingsCategoryStatus('notifications')"
-                      >
-                        <el-badge is-dot :type="systemSettingsCategoryErrors.notifications ? 'danger' : 'warning'" />
-                      </span>
-                    </span>
-                  </template>
-                  <section class="settings-system__section">
+              <section v-else-if="systemSettingsTab === 'notifications'" class="settings-system__section">
                     <el-form-item :label="t('operations.emailEnabled')" :error="systemSettingsFormErrors.email_digest_enabled">
                       <el-switch v-model="systemSettingsForm.email_digest_enabled" :disabled="!can('settings.manage') || systemSettingsSaving" />
                     </el-form-item>
@@ -776,11 +707,7 @@ function userDirectoryTooltip(user: { auth_source: string; directory_provider: s
                       </div>
                     </div>
                   </section>
-                </el-tab-pane>
-                <el-tab-pane name="branding" :label="t('branding.title')">
-                  <BrandingSettings v-if="systemSettingsTab === 'branding'" :context="context" />
-                </el-tab-pane>
-              </el-tabs>
+              <BrandingSettings v-else-if="systemSettingsTab === 'branding'" :context="context" />
             </el-form>
           </template>
 

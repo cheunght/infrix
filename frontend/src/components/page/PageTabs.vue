@@ -3,6 +3,8 @@ export interface PageTabItem {
   label: string;
   value: string;
   disabled?: boolean;
+  status?: "error" | "warning";
+  statusLabel?: string;
 }
 
 defineProps<{
@@ -23,10 +25,22 @@ const emit = defineEmits<{ "update:modelValue": [value: string] }>();
       <el-tab-pane
         v-for="item in items"
         :key="item.value"
-        :label="item.label"
         :name="item.value"
         :disabled="item.disabled"
-      />
+      >
+        <template #label>
+          <span class="page-tabs__label">
+            <span>{{ item.label }}</span>
+            <el-badge
+              v-if="item.status"
+              is-dot
+              :type="item.status"
+              :title="item.statusLabel"
+              :aria-label="item.statusLabel"
+            />
+          </span>
+        </template>
+      </el-tab-pane>
     </el-tabs>
     <div v-if="$slots.actions" class="page-tabs-actions">
       <slot name="actions" />

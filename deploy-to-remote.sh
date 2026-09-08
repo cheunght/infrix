@@ -8,11 +8,12 @@ usage() {
 
 示例：
   ./deploy-to-remote.sh root@rocky-host
-  ./deploy-to-remote.sh deploy@server-host /opt/infrix-src
+  ./deploy-to-remote.sh deploy@server-host /tmp/infrix-src
 
 说明：
   ssh-target       SSH 目标，例如 user@hostname 或 ~/.ssh/config 中的主机别名
-  remote-source-dir 远程源码目录，默认使用 INFRIX_REMOTE_SRC 或 /opt/infrix-src
+  remote-source-dir 远程源码目录，必须是 SSH 用户可写目录；默认使用
+                     INFRIX_REMOTE_SRC 或 /tmp/infrix-src
 EOF
 }
 
@@ -35,7 +36,11 @@ fi
 if [[ $# -eq 2 ]]; then
   REMOTE_SRC="$2"
 else
-  REMOTE_SRC="${INFRIX_REMOTE_SRC:-/opt/infrix-src}"
+  # rsync connects as the SSH user, while deploy/install.sh escalates only
+  # after the source tree has been uploaded.  Keep the staging directory in a
+  # user-writable location so a normal sudo-capable deployment user does not
+  # need write permission on /opt.
+  REMOTE_SRC="${INFRIX_REMOTE_SRC:-/tmp/infrix-src}"
 fi
 if [[ -z "$REMOTE_SRC" || "$REMOTE_SRC" == -* ]]; then
   echo "错误：remote-source-dir 不能为空或以短横线开头。" >&2

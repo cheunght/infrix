@@ -16,7 +16,7 @@ First `infrix` release candidate. This entry describes the implementation curren
 
 ### Verification note
 
-The release candidate is covered by the repository’s automated backend and frontend checks, plus a fresh SQLite migration, bootstrap, authentication, and API smoke test. Real Microsoft AD, SMTP delivery, MariaDB, and production reverse-proxy verification remain environment-specific checks.
+The release candidate is covered by the repository’s automated backend and frontend checks, plus fresh SQLite and MariaDB migration/bootstrap verification and authentication/API smoke tests. SMTP implementation and delivery behavior are covered by automated checks; a live SMTP endpoint and real Microsoft AD verification remain environment-specific. Production reverse-proxy verification remains deployment-specific.
 
 ### Not included
 
