@@ -9,7 +9,6 @@ from rest_framework.response import Response
 from .permissions import CanManageSystemSettings
 from .system_settings import get_system_settings, system_now
 from .ldap_auth import ldap_status_snapshot
-from .models import NotificationDelivery
 from .smtp import _configured_password, SmtpConfigurationError
 
 
@@ -52,9 +51,6 @@ def operational_status(request):
         result["smtp"] = {"status": smtp_state, "digest_enabled": setting.email_digest_enabled}
         ldap = ldap_status_snapshot()
         result["ldap"] = {"status": "disabled" if not ldap["enabled"] else "healthy" if ldap["configured"] else "attention"}
-        result["deliveries"] = [dict(row, delivery_type="daily_digest") for row in NotificationDelivery.objects.order_by("-attempted_at", "-id").values(
-            "id", "window_date", "status", "attempts", "attempted_at", "sent_at", "recipient_count", "error_code"
-        )[:20]]
     except Exception:
         result["configuration_status"] = "unavailable"
     return Response(result)

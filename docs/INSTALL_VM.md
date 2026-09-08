@@ -1,344 +1,340 @@
-# Rocky Linux 9 Automatic Installation and Upgrade Guide
+# Rocky Linux 9 Automatic Installation and Upgrade
 
-This guide explains how to install or upgrade Infrix on a Rocky Linux 9 host.
-The automatic installer provisions the application runtime, the selected
-database, the frontend, the systemd service, and the Nginx reverse proxy.
+This guide is the primary English guide for installing and upgrading Infrix on
+Rocky Linux 9.x. For the Chinese guide, see
+[Rocky Linux 9 中文安装文档](DEPLOYMENT.zh-CN.md). For the installer's detailed
+retry and packaging behavior, see [Installer Workflow](INSTALLER_WORKFLOW.md).
 
-The automatic installation path supports Rocky Linux 9.x through
-`deploy/install.sh`. Use the [manual deployment guide](MANUAL_DEPLOYMENT.md) on
-other Linux distributions.
+The automatic installer manages the application runtime, the selected
+database, frontend assets, systemd units, and the Nginx entry point. Use the
+[manual deployment guide](MANUAL_DEPLOYMENT.md) when another Linux distribution
+or a custom service layout is required.
 
-## Deployment model
+## 1. Choose a deployment path
 
-The reference production path is:
+| Situation | Recommended path |
+| --- | --- |
+| Rocky Linux 9.x, new host | Run `deploy/install.sh` and use the wizard. |
+| Rocky Linux 9.x, existing Infrix | Rerun the installer for an in-place upgrade. |
+| Release package | Extract the package and run the installer; Node.js is not needed on the target. |
+| Other Linux distribution | Follow [Manual Deployment](MANUAL_DEPLOYMENT.md). |
+
+The reference runtime is:
 
 ```text
-Client browser → HTTPS gateway → private Nginx:80 → Gunicorn:127.0.0.1:8001 → MariaDB
+Client → HTTPS gateway or local Nginx TLS → Nginx → Gunicorn:127.0.0.1:8001 → MariaDB
                                       └→ frontend/dist
 ```
 
-The external HTTPS gateway terminates public TLS and passes one authoritative
-`X-Forwarded-Proto` value to Nginx. Do not expose the internal Nginx listener,
-Gunicorn, or MariaDB directly to untrusted clients.
-
-The installer preserves SELinux enforcement. It configures only the required
-Nginx-to-Gunicorn permission and does not disable SELinux or weaken filesystem
-permissions.
-
-## Before you begin
-
-The target host must provide:
-
-- Rocky Linux 9.x with root access or an account that can use `sudo`.
-- Access to the Rocky Linux package repositories and Python/npm package sources.
-- A complete source tree containing `backend/manage.py`,
-  `backend/requirements.txt`, `frontend/package.json`, and
-  `frontend/package-lock.json`.
-- Python 3.10 or newer and Node.js 18 or newer, or permission for the installer
-  to install them.
-- TCP port 80 restricted to the trusted HTTPS gateway.
-
-For local MariaDB mode, the installer must be allowed to manage MariaDB and
-keep TCP port 3306 bound to the local host. For an external database, prepare
-the database and access policy before installation.
-
-## v0.1 migration baseline
+An external gateway may terminate public TLS and forward to private Nginx on
+port 80. A host without a gateway may use the wizard's self-signed certificate
+or an existing certificate and let local Nginx listen on port 443. Do not
+expose Gunicorn or MariaDB to untrusted clients.
 
 The `v0.1.0` source tree is a clean fresh-install migration baseline. A
-development database created from pre-baseline migration history must be
-recreated for the v0.1 baseline; do not try to upgrade that development
-database in place. This is a pre-release development-data instruction only:
-production databases must be preserved, and future `v0.1.x` releases must
-ship explicit incremental migrations for production upgrades.
+pre-release development database created from older migration history must be
+recreated for that baseline; never apply this rule to production data. Future
+`v0.1.x` production upgrades must ship explicit incremental migrations.
 
-## 1. Obtain the source
+## 2. Before you begin
 
-Clone the repository to a staging directory or place the supplied source
-package there:
+The target host needs:
+
+- Rocky Linux 9.x and root access or a sudo-capable account.
+- Access to Rocky package repositories and Python package sources.
+- At least 2 GiB free in `/var/tmp` for the installer preparation area.
+- A synchronized system clock, working DNS, and the required network routes.
+- Unused or intentionally managed ports 80, 443, and 8001.
+
+For a source installation, keep the complete tree containing
+`backend/manage.py`, `backend/requirements.txt`, `frontend/package.json`, and
+`frontend/package-lock.json`. The installer can install Python 3.10+ and
+Node.js 18+ from Rocky repositories. The target of a release package still
+needs Python and system packages, but does not need Node.js or npm.
+
+Choose the database and HTTPS mode before starting:
+
+- Local MariaDB: allow the installer to install and manage MariaDB, create the
+  dedicated database account, and bind port 3306 to loopback.
+- External MariaDB: create the database and account first, then set
+  `SKIP_MARIADB=1` in the production environment file.
+- Local TLS: use a self-signed certificate for an internal deployment or bring
+  an existing certificate and private key.
+- Gateway TLS: configure the trusted gateway before the final HTTPS check and
+  make it overwrite `X-Forwarded-Proto` with one authoritative value.
+
+The installer warns when time synchronization is not active. Correct the host
+clock before retrying if package or certificate validation fails.
+
+## 3. Obtain the source or release package
+
+### Source tree
+
+Clone or copy the repository to a staging directory:
 
 ```bash
-sudo -i
 dnf install -y git
 git clone <repository-url> /tmp/infrix-src
 cd /tmp/infrix-src
 ```
 
-Do not place `/etc/infrix/infrix.env` inside the source tree. Keep passwords,
-keys, backups, generated dependencies, and runtime data outside the source
-directory.
+### Prebuilt release package
 
-## 2. Configure the production environment
-
-The following example uses `<hostname>` as the public application hostname.
-Replace every placeholder with values for the deployment:
+Build packages on a development machine as described in
+[Installer Workflow](INSTALLER_WORKFLOW.md), then extract one on the target:
 
 ```bash
-export SERVER_NAME='<hostname>'
-export DJANGO_ENV=production
-export DJANGO_DEBUG=0
-export DJANGO_ALLOWED_HOSTS='<hostname>'
-export DJANGO_CSRF_TRUSTED_ORIGINS='https://<hostname>'
-export DJANGO_HTTPS_MODE=proxy
-export DJANGO_SECURE_SSL_REDIRECT=1
-export DJANGO_SESSION_COOKIE_SECURE=1
-export DJANGO_CSRF_COOKIE_SECURE=1
-export DJANGO_SECURE_HSTS_SECONDS=3600
-export DJANGO_SECURE_HSTS_INCLUDE_SUBDOMAINS=0
-export DJANGO_SECURE_HSTS_PRELOAD=0
-export DJANGO_USE_X_FORWARDED_HOST=0
-export DB_ENGINE=mysql
-export DB_NAME=infrix
-export DB_USER=infrix
-export DB_HOST='<database-host>'
-export DB_PORT=3306
-export DB_PASSWORD='<database-password>'
-export INFRIX_CONFIG_ENCRYPTION_KEY='<base64-fernet-key>'
+mkdir /tmp/infrix-release
+tar -xzf infrix-release.tar.gz -C /tmp/infrix-release
+cd /tmp/infrix-release
 ```
 
-Production requires a random `DJANGO_SECRET_KEY` of sufficient length. A fresh
-installation may generate it after confirming that the target database is
-empty. An existing installation must already have this value; it is never
-regenerated during an upgrade.
+The installer verifies `frontend-release.json` and the files under
+`frontend/dist`. Do not edit those files after packaging.
 
-`INFRIX_CONFIG_ENCRYPTION_KEY` encrypts LDAP bind passwords stored in the
-database. Keep it in the protected environment file and include it in the
-backup plan.
+### Remote synchronization
 
-The environment file should use the reference location and permissions:
+From an administration workstation:
 
 ```bash
-sudo install -d -o root -g infrix -m 750 /etc/infrix
-sudo touch /etc/infrix/infrix.env
-sudo chown root:infrix /etc/infrix/infrix.env
-sudo chmod 640 /etc/infrix/infrix.env
+./deploy-to-remote.sh <ssh-target>
 ```
 
-If the file already exists, preserve its values and set `ENV_FILE` when using
-a different path. Never print the file contents in logs or shared terminals.
-
-## 3. Run the installation or upgrade
-
-### 3.1 Configuration check
-
-For an existing environment file, run the installer configuration check before
-changing the system:
+The default remote staging directory is `/tmp/infrix-src`. A custom directory
+must be writable by the SSH account. The helper uploads source, then invokes
+the installer through sudo on the remote host:
 
 ```bash
-ENV_FILE=/etc/infrix/infrix.env ./deploy/install.sh --preflight
+./deploy-to-remote.sh --config /etc/infrix/infrix.env <ssh-target>
+./deploy-to-remote.sh --non-interactive \
+  --config /etc/infrix/infrix.env <ssh-target>
 ```
 
-This checks the production configuration and does not modify the system or
-database. Resolve every reported error before continuing.
+The `--config` path is on the remote server and is never copied from the
+workstation. Noninteractive mode requires passwordless sudo and a complete
+environment file.
 
-### 3.2 Automatic installation
+## 4. First installation
 
-From the source root:
+From the source or extracted package directory, run:
 
 ```bash
-chmod +x deploy/install.sh
-sudo -E ./deploy/install.sh
+sudo bash deploy/install.sh
 ```
 
-The default `INSTALL_MODE=auto` selects a new installation when no Infrix
-runtime exists and an upgrade when an existing service, virtual environment,
-database, or environment file is detected.
+When no Infrix runtime exists and no `DJANGO_ENV` is already supplied, the
+wizard asks for the access IP/hostname, database mode, and HTTPS mode. It then:
 
-Use an explicit mode when required:
+1. Generates the Django and Fernet secrets that are needed.
+2. Generates a local database password when local MariaDB is selected.
+3. Writes `/etc/infrix/infrix.env` with owner `root:infrix` and mode `640`.
+4. Confirms that the new database is empty before applying migrations.
+5. Installs the runtime, initializes system data, configures systemd/Nginx,
+   and performs the HTTPS acceptance check.
 
-```bash
-export INSTALL_MODE=fresh
-sudo -E ./deploy/install.sh
-```
-
-```bash
-export INSTALL_MODE=upgrade
-sudo -E ./deploy/install.sh
-```
-
-The installer installs system packages, creates the `infrix` account and
-application directory, prepares the Python environment, initializes or reuses
-MariaDB, applies Django migrations, builds the frontend, collects static files,
-configures systemd and Nginx, and starts the services.
-
-During an upgrade it preserves `/etc/infrix/infrix.env` and business data,
-creates a restricted database backup before migrations, and restarts the
-services after the new files are ready.
-
-For a fresh installation, the application-side sequence is source staging,
-production environment configuration, an empty MariaDB check, Python/backend
-dependency installation, `npm ci` and frontend build, `migrate`, and
-`check_preset_roles`. The latter invokes `initialize_system_data` and verifies
-the four preset roles. The installer then collects static files, writes the
-Gunicorn/systemd and Nginx configuration, and starts the services. Create the
-first administrator after startup. SMTP and LDAP are optional: configure SMTP
-from **System Settings → SMTP** and LDAP from **Organization & Permissions →
-LDAP / AD** when those integrations are needed.
-
-The installer also creates and enables the daily notification digest timer.
-It runs the digest command as the non-root `infrix` account at approximately
-09:00 in the host's systemd timezone. The command exits without sending when
-email delivery is disabled or no relevant alerts exist.
-
-Optional variables include `APP_DIR`, `APP_USER`, `BACKUP_DIR`, `ENV_FILE`,
-`SYSTEMD_UNIT_FILE`, `DIGEST_SERVICE_UNIT_FILE`, `DIGEST_TIMER_UNIT_FILE`,
-`NGINX_CONF_FILE`, `SOURCE_DIR`, `PYTHON_BIN`,
-`GUNICORN_WORKERS`, and `SKIP_MARIADB=1`. Use absolute paths for file and
-directory overrides.
-
-## 4. Use an external MariaDB server
-
-Create the database and dedicated application account on the database server,
-then configure the application host with:
-
-```bash
-export SKIP_MARIADB=1
-export DB_ENGINE=mysql
-export DB_NAME=infrix
-export DB_USER=infrix
-export DB_HOST='<database-host>'
-export DB_PORT=3306
-export DB_PASSWORD='<database-password>'
-export INFRIX_CONFIG_ENCRYPTION_KEY='<base64-fernet-key>'
-sudo -E ./deploy/install.sh
-```
-
-The database account must be able to create and alter the tables and indexes
-required by Django migrations. Restrict database access with database grants
-and network policy; never expose port 3306 to untrusted public clients.
-
-Use `utf8mb4` and a compatible collation such as `utf8mb4_unicode_ci`.
-
-## 5. Create an administrator and access the application
-
-Create the first administrator through the application runtime:
+In an interactive terminal, the installer checks for an active superuser and
+opens the administrator prompt when one is missing. In a noninteractive run,
+create one after the service is ready:
 
 ```bash
 cd /opt/infrix/backend
 sudo -u infrix ./run.sh createsuperuser
 ```
 
-The standard application URLs are:
+The completed environment file, database, private key, and backups must remain
+outside the source tree. Never paste the environment file into logs or shared
+terminals.
+
+## 5. Configuration, keys, and preflight
+
+Use [`deploy/infrix.env.example`](../deploy/infrix.env.example) as the only
+field reference. For a preconfigured or noninteractive installation, pass an
+absolute environment-file path:
+
+```bash
+sudo bash deploy/install.sh \
+  --config /etc/infrix/infrix.env
+```
+
+Production requires explicit `DJANGO_ENV=production`, non-debug settings,
+allowed hosts, HTTPS CSRF origins, and MySQL connection values. When LDAP/AD
+or another protected configuration feature is used, keep a stable
+`INFRIX_CONFIG_ENCRYPTION_KEY`; it encrypts secrets stored in the database.
+Generate it once and back it up with the environment file and database:
+
+```bash
+python3 -c 'import base64, os; print(base64.urlsafe_b64encode(os.urandom(32)).decode())'
+```
+
+Do not regenerate the key during an upgrade. A missing Django secret may be
+generated only for a confirmed empty fresh-install database; an existing
+production installation must keep its current secret.
+
+Run the read-only configuration check with:
+
+```bash
+sudo bash deploy/install.sh \
+  --config /etc/infrix/infrix.env \
+  --preflight
+```
+
+This command validates the environment file and does not modify packages,
+services, Nginx, or the database. Machine checks such as disk space, port
+conflicts, and certificate readability run automatically during a normal
+installation.
+
+## 6. Database setup
+
+### Local MariaDB
+
+The wizard's local database option installs and starts MariaDB, creates the
+`infrix` database and dedicated application user, and verifies that MariaDB
+only listens on loopback. No public database port is required.
+
+### External MariaDB
+
+Create an empty `utf8mb4` database and a dedicated account on the database
+server. Grant the account the table and index permissions required by Django
+migrations, restrict its network source, and configure the application host:
+
+```dotenv
+DB_ENGINE=mysql
+DB_NAME=infrix
+DB_USER=infrix
+DB_PASSWORD=<database-password>
+DB_HOST=<database-host>
+DB_PORT=3306
+SKIP_MARIADB=1
+```
+
+Then run the installer with the completed file. The installer checks the
+connection and applies migrations; it does not provision the external server.
+Never expose port 3306 to untrusted clients.
+
+## 7. HTTPS and access modes
+
+The installer supports three HTTPS choices:
+
+| Installer mode | Behavior |
+| --- | --- |
+| `TLS_MODE=self-signed` | Generate a local certificate when no pair exists; Nginx serves HTTPS on 443 and redirects port 80. |
+| `TLS_MODE=certificate` | Use the supplied `TLS_CERT_FILE` and `TLS_KEY_FILE` pair for local Nginx TLS. |
+| `TLS_MODE=gateway` | Do not terminate TLS locally; a trusted external gateway serves HTTPS and reaches private Nginx on port 80. |
+
+The Django setting remains `DJANGO_HTTPS_MODE=proxy` for the supplied Nginx
+deployment. In gateway mode, only the trusted gateway may set the forwarded
+protocol header. In self-signed mode, add the generated certificate to the
+client trust store or pass it as a CA during diagnosis; browsers will otherwise
+show a trust warning.
+
+The installer runs a real HTTPS check after startup. Run it later with:
+
+```bash
+bash deploy/doctor.sh https://infrix.example.com
+```
+
+For a self-signed certificate:
+
+```bash
+bash deploy/doctor.sh \
+  https://192.0.2.10 \
+  /etc/pki/tls/certs/infrix.crt
+```
+
+The check requires TLS, HTTP 200, valid SPA content for `/` and `/assets`, a
+valid CSRF token response, and a reachable branding endpoint. A 301, 400,
+connection refusal, certificate failure, or HTML error response is not
+accepted as healthy.
+
+## 8. Upgrade, retry, and backup behavior
+
+For an existing installation, the default `INSTALL_MODE=auto` detects the
+runtime and performs an in-place upgrade. To make the choice explicit:
+
+```bash
+sudo env INSTALL_MODE=upgrade bash deploy/install.sh
+```
+
+Upgrades preserve `/etc/infrix/infrix.env` and business data. Before stopping
+the active application, the installer checks migration compatibility, creates a
+restricted database backup in `/var/backups/infrix`, downloads Python wheels,
+and prepares the frontend. A pre-stop preparation failure leaves the old
+application running.
+
+Fresh installations record `configured`, `database-ready`, and `complete` in
+`${ENV_FILE}.install-state`. If a fresh installation is interrupted, rerun the
+same command with the same source, environment path, and application directory.
+The installer reuses the saved secrets and rejects a changed configuration or
+destination rather than risking the wrong database.
+
+Nginx configuration is backed up before replacement. If `nginx -t` fails, the
+previous configuration is restored and Nginx is not reloaded. A database
+migration is not automatically rolled back; use the retained database backup
+and normal recovery procedure after a live mutation failure. Failed preparation
+directories under `/var/tmp/infrix-prepare.*` are retained for diagnosis.
+
+## 9. First login, health checks, and daily operations
+
+The standard endpoints are:
 
 - Application: `https://<hostname>/`
 - Administration: `https://<hostname>/admin/`
 - API documentation: `https://<hostname>/api/docs/`
 
-After the first login, complete the password change if requested, create the
-organization and location data, then add assets and configure permissions.
+After login, complete any requested password change, create organizations and
+locations, and then configure assets and permissions. LDAP/AD and SMTP are
+optional integrations; configure them from the administration UI only after
+the base application is healthy. Keep the Fernet key available before saving
+LDAP or other protected passwords.
 
-SMTP is optional and does not block startup. Configure and test it from
-**System Settings → SMTP**. To use the scheduled digest, explicitly enable it
-under **System Settings → Notifications**, configure the recipients, and set
-the public HTTPS application URL used in email links.
-
-## 6. Configure LDAP / Active Directory
-
-Open **Organization & Permissions → LDAP / AD** as an administrator. Configure
-the directory type, server endpoints, security mode, Base DN, user search base,
-login attribute, bind account, and bind password.
-
-Use LDAPS or StartTLS for production directory connections. Run the connection
-diagnosis before saving the configuration; it uses the current form and does
-not enable LDAP. LDAP remains disabled until an administrator explicitly
-enables it.
-
-Keep `INFRIX_CONFIG_ENCRYPTION_KEY` available for the lifetime of the stored
-LDAP configuration. If the key is lost, stored bind passwords cannot be
-decrypted.
-
-## 7. Deployment health checks
-
-Check the services and configured endpoints:
+Check the deployment with:
 
 ```bash
-sudo systemctl is-enabled infrix nginx mariadb infrix-notification-digest.timer
 sudo systemctl is-active infrix nginx mariadb
 sudo nginx -t
-curl -fsS https://<hostname>/
-curl -fsS https://<hostname>/api/v1/auth/csrf/
+bash deploy/doctor.sh https://<hostname>
 sudo journalctl -u infrix -n 100 --no-pager
 ```
 
-These checks cover service state, environment-file wiring, production security
-settings, migrations, static files, and HTTP endpoints. They do not replace
-firewall, TLS gateway, certificate, or browser configuration checks.
+Back up the database and `/etc/infrix/infrix.env`, including
+`DJANGO_SECRET_KEY` and `INFRIX_CONFIG_ENCRYPTION_KEY`. Keep database dumps,
+certificates, private keys, and logs protected according to the site's recovery
+policy.
 
-## 8. Backups and daily operations
+## 10. Troubleshooting and security checklist
 
-Back up the Infrix database and `/etc/infrix/infrix.env`, including
-`DJANGO_SECRET_KEY` and `INFRIX_CONFIG_ENCRYPTION_KEY`. The database backup
-also preserves system settings and uploaded branding images. Restrict the
-backup directory to administrators and protect database dumps from public
-access.
+### The installer says `DJANGO_ENV` is missing
 
-Common service commands:
-
-```bash
-sudo systemctl restart infrix
-sudo systemctl reload nginx
-sudo journalctl -u infrix -f
-```
-
-Before an in-place upgrade, confirm that a recent database backup is readable.
-Keep database migrations in place across upgrades; do not delete an already
-applied migration file.
-
-## 9. Troubleshooting
-
-### The application service does not start
-
-Inspect the service and recent logs:
+Run the interactive wizard from a terminal, or provide a complete production
+environment file with `--config`. Do not put a completed secret file in the
+source tree. Check it without printing its contents:
 
 ```bash
-sudo systemctl status infrix --no-pager
-sudo journalctl -u infrix -n 100 --no-pager
+sudo bash deploy/install.sh \
+  --config /etc/infrix/infrix.env \
+  --preflight
 ```
 
-Check the environment-file path, ownership, permissions, database connection,
-virtual-environment path, migration state, and port conflicts.
+### The browser reports HTTP 400, connection refused, or a failed session
 
-### Database access is denied
+Check `infrix` and Nginx status and logs, confirm the address is in
+`DJANGO_ALLOWED_HOSTS`, and run `doctor.sh` against the exact HTTPS URL. For a
+gateway, confirm that it reaches private Nginx and sets one trusted
+`X-Forwarded-Proto` value. For local TLS, confirm the certificate name matches
+the IP/hostname and that the client trusts the certificate.
 
-Review `DB_HOST`, `DB_PORT`, `DB_NAME`, `DB_USER`, and `DB_PASSWORD` in the
-environment file. Confirm the database grant allows connections from the
-application host and includes the permissions required by migrations.
+### The database or migration check fails
 
-### A migration cannot be applied
+Verify `DB_HOST`, `DB_PORT`, `DB_NAME`, `DB_USER`, `DB_PASSWORD`, grants, and
+network policy. A fresh database must be empty; an upgrade must contain every
+already-applied migration file and have a readable pre-upgrade backup. Never
+delete migration records or applied migration files to bypass an error.
 
-For an upgrade, preserve the database backup and inspect the reported migration
-or permission error. Do not delete migration records. Run:
+### Production safety checklist
 
-```bash
-cd /opt/infrix/backend
-sudo -u infrix ./run.sh migrate --noinput
-sudo -u infrix ./run.sh showmigrations assets
-```
-
-### The frontend is stale or unavailable
-
-Confirm that the frontend artifact exists, reload Nginx, and refresh the
-browser:
-
-```bash
-[ -s /opt/infrix/frontend/dist/index.html ]
-sudo nginx -t && sudo systemctl reload nginx
-```
-
-### Nginx returns HTTP 400 or redirects repeatedly
-
-Check for conflicting Nginx server blocks, confirm the hostname is included in
-`DJANGO_ALLOWED_HOSTS`, and ensure the HTTPS gateway writes one authoritative
-`X-Forwarded-Proto` value. The internal Nginx listener must not be publicly
-reachable.
-
-## 10. Production security checklist
-
-- Use `DJANGO_ENV=production` and `DJANGO_DEBUG=0`.
-- Use HTTPS, secure session cookies, secure CSRF cookies, and explicit trusted
-  CSRF origins.
-- Keep `/etc/infrix/infrix.env` at `root:infrix` ownership with mode `640`.
-- Bind Gunicorn and local MariaDB to loopback or another protected interface.
-- Allow only required traffic through the host firewall and security groups.
-- Keep SELinux enabled and grant only the required reverse-proxy permission.
-- Back up the database, environment file, and LDAP encryption key regularly.
-- Protect database passwords, certificates, private keys, logs, and backups.
+- Use `DJANGO_ENV=production`, `DJANGO_DEBUG=0`, explicit hosts, and HTTPS.
+- Keep the environment file at `root:infrix` mode `640`.
+- Keep Gunicorn and local MariaDB on protected interfaces.
+- Keep SELinux enabled and allow only the required Nginx-to-Gunicorn policy.
+- Restrict database, certificate, private-key, log, and backup access.
+- Maintain tested backups of the database and environment file.

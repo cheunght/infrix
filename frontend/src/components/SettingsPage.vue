@@ -9,6 +9,7 @@ import TagSettingsPage from "./TagSettingsPage.vue";
 import LdapConfigurationPage from "./LdapConfigurationPage.vue";
 import BrandingSettings from "./BrandingSettings.vue";
 import SystemOperations from "./SystemOperations.vue";
+import NotificationDeliveryLogs from "./NotificationDeliveryLogs.vue";
 import DescriptionList from "./DescriptionList.vue";
 import PageContainer from "./page/PageContainer.vue";
 import PageContent from "./page/PageContent.vue";
@@ -35,6 +36,14 @@ import {
 const props = defineProps<{ context: SettingsContext }>();
 const { t } = useI18n();
 const context = props.context;
+const maintenanceTab = ref("operations");
+const maintenanceTabs = computed<PageTabItem[]>(() => [
+  { value: "operations", label: t("operations.statusTab") },
+  { value: "reset", label: t("operations.resetTab"), disabled: !context.can("system.reset") },
+]);
+watch([context.settingsSection, () => context.can("system.reset")], () => {
+  maintenanceTab.value = "operations";
+});
 const {
   settingsSection,
   organizationTab,
@@ -150,6 +159,14 @@ const {
 } = context;
 
 const userTableRef = ref<{ clearSelection: () => void } | null>(null);
+const auditTab = ref("audit");
+const auditTabs = computed<PageTabItem[]>(() => [
+  { value: "audit", label: t("settings.auditTab") },
+  { value: "mail-delivery", label: t("settings.mailDeliveryTab") },
+]);
+watch(settingsSection, () => {
+  auditTab.value = "audit";
+});
 const dictionaryTabs = computed<PageTabItem[]>(() => [
   { label: t("settings.manufacturersTab"), value: "manufacturers" },
   { label: t("settings.deviceTypesTab"), value: "device-types" },
@@ -995,7 +1012,10 @@ function userDirectoryTooltip(user: { auth_source: string; directory_provider: s
       </PageContent>
     </PageContainer>
 
-    <PageContainer v-else-if="settingsSection === 'audit' && can('audit.view')">
+    <PageContainer v-else-if="settingsSection === 'audit' && can('audit.view')" :toolbar-visible="auditTab === 'audit'">
+      <template #subnav>
+        <PageTabs v-model="auditTab" :items="auditTabs" />
+      </template>
       <template #toolbar>
         <PageToolbar>
           <template #search>
@@ -1013,58 +1033,64 @@ function userDirectoryTooltip(user: { auth_source: string; directory_provider: s
           </template>
         </PageToolbar>
       </template>
-      <PageContent surface>
-        <el-alert v-if="auditListError" :title="t('settings.auditLoadFailed')" type="error" show-icon :closable="false">
-          <template #default>
-            <span>{{ auditListError }}</span>
-            <el-button link type="danger" :loading="auditListLoading" @click="retryAuditLogs">{{ t('common.retry') }}</el-button>
-          </template>
-        </el-alert>
-        <template v-else>
-          <el-table class="audit-log-table" v-loading="auditListLoading" :data="auditLogs" table-layout="fixed">
-            <template #empty>
-              <el-empty :image-size="56" :description="hasAuditFilters ? t('settings.noMatchingAudit') : t('settings.noAudit')">
-                <el-button v-if="hasAuditFilters" link type="primary" @click="clearAuditFilters">{{ t('common.clearFilters') }}</el-button>
-              </el-empty>
+      <template v-if="auditTab === 'audit'">
+        <PageContent surface>
+          <el-alert v-if="auditListError" :title="t('settings.auditLoadFailed')" type="error" show-icon :closable="false">
+            <template #default>
+              <span>{{ auditListError }}</span>
+              <el-button link type="danger" :loading="auditListLoading" @click="retryAuditLogs">{{ t('common.retry') }}</el-button>
             </template>
-            <el-table-column prop="created_at" :label="t('common.time')" width="178"><template #default="{ row }">{{ formatAuditDateTime(row.created_at) }}</template></el-table-column>
-            <el-table-column prop="actor_display_name" :label="t('settings.actor')" width="138" />
-            <el-table-column :label="t('settings.resource')" width="108"><template #default="{ row }">{{ resourceLabel(row.resource_type) }}</template></el-table-column>
-            <el-table-column :label="t('settings.action')" width="108"><template #default="{ row }">{{ auditLogActionLabel(row) }}</template></el-table-column>
-            <el-table-column :label="t('settings.object')" min-width="180">
-              <template #default="{ row }">{{ auditObjectLabel(row) }}</template>
-            </el-table-column>
-            <el-table-column :label="t('settings.changeSummary')" min-width="320">
-              <template #default="{ row }">
-                <span class="audit-change-summary">{{ auditChangeSummary(row) }}</span>
+          </el-alert>
+          <template v-else>
+            <el-table class="audit-log-table" v-loading="auditListLoading" :data="auditLogs" table-layout="fixed">
+              <template #empty>
+                <el-empty :image-size="56" :description="hasAuditFilters ? t('settings.noMatchingAudit') : t('settings.noAudit')">
+                  <el-button v-if="hasAuditFilters" link type="primary" @click="clearAuditFilters">{{ t('common.clearFilters') }}</el-button>
+                </el-empty>
               </template>
-            </el-table-column>
-            <el-table-column :label="t('common.operation')" width="132" fixed="right">
-              <template #default="{ row }">
-                <div class="ep-table-actions">
-                  <TableIconButton :icon="View" :label="t('common.details')" type="primary" @click="openAuditDetail(row)" />
-                </div>
-              </template>
-            </el-table-column>
-          </el-table>
-          <PagedTable v-model:current-page="auditPage" v-model:page-size="auditPageSize" :total="auditCount" :page-sizes="[20, 50, 100]" @update:current-page="changeAuditPage" @update:page-size="changeAuditPageSize" />
-        </template>
-      </PageContent>
+              <el-table-column prop="created_at" :label="t('common.time')" width="178"><template #default="{ row }">{{ formatAuditDateTime(row.created_at) }}</template></el-table-column>
+              <el-table-column prop="actor_display_name" :label="t('settings.actor')" width="138" />
+              <el-table-column :label="t('settings.resource')" width="108"><template #default="{ row }">{{ resourceLabel(row.resource_type) }}</template></el-table-column>
+              <el-table-column :label="t('settings.action')" width="108"><template #default="{ row }">{{ auditLogActionLabel(row) }}</template></el-table-column>
+              <el-table-column :label="t('settings.object')" min-width="180">
+                <template #default="{ row }">{{ auditObjectLabel(row) }}</template>
+              </el-table-column>
+              <el-table-column :label="t('settings.changeSummary')" min-width="320">
+                <template #default="{ row }">
+                  <span class="audit-change-summary">{{ auditChangeSummary(row) }}</span>
+                </template>
+              </el-table-column>
+              <el-table-column :label="t('common.operation')" width="132" fixed="right">
+                <template #default="{ row }">
+                  <div class="ep-table-actions">
+                    <TableIconButton :icon="View" :label="t('common.details')" type="primary" @click="openAuditDetail(row)" />
+                  </div>
+                </template>
+              </el-table-column>
+            </el-table>
+            <PagedTable v-model:current-page="auditPage" v-model:page-size="auditPageSize" :total="auditCount" :page-sizes="[20, 50, 100]" @update:current-page="changeAuditPage" @update:page-size="changeAuditPageSize" />
+          </template>
+        </PageContent>
+      </template>
+      <NotificationDeliveryLogs v-else :context="context" />
     </PageContainer>
 
     <PageContainer v-else-if="settingsSection === 'maintenance' && can('settings.view')" content-class="settings-maintenance-container">
+      <template #subnav>
+        <PageTabs v-model="maintenanceTab" :items="maintenanceTabs" />
+      </template>
       <PageContent surface>
         <div class="settings-maintenance">
-          <SystemOperations :context="context" />
+          <SystemOperations v-show="maintenanceTab === 'operations'" :context="context" />
           <el-alert
-            v-if="can('system.reset')"
+            v-if="maintenanceTab === 'reset' && can('system.reset')"
             :title="t('settings.highRiskAction')"
             type="warning"
             show-icon
             :closable="false"
             :description="t('settings.systemResetDescription')"
           />
-          <section v-if="can('system.reset')" class="settings-maintenance__section">
+          <section v-if="maintenanceTab === 'reset' && can('system.reset')" class="settings-maintenance__section">
             <div class="settings-maintenance__intro">
               <h2>{{ t('settings.systemReset') }}</h2>
               <p>{{ t('settings.systemResetIntro') }}</p>

@@ -31,7 +31,7 @@ from openpyxl import Workbook
 from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
 from openpyxl.utils import get_column_letter
 from urllib.parse import quote
-from .models import AuthThrottleState, AuditLog, Asset, AssetCustomValue, AssetNetworkAddress, AssetResponsibilityEvent, AssetTag, CustomField, CustomFieldOption, DataCenter, Department, DeviceType, DirectoryIdentity, FaultEvent, InventoryItem, InventoryTask, MaintenanceContract, Manufacturer, ProcurementRecord, Rack, RackUnitAllocation, RepairPartUsage, RepairRecord, ServerRoom, SoftwareLicense, SparePart, SparePartCategory, SpareStock, SpareStockTransaction, SystemSetting, Tag, UserSecurityProfile
+from .models import AuthThrottleState, AuditLog, Asset, AssetCustomValue, AssetNetworkAddress, AssetResponsibilityEvent, AssetTag, CustomField, CustomFieldOption, DataCenter, Department, DeviceType, DirectoryIdentity, FaultEvent, InventoryItem, InventoryTask, MaintenanceContract, Manufacturer, NotificationDelivery, ProcurementRecord, Rack, RackUnitAllocation, RepairPartUsage, RepairRecord, ServerRoom, SoftwareLicense, SparePart, SparePartCategory, SpareStock, SpareStockTransaction, SystemSetting, Tag, UserSecurityProfile
 from .enum_contracts import (
     ASSET_STATUS_LABELS,
     ASSET_STATUS_VALUES,
@@ -45,7 +45,7 @@ from .enum_contracts import (
     STOCK_OPERATION_TYPE_LABELS,
     STOCK_OPERATION_TYPE_VALUES,
 )
-from .serializers import AdminPasswordResetSerializer, AssetBatchDeleteResponseSerializer, AssetBatchDeleteSerializer, AssetDetailSerializer, AssetListSerializer, AssetResponsibilityEventSerializer, AssetResponsibilityReturnSerializer, AssetResponsibilityTargetSerializer, AssetResponsibilityUserSerializer, AssetSerializer, AssetWriteSerializer, AuditLogSerializer, CurrentUserProfileSerializer, CustomFieldOptionSerializer, CustomFieldRuntimeSchemaSerializer, CustomFieldSerializer, DataCenterSerializer, DepartmentSerializer, DeviceTypeSerializer, FaultEventSerializer, GroupSerializer, InventoryBulkNormalResponseSerializer, InventoryBulkNormalSerializer, InventoryBulkResolutionResponseSerializer, InventoryBulkResolutionSerializer, InventoryInspectorSerializer, InventoryItemPageSerializer, InventoryItemSerializer, InventoryResolutionSerializer, InventoryScopePreviewQuerySerializer, InventoryScopePreviewSerializer, InventoryTaskSerializer, LdapConfigurationUpdateSerializer, ManufacturerSerializer, RackSerializer, RepairPartUsageCreateSerializer, RepairPartUsageSerializer, RepairRecordSerializer, ServerRoomSerializer, SoftwareLicenseSerializer, SparePartCategorySerializer, SparePartDetailSerializer, SparePartSerializer, SpareStockSerializer, SpareStockTransactionSerializer, SmtpTestEmailSerializer, SystemResetSerializer, SystemSettingsSerializer, TagSerializer, UserBatchStatusResponseSerializer, UserBatchStatusSerializer, UserSerializer, _default_references_option, _responsibility_user_name
+from .serializers import AdminPasswordResetSerializer, AssetBatchDeleteResponseSerializer, AssetBatchDeleteSerializer, AssetDetailSerializer, AssetListSerializer, AssetResponsibilityEventSerializer, AssetResponsibilityReturnSerializer, AssetResponsibilityTargetSerializer, AssetResponsibilityUserSerializer, AssetSerializer, AssetWriteSerializer, AuditLogSerializer, CurrentUserProfileSerializer, CustomFieldOptionSerializer, CustomFieldRuntimeSchemaSerializer, CustomFieldSerializer, DataCenterSerializer, DepartmentSerializer, DeviceTypeSerializer, FaultEventSerializer, GroupSerializer, InventoryBulkNormalResponseSerializer, InventoryBulkNormalSerializer, InventoryBulkResolutionResponseSerializer, InventoryBulkResolutionSerializer, InventoryInspectorSerializer, InventoryItemPageSerializer, InventoryItemSerializer, InventoryResolutionSerializer, InventoryScopePreviewQuerySerializer, InventoryScopePreviewSerializer, InventoryTaskSerializer, LdapConfigurationUpdateSerializer, ManufacturerSerializer, NotificationDeliverySerializer, RackSerializer, RepairPartUsageCreateSerializer, RepairPartUsageSerializer, RepairRecordSerializer, ServerRoomSerializer, SoftwareLicenseSerializer, SparePartCategorySerializer, SparePartDetailSerializer, SparePartSerializer, SpareStockSerializer, SpareStockTransactionSerializer, SmtpTestEmailSerializer, SystemResetSerializer, SystemSettingsSerializer, TagSerializer, UserBatchStatusResponseSerializer, UserBatchStatusSerializer, UserSerializer, _default_references_option, _responsibility_user_name
 from .services import (
     apply_spare_stock_transaction,
     confirm_inventory_item_normal,
@@ -2650,6 +2650,15 @@ class AuditLogViewSet(viewsets.ReadOnlyModelViewSet):
         if errors:
             return Response(errors, status=400)
         return super().list(request, *args, **kwargs)
+
+
+class NotificationDeliveryViewSet(viewsets.ReadOnlyModelViewSet):
+    queryset = NotificationDelivery.objects.order_by("-attempted_at", "-id")
+    serializer_class = NotificationDeliverySerializer
+    permission_classes = [CanViewAuditLog]
+    filter_backends = [DjangoFilterBackend, OrderingFilter]
+    filterset_fields = ["status", "window_date"]
+    ordering_fields = ["attempted_at", "sent_at", "created_at"]
 
 
 LOGIN_USERNAME_MAX_LENGTH = User._meta.get_field(User.USERNAME_FIELD).max_length or 150

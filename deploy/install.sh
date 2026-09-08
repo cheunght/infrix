@@ -8,6 +8,9 @@ log() {
 
 fail() {
   echo "错误：$*" >&2
+  if [[ "${upgrade_service_was_active:-0}" == 1 && "${upgrade_mutation_started:-0}" == 0 ]]; then
+    systemctl start infrix >&2 2>/dev/null || true
+  fi
   exit 1
 }
 
@@ -46,11 +49,19 @@ check_rocky_linux_9() {
 }
 
 PREFLIGHT_ONLY=0
-if [[ "${1:-}" == "--preflight" ]]; then
-  PREFLIGHT_ONLY=1
-  shift
-  [[ "$#" -eq 0 ]] || fail "--preflight 不接受额外参数。"
-fi
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --preflight) PREFLIGHT_ONLY=1; shift ;;
+    --config)
+      [[ $# -ge 2 && "$2" = /* ]] || fail '--config 需要环境文件绝对路径。'
+      ENV_FILE="$2"; shift 2 ;;
+    -h|--help)
+      echo '用法：sudo bash deploy/install.sh [--config /etc/infrix/infrix.env] [--preflight]'
+      echo '首次安装自动进入向导；已有安装读取持久化配置。'
+      exit 0 ;;
+    *) fail "未知参数：$1" ;;
+  esac
+done
 
 if [[ "$PREFLIGHT_ONLY" -eq 0 ]]; then
   check_rocky_linux_9 || exit 1
@@ -67,8 +78,14 @@ ENV_FILE="${ENV_FILE:-/etc/infrix/infrix.env}"
 APP_DIR="${APP_DIR:-/opt/infrix}"
 APP_USER="${APP_USER:-infrix}"
 APP_GROUP="${APP_GROUP:-infrix}"
+server_name_was_explicit=0
+if [[ -n "${SERVER_NAME:-}" ]]; then
+  server_name_was_explicit=1
+fi
 SERVER_NAME="${SERVER_NAME:-_}"
 NGINX_CONF_FILE="${NGINX_CONF_FILE:-/etc/nginx/conf.d/infrix.conf}"
+TLS_CERT_FILE="${TLS_CERT_FILE:-/etc/pki/tls/certs/infrix.crt}"
+TLS_KEY_FILE="${TLS_KEY_FILE:-/etc/pki/tls/private/infrix.key}"
 BACKUP_DIR="${BACKUP_DIR:-/var/backups/infrix}"
 SYSTEMD_UNIT_FILE="${SYSTEMD_UNIT_FILE:-/etc/systemd/system/infrix.service}"
 DIGEST_SERVICE_UNIT_FILE="${DIGEST_SERVICE_UNIT_FILE:-/etc/systemd/system/infrix-notification-digest.service}"
@@ -93,6 +110,8 @@ esac
 [[ "$BACKUP_DIR" = /* ]] || fail "BACKUP_DIR 必须是绝对路径。"
 [[ "$ENV_FILE" = /* ]] || fail "ENV_FILE 必须是绝对路径。"
 [[ "$NGINX_CONF_FILE" = /* ]] || fail "NGINX_CONF_FILE 必须是绝对路径。"
+[[ "$TLS_CERT_FILE" = /* ]] || fail "TLS_CERT_FILE 必须是绝对路径。"
+[[ "$TLS_KEY_FILE" = /* ]] || fail "TLS_KEY_FILE 必须是绝对路径。"
 [[ "$SYSTEMD_UNIT_FILE" = /* ]] || fail "SYSTEMD_UNIT_FILE 必须是绝对路径。"
 [[ "$DIGEST_SERVICE_UNIT_FILE" = /* ]] || fail "DIGEST_SERVICE_UNIT_FILE 必须是绝对路径。"
 [[ "$DIGEST_TIMER_UNIT_FILE" = /* ]] || fail "DIGEST_TIMER_UNIT_FILE 必须是绝对路径。"
@@ -126,14 +145,40 @@ if [[ -f "$ENV_FILE" ]]; then
   set +a
 fi
 
+# Preserve the site name from a previous Infrix Nginx configuration when the
+# deployment caller did not provide SERVER_NAME.  This keeps remote upgrades
+# from silently falling back to the catch-all server name "_".
+if [[ "$server_name_was_explicit" -eq 0 && "$SERVER_NAME" == "_" && -f "$NGINX_CONF_FILE" ]]; then
+  existing_server_name="$(sed -n -E \
+    '/^[[:space:]]*server_name[[:space:]]+/ { s/^[[:space:]]*server_name[[:space:]]+([^;[:space:]]+).*/\1/; p; q; }' \
+    "$NGINX_CONF_FILE")"
+  if [[ -n "$existing_server_name" && "$existing_server_name" != "_" ]]; then
+    SERVER_NAME="$existing_server_name"
+    log "从现有 Nginx 配置恢复 SERVER_NAME=$SERVER_NAME"
+  fi
+fi
+
 existing_installation=0
+resume_phase=""
+install_state_file="${ENV_FILE}.install-state"
+if [[ -f "$install_state_file" && -f "$ENV_FILE" ]]; then
+  read -r saved_phase saved_fingerprint < "$install_state_file"
+  if [[ "$saved_phase" == configured || "$saved_phase" == database-ready ]]; then
+    current_fingerprint="$( { sha256sum "$ENV_FILE"; printf '%s\n' "$APP_DIR"; } | sha256sum | cut -d ' ' -f1)"
+    [[ "$current_fingerprint" == "$saved_fingerprint" ]] || fail '未完成安装的配置已变化，请恢复原配置后续装，避免使用错误数据库。'
+    resume_phase="$saved_phase"
+    log "继续未完成安装：$resume_phase"
+  fi
+fi
 # A source-only staging directory is intentionally not an installation marker:
 # deploy-to-remote.sh populates the target tree before this script runs.
 if [[ -f "$SYSTEMD_UNIT_FILE" ||
   -x "$APP_DIR/backend/.venv/bin/python" ||
-  -f "$APP_DIR/backend/db.sqlite3" ||
-  -f "$ENV_FILE" ]]; then
+  -f "$APP_DIR/backend/db.sqlite3" ]]; then
   existing_installation=1
+fi
+if [[ -n "$resume_phase" ]]; then
+  existing_installation=0
 fi
 if [[ "$existing_installation" -eq 1 && "$env_file_present" -eq 0 ]]; then
   fail "Production environment file not found: ${ENV_FILE}; existing Infrix runtime detected, so no new configuration or migration was created. 请恢复该文件，或使用 ENV_FILE=/absolute/path/to/infrix.env 指向现有环境文件后重试。若目标只有同步的源码目录、没有服务/虚拟环境/数据库，可直接按全新安装重试。"
@@ -170,6 +215,10 @@ if [[ "$PREFLIGHT_ONLY" -eq 1 && "$env_file_present" -eq 0 ]]; then
 fi
 
 DJANGO_ENV="${DJANGO_ENV:-}"
+if [[ "$INSTALL_MODE" == "fresh" && -z "$DJANGO_ENV" && "$PREFLIGHT_ONLY" == 0 ]]; then
+  . "$SCRIPT_DIR/configure.sh"
+  configure_fresh_install
+fi
 case "$DJANGO_ENV" in
   production|development) ;;
   "") fail "DJANGO_ENV 必须显式设置为 production 或 development。" ;;
@@ -191,6 +240,9 @@ fi
 DB_PASSWORD="${DB_PASSWORD:-}"
 DB_PORT="${DB_PORT:-3306}"
 INFRIX_CONFIG_ENCRYPTION_KEY="${INFRIX_CONFIG_ENCRYPTION_KEY:-}"
+if [[ "$INSTALL_MODE" == fresh && -z "$INFRIX_CONFIG_ENCRYPTION_KEY" ]]; then
+  INFRIX_CONFIG_ENCRYPTION_KEY="$(openssl rand -base64 32 | tr '+/' '-_')"
+fi
 DJANGO_DEBUG="${DJANGO_DEBUG:-0}"
 DJANGO_SECRET_KEY="${DJANGO_SECRET_KEY:-}"
 DJANGO_ALLOWED_HOSTS="${DJANGO_ALLOWED_HOSTS:-}"
@@ -251,6 +303,9 @@ if [[ "$PREFLIGHT_ONLY" -eq 1 ]]; then
   exit 0
 fi
 
+. "$SCRIPT_DIR/preflight.sh"
+check_machine_readiness
+
 log "安装 Rocky 9 系统依赖"
 dnf install -y ca-certificates openssl curl git rsync nginx mariadb-server mariadb \
   gcc gcc-c++ make iproute policycoreutils
@@ -274,6 +329,12 @@ command -v "$PYTHON_BIN" >/dev/null 2>&1 || fail "未找到 Python 解释器：$
 "$PYTHON_BIN" -c 'import sys; raise SystemExit(0 if sys.version_info >= (3, 10) else 1)' \
   || fail "Python 版本必须 >= 3.10，当前为 $($PYTHON_BIN --version 2>&1)。"
 
+prebuilt_frontend=0
+if [[ -f "$SOURCE_DIR/frontend-release.json" ]]; then
+  "$PYTHON_BIN" "$SOURCE_DIR/scripts/release-package.py" --verify-frontend "$SOURCE_DIR"
+  prebuilt_frontend=1
+fi
+if [[ "$prebuilt_frontend" == 0 ]]; then
 node_major=0
 if command -v node >/dev/null 2>&1; then
   node_major="$(node --version | sed 's/^v//' | cut -d. -f1)"
@@ -295,6 +356,7 @@ command -v npm >/dev/null 2>&1 || fail "未找到 npm。"
 NODE_OPTIONS="${NODE_OPTIONS:---max-old-space-size=1024}"
 export NODE_OPTIONS
 log "Node.js $(node --version)，前端构建使用 NODE_OPTIONS=$NODE_OPTIONS"
+fi
 
 if [[ "$SOURCE_DIR" != "$APP_DIR" ]]; then
   log "准备应用目录 $APP_DIR"
@@ -352,7 +414,7 @@ sql_literal() {
 }
 
 stop_existing_service_for_upgrade() {
-  [[ "$INSTALL_MODE" == "upgrade" && -f "$SYSTEMD_UNIT_FILE" ]] || return 0
+  [[ ( "$INSTALL_MODE" == "upgrade" || "$resume_phase" == database-ready ) && -f "$SYSTEMD_UNIT_FILE" ]] || return 0
   if systemctl is-active --quiet infrix; then
     upgrade_service_was_active=1
     log "停止 Infrix 服务，避免升级期间继续使用旧代码。"
@@ -430,7 +492,7 @@ PY
 }
 
 backup_existing_database() {
-  [[ "$INSTALL_MODE" == "upgrade" ]] || return 0
+  [[ "$INSTALL_MODE" == "upgrade" || "$resume_phase" == database-ready ]] || return 0
 
   local timestamp
   local backup_file
@@ -480,73 +542,6 @@ backup_existing_database() {
   log "升级前数据库备份已创建：$backup_file"
 }
 
-if [[ "$DB_ENGINE" == "mysql" && "$SKIP_MARIADB" != "1" ]]; then
-  log "启动并初始化 MariaDB"
-  configure_local_mariadb_listener
-  systemctl enable --now mariadb
-  if [[ "$mariadb_local_config_changed" -eq 1 ]]; then
-    systemctl restart mariadb
-  fi
-  verify_local_mariadb_listener
-  mariadb_root_args=(--protocol=socket -uroot)
-  if [[ -n "$MARIADB_ROOT_PASSWORD" ]]; then
-    mariadb_root_args+=("--password=$MARIADB_ROOT_PASSWORD")
-  fi
-  db_password_sql="$(sql_literal "$DB_PASSWORD")"
-  mariadb "${mariadb_root_args[@]}" <<SQL
-CREATE DATABASE IF NOT EXISTS \`$DB_NAME\` CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
-CREATE USER IF NOT EXISTS '$DB_USER'@'localhost' IDENTIFIED BY $db_password_sql;
-ALTER USER '$DB_USER'@'localhost' IDENTIFIED BY $db_password_sql;
-GRANT ALL PRIVILEGES ON \`$DB_NAME\`.* TO '$DB_USER'@'localhost';
-CREATE USER IF NOT EXISTS '$DB_USER'@'127.0.0.1' IDENTIFIED BY $db_password_sql;
-ALTER USER '$DB_USER'@'127.0.0.1' IDENTIFIED BY $db_password_sql;
-GRANT ALL PRIVILEGES ON \`$DB_NAME\`.* TO '$DB_USER'@'127.0.0.1';
-FLUSH PRIVILEGES;
-SQL
-elif [[ "$DB_ENGINE" == "mysql" ]]; then
-  log "跳过本机 MariaDB，使用外部数据库 $DB_HOST:$DB_PORT"
-fi
-
-if [[ "$INSTALL_MODE" == "upgrade" ]]; then
-  validate_existing_migrations
-  stop_existing_service_for_upgrade
-  backup_existing_database
-fi
-
-if [[ "$DB_ENGINE" == "mysql" && "$INSTALL_MODE" == "fresh" ]]; then
-  database_table_count="$(
-    MYSQL_PWD="$DB_PASSWORD" mariadb \
-      --protocol=tcp -h "$DB_HOST" -P "$DB_PORT" -u "$DB_USER" \
-      --batch --skip-column-names information_schema \
-      -e "SELECT COUNT(*) FROM TABLES WHERE TABLE_SCHEMA = $(sql_literal "$DB_NAME");"
-  )" || fail "无法连接数据库以确认全新安装状态，已停止。"
-  [[ "$database_table_count" =~ ^[0-9]+$ ]] || \
-    fail "无法确认数据库是否为空，已停止。"
-  if [[ "$database_table_count" -gt 0 ]]; then
-    fail "全新安装要求目标数据库为空；检测到已有数据库表，已停止。"
-  fi
-  log "数据库为空，确认是全新安装。"
-fi
-
-if [[ "$INSTALL_MODE" == "upgrade" ]]; then
-  upgrade_mutation_started=1
-fi
-if [[ "$SOURCE_DIR" != "$APP_DIR" ]]; then
-  log "复制项目到 $APP_DIR"
-  rsync -a --delete \
-    --exclude '.git/' \
-    --exclude '.venv/' \
-    --exclude 'backend/.venv/' \
-    --exclude 'backend/db.sqlite3' \
-    --exclude 'backend/staticfiles/' \
-    --exclude 'frontend/node_modules/' \
-    --exclude 'frontend/dist/' \
-    --exclude '*.pyc' \
-    --exclude '__pycache__/' \
-    --exclude '.pytest_cache/' \
-    "$SOURCE_DIR/" "$APP_DIR/"
-fi
-
 if [[ -z "$DJANGO_SECRET_KEY" ]]; then
   DJANGO_SECRET_KEY="$(openssl rand -hex 32)"
 fi
@@ -593,9 +588,10 @@ esac
 
 if [[ ! -f "$ENV_FILE" ]]; then
   log "创建 $ENV_FILE"
+  environment_temporary_file="$(mktemp "${ENV_FILE}.XXXXXX")"
   (
     umask 027
-    cat > "$ENV_FILE" <<EOF
+    cat > "$environment_temporary_file" <<EOF
 DJANGO_ENV=$DJANGO_ENV
 DJANGO_DEBUG=$DJANGO_DEBUG
 DJANGO_SECRET_KEY=$DJANGO_SECRET_KEY
@@ -617,10 +613,24 @@ DB_PASSWORD=$DB_PASSWORD
 DB_HOST=$DB_HOST
 DB_PORT=$DB_PORT
 INFRIX_CONFIG_ENCRYPTION_KEY=$INFRIX_CONFIG_ENCRYPTION_KEY
+SERVER_NAME=$SERVER_NAME
+TLS_MODE=${TLS_MODE:-auto}
+TLS_CERT_FILE=$TLS_CERT_FILE
+TLS_KEY_FILE=$TLS_KEY_FILE
+SKIP_MARIADB=$SKIP_MARIADB
 EOF
   )
+  mv -- "$environment_temporary_file" "$ENV_FILE"
 else
   log "使用现有环境文件 $ENV_FILE"
+  if [[ "$INSTALL_MODE" == fresh ]]; then
+    if ! grep -q '^DJANGO_SECRET_KEY=' "$ENV_FILE"; then
+      printf '\nDJANGO_SECRET_KEY=%s\n' "$DJANGO_SECRET_KEY" >> "$ENV_FILE"
+    fi
+    if ! grep -q '^INFRIX_CONFIG_ENCRYPTION_KEY=' "$ENV_FILE"; then
+      printf '\nINFRIX_CONFIG_ENCRYPTION_KEY=%s\n' "$INFRIX_CONFIG_ENCRYPTION_KEY" >> "$ENV_FILE"
+    fi
+  fi
 fi
 chmod 640 "$ENV_FILE"
 chown root:"$APP_GROUP" "$ENV_FILE"
@@ -636,8 +646,116 @@ if [[ "$DB_ENGINE" == "mysql" ]]; then
     fail "${ENV_FILE} 中 DB_PASSWORD 包含不支持的字符。"
 fi
 
-"$PYTHON_BIN" "$APP_DIR/scripts/check-production-config.py" \
+"$PYTHON_BIN" "$SOURCE_DIR/scripts/check-production-config.py" \
   --env-file "$ENV_FILE" --require-proxy
+
+save_install_phase() {
+  local phase="$1" fingerprint temporary_state
+  fingerprint="$( { sha256sum "$ENV_FILE"; printf '%s\n' "$APP_DIR"; } | sha256sum | cut -d ' ' -f1)"
+  temporary_state="$(mktemp "${install_state_file}.XXXXXX")"
+  chmod 600 "$temporary_state"
+  printf '%s\t%s\n' "$phase" "$fingerprint" > "$temporary_state"
+  mv -f -- "$temporary_state" "$install_state_file"
+}
+if [[ "$INSTALL_MODE" == fresh && -z "$resume_phase" ]]; then
+  save_install_phase configured
+fi
+
+
+if [[ "$DB_ENGINE" == "mysql" && "$SKIP_MARIADB" != "1" ]]; then
+  log "启动并初始化 MariaDB"
+  configure_local_mariadb_listener
+  systemctl enable --now mariadb
+  if [[ "$mariadb_local_config_changed" -eq 1 ]]; then
+    systemctl restart mariadb
+  fi
+  verify_local_mariadb_listener
+  mariadb_root_args=(--protocol=socket -uroot)
+  if [[ -n "$MARIADB_ROOT_PASSWORD" ]]; then
+    mariadb_root_args+=("--password=$MARIADB_ROOT_PASSWORD")
+  fi
+  db_password_sql="$(sql_literal "$DB_PASSWORD")"
+  mariadb "${mariadb_root_args[@]}" <<SQL
+CREATE DATABASE IF NOT EXISTS \`$DB_NAME\` CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
+CREATE USER IF NOT EXISTS '$DB_USER'@'localhost' IDENTIFIED BY $db_password_sql;
+ALTER USER '$DB_USER'@'localhost' IDENTIFIED BY $db_password_sql;
+GRANT ALL PRIVILEGES ON \`$DB_NAME\`.* TO '$DB_USER'@'localhost';
+CREATE USER IF NOT EXISTS '$DB_USER'@'127.0.0.1' IDENTIFIED BY $db_password_sql;
+ALTER USER '$DB_USER'@'127.0.0.1' IDENTIFIED BY $db_password_sql;
+GRANT ALL PRIVILEGES ON \`$DB_NAME\`.* TO '$DB_USER'@'127.0.0.1';
+FLUSH PRIVILEGES;
+SQL
+elif [[ "$DB_ENGINE" == "mysql" ]]; then
+  log "跳过本机 MariaDB，使用外部数据库 $DB_HOST:$DB_PORT"
+fi
+
+if [[ "$INSTALL_MODE" == "upgrade" ]]; then
+  validate_existing_migrations
+fi
+
+# Build in a separate directory while the current application is still running.
+# Keep failed preparation directories for diagnosis; never replace live code here.
+prepare_dir="$(mktemp -d /var/tmp/infrix-prepare.XXXXXXXX)"
+chmod 700 "$prepare_dir"
+log "准备新版本依赖和静态资源：$prepare_dir（此阶段不停止 Infrix）"
+"$PYTHON_BIN" -m venv "$prepare_dir/venv"
+"$prepare_dir/venv/bin/python" -m pip wheel \
+  --wheel-dir "$prepare_dir/wheels" -r "$SOURCE_DIR/backend/requirements.txt"
+mkdir "$prepare_dir/frontend"
+if [[ "$prebuilt_frontend" == 1 ]]; then
+  mkdir "$prepare_dir/frontend/dist"
+  rsync -a "$SOURCE_DIR/frontend/dist/" "$prepare_dir/frontend/dist/"
+else
+rsync -a --exclude=node_modules/ --exclude=dist/ "$SOURCE_DIR/frontend/" "$prepare_dir/frontend/"
+(
+  cd "$prepare_dir/frontend"
+  npm ci --no-audit --no-fund
+  npm run build
+)
+fi
+[[ -s "$prepare_dir/frontend/dist/index.html" ]] || fail '前端准备失败，未停止现有服务。'
+
+if [[ "$INSTALL_MODE" == "upgrade" || "$resume_phase" == database-ready ]]; then
+  stop_existing_service_for_upgrade
+  backup_existing_database
+fi
+
+if [[ "$DB_ENGINE" == "mysql" && "$INSTALL_MODE" == "fresh" && "$resume_phase" != database-ready ]]; then
+  database_table_count="$(
+    MYSQL_PWD="$DB_PASSWORD" mariadb \
+      --protocol=tcp -h "$DB_HOST" -P "$DB_PORT" -u "$DB_USER" \
+      --batch --skip-column-names information_schema \
+      -e "SELECT COUNT(*) FROM TABLES WHERE TABLE_SCHEMA = $(sql_literal "$DB_NAME");"
+  )" || fail "无法连接数据库以确认全新安装状态，已停止。"
+  [[ "$database_table_count" =~ ^[0-9]+$ ]] || \
+    fail "无法确认数据库是否为空，已停止。"
+  if [[ "$database_table_count" -gt 0 ]]; then
+    fail "全新安装要求目标数据库为空；检测到已有数据库表，已停止。"
+  fi
+  log "数据库为空，确认是全新安装。"
+fi
+if [[ "$INSTALL_MODE" == fresh ]]; then
+  save_install_phase database-ready
+fi
+
+if [[ "$INSTALL_MODE" == "upgrade" || "$resume_phase" == database-ready ]]; then
+  upgrade_mutation_started=1
+fi
+if [[ "$SOURCE_DIR" != "$APP_DIR" ]]; then
+  log "复制项目到 $APP_DIR"
+  rsync -a --delete \
+    --exclude '.git/' \
+    --exclude '.venv/' \
+    --exclude 'backend/.venv/' \
+    --exclude 'backend/db.sqlite3' \
+    --exclude 'backend/staticfiles/' \
+    --exclude 'frontend/node_modules/' \
+    --exclude 'frontend/dist/' \
+    --exclude '*.pyc' \
+    --exclude '__pycache__/' \
+    --exclude '.pytest_cache/' \
+    "$SOURCE_DIR/" "$APP_DIR/"
+fi
 
 if [[ "$INSTALL_MODE" == "upgrade" ]]; then
   log "开始应用当前 Infrix 版本：同步源代码、执行迁移并重建静态资源。"
@@ -651,14 +769,13 @@ if [[ -x "$APP_DIR/backend/.venv/bin/python" ]] && \
   rm -rf "$APP_DIR/backend/.venv"
 fi
 "$PYTHON_BIN" -m venv "$APP_DIR/backend/.venv"
-"$APP_DIR/backend/.venv/bin/python" -m pip install --upgrade pip wheel
-"$APP_DIR/backend/.venv/bin/python" -m pip install -r "$APP_DIR/backend/requirements.txt"
+"$APP_DIR/backend/.venv/bin/python" -m pip install --no-index \
+  --find-links "$prepare_dir/wheels" -r "$APP_DIR/backend/requirements.txt"
 "$APP_DIR/backend/.venv/bin/python" -c 'import django; print("Django", django.get_version())'
 
-log "安装并构建前端"
-cd "$APP_DIR/frontend"
-npm ci --no-audit --no-fund
-npm run build
+log "安装已验证的前端构建产物"
+mkdir -p "$APP_DIR/frontend/dist"
+rsync -a --delete "$prepare_dir/frontend/dist/" "$APP_DIR/frontend/dist/"
 
 frontend_dist="$APP_DIR/frontend/dist"
 [[ -s "$frontend_dist/index.html" ]] || fail "前端构建未生成：$frontend_dist/index.html"
@@ -808,7 +925,48 @@ while IFS= read -r -d '' nginx_candidate; do
   fi
 done < <(find /etc/nginx -type f -name '*.conf' -print0 2>/dev/null)
 
+local_tls_enabled=0
+if [[ "${TLS_MODE:-auto}" == self-signed && ! -e "$TLS_CERT_FILE" && ! -e "$TLS_KEY_FILE" ]]; then
+  install -d -m 755 "$(dirname -- "$TLS_CERT_FILE")"
+  install -d -m 700 "$(dirname -- "$TLS_KEY_FILE")"
+  tls_san="DNS:$SERVER_NAME"
+  if [[ "$SERVER_NAME" =~ ^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+    tls_san="IP:$SERVER_NAME"
+  fi
+  (umask 077; openssl req -x509 -newkey rsa:3072 -nodes -days 825 \
+    -keyout "$TLS_KEY_FILE" -out "$TLS_CERT_FILE" \
+    -subj "/CN=$SERVER_NAME" -addext "subjectAltName=$tls_san")
+  chmod 644 "$TLS_CERT_FILE"
+fi
+if [[ -e "$TLS_CERT_FILE" || -e "$TLS_KEY_FILE" ]]; then
+  [[ -f "$TLS_CERT_FILE" && -f "$TLS_KEY_FILE" ]] || \
+    fail "检测到本机 TLS 配置不完整；TLS_CERT_FILE 和 TLS_KEY_FILE 必须同时存在。"
+  local_tls_enabled=1
+fi
+if [[ "${TLS_MODE:-auto}" == gateway ]]; then
+  local_tls_enabled=0
+fi
+
+nginx_tls_listen_directive="listen 443 ssl default_server"
+if [[ "$local_tls_enabled" -eq 1 ]]; then
+  while IFS= read -r -d '' nginx_candidate; do
+    [[ "$nginx_candidate" == "$NGINX_CONF_FILE" ]] && continue
+    if grep -Eq '^[[:space:]]*listen[[:space:]]+(443|\[::\]:443)[^;]*ssl[^;]*default_server([[:space:];]|$)' "$nginx_candidate"; then
+      nginx_tls_listen_directive="listen 443 ssl"
+      log "检测到其它 Nginx 配置已占用 443 端口 default_server，Infrix 配置改用 TLS server_name 精确匹配。"
+      break
+    fi
+  done < <(find /etc/nginx -type f -name '*.conf' -print0 2>/dev/null)
+fi
+
 nginx_hsts_value="max-age=$DJANGO_SECURE_HSTS_SECONDS"
+nginx_previous_config=""
+if [[ -f "$NGINX_CONF_FILE" ]]; then
+  install -d -m 700 "$BACKUP_DIR"
+  nginx_previous_config="$BACKUP_DIR/infrix-nginx-$(date +%Y%m%d-%H%M%S)-$$.conf"
+  cp -a -- "$NGINX_CONF_FILE" "$nginx_previous_config"
+  log "现有站点配置已备份：$nginx_previous_config"
+fi
 if [[ "$DJANGO_SECURE_HSTS_INCLUDE_SUBDOMAINS" == "1" ]]; then
   nginx_hsts_value+="; includeSubDomains"
 fi
@@ -816,7 +974,58 @@ if [[ "$DJANGO_SECURE_HSTS_PRELOAD" == "1" ]]; then
   nginx_hsts_value+="; preload"
 fi
 
-cat > "$NGINX_CONF_FILE" <<EOF
+if [[ "$local_tls_enabled" -eq 1 ]]; then
+  log "检测到本机 TLS 证书，生成 HTTPS Nginx 配置：$TLS_CERT_FILE"
+  cat > "$NGINX_CONF_FILE" <<EOF
+server {
+    $nginx_listen_directive;
+    server_name $SERVER_NAME;
+    return 301 https://\$host\$request_uri;
+}
+
+server {
+    $nginx_tls_listen_directive;
+    server_name $SERVER_NAME;
+    ssl_certificate $TLS_CERT_FILE;
+    ssl_certificate_key $TLS_KEY_FILE;
+    ssl_protocols TLSv1.2 TLSv1.3;
+    add_header Strict-Transport-Security "$nginx_hsts_value" always;
+    client_max_body_size 50m;
+    root $APP_DIR/frontend/dist;
+
+    location /api/ {
+        proxy_pass http://127.0.0.1:8001;
+        proxy_set_header Host \$host;
+        proxy_set_header X-Real-IP \$remote_addr;
+        proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto https;
+    }
+
+    location /admin/ {
+        proxy_pass http://127.0.0.1:8001;
+        proxy_set_header Host \$host;
+        proxy_set_header X-Forwarded-Proto https;
+    }
+
+    location /static/ {
+        alias $APP_DIR/backend/staticfiles/;
+        add_header Strict-Transport-Security "$nginx_hsts_value" always;
+        add_header X-Frame-Options "DENY" always;
+        add_header X-Content-Type-Options "nosniff" always;
+    }
+
+    location / {
+        # SPA 路由可能与 Vite 的静态目录同名（例如 /assets），只服务
+        # 真实文件，目录路径统一回退到 index.html，避免刷新时返回 403。
+        try_files \$uri /index.html;
+        add_header Strict-Transport-Security "$nginx_hsts_value" always;
+        add_header X-Frame-Options "DENY" always;
+        add_header X-Content-Type-Options "nosniff" always;
+    }
+}
+EOF
+else
+  cat > "$NGINX_CONF_FILE" <<EOF
 server {
     $nginx_listen_directive;
     server_name $SERVER_NAME;
@@ -856,8 +1065,21 @@ server {
     }
 }
 EOF
+fi
 chmod 644 "$NGINX_CONF_FILE"
-nginx -t
+if [[ -n "$nginx_previous_config" ]]; then
+  diff -u -- "$nginx_previous_config" "$NGINX_CONF_FILE" || true
+fi
+if ! nginx -t; then
+  if [[ -n "$nginx_previous_config" ]]; then
+    cp -a -- "$nginx_previous_config" "$NGINX_CONF_FILE"
+    log "新配置验证失败，已恢复原 Nginx 站点配置。"
+  else
+    install -d -m 700 "$BACKUP_DIR"
+    mv -- "$NGINX_CONF_FILE" "$BACKUP_DIR/infrix-nginx-rejected-$$.conf"
+  fi
+  fail "Nginx 配置未通过验证，未执行 reload。"
+fi
 
 runuser -u nginx -- test -r "$frontend_dist/index.html" \
   || fail "Nginx 用户无法读取前端首页：$frontend_dist/index.html"
@@ -967,12 +1189,40 @@ if ! curl --retry 5 --retry-delay 1 -fsS --connect-timeout 5 --max-time 10 \
 fi
 
 echo
+log "验证实际 HTTPS 入口（含证书、首页和会话接口）"
+site_url="https://${SERVER_NAME}"
+if [[ "$SERVER_NAME" == "_" ]]; then
+  site_url="https://${health_host}"
+fi
+doctor_ca="${TLS_CA_FILE:-}"
+if [[ -z "$doctor_ca" && "$local_tls_enabled" == 1 ]]; then
+  doctor_ca="$TLS_CERT_FILE"
+fi
 if [[ "$DJANGO_ENV" == "production" ]]; then
-  echo "Infrix 部署完成：请通过外部 HTTPS 网关访问。"
-  echo "内部 Nginx：TCP 80（仅允许可信 HTTPS 网关访问）"
+  bash "$APP_DIR/deploy/doctor.sh" "$site_url" "$doctor_ca" || \
+    fail "应用已启动，但实际 HTTPS 入口未通过验收；请修复入口后重新执行 doctor。"
+fi
+if [[ "$DJANGO_ENV" == "production" ]]; then
+  echo "Infrix 部署完成：$site_url"
+  if [[ "$local_tls_enabled" == "1" ]]; then
+    echo "本机 Nginx 提供 HTTPS，HTTP 自动跳转。"
+  else
+    echo "通过外部 HTTPS 网关访问，内部 Nginx 使用 TCP 80。"
+  fi
 else
   echo "Infrix 开发环境部署完成：Nginx 监听 TCP 80。"
 fi
 echo "环境文件：$ENV_FILE"
+if [[ -t 0 ]]; then
+  administrator_exists="$(runuser -u "$APP_USER" -- env INFIX_ENV_FILE="$ENV_FILE" \
+    "$APP_DIR/backend/run.sh" shell -c 'from django.contrib.auth import get_user_model; print(int(get_user_model().objects.filter(is_superuser=True,is_active=True).exists()))' | tail -n 1)"
+  if [[ "$administrator_exists" == 0 ]]; then
+    log '创建首个管理员（密码输入不会显示）'
+    runuser -u "$APP_USER" -- env INFIX_ENV_FILE="$ENV_FILE" "$APP_DIR/backend/run.sh" createsuperuser
+  fi
+fi
+if [[ "$INSTALL_MODE" == fresh ]]; then
+  save_install_phase complete
+fi
 echo "创建管理员：cd $APP_DIR/backend && sudo -u $APP_USER ./run.sh createsuperuser"
 echo "注意：本脚本不会配置防火墙；请按生产网络策略维护入口、TLS 和 Security Group。"

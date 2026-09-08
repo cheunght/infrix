@@ -4,7 +4,7 @@ set -euo pipefail
 usage() {
   cat <<'EOF'
 用法：
-  ./deploy-to-remote.sh <ssh-target> [remote-source-dir]
+  ./deploy-to-remote.sh [--config /服务器上的/infrix.env] [--non-interactive] <ssh-target> [remote-source-dir]
 
 示例：
   ./deploy-to-remote.sh root@rocky-host
@@ -17,10 +17,18 @@ usage() {
 EOF
 }
 
-if [[ "${1:-}" == "-h" || "${1:-}" == "--help" ]]; then
-  usage
-  exit 0
-fi
+REMOTE_CONFIG=""
+NON_INTERACTIVE=0
+while [[ "${1:-}" == -* ]]; do
+  case "$1" in
+    -h|--help) usage; exit 0 ;;
+    --config)
+      [[ $# -ge 2 && "$2" = /* ]] || { echo '--config 需要服务器上的绝对路径' >&2; exit 2; }
+      REMOTE_CONFIG="$2"; shift 2 ;;
+    --non-interactive) NON_INTERACTIVE=1; shift ;;
+    *) usage >&2; exit 2 ;;
+  esac
+done
 
 if [[ $# -lt 1 || $# -gt 2 ]]; then
   usage >&2
@@ -42,8 +50,8 @@ else
   # need write permission on /opt.
   REMOTE_SRC="${INFRIX_REMOTE_SRC:-/tmp/infrix-src}"
 fi
-if [[ -z "$REMOTE_SRC" || "$REMOTE_SRC" == -* ]]; then
-  echo "错误：remote-source-dir 不能为空或以短横线开头。" >&2
+if [[ ! "$REMOTE_SRC" =~ ^/[A-Za-z0-9._/-]+$ || "$REMOTE_SRC" == / || "$REMOTE_SRC" == /tmp || "$REMOTE_SRC" == /opt || "$REMOTE_SRC" == /home || "$REMOTE_SRC" == /root || "$REMOTE_SRC" == *'/../'* || "$REMOTE_SRC" == */.. ]]; then
+  echo "错误：remote-source-dir 必须是专用源码目录的绝对路径，不支持空格。" >&2
   exit 2
 fi
 
@@ -60,6 +68,25 @@ shell_quote() {
 }
 
 REMOTE_SRC_QUOTED="$(shell_quote "$REMOTE_SRC")"
+PROJECT_ROOT="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)"
+DIST_FILTER=--exclude=frontend/dist/
+if [[ -f "$PROJECT_ROOT/frontend-release.json" ]]; then
+  python3 "$PROJECT_ROOT/scripts/release-package.py" --verify-frontend "$PROJECT_ROOT"
+  DIST_FILTER=--exclude=frontend/node_modules/
+fi
+INSTALL_ARGS=""
+if [[ -n "$REMOTE_CONFIG" ]]; then
+  INSTALL_ARGS=" --config $(shell_quote "$REMOTE_CONFIG")"
+fi
+SSH_TTY=(-T)
+SUDO_COMMAND='sudo -n'
+if [[ "$NON_INTERACTIVE" == 0 && -t 0 ]]; then
+  SSH_TTY=(-t)
+  SUDO_COMMAND=sudo
+fi
+# Validate SSH and privilege access before uploading a source tree.
+ssh "${SSH_TTY[@]}" "$HOST" "$SUDO_COMMAND true"
+ssh "${SSH_TTY[@]}" "$HOST" "command -v rsync >/dev/null || $SUDO_COMMAND dnf install -y rsync"
 
 # macOS 自带 rsync 2.6.9 不支持 --info=progress2；--progress 同时兼容
 # macOS 和 Rocky 9，仍会显示文件传输进度。
@@ -70,11 +97,15 @@ rsync -az --delete --progress \
   --exclude='backend/db.sqlite3' \
   --exclude='backend/staticfiles/' \
   --exclude='frontend/node_modules/' \
-  --exclude='frontend/dist/' \
+  "$DIST_FILTER" \
   --exclude='*.pyc' \
   --exclude='__pycache__/' \
   --exclude='.pytest_cache/' \
-  ./ "$HOST:$REMOTE_SRC/"
+  --exclude='.env' \
+  --exclude='*.env' \
+  --exclude='*.key' \
+  --exclude='*.pem' \
+  "$PROJECT_ROOT/" "$HOST:$REMOTE_SRC/"
 
-ssh "$HOST" \
-  "cd -- $REMOTE_SRC_QUOTED && sudo -E env SOURCE_DIR=$REMOTE_SRC_QUOTED APP_DIR=/opt/infrix bash deploy/install.sh"
+ssh "${SSH_TTY[@]}" "$HOST" \
+  "cd -- $REMOTE_SRC_QUOTED && $SUDO_COMMAND env SOURCE_DIR=$REMOTE_SRC_QUOTED APP_DIR=/opt/infrix bash deploy/install.sh$INSTALL_ARGS"

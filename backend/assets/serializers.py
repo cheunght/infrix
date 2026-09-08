@@ -14,7 +14,7 @@ from typing import Any
 import json
 import re
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
-from .models import AuditLog, Asset, AssetCustomValue, AssetNetworkAddress, AssetResponsibilityEvent, AssetTag, CustomField, CustomFieldOption, DataCenter, Department, DeviceType, DirectoryIdentity, FaultEvent, InventoryItem, InventoryTask, MaintenanceContract, Manufacturer, ProcurementRecord, Rack, RackUnitAllocation, RepairPartUsage, RepairRecord, ServerRoom, SoftwareLicense, SparePart, SparePartCategory, SpareStock, SpareStockTransaction, SystemSetting, Tag, UserSecurityProfile
+from .models import AuditLog, Asset, AssetCustomValue, AssetNetworkAddress, AssetResponsibilityEvent, AssetTag, CustomField, CustomFieldOption, DataCenter, Department, DeviceType, DirectoryIdentity, FaultEvent, InventoryItem, InventoryTask, MaintenanceContract, Manufacturer, NotificationDelivery, ProcurementRecord, Rack, RackUnitAllocation, RepairPartUsage, RepairRecord, ServerRoom, SoftwareLicense, SparePart, SparePartCategory, SpareStock, SpareStockTransaction, SystemSetting, Tag, UserSecurityProfile
 from .depreciation import DepreciationValidationError, calculate_asset_depreciation, validate_depreciation_configuration
 from .enum_contracts import (
     INVENTORY_ITEM_STATUS_LABELS,
@@ -2322,6 +2322,22 @@ class AuditLogSerializer(serializers.ModelSerializer):
         fields = [
             "id", "actor", "actor_username", "actor_display_name", "action",
             "resource_type", "resource_id", "payload", "created_at",
+        ]
+        read_only_fields = fields
+
+
+class NotificationDeliverySerializer(serializers.ModelSerializer):
+    delivery_type = serializers.SerializerMethodField()
+
+    def get_delivery_type(self, obj) -> str:
+        return "daily_digest"
+
+    class Meta:
+        model = NotificationDelivery
+        fields = [
+            "id", "delivery_type", "window_date", "status", "attempts",
+            "attempted_at", "sent_at", "recipient_count", "error_code",
+            "created_at", "updated_at",
         ]
         read_only_fields = fields
 

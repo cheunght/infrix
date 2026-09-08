@@ -12,7 +12,6 @@ type Operations = {
   smtp?: { status: string; digest_enabled: boolean };
   ldap?: { status: string };
   configuration_status?: string;
-  deliveries?: Array<{ id: number; status: string; attempted_at: string | null; sent_at: string | null; recipient_count: number; error_code: string; delivery_type: string }>;
 };
 const data = ref<Operations | null>(null);
 const busy = ref(false);
@@ -46,9 +45,6 @@ async function load() {
   }
 }
 function state(value: string | undefined) { return t(`operations.${value || 'unavailable'}`); }
-function deliveryFailure(value: string | undefined) {
-  return value ? t(`operations.error_${value}`) : "—";
-}
 onMounted(load);
 </script>
 <template>
@@ -66,15 +62,6 @@ onMounted(load);
         <el-descriptions-item label="LDAP / AD">{{ state(data.ldap?.status) }} <router-link to="/settings/organization?tab=ldap">{{ t('nav.organization') }}</router-link></el-descriptions-item>
       </el-descriptions>
       <p>{{ t('operations.readinessHelp') }}</p>
-      <el-table :data="data.deliveries || []" :empty-text="t('common.noData')">
-        <el-table-column :label="t('operations.deliveryType')"><template #default>{{ t('operations.dailyDigest') }}</template></el-table-column>
-        <el-table-column :label="t('common.status')"><template #default="scope">{{ state(scope.row.status) }}</template></el-table-column>
-        <el-table-column prop="recipient_count" :label="t('operations.recipientCount')" />
-        <el-table-column :label="t('operations.failureReason')"><template #default="scope">{{ deliveryFailure(scope.row.error_code) }}</template></el-table-column>
-        <el-table-column :label="t('operations.attemptedAt')" min-width="200"><template #default="scope">{{ context.formatDateTime(scope.row.attempted_at) }}</template></el-table-column>
-        <el-table-column :label="t('operations.sentAt')" min-width="200"><template #default="scope">{{ context.formatDateTime(scope.row.sent_at) }}</template></el-table-column>
-      </el-table>
-      <p>{{ t('operations.retryHelp') }}</p>
     </template>
   </section>
 </template>

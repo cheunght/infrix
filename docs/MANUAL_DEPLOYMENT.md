@@ -8,6 +8,10 @@ The automatic installation path is available for Rocky Linux 9.x through
 `deploy/install.sh`; see [INSTALL_VM.md](INSTALL_VM.md). Use this guide when
 the operating system or service layout is managed manually.
 
+For the Chinese version, see [中文手工部署文档](MANUAL_DEPLOYMENT.zh-CN.md).
+For first-install wizard behavior, resumable installation, release packages,
+and HTTPS diagnosis, see [Installer Workflow](INSTALLER_WORKFLOW.md).
+
 ## v0.1 migration baseline
 
 The `v0.1.0` source tree is a clean fresh-install migration baseline. A
@@ -150,30 +154,9 @@ deployment host and do not need to be supplied with the source package.
 
 Use one production environment file for the application process. The reference
 file is `/etc/infrix/infrix.env`; a different path is valid when the process
-supervisor and `INFIX_ENV_FILE` usage are configured consistently.
-
-```dotenv
-DJANGO_ENV=production
-DJANGO_DEBUG=0
-DJANGO_SECRET_KEY=<random-secret-at-least-50-characters>
-DJANGO_ALLOWED_HOSTS=<hostname>
-DJANGO_CSRF_TRUSTED_ORIGINS=https://<hostname>
-DJANGO_HTTPS_MODE=proxy
-DJANGO_SECURE_SSL_REDIRECT=1
-DJANGO_SESSION_COOKIE_SECURE=1
-DJANGO_CSRF_COOKIE_SECURE=1
-DJANGO_SECURE_HSTS_SECONDS=3600
-DJANGO_SECURE_HSTS_INCLUDE_SUBDOMAINS=0
-DJANGO_SECURE_HSTS_PRELOAD=0
-DJANGO_USE_X_FORWARDED_HOST=0
-DB_ENGINE=mysql
-DB_NAME=infrix
-DB_USER=infrix
-DB_PASSWORD=<database-password>
-DB_HOST=<database-host>
-DB_PORT=3306
-INFRIX_CONFIG_ENCRYPTION_KEY=<base64-fernet-key>
-```
+supervisor and `INFIX_ENV_FILE` usage are configured consistently. Use the
+repository's [`deploy/infrix.env.example`](../deploy/infrix.env.example) as the
+field reference instead of maintaining a second configuration sample here.
 
 Production rejects short or placeholder secrets, wildcard hosts, non-HTTPS
 CSRF origins, insecure cookies, invalid proxy settings, and incomplete MySQL
@@ -192,6 +175,13 @@ chown root:infrix /etc/infrix/infrix.env
 
 Do not store the real environment file in the source directory or print its
 contents to logs.
+
+Generate a Fernet key once and keep it with the environment-file and database
+backups:
+
+```bash
+python3 -c 'import base64, os; print(base64.urlsafe_b64encode(os.urandom(32)).decode())'
+```
 
 ### LDAP / Active Directory
 
