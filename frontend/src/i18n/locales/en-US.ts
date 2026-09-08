@@ -1,4 +1,20 @@
 export default {
+  operations: {
+    emailEnabled: "Enable daily email digest", recipients: "Digest recipients", applicationUrl: "Application HTTPS URL",
+    emailHelp: "Press Enter after each email, up to 20. Recipients receive all enabled alert categories below. A scheduled command must be deployed.",
+    application: "Application and runtime", time: "Application time and timezone", database: "Database", migrations: "Migrations / pending count",
+    healthy: "Healthy", disabled: "Disabled", unconfigured: "Not configured", unavailable: "Unavailable", attention: "Needs attention",
+    sent: "Sent", failed: "Failed", sending: "Sending or unconfirmed", unknown: "Unconfirmed", pending: "Pending",
+    deliveryType: "Delivery type", dailyDigest: "Daily operational digest", recipientCount: "Recipients", failureReason: "Failure reason", attemptedAt: "Last attempt", sentAt: "Sent at",
+    error_delivery_failed: "Mail service delivery failed", error_smtp_disabled: "SMTP is disabled", error_smtp_incomplete: "SMTP configuration is incomplete", error_password_missing: "SMTP password is not configured", error_secret_unavailable: "SMTP secret is unavailable",
+    readinessHelp: "Healthy SMTP and LDAP indicate usable configuration, not verified live connectivity. Use their settings pages to test connections.",
+    retryHelp: "Configuration failures retry up to 3 times, at least 1 hour apart. Unconfirmed sends are not retried automatically; check mail server records.",
+  },
+  branding: {
+    title: "Branding", description: "Configure the application display name and safe image branding assets.", displayName: "Application display name", logo: "Full logo (sidebar and login)",
+    compact_logo: "Compact logo", favicon: "Browser icon", restore: "Restore infrix branding",
+    save: "Save branding", uploadHelp: "Logos: PNG, JPEG, WebP. Browser icon: PNG only. Maximum 2 MB and 4 million pixels. Branding is saved separately.",
+  },
   common: {
     appName: "Infrix",
     loading: "Loading…",
@@ -1263,6 +1279,8 @@ export default {
     settingsSaved: "System parameters saved",
     generalSection: "General",
     generalSectionDescription: "Configure defaults for lists and newly created assets.",
+    categoryHasErrors: "This category has validation errors",
+    categoryHasUnsavedChanges: "This category has unsaved changes",
     localizationSection: "Language and region",
     localizationSectionDescription: "Set the system language, timezone, date format and currency. A user's personal language preference takes precedence.",
     defaultLocale: "Default interface language",
@@ -1723,6 +1741,8 @@ export default {
       ldap_enabled: "Enabled LDAP",
       ldap_disabled: "Disabled LDAP",
       ldap_bind_password_updated: "Updated LDAP bind password",
+      branding_updated: "Updated branding settings",
+      branding_reset: "Restored default branding",
       system_reset: "Restored initial system state",
     },
     fields: {

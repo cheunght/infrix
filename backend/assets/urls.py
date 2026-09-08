@@ -1,5 +1,7 @@
 from rest_framework.routers import DefaultRouter
 from django.urls import path
+from .branding import public_branding, branding_image, branding_configuration
+from .operations import operational_status
 from .views import AuditLogViewSet, AssetViewSet, CustomFieldOptionViewSet, CustomFieldViewSet, DataCenterViewSet, DepartmentViewSet, DeviceTypeViewSet, FaultEventViewSet, GroupViewSet, InventoryItemViewSet, InventoryTaskViewSet, ManufacturerViewSet, RackViewSet, RepairRecordViewSet, ServerRoomViewSet, SoftwareLicenseViewSet, SparePartCategoryViewSet, SparePartViewSet, SpareStockViewSet, SpareStockTransactionViewSet, TagViewSet, UserViewSet, alerts_overview, asset_inventory_records, dashboard_overview, facilities_summary, inventory_inspectors, license_export, license_summary, repair_record_export, rack_layout_export, spare_part_export, spare_transaction_export, auth_login, auth_me, auth_logout, auth_csrf, auth_change_password, auth_ldap_status, auth_ldap_config, auth_ldap_diagnostics, smtp_test_email, system_reset, system_settings, asset_import, asset_import_preview, asset_import_template, asset_export
 
 router = DefaultRouter()
@@ -27,6 +29,10 @@ router.register("inventory-tasks", InventoryTaskViewSet, basename="inventory-tas
 router.register("inventory-items", InventoryItemViewSet, basename="inventory-item")
 
 urlpatterns = [
+    path("system/operations/", operational_status),
+    path("branding/", public_branding),
+    path("branding/images/<str:kind>/", branding_image),
+    path("system/settings/branding/", branding_configuration),
     path("auth/login/", auth_login),
     path("auth/csrf/", auth_csrf),
     path("auth/me/", auth_me),

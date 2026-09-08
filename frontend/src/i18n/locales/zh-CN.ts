@@ -1,4 +1,20 @@
 export default {
+  operations: {
+    emailEnabled: "启用每日邮件摘要", recipients: "摘要收件人", applicationUrl: "应用 HTTPS 访问地址",
+    emailHelp: "输入邮箱后按回车，最多 20 个。收件人将收到下面所有已启用类别的业务提醒；需要部署定时任务。",
+    application: "应用与运行环境", time: "应用时间与时区", database: "数据库", migrations: "迁移状态 / 待执行数量",
+    healthy: "正常", disabled: "已停用", unconfigured: "未配置", unavailable: "不可用", attention: "需要处理",
+    sent: "发送成功", failed: "发送失败", sending: "发送中或结果未确认", unknown: "结果未确认", pending: "待发送",
+    deliveryType: "投递类型", dailyDigest: "每日业务摘要", recipientCount: "收件人数", failureReason: "失败原因", attemptedAt: "最近尝试", sentAt: "发送成功时间",
+    error_delivery_failed: "邮件服务发送失败", error_smtp_disabled: "SMTP 已停用", error_smtp_incomplete: "SMTP 配置不完整", error_password_missing: "SMTP 密码未配置", error_secret_unavailable: "SMTP 密钥不可用",
+    readinessHelp: "SMTP 和 LDAP 正常表示配置可用，并不代表实时连接已验证。连接验证请前往相应设置。",
+    retryHelp: "配置失败最多重试 3 次，间隔至少 1 小时。结果未确认的发送不会自动重试，需管理员核对邮件服务端记录。",
+  },
+  branding: {
+    title: "品牌设置", description: "配置应用显示名称和安全的图像品牌资源。", displayName: "应用显示名称", logo: "完整 Logo（侧栏与登录页）",
+    compact_logo: "紧凑 Logo", favicon: "浏览器图标", restore: "恢复 infrix 默认品牌",
+    save: "保存品牌设置", uploadHelp: "Logo 支持 PNG、JPEG、WebP，浏览器图标仅支持 PNG；最大 2 MB、400 万像素。品牌设置单独保存。",
+  },
   common: {
     appName: "Infrix",
     loading: "正在加载…",
@@ -1263,6 +1279,8 @@ export default {
     settingsSaved: "系统参数已保存",
     generalSection: "常规设置",
     generalSectionDescription: "配置列表和新资产的默认行为。",
+    categoryHasErrors: "此分类存在校验错误",
+    categoryHasUnsavedChanges: "此分类有未保存的更改",
     localizationSection: "语言与区域",
     localizationSectionDescription: "统一设置系统的语言、时区、日期和金额展示方式；用户个人语言设置优先。",
     defaultLocale: "默认界面语言",
@@ -1723,6 +1741,8 @@ export default {
       ldap_enabled: "启用 LDAP",
       ldap_disabled: "停用 LDAP",
       ldap_bind_password_updated: "更新 LDAP 绑定密码",
+      branding_updated: "更新品牌设置",
+      branding_reset: "恢复默认品牌",
       system_reset: "恢复系统初始状态",
     },
     fields: {

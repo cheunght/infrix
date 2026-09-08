@@ -88,6 +88,8 @@ const ACTION_LABELS: Record<string, string> = {
   ldap_enabled: "auditLog.actions.ldap_enabled",
   ldap_disabled: "auditLog.actions.ldap_disabled",
   ldap_bind_password_updated: "auditLog.actions.ldap_bind_password_updated",
+  branding_updated: "auditLog.actions.branding_updated",
+  branding_reset: "auditLog.actions.branding_reset",
   system_reset: "auditLog.actions.system_reset",
 };
 

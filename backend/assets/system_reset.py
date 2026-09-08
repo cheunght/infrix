@@ -27,6 +27,7 @@ from .models import (
     InventoryTask,
     MaintenanceContract,
     Manufacturer,
+    NotificationDelivery,
     ProcurementRecord,
     Rack,
     RackUnitAllocation,
@@ -84,6 +85,7 @@ def _clear_mutable_data(preserved_user_ids):
 
     # Operational history and authentication state must be removed before
     # their actors or referenced business objects disappear.
+    _delete_queryset(counts, "notification_deliveries", NotificationDelivery.objects.all())
     _delete_queryset(counts, "audit_logs", AuditLog.objects.all())
     _delete_queryset(counts, "admin_log_entries", LogEntry.objects.all())
     _delete_queryset(counts, "inventory_items", InventoryItem.objects.all())

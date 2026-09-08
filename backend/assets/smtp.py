@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from email.utils import formataddr
+from smtplib import SMTPAuthenticationError, SMTPRecipientsRefused, SMTPSenderRefused, SMTPDataError, SMTPConnectError
 
 from django.core.mail import EmailMessage, get_connection
 
@@ -32,6 +33,12 @@ def _configured_password(setting) -> str:
 
 def send_smtp_test_email(setting, recipient: str) -> None:
     """Send one synchronous test message using only the saved configuration."""
+
+    send_smtp_message(setting, recipient, "infrix SMTP test email", "This is a test email sent by infrix.")
+
+
+def send_smtp_message(setting, recipient: str, subject: str, body: str) -> None:
+    """Send through the existing encrypted SMTP configuration boundary."""
 
     if not setting.smtp_enabled:
         raise SmtpConfigurationError("smtp_disabled", "请先启用 SMTP")
@@ -63,8 +70,8 @@ def send_smtp_test_email(setting, recipient: str) -> None:
     if setting.smtp_from_name.strip():
         from_email = formataddr((setting.smtp_from_name.strip(), from_email))
     message = EmailMessage(
-        subject="infrix SMTP test email",
-        body="This is a test email sent by infrix.",
+        subject=subject,
+        body=body,
         from_email=from_email,
         to=[recipient],
         connection=connection,
@@ -72,9 +79,11 @@ def send_smtp_test_email(setting, recipient: str) -> None:
     try:
         sent = message.send(fail_silently=False)
     except Exception as exc:
-        raise SmtpConfigurationError(
+        error = SmtpConfigurationError(
             "delivery_failed",
             "无法发送测试邮件，请检查 SMTP 地址、端口、安全模式和账号配置",
-        ) from exc
+        )
+        error.retry_safe = isinstance(exc, (ConnectionRefusedError, SMTPAuthenticationError, SMTPRecipientsRefused, SMTPSenderRefused, SMTPDataError, SMTPConnectError))
+        raise error from exc
     if sent != 1:
         raise SmtpConfigurationError("delivery_failed", "测试邮件未发送成功")

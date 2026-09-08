@@ -41,8 +41,7 @@ import ApiErrorAlert from "./components/ApiErrorAlert.vue";
 import SearchField from "./components/SearchField.vue";
 import NotificationCenter from "./components/NotificationCenter.vue";
 import LanguageSwitcher from "./components/LanguageSwitcher.vue";
-import infrixMark from "./assets/infrix-mark.png";
-import infrixWordmark from "./assets/infrix-wordmark.png";
+import { branding, brandingLogo, brandingMark, brandingImageFailed, loadBranding } from "./branding";
 import { hasCapability } from "./permissions";
 import { statusLabel } from "./status";
 import { currentLocale, elementPlusLocale, normalizeLocale, setLocale, type Locale } from "./i18n";
@@ -53,6 +52,7 @@ import {
   type OrganizationTab,
   type RackSection,
   type SettingsSection,
+  type SystemSettingsTab,
 } from "./router";
 import {
   ensureElementPlusComponents,
@@ -195,6 +195,7 @@ const lastLogin = ref<string | null>(null);
 const viewportHeight = ref(window.innerHeight);
 const settingsSection = ref<SettingsSection>("system");
 const organizationTab = ref<OrganizationTab>("users");
+const systemSettingsTab = ref<SystemSettingsTab>("general");
 const inventoryTaskId = ref<number | null>(null);
 const assetConfigSection = ref<AssetConfigSection>("custom-fields");
 const rackSection = ref<RackSection>("locations");
@@ -1000,7 +1001,15 @@ function syncRouteState(): boolean {
   page.value = routePage;
   if (routePage === "settings") {
     settingsSection.value = route.meta.settingsSection || "system";
-    if (settingsSection.value === "organization") {
+    if (settingsSection.value === "system") {
+      const requestedTab = routeQueryValue("tab");
+      systemSettingsTab.value = requestedTab === "localization" || requestedTab === "security" || requestedTab === "smtp" || requestedTab === "notifications" || requestedTab === "branding"
+        ? requestedTab
+        : "general";
+      if (hasQueryKey("tab") && requestedTab !== "general" && requestedTab !== "localization" && requestedTab !== "security" && requestedTab !== "smtp" && requestedTab !== "notifications" && requestedTab !== "branding") {
+        queryKeysToClear.push("tab");
+      }
+    } else if (settingsSection.value === "organization") {
       const requestedTab = routeQueryValue("tab");
       organizationTab.value = requestedTab === "roles" || requestedTab === "ldap" || requestedTab === "departments"
         ? requestedTab
@@ -1136,7 +1145,7 @@ function routeIsAllowed() {
   if (section === "audit" && !can("audit.view")) return false;
   if (section === "custom-fields" && !can("custom_fields.view")) return false;
   if (section === "tags" && !can("tags.view")) return false;
-  if (section === "maintenance" && !can("system.reset")) return false;
+  if (section === "maintenance" && !can("settings.view")) return false;
   return true;
 }
 
@@ -1558,6 +1567,7 @@ function navigate(item: (typeof navItems)[number]) {
     routeForPage(item.page, {
       rackSection: rackSection.value,
       settingsSection: settingsSection.value,
+      systemSettingsTab: settingsSection.value === "system" ? systemSettingsTab.value : undefined,
     }),
     true,
   );
@@ -1576,13 +1586,14 @@ function openSettingsSection(
   if (section === "organization" && !can("organization.manage")) organizationTab.value = "departments";
   if (section === "system" && !can("settings.view")) return;
   if (section === "audit" && !can("audit.view")) return;
-  if (section === "maintenance" && !can("system.reset")) return;
+  if (section === "maintenance" && !can("settings.view")) return;
   closeTransientUi();
   settingsSection.value = section;
   nextTick(() => sidebarMenu.value?.open("settings"));
   navigateToRoute(routeForPage("settings", {
     settingsSection: section,
     organizationTab: section === "organization" ? organizationTab.value : undefined,
+    systemSettingsTab: section === "system" ? systemSettingsTab.value : undefined,
   }), true);
 }
 function changeOrganizationTab(value: string) {
@@ -1599,6 +1610,15 @@ function changeOrganizationTab(value: string) {
     settingsSection: "organization",
     organizationTab: nextTab,
   }), true);
+}
+function changeSystemSettingsTab(value: string) {
+  if (!can("settings.view")) return;
+  if (value !== "general" && value !== "localization" && value !== "security" && value !== "smtp" && value !== "notifications" && value !== "branding") return;
+  systemSettingsTab.value = value;
+  navigateToRoute(routeForPage("settings", {
+    settingsSection: "system",
+    systemSettingsTab: systemSettingsTab.value,
+  }));
 }
 function openAssetConfiguration(section: AssetConfigSection) {
   if (section === "custom-fields" && !can("custom_fields.view")) return;
@@ -1742,6 +1762,7 @@ watch(
   { immediate: true },
 );
 onMounted(async () => {
+  void loadBranding();
   window.addEventListener("resize", updateViewportHeight);
   await runInitialBootstrap();
 });
@@ -1843,7 +1864,8 @@ const pageContext = {
   responsibilityActionSaving, responsibilityActionError, responsibilityActionFieldErrors,
   clearResponsibilityActionErrors, clearResponsibilityActionFieldError, assignAsset, returnAsset, transferAsset,
   rackCount, rackPage, rackPageSize, changeRackPage,
-  settingsSection, organizationTab, changeOrganizationTab, systemSettings, systemSettingsForm, systemSettingsDefinitions, systemSettingsLoading,
+  settingsSection, organizationTab, changeOrganizationTab, systemSettingsTab, changeSystemSettingsTab,
+  systemSettings, systemSettingsForm, systemSettingsDefinitions, systemSettingsLoading,
   systemSettingsSaving, systemSettingsError, systemSettingsFormErrors, systemSettingsDirty,
   systemSmtpTesting, systemSmtpTestRecipient,
   ldapStatus, ldapConfiguration, ldapConfigurationForm, ldapConfigurationLoading, ldapConfigurationSaving,
@@ -1964,7 +1986,7 @@ watch(hasOpenGlobalOverlay, (isOpen) => {
     <div class="login-card">
       <div class="login-language-switcher"><LanguageSwitcher /></div>
       <div class="login-brand">
-        <img class="login-brand-wordmark" :src="infrixWordmark" alt="Infrix" />
+        <img class="login-brand-wordmark" :src="brandingLogo" :alt="branding.display_name" @error="brandingImageFailed('logo')" />
         <div class="login-brand-subtitle">{{ t('auth.productSubtitle') }}</div>
       </div>
       <el-form label-position="top" @submit.prevent="login">
@@ -2013,14 +2035,16 @@ watch(hasOpenGlobalOverlay, (isOpen) => {
         <img
           v-show="sidebarCollapsed"
           class="sidebar-brand-icon"
-          :src="infrixMark"
-          alt="Infrix"
+          :src="brandingMark"
+          :alt="branding.display_name"
+          @error="brandingImageFailed('compact_logo')"
         />
         <img
           v-show="!sidebarCollapsed"
           class="sidebar-wordmark"
-          :src="infrixWordmark"
-          alt="Infrix"
+          :src="brandingLogo"
+          :alt="branding.display_name"
+          @error="brandingImageFailed('logo')"
         />
         <el-button
           class="ep-sidebar-collapse-button"
@@ -2098,7 +2122,11 @@ watch(hasOpenGlobalOverlay, (isOpen) => {
             >{{ t('nav.organization') }}</el-menu-item
           ><el-menu-item v-if="can('audit.view')" index="settings-audit"
             >{{ t('nav.audit') }}</el-menu-item
-          ><el-menu-item v-if="can('system.reset')" index="settings-maintenance"
+          ><template v-if="can('system.reset')"
+            ><el-menu-item v-if="can('settings.view')" index="settings-maintenance"
+              >{{ t('nav.maintenance') }}</el-menu-item
+          ></template
+          ><el-menu-item v-if="can('settings.view') && !can('system.reset')" index="settings-maintenance"
             >{{ t('nav.maintenance') }}</el-menu-item
           ></el-sub-menu
         >

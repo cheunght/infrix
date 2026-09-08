@@ -71,6 +71,8 @@ SERVER_NAME="${SERVER_NAME:-_}"
 NGINX_CONF_FILE="${NGINX_CONF_FILE:-/etc/nginx/conf.d/infrix.conf}"
 BACKUP_DIR="${BACKUP_DIR:-/var/backups/infrix}"
 SYSTEMD_UNIT_FILE="${SYSTEMD_UNIT_FILE:-/etc/systemd/system/infrix.service}"
+DIGEST_SERVICE_UNIT_FILE="${DIGEST_SERVICE_UNIT_FILE:-/etc/systemd/system/infrix-notification-digest.service}"
+DIGEST_TIMER_UNIT_FILE="${DIGEST_TIMER_UNIT_FILE:-/etc/systemd/system/infrix-notification-digest.timer}"
 INSTALL_MODE="${INSTALL_MODE:-auto}"
 SKIP_MARIADB="${SKIP_MARIADB:-0}"
 PYTHON_BIN="${PYTHON_BIN:-}"
@@ -92,6 +94,8 @@ esac
 [[ "$ENV_FILE" = /* ]] || fail "ENV_FILE 必须是绝对路径。"
 [[ "$NGINX_CONF_FILE" = /* ]] || fail "NGINX_CONF_FILE 必须是绝对路径。"
 [[ "$SYSTEMD_UNIT_FILE" = /* ]] || fail "SYSTEMD_UNIT_FILE 必须是绝对路径。"
+[[ "$DIGEST_SERVICE_UNIT_FILE" = /* ]] || fail "DIGEST_SERVICE_UNIT_FILE 必须是绝对路径。"
+[[ "$DIGEST_TIMER_UNIT_FILE" = /* ]] || fail "DIGEST_TIMER_UNIT_FILE 必须是绝对路径。"
 
 discover_environment_file_from_unit() {
   # A previous deployment may have used a custom environment-file path.  When
@@ -726,6 +730,40 @@ WantedBy=multi-user.target
 EOF
 chmod 644 "$SYSTEMD_UNIT_FILE"
 
+log "写入每日邮件摘要定时任务"
+cat > "$DIGEST_SERVICE_UNIT_FILE" <<EOF
+[Unit]
+Description=Infrix daily notification digest
+After=network-online.target mariadb.service
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=$APP_USER
+Group=$APP_GROUP
+WorkingDirectory=$APP_DIR/backend
+EnvironmentFile=$ENV_FILE
+ExecStart=$APP_DIR/backend/.venv/bin/python manage.py send_notification_digest
+PrivateTmp=true
+NoNewPrivileges=true
+EOF
+chmod 644 "$DIGEST_SERVICE_UNIT_FILE"
+
+cat > "$DIGEST_TIMER_UNIT_FILE" <<EOF
+[Unit]
+Description=Infrix daily notification digest schedule
+
+[Timer]
+OnCalendar=*-*-* 09:00:00
+Persistent=true
+RandomizedDelaySec=15m
+Unit=$(basename -- "$DIGEST_SERVICE_UNIT_FILE")
+
+[Install]
+WantedBy=timers.target
+EOF
+chmod 644 "$DIGEST_TIMER_UNIT_FILE"
+
 log "写入 Nginx 配置"
 install -d -m 700 "$BACKUP_DIR"
 install -d -m 755 "$(dirname -- "$NGINX_CONF_FILE")"
@@ -876,6 +914,7 @@ if [[ "$service_ready" -ne 1 ]]; then
   fail "Infrix 服务启动失败。"
 fi
 systemctl reload nginx
+systemctl enable --now "$(basename -- "$DIGEST_TIMER_UNIT_FILE")"
 
 health_host="${DJANGO_ALLOWED_HOSTS%%,*}"
 if [[ "$health_host" == "*" ]]; then

@@ -7,3 +7,4 @@ gunicorn>=23.0,<24.0
 PyMySQL>=1.1,<2.0
 ldap3>=2.9,<3.0
 cryptography>=42,<47
+Pillow>=11,<13

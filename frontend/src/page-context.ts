@@ -7,6 +7,7 @@ import type {
   OrganizationTab,
   RackSection,
   SettingsSection,
+  SystemSettingsTab,
 } from "./router";
 import type {
   Asset,
@@ -563,10 +564,13 @@ export interface InventoryContext {
 }
 
 export interface SettingsContext extends CustomFieldContext, TagContext {
+  request: RequestFn;
   loading: Ref<boolean>;
   settingsSection: Ref<SettingsSection>;
   organizationTab: Ref<OrganizationTab>;
   changeOrganizationTab: (value: string) => void;
+  systemSettingsTab: Ref<SystemSettingsTab>;
+  changeSystemSettingsTab: (value: string) => void;
   can: CapabilityFn;
   systemSettings: Ref<SystemSettings | null>;
   systemSettingsForm: Ref<SystemSettingsForm>;

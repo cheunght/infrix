@@ -41,6 +41,9 @@ export type CurrencyCode = "CNY" | "USD" | "EUR" | "GBP" | "JPY" | "HKD";
 export type DateFormat = "YYYY-MM-DD" | "DD/MM/YYYY" | "MM/DD/YYYY";
 export type SmtpSecurityMode = "none" | "starttls" | "ssl";
 export type SystemSettingKey =
+  | "email_digest_enabled"
+  | "email_digest_recipients"
+  | "application_url"
   | "default_page_size"
   | "default_asset_status"
   | "default_locale"
@@ -71,13 +74,16 @@ export type SystemSettingOption = { value: string | number | boolean; label: str
 export type SystemSettingDefinition = {
   key: SystemSettingKey;
   label: string;
-  type: "integer" | "enum" | "boolean" | "string" | "email" | "timezone";
+  type: "integer" | "enum" | "boolean" | "string" | "email" | "emails" | "timezone";
   section: "general" | "localization" | "security" | "smtp" | "notifications";
-  default: string | number | boolean;
+  default: string | number | boolean | string[];
   options: SystemSettingOption[];
   help_text: string;
 };
 export type SystemSettingsForm = {
+  email_digest_enabled: boolean;
+  email_digest_recipients: string[];
+  application_url: string;
   default_page_size: number;
   default_asset_status: AssetStatus;
   default_locale: SystemLocale;

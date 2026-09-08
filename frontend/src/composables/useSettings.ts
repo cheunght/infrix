@@ -65,6 +65,9 @@ type CustomFieldOptionForm = {
 type FormErrors = Record<string, string>;
 
 const DEFAULT_SYSTEM_SETTINGS_FORM: SystemSettingsForm = {
+  email_digest_enabled: false,
+  email_digest_recipients: [],
+  application_url: "",
   default_page_size: 50,
   default_asset_status: "in_stock",
   default_locale: "zh-CN",
@@ -95,6 +98,7 @@ const DEFAULT_SYSTEM_SETTINGS_FORM: SystemSettingsForm = {
 };
 
 const SYSTEM_SETTINGS_VALUE_KEYS: Array<keyof Omit<SystemSettingsForm, "smtp_password">> = [
+  "email_digest_enabled", "email_digest_recipients", "application_url",
   "default_page_size",
   "default_asset_status",
   "default_locale",
@@ -410,7 +414,7 @@ export function useSettings(deps: SettingsDeps) {
   const systemSettingsDirty = computed(() => {
     if (!systemSettings.value) return false;
     return SYSTEM_SETTINGS_VALUE_KEYS.some((key) =>
-      systemSettingsForm.value[key] !== systemSettings.value?.[key]
+      JSON.stringify(systemSettingsForm.value[key]) !== JSON.stringify(systemSettings.value?.[key])
     ) || Boolean(systemSettingsForm.value.smtp_password);
   });
   const showSystemResetDialog = ref(false);
@@ -619,6 +623,9 @@ export function useSettings(deps: SettingsDeps) {
       notify_open_faults: value.notify_open_faults,
       notify_overdue_inventory: value.notify_overdue_inventory,
       notify_low_spare_stock: value.notify_low_spare_stock,
+      email_digest_enabled: value.email_digest_enabled,
+      email_digest_recipients: [...value.email_digest_recipients],
+      application_url: value.application_url,
     };
   }
 

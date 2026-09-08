@@ -16,6 +16,7 @@ export type SettingsSection =
   | "maintenance";
 export type AssetConfigSection = "custom-fields" | "tags";
 export type OrganizationTab = "users" | "roles" | "ldap" | "departments";
+export type SystemSettingsTab = "general" | "localization" | "security" | "smtp" | "notifications" | "branding";
 
 export type RackSection = "locations" | "view";
 export type LocationTypeFilter = "" | "data-center" | "room";
@@ -175,6 +176,7 @@ const pageComponents: Partial<Record<Page, () => Promise<Component>>> = {
     "ElTable",
     "ElTableColumn",
     "ElTabs",
+    "ElUpload",
     "ElTag",
     "ElText",
     "ElTooltip",
@@ -295,6 +297,7 @@ export function routeForPage(
   options: {
     settingsSection?: SettingsSection;
     organizationTab?: OrganizationTab;
+    systemSettingsTab?: SystemSettingsTab;
     assetConfigSection?: AssetConfigSection;
     rackSection?: RackSection;
   } = {},
@@ -320,6 +323,9 @@ export function routeForPage(
     }
     if (section === "organization" && options.organizationTab && options.organizationTab !== "users") {
       return { name: `settings-${section}`, query: { tab: options.organizationTab } };
+    }
+    if (section === "system" && options.systemSettingsTab && options.systemSettingsTab !== "general") {
+      return { name: `settings-${section}`, query: { tab: options.systemSettingsTab } };
     }
     return { name: `settings-${section}` };
   }

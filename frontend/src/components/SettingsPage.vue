@@ -7,6 +7,8 @@ import SearchField from "./SearchField.vue";
 import CustomFieldSettingsPage from "./CustomFieldSettingsPage.vue";
 import TagSettingsPage from "./TagSettingsPage.vue";
 import LdapConfigurationPage from "./LdapConfigurationPage.vue";
+import BrandingSettings from "./BrandingSettings.vue";
+import SystemOperations from "./SystemOperations.vue";
 import DescriptionList from "./DescriptionList.vue";
 import PageContainer from "./page/PageContainer.vue";
 import PageContent from "./page/PageContent.vue";
@@ -16,6 +18,7 @@ import StatusTag from "./StatusTag.vue";
 import ActionDialogShell from "./ActionDialogShell.vue";
 import TableIconButton from "./TableIconButton.vue";
 import type { SettingsContext } from "../page-context";
+import type { SystemSettingsTab } from "../router";
 import type { AuditLog } from "../types";
 import { ASSET_STATUS_OPTIONS, businessOptionLabel, roleDescription, roleLabel } from "../business-enums";
 import {
@@ -36,6 +39,8 @@ const {
   settingsSection,
   organizationTab,
   changeOrganizationTab,
+  systemSettingsTab,
+  changeSystemSettingsTab,
   can,
   systemSettings,
   systemSettingsForm,
@@ -165,6 +170,54 @@ const smtpTestRecipientError = computed(() => {
   const value = systemSmtpTestRecipient.value.trim();
   return value && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(value) ? t("validation.invalidEmail") : "";
 });
+const systemSettingsCategories = computed<Array<{ value: SystemSettingsTab; label: string }>>(() => [
+  { value: "general", label: t("settings.generalSection") },
+  { value: "localization", label: t("settings.localizationSection") },
+  { value: "security", label: t("settings.securitySection") },
+  { value: "smtp", label: t("settings.smtpSection") },
+  { value: "notifications", label: t("settings.notificationsSection") },
+  { value: "branding", label: t("branding.title") },
+]);
+const systemSettingsCategoryDirty = computed<Record<SystemSettingsTab, boolean>>(() => {
+  const result: Record<SystemSettingsTab, boolean> = {
+    general: false,
+    localization: false,
+    security: false,
+    smtp: false,
+    notifications: false,
+    branding: false,
+  };
+  if (!systemSettings.value) return result;
+  for (const category of systemSettingsCategories.value) {
+    result[category.value] = systemSettingsDefinitions.value
+      .filter((definition) => definition.section === category.value)
+      .some((definition) => JSON.stringify(systemSettingsForm.value[definition.key]) !== JSON.stringify(systemSettings.value?.[definition.key]));
+  }
+  if (systemSettingsForm.value.smtp_password) result.smtp = true;
+  return result;
+});
+const systemSettingsCategoryErrors = computed<Record<SystemSettingsTab, boolean>>(() => {
+  const result: Record<SystemSettingsTab, boolean> = {
+    general: false,
+    localization: false,
+    security: false,
+    smtp: false,
+    notifications: false,
+    branding: false,
+  };
+  for (const category of systemSettingsCategories.value) {
+    result[category.value] = systemSettingsDefinitions.value
+      .filter((definition) => definition.section === category.value)
+      .some((definition) => Boolean(systemSettingsFormErrors.value[definition.key]));
+  }
+  result.smtp = result.smtp || Boolean(systemSettingsFormErrors.value.smtp_password || smtpTestRecipientError.value);
+  return result;
+});
+function systemSettingsCategoryStatus(category: SystemSettingsTab) {
+  if (systemSettingsCategoryErrors.value[category]) return t("settings.categoryHasErrors");
+  if (systemSettingsCategoryDirty.value[category]) return t("settings.categoryHasUnsavedChanges");
+  return "";
+}
 const dictionaryPrimaryLabel = computed(() => {
   if (dictionarySection.value === "manufacturers") return t("settings.addManufacturer");
   if (dictionarySection.value === "device-types" || dictionarySection.value === "spare-categories") return t("settings.addType");
@@ -404,10 +457,6 @@ function userDirectoryTooltip(user: { auth_source: string; directory_provider: s
 
           <template v-else-if="systemSettings">
             <div class="settings-system__heading">
-              <div>
-                <h2>{{ t('settings.runtimeParameters') }}</h2>
-                <p>{{ t('settings.runtimeParametersDescription') }}</p>
-              </div>
               <div class="settings-system__actions">
                 <el-button :disabled="!systemSettingsDirty || systemSettingsSaving" @click="resetSystemSettingsForm">{{ t('settings.restoreUnsaved') }}</el-button>
                 <el-button
@@ -424,6 +473,7 @@ function userDirectoryTooltip(user: { auth_source: string; directory_provider: s
 
             <el-alert
               v-if="!can('settings.manage')"
+              class="settings-system__readonly-alert"
               :title="t('settings.readOnlyAccount')"
               :description="t('settings.readOnlySettings')"
               type="info"
@@ -432,9 +482,27 @@ function userDirectoryTooltip(user: { auth_source: string; directory_provider: s
             />
 
             <el-form label-position="top" @submit.prevent="saveSystemSettings">
-              <section>
-                <h3>{{ t('settings.generalSection') }}</h3>
-                <p class="settings-system__help">{{ t('settings.generalSectionDescription') }}</p>
+              <el-tabs
+                v-model="systemSettingsTab"
+                class="settings-system__tabs"
+                tab-position="left"
+                @tab-change="changeSystemSettingsTab"
+              >
+                <el-tab-pane name="general">
+                  <template #label>
+                    <span class="settings-system__tab-label">
+                      <span>{{ t('settings.generalSection') }}</span>
+                      <span
+                        v-if="systemSettingsCategoryStatus('general')"
+                        class="settings-system__tab-status"
+                        :title="systemSettingsCategoryStatus('general')"
+                        :aria-label="systemSettingsCategoryStatus('general')"
+                      >
+                        <el-badge is-dot :type="systemSettingsCategoryErrors.general ? 'danger' : 'warning'" />
+                      </span>
+                    </span>
+                  </template>
+                  <section class="settings-system__section">
                 <div class="settings-system__form">
                   <el-form-item :label="systemSettingLabel('default_page_size')" :error="systemSettingsFormErrors.default_page_size">
                     <el-select v-model="systemSettingsForm.default_page_size" :disabled="!can('settings.manage') || systemSettingsSaving" class="settings-system__control">
@@ -449,13 +517,24 @@ function userDirectoryTooltip(user: { auth_source: string; directory_provider: s
                     <div class="settings-system__help">{{ systemSettingHelp('default_asset_status') }}</div>
                   </el-form-item>
                 </div>
-              </section>
+                  </section>
+                </el-tab-pane>
 
-              <el-divider />
-
-              <section>
-                <h3>{{ t('settings.localizationSection') }}</h3>
-                <p class="settings-system__help">{{ t('settings.localizationSectionDescription') }}</p>
+                <el-tab-pane name="localization">
+                  <template #label>
+                    <span class="settings-system__tab-label">
+                      <span>{{ t('settings.localizationSection') }}</span>
+                      <span
+                        v-if="systemSettingsCategoryStatus('localization')"
+                        class="settings-system__tab-status"
+                        :title="systemSettingsCategoryStatus('localization')"
+                        :aria-label="systemSettingsCategoryStatus('localization')"
+                      >
+                        <el-badge is-dot :type="systemSettingsCategoryErrors.localization ? 'danger' : 'warning'" />
+                      </span>
+                    </span>
+                  </template>
+                  <section class="settings-system__section">
                 <div class="settings-system__form">
                   <el-form-item :label="systemSettingLabel('default_locale')" :error="systemSettingsFormErrors.default_locale">
                     <el-select v-model="systemSettingsForm.default_locale" :disabled="!can('settings.manage') || systemSettingsSaving" class="settings-system__control">
@@ -482,13 +561,24 @@ function userDirectoryTooltip(user: { auth_source: string; directory_provider: s
                     <div class="settings-system__help">{{ systemSettingHelp('currency') }}</div>
                   </el-form-item>
                 </div>
-              </section>
+                  </section>
+                </el-tab-pane>
 
-              <el-divider />
-
-              <section>
-                <h3>{{ t('settings.securitySection') }}</h3>
-                <p class="settings-system__help">{{ t('settings.securitySectionDescription') }}</p>
+                <el-tab-pane name="security">
+                  <template #label>
+                    <span class="settings-system__tab-label">
+                      <span>{{ t('settings.securitySection') }}</span>
+                      <span
+                        v-if="systemSettingsCategoryStatus('security')"
+                        class="settings-system__tab-status"
+                        :title="systemSettingsCategoryStatus('security')"
+                        :aria-label="systemSettingsCategoryStatus('security')"
+                      >
+                        <el-badge is-dot :type="systemSettingsCategoryErrors.security ? 'danger' : 'warning'" />
+                      </span>
+                    </span>
+                  </template>
+                  <section class="settings-system__section">
                 <div class="settings-system__form">
                   <el-form-item :label="systemSettingLabel('password_min_length')" :error="systemSettingsFormErrors.password_min_length">
                     <el-input-number v-model="systemSettingsForm.password_min_length" :min="8" :max="128" :step="1" :disabled="!can('settings.manage') || systemSettingsSaving" class="settings-system__control" />
@@ -511,13 +601,24 @@ function userDirectoryTooltip(user: { auth_source: string; directory_provider: s
                     <div class="settings-system__help">{{ systemSettingHelp('login_lock_seconds') }}</div>
                   </el-form-item>
                 </div>
-              </section>
+                  </section>
+                </el-tab-pane>
 
-              <el-divider />
-
-              <section>
-                <h3>{{ t('settings.smtpSection') }}</h3>
-                <p class="settings-system__help">{{ t('settings.smtpSectionDescription') }}</p>
+                <el-tab-pane name="smtp">
+                  <template #label>
+                    <span class="settings-system__tab-label">
+                      <span>{{ t('settings.smtpSection') }}</span>
+                      <span
+                        v-if="systemSettingsCategoryStatus('smtp')"
+                        class="settings-system__tab-status"
+                        :title="systemSettingsCategoryStatus('smtp')"
+                        :aria-label="systemSettingsCategoryStatus('smtp')"
+                      >
+                        <el-badge is-dot :type="systemSettingsCategoryErrors.smtp ? 'danger' : 'warning'" />
+                      </span>
+                    </span>
+                  </template>
+                  <section class="settings-system__section">
                 <div class="settings-system__form">
                   <el-form-item :label="systemSettingLabel('smtp_enabled')" :error="systemSettingsFormErrors.smtp_enabled">
                     <el-switch v-model="systemSettingsForm.smtp_enabled" :disabled="!can('settings.manage') || systemSettingsSaving" />
@@ -563,44 +664,123 @@ function userDirectoryTooltip(user: { auth_source: string; directory_provider: s
                     <el-button v-if="can('settings.manage')" type="primary" plain :loading="systemSmtpTesting" :disabled="systemSmtpTesting" @click="testSystemSmtp">{{ t('settings.smtpTest') }}</el-button>
                   </el-form-item>
                 </div>
-              </section>
+                  </section>
+                </el-tab-pane>
 
-              <el-divider />
+                <el-tab-pane name="notifications">
+                  <template #label>
+                    <span class="settings-system__tab-label">
+                      <span>{{ t('settings.notificationsSection') }}</span>
+                      <span
+                        v-if="systemSettingsCategoryStatus('notifications')"
+                        class="settings-system__tab-status"
+                        :title="systemSettingsCategoryStatus('notifications')"
+                        :aria-label="systemSettingsCategoryStatus('notifications')"
+                      >
+                        <el-badge is-dot :type="systemSettingsCategoryErrors.notifications ? 'danger' : 'warning'" />
+                      </span>
+                    </span>
+                  </template>
+                  <section class="settings-system__section">
+                    <el-form-item :label="t('operations.emailEnabled')" :error="systemSettingsFormErrors.email_digest_enabled">
+                      <el-switch v-model="systemSettingsForm.email_digest_enabled" :disabled="!can('settings.manage') || systemSettingsSaving" />
+                    </el-form-item>
+                    <el-form-item :label="t('operations.recipients')" :error="systemSettingsFormErrors.email_digest_recipients">
+                      <el-select v-model="systemSettingsForm.email_digest_recipients" multiple filterable allow-create default-first-option :reserve-keyword="false" :disabled="!can('settings.manage') || systemSettingsSaving" />
+                      <div class="settings-system__help">{{ t('operations.emailHelp') }}</div>
+                    </el-form-item>
+                    <el-form-item :label="t('operations.applicationUrl')" :error="systemSettingsFormErrors.application_url">
+                      <el-input v-model="systemSettingsForm.application_url" :disabled="!can('settings.manage') || systemSettingsSaving" />
+                    </el-form-item>
+                    <div class="settings-system__notification-list">
+                      <div class="settings-system__notification-row">
+                        <div class="settings-system__notification-copy">
+                          <div class="settings-system__notification-title">{{ systemSettingLabel('notify_maintenance') }}</div>
+                          <div class="settings-system__help">{{ systemSettingHelp('notify_maintenance') }}</div>
+                        </div>
+                        <div class="settings-system__notification-field">
+                          <div class="settings-system__notification-field-label">{{ systemSettingLabel('maintenance_expiry_days') }}</div>
+                          <el-form-item class="settings-system__notification-form-item" :error="systemSettingsFormErrors.maintenance_expiry_days">
+                            <el-input-number v-model="systemSettingsForm.maintenance_expiry_days" :min="0" :max="3650" :step="1" :disabled="!can('settings.manage') || systemSettingsSaving" />
+                          </el-form-item>
+                          <div class="settings-system__help">{{ systemSettingHelp('maintenance_expiry_days') }}</div>
+                        </div>
+                        <div class="settings-system__notification-switch">
+                          <el-form-item class="settings-system__notification-form-item" :error="systemSettingsFormErrors.notify_maintenance">
+                            <el-switch v-model="systemSettingsForm.notify_maintenance" :disabled="!can('settings.manage') || systemSettingsSaving" :aria-label="systemSettingLabel('notify_maintenance')" />
+                          </el-form-item>
+                          <span class="settings-system__notification-switch-label">{{ t('status.enabled') }}</span>
+                        </div>
+                      </div>
 
-              <section>
-                <h3>{{ t('settings.notificationsSection') }}</h3>
-                <p class="settings-system__help">{{ t('settings.notificationsSectionDescription') }}</p>
-                <div class="settings-system__form">
-                  <el-form-item :label="systemSettingLabel('notify_maintenance')" :error="systemSettingsFormErrors.notify_maintenance">
-                    <el-switch v-model="systemSettingsForm.notify_maintenance" :disabled="!can('settings.manage') || systemSettingsSaving" />
-                    <div class="settings-system__help">{{ systemSettingHelp('notify_maintenance') }}</div>
-                  </el-form-item>
-                  <el-form-item :label="systemSettingLabel('maintenance_expiry_days')" :error="systemSettingsFormErrors.maintenance_expiry_days">
-                    <el-input-number v-model="systemSettingsForm.maintenance_expiry_days" :min="0" :max="3650" :step="1" :disabled="!can('settings.manage') || systemSettingsSaving" class="settings-system__control" />
-                    <div class="settings-system__help">{{ systemSettingHelp('maintenance_expiry_days') }}</div>
-                  </el-form-item>
-                  <el-form-item :label="systemSettingLabel('notify_license_expiry')" :error="systemSettingsFormErrors.notify_license_expiry">
-                    <el-switch v-model="systemSettingsForm.notify_license_expiry" :disabled="!can('settings.manage') || systemSettingsSaving" />
-                    <div class="settings-system__help">{{ systemSettingHelp('notify_license_expiry') }}</div>
-                  </el-form-item>
-                  <el-form-item :label="systemSettingLabel('license_expiry_days')" :error="systemSettingsFormErrors.license_expiry_days">
-                    <el-input-number v-model="systemSettingsForm.license_expiry_days" :min="0" :max="3650" :step="1" :disabled="!can('settings.manage') || systemSettingsSaving" class="settings-system__control" />
-                    <div class="settings-system__help">{{ systemSettingHelp('license_expiry_days') }}</div>
-                  </el-form-item>
-                  <el-form-item :label="systemSettingLabel('notify_open_faults')" :error="systemSettingsFormErrors.notify_open_faults">
-                    <el-switch v-model="systemSettingsForm.notify_open_faults" :disabled="!can('settings.manage') || systemSettingsSaving" />
-                    <div class="settings-system__help">{{ systemSettingHelp('notify_open_faults') }}</div>
-                  </el-form-item>
-                  <el-form-item :label="systemSettingLabel('notify_overdue_inventory')" :error="systemSettingsFormErrors.notify_overdue_inventory">
-                    <el-switch v-model="systemSettingsForm.notify_overdue_inventory" :disabled="!can('settings.manage') || systemSettingsSaving" />
-                    <div class="settings-system__help">{{ systemSettingHelp('notify_overdue_inventory') }}</div>
-                  </el-form-item>
-                  <el-form-item :label="systemSettingLabel('notify_low_spare_stock')" :error="systemSettingsFormErrors.notify_low_spare_stock">
-                    <el-switch v-model="systemSettingsForm.notify_low_spare_stock" :disabled="!can('settings.manage') || systemSettingsSaving" />
-                    <div class="settings-system__help">{{ systemSettingHelp('notify_low_spare_stock') }}</div>
-                  </el-form-item>
-                </div>
-              </section>
+                      <div class="settings-system__notification-row">
+                        <div class="settings-system__notification-copy">
+                          <div class="settings-system__notification-title">{{ systemSettingLabel('notify_license_expiry') }}</div>
+                          <div class="settings-system__help">{{ systemSettingHelp('notify_license_expiry') }}</div>
+                        </div>
+                        <div class="settings-system__notification-field">
+                          <div class="settings-system__notification-field-label">{{ systemSettingLabel('license_expiry_days') }}</div>
+                          <el-form-item class="settings-system__notification-form-item" :error="systemSettingsFormErrors.license_expiry_days">
+                            <el-input-number v-model="systemSettingsForm.license_expiry_days" :min="0" :max="3650" :step="1" :disabled="!can('settings.manage') || systemSettingsSaving" />
+                          </el-form-item>
+                          <div class="settings-system__help">{{ systemSettingHelp('license_expiry_days') }}</div>
+                        </div>
+                        <div class="settings-system__notification-switch">
+                          <el-form-item class="settings-system__notification-form-item" :error="systemSettingsFormErrors.notify_license_expiry">
+                            <el-switch v-model="systemSettingsForm.notify_license_expiry" :disabled="!can('settings.manage') || systemSettingsSaving" :aria-label="systemSettingLabel('notify_license_expiry')" />
+                          </el-form-item>
+                          <span class="settings-system__notification-switch-label">{{ t('status.enabled') }}</span>
+                        </div>
+                      </div>
+
+                      <div class="settings-system__notification-row">
+                        <div class="settings-system__notification-copy">
+                          <div class="settings-system__notification-title">{{ systemSettingLabel('notify_open_faults') }}</div>
+                          <div class="settings-system__help">{{ systemSettingHelp('notify_open_faults') }}</div>
+                        </div>
+                        <div class="settings-system__notification-spacer" aria-hidden="true"></div>
+                        <div class="settings-system__notification-switch">
+                          <el-form-item class="settings-system__notification-form-item" :error="systemSettingsFormErrors.notify_open_faults">
+                            <el-switch v-model="systemSettingsForm.notify_open_faults" :disabled="!can('settings.manage') || systemSettingsSaving" :aria-label="systemSettingLabel('notify_open_faults')" />
+                          </el-form-item>
+                          <span class="settings-system__notification-switch-label">{{ t('status.enabled') }}</span>
+                        </div>
+                      </div>
+
+                      <div class="settings-system__notification-row">
+                        <div class="settings-system__notification-copy">
+                          <div class="settings-system__notification-title">{{ systemSettingLabel('notify_overdue_inventory') }}</div>
+                          <div class="settings-system__help">{{ systemSettingHelp('notify_overdue_inventory') }}</div>
+                        </div>
+                        <div class="settings-system__notification-spacer" aria-hidden="true"></div>
+                        <div class="settings-system__notification-switch">
+                          <el-form-item class="settings-system__notification-form-item" :error="systemSettingsFormErrors.notify_overdue_inventory">
+                            <el-switch v-model="systemSettingsForm.notify_overdue_inventory" :disabled="!can('settings.manage') || systemSettingsSaving" :aria-label="systemSettingLabel('notify_overdue_inventory')" />
+                          </el-form-item>
+                          <span class="settings-system__notification-switch-label">{{ t('status.enabled') }}</span>
+                        </div>
+                      </div>
+
+                      <div class="settings-system__notification-row">
+                        <div class="settings-system__notification-copy">
+                          <div class="settings-system__notification-title">{{ systemSettingLabel('notify_low_spare_stock') }}</div>
+                          <div class="settings-system__help">{{ systemSettingHelp('notify_low_spare_stock') }}</div>
+                        </div>
+                        <div class="settings-system__notification-spacer" aria-hidden="true"></div>
+                        <div class="settings-system__notification-switch">
+                          <el-form-item class="settings-system__notification-form-item" :error="systemSettingsFormErrors.notify_low_spare_stock">
+                            <el-switch v-model="systemSettingsForm.notify_low_spare_stock" :disabled="!can('settings.manage') || systemSettingsSaving" :aria-label="systemSettingLabel('notify_low_spare_stock')" />
+                          </el-form-item>
+                          <span class="settings-system__notification-switch-label">{{ t('status.enabled') }}</span>
+                        </div>
+                      </div>
+                    </div>
+                  </section>
+                </el-tab-pane>
+                <el-tab-pane name="branding" :label="t('branding.title')">
+                  <BrandingSettings v-if="systemSettingsTab === 'branding'" :context="context" />
+                </el-tab-pane>
+              </el-tabs>
             </el-form>
           </template>
 
@@ -945,17 +1125,19 @@ function userDirectoryTooltip(user: { auth_source: string; directory_provider: s
       </PageContent>
     </PageContainer>
 
-    <PageContainer v-else-if="settingsSection === 'maintenance' && can('system.reset')" content-class="settings-maintenance-container">
+    <PageContainer v-else-if="settingsSection === 'maintenance' && can('settings.view')" content-class="settings-maintenance-container">
       <PageContent surface>
         <div class="settings-maintenance">
+          <SystemOperations :context="context" />
           <el-alert
+            v-if="can('system.reset')"
             :title="t('settings.highRiskAction')"
             type="warning"
             show-icon
             :closable="false"
             :description="t('settings.systemResetDescription')"
           />
-          <section class="settings-maintenance__section">
+          <section v-if="can('system.reset')" class="settings-maintenance__section">
             <div class="settings-maintenance__intro">
               <h2>{{ t('settings.systemReset') }}</h2>
               <p>{{ t('settings.systemResetIntro') }}</p>

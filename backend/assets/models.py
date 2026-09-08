@@ -534,9 +534,30 @@ class SystemSetting(Timestamped):
     notify_open_faults = models.BooleanField(default=True)
     notify_overdue_inventory = models.BooleanField(default=True)
     notify_low_spare_stock = models.BooleanField(default=True)
+    branding_display_name = models.CharField(max_length=80, default="infrix")
+    branding_logo = models.BinaryField(default=bytes, blank=True)
+    branding_compact_logo = models.BinaryField(default=bytes, blank=True)
+    branding_favicon = models.BinaryField(default=bytes, blank=True)
+    email_digest_enabled = models.BooleanField(default=False)
+    email_digest_recipients = models.JSONField(default=list, blank=True)
+    application_url = models.URLField(max_length=500, blank=True, default="")
 
     def __str__(self):
         return "系统设置"
+
+
+class NotificationDelivery(Timestamped):
+    window_date = models.DateField()
+    recipient_key = models.CharField(max_length=64)
+    status = models.CharField(max_length=16, default="pending")
+    attempts = models.PositiveSmallIntegerField(default=0)
+    attempted_at = models.DateTimeField(null=True)
+    sent_at = models.DateTimeField(null=True)
+    recipient_count = models.PositiveSmallIntegerField(default=1)
+    error_code = models.CharField(max_length=40, blank=True, default="")
+
+    class Meta:
+        constraints = [models.UniqueConstraint(fields=["window_date", "recipient_key"], name="unique_digest_recipient_day")]
 
 
 class DirectoryServiceConfiguration(Timestamped):

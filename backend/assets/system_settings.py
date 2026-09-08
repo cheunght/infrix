@@ -32,6 +32,9 @@ TIMEZONE_OPTIONS = (
 
 
 SETTING_METADATA = {
+    "email_digest_enabled": {"label": "启用每日邮件摘要", "type": "boolean", "section": "notifications", "help_text": "显式启用后，通过定时任务发送当前已启用的业务提醒。"},
+    "email_digest_recipients": {"label": "摘要收件人", "type": "emails", "section": "notifications", "help_text": "最多 20 个邮箱；收件人将看到全部已启用类别的业务提醒。"},
+    "application_url": {"label": "应用访问地址", "type": "string", "section": "notifications", "help_text": "邮件中的链接使用此 HTTPS 地址。"},
     "default_page_size": {
         "label": "默认每页条数",
         "type": "integer",
@@ -192,7 +195,14 @@ SETTING_METADATA = {
 }
 
 PUBLIC_SETTING_KEYS = tuple(SETTING_METADATA)
-RESET_SETTING_KEYS = (*PUBLIC_SETTING_KEYS, "smtp_password_encrypted")
+RESET_SETTING_KEYS = (
+    *PUBLIC_SETTING_KEYS,
+    "branding_display_name",
+    "branding_logo",
+    "branding_compact_logo",
+    "branding_favicon",
+    "smtp_password_encrypted",
+)
 
 
 def _valid_timezone(value: str) -> str:

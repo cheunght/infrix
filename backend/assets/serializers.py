@@ -234,6 +234,17 @@ class SystemSettingsSerializer(serializers.ModelSerializer):
     """Serialize the fixed, editable system-settings contract."""
 
     definitions = serializers.SerializerMethodField()
+    email_digest_recipients = serializers.ListField(child=serializers.EmailField(max_length=254), max_length=20, required=False, allow_empty=True)
+
+    def validate_email_digest_recipients(self, value):
+        return list(dict.fromkeys(address.strip().lower() for address in value))
+
+    def validate_application_url(self, value):
+        from urllib.parse import urlsplit
+        parsed = urlsplit(value)
+        if value and (parsed.scheme != "https" or not parsed.hostname or parsed.username or parsed.password or parsed.query or parsed.fragment):
+            raise serializers.ValidationError("请输入不含账号、查询参数或片段的 HTTPS 应用地址")
+        return value.rstrip("/")
     smtp_password = serializers.CharField(
         write_only=True,
         required=False,
@@ -304,6 +315,14 @@ class SystemSettingsSerializer(serializers.ModelSerializer):
         }
         values.update({key: value for key, value in attrs.items() if key in SETTING_METADATA})
         password_value = attrs.get("smtp_password", "")
+        if values.get("email_digest_enabled"):
+            errors = {}
+            if not values.get("email_digest_recipients"):
+                errors["email_digest_recipients"] = "启用邮件摘要前必须配置收件人"
+            if not values.get("application_url"):
+                errors["application_url"] = "启用邮件摘要前必须配置应用访问地址"
+            if errors:
+                raise serializers.ValidationError(errors)
         password_configured = bool(password_value) or bool(
             current is not None and current.smtp_password_encrypted
         )
