@@ -191,6 +191,7 @@ DJANGO_ENV = os.getenv("DJANGO_ENV", "development").strip().lower()
 if DJANGO_ENV not in {"development", "production"}:
     raise ImproperlyConfigured("DJANGO_ENV must be either 'development' or 'production'.")
 IS_PRODUCTION = DJANGO_ENV == "production"
+PRODUCT_VERSION = "0.1.0"
 
 SECRET_KEY = os.getenv(
     "DJANGO_SECRET_KEY",
@@ -352,7 +353,7 @@ REST_FRAMEWORK = {
 }
 SPECTACULAR_SETTINGS = {
     "TITLE": "Infrix API",
-    "VERSION": "1.0.0",
+    "VERSION": PRODUCT_VERSION,
     "SERVE_INCLUDE_SCHEMA": False,
     "SERVE_PERMISSIONS": [
         "rest_framework.permissions.AllowAny"
