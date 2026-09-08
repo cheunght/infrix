@@ -83,7 +83,7 @@ export function formatSystemDateTime(
   includeSeconds = false,
 ): string {
   if (value === null || value === undefined || String(value).trim() === "") return "";
-  const parts = dateParts(value, includeSeconds);
+  const parts = dateParts(value, true);
   if (!parts) return String(value);
   return `${formatSystemDate(value)} ${parts.hour}:${parts.minute}${includeSeconds ? `:${parts.second}` : ""}`;
 }

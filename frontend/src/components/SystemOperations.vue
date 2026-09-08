@@ -3,6 +3,7 @@ import { ref, onMounted, onBeforeUnmount } from "vue";
 import { useI18n } from "vue-i18n";
 import type { SettingsContext } from "../page-context";
 import { normalizeApiError } from "../error-handling";
+import { isAbortError } from "../api";
 const props = defineProps<{ context: SettingsContext }>();
 const { t } = useI18n();
 type Operations = {
@@ -17,17 +18,32 @@ const data = ref<Operations | null>(null);
 const busy = ref(false);
 const error = ref("");
 let generation = 0;
-onBeforeUnmount(() => { generation += 1; });
+let requestController: AbortController | null = null;
+onBeforeUnmount(() => {
+  generation += 1;
+  requestController?.abort();
+});
 async function load() {
   const current = ++generation;
+  requestController?.abort();
+  const controller = new AbortController();
+  requestController = controller;
   busy.value = true;
   error.value = "";
   try {
-    const result = await props.context.request<Operations>("/system/operations/");
+    const result = await props.context.request<Operations>("/system/operations/", { signal: controller.signal });
     if (current === generation) data.value = result;
   } catch (cause) {
-    if (current === generation) { error.value = normalizeApiError(cause).message; data.value = null; }
-  } finally { if (current === generation) busy.value = false; }
+    if (current === generation && !isAbortError(cause)) {
+      error.value = normalizeApiError(cause).message;
+      data.value = null;
+    }
+  } finally {
+    if (current === generation) {
+      busy.value = false;
+      requestController = null;
+    }
+  }
 }
 function state(value: string | undefined) { return t(`operations.${value || 'unavailable'}`); }
 function deliveryFailure(value: string | undefined) {
