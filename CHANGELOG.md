@@ -6,7 +6,8 @@ First `infrix` release candidate. This entry describes the implementation curren
 
 ### Included
 
-- Asset, spare-part, license, facility, department, repair, fault, inventory, and responsibility management.
+- Asset, spare-part, license, facility, department, repair, fault, inventory,
+  people, and asset usage management.
 - Local authentication with role-based capabilities, password-change enforcement, CSRF protection, rate limiting, audit logging, and safe operational diagnostics.
 - LDAP/AD configuration, connectivity diagnostics, directory identity mapping, and just-in-time local-user provisioning.
 - System administration for localization, timezone, date format, currency, maintenance mode, and runtime settings.

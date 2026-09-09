@@ -67,6 +67,10 @@ import type { PageContext } from "./page-context";
 
 const globalOverlayElementComponents: readonly ElementPlusComponentName[] = [
   "ElAlert",
+  "ElCollapse",
+  "ElCollapseItem",
+  "ElDescriptions",
+  "ElDescriptionsItem",
   "ElColorPicker",
   "ElDatePicker",
   "ElDialog",
@@ -404,6 +408,30 @@ const {
   departmentForm,
   editingDepartment,
   showDepartmentModal,
+  responsibilityDirectorySubjects,
+  responsibilityDirectoryTotal,
+  responsibilityDirectoryPage,
+  responsibilityDirectoryPageSize,
+  responsibilityDirectorySearch,
+  responsibilityDirectoryType,
+  responsibilityDirectoryActive,
+  responsibilityDirectoryLoading,
+  responsibilityDirectoryError,
+  responsibilityDirectorySaving,
+  responsibilityDirectoryActionId,
+  responsibilityDirectoryFormErrors,
+  responsibilityDirectoryForm,
+  editingResponsibilitySubject,
+  showResponsibilitySubjectModal,
+  loadResponsibilityDirectory,
+  searchResponsibilityDirectory,
+  retryResponsibilityDirectory,
+  changeResponsibilityDirectoryPage,
+  changeResponsibilityDirectoryPageSize,
+  openResponsibilitySubjectModal,
+  saveResponsibilitySubject,
+  toggleResponsibilitySubject,
+  deleteResponsibilitySubject,
   loadDepartments,
   searchDepartments,
   changeDepartmentPage,
@@ -687,6 +715,10 @@ const {
   manufacturerOptions,
   activeDeviceTypes,
   activeDataCenters,
+  people,
+  peopleLoading,
+  peopleError,
+  retryPeople,
   assetRoomOptions,
   assetRackOptions,
   loadAssets,
@@ -713,10 +745,10 @@ const {
   retryResponsibilityHistory,
   changeResponsibilityHistoryPage,
   changeResponsibilityHistoryPageSize,
-  responsibilityUsers,
-  responsibilityUsersLoading,
-  responsibilityUsersError,
-  loadResponsibilityUsers,
+  responsibilitySubjects,
+  responsibilitySubjectsLoading,
+  responsibilitySubjectsError,
+  loadResponsibilitySubjects,
   responsibilityActionSaving,
   responsibilityActionError,
   responsibilityActionFieldErrors,
@@ -960,9 +992,10 @@ const navItems = [
     page: "settings" as Page,
     children: [
       { labelKey: "nav.system", section: "system" as const },
-      { labelKey: "nav.dictionaries", section: "dictionaries" as const },
       { labelKey: "nav.organization", section: "organization" as const },
+      { labelKey: "nav.dictionaries", section: "dictionaries" as const },
       { labelKey: "nav.audit", section: "audit" as const },
+      { labelKey: "nav.maintenance", section: "maintenance" as const },
     ],
   },
   { labelKey: "nav.spareParts", icon: "", iconIndex: 0, page: "spares" as Page },
@@ -1014,14 +1047,17 @@ function syncRouteState(): boolean {
       }
     } else if (settingsSection.value === "organization") {
       const requestedTab = routeQueryValue("tab");
-      organizationTab.value = requestedTab === "roles" || requestedTab === "ldap" || requestedTab === "departments"
+      organizationTab.value = requestedTab === "roles" || requestedTab === "ldap" || requestedTab === "departments" || requestedTab === "people"
         ? requestedTab
         : "users";
-      if (hasQueryKey("tab") && requestedTab !== "users" && requestedTab !== "roles" && requestedTab !== "ldap" && requestedTab !== "departments") {
+      if (hasQueryKey("tab") && requestedTab !== "users" && requestedTab !== "roles" && requestedTab !== "ldap" && requestedTab !== "departments" && requestedTab !== "people") {
         queryKeysToClear.push("tab");
       }
-      if (!can("organization.manage")) organizationTab.value = "departments";
-      if (organizationTab.value === "departments" && !can("settings.manage")) organizationTab.value = "users";
+      if (!can("organization.manage") && organizationTab.value !== "departments" && organizationTab.value !== "people") {
+        organizationTab.value = can("settings.manage") ? "departments" : "people";
+      }
+      if (organizationTab.value === "departments" && !can("settings.manage")) organizationTab.value = "people";
+      if (organizationTab.value === "people" && !can("settings.view") && !can("settings.manage")) organizationTab.value = can("organization.manage") ? "users" : "departments";
     }
   }
   if (routePage === "asset-config") {
@@ -1144,7 +1180,7 @@ function routeIsAllowed() {
   const section = route.meta.settingsSection || "system";
   if (section === "system" && !can("settings.view")) return false;
   if (section === "dictionaries" && !can("settings.view")) return false;
-  if (section === "organization" && !can("organization.manage") && !can("settings.manage")) return false;
+  if (section === "organization" && !can("organization.manage") && !can("settings.manage") && !can("settings.view")) return false;
   if (section === "audit" && !can("audit.view")) return false;
   if (section === "custom-fields" && !can("custom_fields.view")) return false;
   if (section === "tags" && !can("tags.view")) return false;
@@ -1163,7 +1199,7 @@ function firstAllowedRoute(): RouteLocationRaw | null {
   if (can("inventory.view")) return routeForPage("inventory");
   if (can("faults.view")) return routeForPage("repairs");
   if (can("settings.view")) return routeForPage("settings", { settingsSection: "system" });
-  if (can("organization.manage") || can("settings.manage")) return routeForPage("settings", { settingsSection: "organization", organizationTab: can("organization.manage") ? organizationTab.value : "departments" });
+  if (can("organization.manage") || can("settings.manage") || can("settings.view")) return routeForPage("settings", { settingsSection: "organization", organizationTab: can("organization.manage") ? organizationTab.value : can("settings.manage") ? "departments" : "people" });
   if (can("audit.view")) return routeForPage("settings", { settingsSection: "audit" });
   if (can("system.reset")) return routeForPage("settings", { settingsSection: "maintenance" });
   return null;
@@ -1514,11 +1550,16 @@ async function load() {
     if (page.value === "settings") {
       if (settingsSection.value === "system" && can("settings.view"))
         await loadSystemSettings(version);
-      else if (settingsSection.value === "organization" && (can("organization.manage") || can("settings.manage"))) {
+      else if (settingsSection.value === "organization" && (can("organization.manage") || can("settings.manage") || can("settings.view"))) {
         if (organizationTab.value === "ldap") {
           await Promise.all([loadLdapConfiguration(version), loadLdapStatus(version)]);
         } else if (organizationTab.value === "departments") {
           await loadDepartments(version);
+        } else if (organizationTab.value === "people") {
+          await Promise.all([
+            loadResponsibilityDirectory(version),
+            loadDepartments(version),
+          ]);
         } else {
           await loadOrganization(version);
         }
@@ -1582,11 +1623,11 @@ function openSettingsSection(
     openAssetConfiguration(section);
     return;
   }
-  if (section === "organization" && !can("organization.manage") && !can("settings.manage")) {
+  if (section === "organization" && !can("organization.manage") && !can("settings.manage") && !can("settings.view")) {
     settingsSection.value = "system";
     return;
   }
-  if (section === "organization" && !can("organization.manage")) organizationTab.value = "departments";
+  if (section === "organization" && !can("organization.manage")) organizationTab.value = can("settings.manage") ? "departments" : "people";
   if (section === "system" && !can("settings.view")) return;
   if (section === "audit" && !can("audit.view")) return;
   if (section === "maintenance" && !can("settings.view")) return;
@@ -1600,8 +1641,10 @@ function openSettingsSection(
   }), true);
 }
 function changeOrganizationTab(value: string) {
-  if (!can("organization.manage") && !can("settings.manage")) return;
-  if (value === "departments" && can("settings.manage")) {
+  if (!can("organization.manage") && !can("settings.manage") && !can("settings.view")) return;
+  if (value === "people" && (can("settings.view") || can("settings.manage"))) {
+    organizationTab.value = "people";
+  } else if (value === "departments" && can("settings.manage")) {
     organizationTab.value = "departments";
   } else if (can("organization.manage")) {
     organizationTab.value = value === "roles" || value === "ldap" ? value : "users";
@@ -1800,6 +1843,7 @@ const pageContext = {
   assetTagFilter, tags, assetListCustomSchemaLoading, assetListCustomSchemaError,
   retryAssetListCustomSchema,
   departments, departmentLoading, departmentError, retryDepartments,
+  people, peopleLoading, peopleError, retryPeople,
   toggleAssetColumn, resetAssetColumns, visibleAssetColumnOptions, can,
   openNewAssetModal, selectedAssetIds, assetBatchDeleteSaving, assetBatchDeleteResult, showAssetBatchDeleteResult,
   deleteSelectedAssets, closeAssetBatchDeleteResult, exportAssets,
@@ -1863,7 +1907,7 @@ const pageContext = {
   responsibilityHistoryItems, responsibilityHistoryPage, responsibilityHistoryPageSize,
   responsibilityHistoryTotal, responsibilityHistoryLoading, responsibilityHistoryError, responsibilityHistoryCanView,
   retryResponsibilityHistory, changeResponsibilityHistoryPage, changeResponsibilityHistoryPageSize,
-  responsibilityUsers, responsibilityUsersLoading, responsibilityUsersError, loadResponsibilityUsers,
+  responsibilitySubjects, responsibilitySubjectsLoading, responsibilitySubjectsError, loadResponsibilitySubjects,
   responsibilityActionSaving, responsibilityActionError, responsibilityActionFieldErrors,
   clearResponsibilityActionErrors, clearResponsibilityActionFieldError, assignAsset, returnAsset, transferAsset,
   rackCount, rackPage, rackPageSize, changeRackPage,
@@ -1889,6 +1933,13 @@ const pageContext = {
   departmentSaving, departmentActionId, departmentFormErrors, departmentForm, editingDepartment,
   showDepartmentModal, loadDepartments, searchDepartments, changeDepartmentPage, changeDepartmentPageSize,
   openDepartmentModal, saveDepartment, deleteDepartment,
+  responsibilityDirectorySubjects, responsibilityDirectoryTotal, responsibilityDirectoryPage, responsibilityDirectoryPageSize,
+  responsibilityDirectorySearch, responsibilityDirectoryType, responsibilityDirectoryActive,
+  responsibilityDirectoryLoading, responsibilityDirectoryError, responsibilityDirectorySaving, responsibilityDirectoryActionId,
+  responsibilityDirectoryFormErrors, responsibilityDirectoryForm, editingResponsibilitySubject, showResponsibilitySubjectModal,
+  loadResponsibilityDirectory, searchResponsibilityDirectory, retryResponsibilityDirectory,
+  changeResponsibilityDirectoryPage, changeResponsibilityDirectoryPageSize, openResponsibilitySubjectModal,
+  saveResponsibilitySubject, toggleResponsibilitySubject, deleteResponsibilitySubject,
   userListError, roleListError, retryOrganization, users, userSearch, userPage, userPageSize, userCount,
   selectedUserIds, userBatchSaving, userBatchResult, showUserBatchResult,
   userFormErrors, userSaving, userPendingId, openUserModal,
@@ -2119,10 +2170,10 @@ watch(hasOpenGlobalOverlay, (isOpen) => {
             ><el-icon><Setting /></el-icon><span>{{ t('nav.settings') }}</span></template
           ><el-menu-item v-if="can('settings.view')" index="settings-system"
             >{{ t('nav.system') }}</el-menu-item
+          ><el-menu-item v-if="can('organization.manage') || can('settings.manage') || can('settings.view')" index="settings-organization"
+            >{{ t('nav.organization') }}</el-menu-item
           ><el-menu-item v-if="can('settings.view')" index="settings-dictionaries"
             >{{ t('nav.dictionaries') }}</el-menu-item
-          ><el-menu-item v-if="can('organization.manage') || can('settings.manage')" index="settings-organization"
-            >{{ t('nav.organization') }}</el-menu-item
           ><el-menu-item v-if="can('audit.view')" index="settings-audit"
             >{{ t('nav.audit') }}</el-menu-item
           ><template v-if="can('system.reset')"

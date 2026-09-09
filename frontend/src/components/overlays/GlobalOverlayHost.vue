@@ -18,7 +18,7 @@ import AssetSummary from "../AssetSummary.vue";
 import MoneyInput from "../MoneyInput.vue";
 import PagedTable from "../PagedTable.vue";
 import StatusTag from "../StatusTag.vue";
-import type { Asset, AssetDetail, Page } from "../../types";
+import type { Asset, AssetDetail, Page, Person } from "../../types";
 import type { AssetFormContext, PageContext, RequestFn } from "../../page-context";
 import { statusTone } from "../../status";
 import { type Locale } from "../../i18n";
@@ -496,6 +496,10 @@ const {
   canChangeUserRole,
   userSaving,
   userFormErrors,
+  unlinkedPeople,
+  unlinkedPeopleLoading,
+  unlinkedPeopleError,
+  loadUnlinkedPeople,
   roles,
   saveUser,
   showDictionaryModal,
@@ -685,6 +689,16 @@ function editCurrentAsset() {
 function importRowErrorText(row: { errors: Array<{ label: string; message: string }> }) {
   return row.errors.map((error) => `${error.label}：${error.message}`).join("；");
 }
+
+function personOptionLabel(person: Person): string {
+  return [person.name || person.display_name, person.employee_no, person.department_name]
+    .filter(Boolean)
+    .join(" · ");
+}
+
+function handleUnlinkedPeopleVisible(visible: boolean): void {
+  if (visible && !unlinkedPeople.value.length) void loadUnlinkedPeople();
+}
 </script>
 
 <template>
@@ -725,6 +739,28 @@ function importRowErrorText(row: { errors: Array<{ label: string; message: strin
           </el-form-item>
           <el-form-item :label="t('auth.firstName')" prop="first_name" required :error="userFormErrors.first_name">
             <el-input v-model="userForm.first_name" autocomplete="given-name" :validate-event="false" :prefix-icon="Edit" :placeholder="t('overlay.enterFirstName')" />
+          </el-form-item>
+        </div>
+      </section>
+      <section v-if="!editingUser" class="form-dialog__section">
+        <h3 class="form-dialog__section-title">{{ t('overlay.personInformation') }}</h3>
+        <div class="horizontal-form__rows">
+          <el-form-item :label="t('settings.person')" prop="person_id" :error="userFormErrors.person_id">
+            <el-select
+              v-model="userForm.person_id"
+              clearable
+              filterable
+              :loading="unlinkedPeopleLoading"
+              :placeholder="t('overlay.selectPersonOptional')"
+              @visible-change="handleUnlinkedPeopleVisible"
+            >
+              <el-option v-for="person in unlinkedPeople" :key="person.id" :label="personOptionLabel(person)" :value="String(person.id)" />
+            </el-select>
+            <FieldHelp :text="t('overlay.personSelectHelp')" />
+            <div v-if="unlinkedPeopleError" class="asset-form-related-state asset-form-related-state--error">
+              <span>{{ unlinkedPeopleError }}</span>
+              <el-button link type="primary" :disabled="unlinkedPeopleLoading" @click="loadUnlinkedPeople">{{ t('common.retry') }}</el-button>
+            </div>
           </el-form-item>
         </div>
       </section>

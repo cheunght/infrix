@@ -58,8 +58,8 @@ def validate_asset_retirement(asset, *, has_open_fault=None):
 
     if asset is None or not asset.pk:
         return
-    if getattr(asset, "responsible_user_id", None):
-        raise ValidationError({"status": "资产仍有当前责任人，请先归还后再报废"})
+    if getattr(asset, "assigned_person_id", None):
+        raise ValidationError({"status": "资产仍有当前使用人，请先归还后再报废"})
     if RackUnitAllocation.objects.filter(asset_id=asset.pk).exists():
         raise ValidationError({"status": "资产仍占用机柜 U 位，请先下架后再报废"})
     if _has_open_fault(asset, has_open_fault):

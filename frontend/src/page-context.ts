@@ -16,8 +16,8 @@ import type {
   AssetSortField,
   AssetSortOrder,
   AssetDetail,
-  AssetResponsibilityEvent,
-  AssetResponsibilityUser,
+  AssetAssignmentEvent,
+  Person,
   CustomField,
   CustomFieldForm,
   CustomFieldOption,
@@ -41,6 +41,7 @@ import type {
   RepairPartUsageFormState,
   RepairPartUsageSource,
   Role,
+  PersonFormState,
   ServerRoom,
   SoftwareLicense,
   SparePart,
@@ -68,7 +69,8 @@ export interface AssetFormState {
   manufacturer_model: string;
   serial_number: string;
   purpose: string;
-  department: string;
+  assigned_person: string;
+  assignment_reason: string;
   status: AssetStatus;
   notes: string;
   rack_mounted: boolean;
@@ -127,7 +129,6 @@ export interface AssetFilters {
   manufacturer: string;
   model: string;
   dataCenter: string;
-  department: string;
   warranty: string;
 }
 
@@ -230,10 +231,10 @@ export interface AssetFormContext {
   activeDeviceTypes: ComputedRef<DictionaryItem[]>;
   syncAssetDeviceType: () => void | Promise<void>;
   manufacturerOptions: ComputedRef<DictionaryItem[]>;
-  departments: Ref<Department[]>;
-  departmentLoading: Ref<boolean>;
-  departmentError: Ref<string>;
-  retryDepartments: () => void | Promise<boolean>;
+  people: Ref<Person[]>;
+  peopleLoading: Ref<boolean>;
+  peopleError: Ref<string>;
+  retryPeople: () => void | Promise<boolean>;
   activeDataCenters: ComputedRef<DataCenter[]>;
   changeAssetDataCenter: () => void | Promise<void>;
   assetRoomOptions: Ref<ServerRoom[]>;
@@ -251,7 +252,7 @@ export interface AssetFormContext {
 }
 
 export interface AssetResponsibilityHistoryContext {
-  responsibilityHistoryItems: Ref<AssetResponsibilityEvent[]>;
+  responsibilityHistoryItems: Ref<AssetAssignmentEvent[]>;
   responsibilityHistoryPage: Ref<number>;
   responsibilityHistoryPageSize: Ref<number>;
   responsibilityHistoryTotal: Ref<number>;
@@ -265,18 +266,18 @@ export interface AssetResponsibilityHistoryContext {
 
 export interface AssetResponsibilityContext extends AssetResponsibilityHistoryContext {
   can: CapabilityFn;
-  responsibilityUsers: Ref<AssetResponsibilityUser[]>;
-  responsibilityUsersLoading: Ref<boolean>;
-  responsibilityUsersError: Ref<string>;
-  loadResponsibilityUsers: (search?: string) => void | Promise<boolean>;
+  responsibilitySubjects: Ref<Person[]>;
+  responsibilitySubjectsLoading: Ref<boolean>;
+  responsibilitySubjectsError: Ref<string>;
+  loadResponsibilitySubjects: (search?: string) => void | Promise<boolean>;
   responsibilityActionSaving: Ref<boolean>;
   responsibilityActionError: Ref<string>;
   responsibilityActionFieldErrors: Ref<Record<string, string>>;
   clearResponsibilityActionErrors: () => void;
   clearResponsibilityActionFieldError: (field: string) => void;
-  assignAsset: (assetId: number, targetUserId: number, reason: string) => void | Promise<boolean>;
+  assignAsset: (assetId: number, targetPersonId: number, reason: string) => void | Promise<boolean>;
   returnAsset: (assetId: number, reason: string) => void | Promise<boolean>;
-  transferAsset: (assetId: number, targetUserId: number, reason: string) => void | Promise<boolean>;
+  transferAsset: (assetId: number, targetPersonId: number, reason: string) => void | Promise<boolean>;
 }
 
 export interface RackManagementContext {
@@ -569,6 +570,30 @@ export interface SettingsContext extends CustomFieldContext, TagContext {
   settingsSection: Ref<SettingsSection>;
   organizationTab: Ref<OrganizationTab>;
   changeOrganizationTab: (value: string) => void;
+  responsibilityDirectorySubjects: Ref<Person[]>;
+  responsibilityDirectoryTotal: Ref<number>;
+  responsibilityDirectoryPage: Ref<number>;
+  responsibilityDirectoryPageSize: Ref<number>;
+  responsibilityDirectorySearch: Ref<string>;
+  responsibilityDirectoryType: Ref<string>;
+  responsibilityDirectoryActive: Ref<string>;
+  responsibilityDirectoryLoading: Ref<boolean>;
+  responsibilityDirectoryError: Ref<string>;
+  responsibilityDirectorySaving: Ref<boolean>;
+  responsibilityDirectoryActionId: Ref<number | null>;
+  responsibilityDirectoryFormErrors: Ref<Record<string, string>>;
+  responsibilityDirectoryForm: Ref<PersonFormState>;
+  editingResponsibilitySubject: Ref<Person | null>;
+  showResponsibilitySubjectModal: Ref<boolean>;
+  loadResponsibilityDirectory: () => void | Promise<boolean>;
+  searchResponsibilityDirectory: () => void | Promise<void>;
+  retryResponsibilityDirectory: () => void | Promise<boolean>;
+  changeResponsibilityDirectoryPage: (page: number) => void | Promise<void>;
+  changeResponsibilityDirectoryPageSize: (size: number) => void | Promise<void>;
+  openResponsibilitySubjectModal: (subject?: Person) => void;
+  saveResponsibilitySubject: () => void | Promise<void>;
+  toggleResponsibilitySubject: (subject: Person) => void | Promise<void>;
+  deleteResponsibilitySubject: (subject: Person) => void | Promise<void>;
   systemSettingsTab: Ref<SystemSettingsTab>;
   changeSystemSettingsTab: (value: string) => void;
   can: CapabilityFn;

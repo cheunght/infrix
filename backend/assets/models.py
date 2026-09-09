@@ -334,6 +334,39 @@ class SoftwareLicense(Timestamped):
         return self.name
 
 
+class Person(Timestamped):
+    """A person who may use an asset, with an optional login account."""
+
+    account = models.OneToOneField(
+        settings.AUTH_USER_MODEL,
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+        related_name="person",
+    )
+    name = models.CharField(max_length=160)
+    employee_no = models.CharField(max_length=80, unique=True, null=True, blank=True)
+    department = models.ForeignKey(
+        Department,
+        null=True,
+        blank=True,
+        on_delete=models.PROTECT,
+        related_name="people",
+    )
+    organization = models.CharField(max_length=160, blank=True)
+    contact = models.CharField(max_length=160, blank=True)
+    is_active = models.BooleanField(default=True)
+
+    class Meta:
+        ordering = ["name", "employee_no", "id"]
+
+    def display_name(self):
+        return self.name
+
+    def __str__(self):
+        return self.display_name() or f"人员 #{self.pk}"
+
+
 class Asset(Timestamped):
     STATUS = [("in_stock", "在库"), ("in_use", "在用"), ("idle", "闲置"), ("repair", "维修中"), ("retired", "已报废")]
     asset_no = models.CharField(max_length=80, unique=True)
@@ -378,23 +411,21 @@ class Asset(Timestamped):
         help_text="未上架资产的所属数据中心；已上架资产以机柜归属为准",
     )
     model = models.CharField(max_length=160, blank=True)
-    department = models.ForeignKey(Department, null=True, blank=True, on_delete=models.PROTECT, related_name="assets")
-    responsible_user = models.ForeignKey(
-        settings.AUTH_USER_MODEL,
+    assigned_person = models.ForeignKey(
+        "Person",
         null=True,
         blank=True,
         on_delete=models.PROTECT,
-        related_name="responsible_assets",
-        help_text="当前正式责任人；领用、归还和调拨通过资产责任动作维护",
+        related_name="assigned_assets",
+        help_text="当前使用人；指定、归还和转交通过使用人操作维护",
     )
-    owner_name = models.CharField(max_length=100, blank=True)
     notes = models.TextField(blank=True)
 
     def __str__(self):
         return f"{self.asset_no} {self.name}"
 
 
-class AssetResponsibilityEvent(models.Model):
+class AssetAssignmentEvent(models.Model):
     ACTIONS = [
         ("assign", "领用"),
         ("return", "归还"),
@@ -404,31 +435,39 @@ class AssetResponsibilityEvent(models.Model):
     asset = models.ForeignKey(
         Asset,
         on_delete=models.PROTECT,
-        related_name="responsibility_events",
+        related_name="assignment_events",
     )
     action = models.CharField(max_length=20, choices=ACTIONS)
-    from_user = models.ForeignKey(
-        settings.AUTH_USER_MODEL,
+    from_person = models.ForeignKey(
+        "Person",
         null=True,
         blank=True,
         on_delete=models.SET_NULL,
-        related_name="asset_responsibility_from_events",
+        related_name="assignment_from_events",
     )
-    from_user_name = models.CharField(max_length=150, blank=True)
-    to_user = models.ForeignKey(
-        settings.AUTH_USER_MODEL,
+    from_person_employee_no = models.CharField(max_length=80, blank=True)
+    from_person_name = models.CharField(max_length=160, blank=True)
+    from_person_department = models.CharField(max_length=120, blank=True)
+    from_person_organization = models.CharField(max_length=160, blank=True)
+    from_person_contact = models.CharField(max_length=160, blank=True)
+    to_person = models.ForeignKey(
+        "Person",
         null=True,
         blank=True,
         on_delete=models.SET_NULL,
-        related_name="asset_responsibility_to_events",
+        related_name="assignment_to_events",
     )
-    to_user_name = models.CharField(max_length=150, blank=True)
+    to_person_employee_no = models.CharField(max_length=80, blank=True)
+    to_person_name = models.CharField(max_length=160, blank=True)
+    to_person_department = models.CharField(max_length=120, blank=True)
+    to_person_organization = models.CharField(max_length=160, blank=True)
+    to_person_contact = models.CharField(max_length=160, blank=True)
     operator = models.ForeignKey(
         settings.AUTH_USER_MODEL,
         null=True,
         blank=True,
         on_delete=models.SET_NULL,
-        related_name="asset_responsibility_events",
+        related_name="asset_assignment_events",
     )
     operator_name = models.CharField(max_length=150, blank=True)
     reason = models.TextField(blank=True)

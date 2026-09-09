@@ -35,10 +35,6 @@ const {
   exportingAssets,
   resetAssetFilters,
   tags,
-  departments,
-  departmentLoading,
-  departmentError,
-  retryDepartments,
   deviceTypes,
   assetColumnOptions,
   assetDynamicColumnOptions,
@@ -107,7 +103,6 @@ const hasAssetFilters = computed(() => Boolean(
   assetFilters.manufacturer ||
   assetFilters.model.trim() ||
   assetFilters.dataCenter ||
-  assetFilters.department ||
   assetFilters.warranty ||
   appliedCustomFilters.value.length,
 ));
@@ -156,10 +151,9 @@ const staticAssetColumnLabelKeys: Record<string, string> = {
   manufacturer: "asset.manufacturer",
   manufacturer_model: "asset.model",
   purpose: "asset.purpose",
-  department: "asset.department",
+  assigned_person: "asset.assignedPerson",
   status: "asset.status",
   serial_number: "asset.serialNumber",
-  responsible_user: "asset.responsibleUser",
   data_center: "location.dataCenter",
   server_room: "location.room",
   rack_code: "asset.rack",
@@ -267,19 +261,6 @@ function openSelectedQrDialog() {
               >
                 <el-option v-for="tag in activeTags" :key="tag.id" :label="tag.name" :value="String(tag.id)" />
               </el-select>
-              <el-select
-                v-model="assetFilters.department"
-                clearable
-                filterable
-                :loading="departmentLoading"
-                :placeholder="t('asset.department')"
-                @change="searchLedger"
-              >
-                <el-option v-for="department in departments" :key="department.id" :label="`${department.name} · ${department.code}`" :value="String(department.id)" />
-              </el-select>
-              <el-button v-if="departmentError" text type="danger" :disabled="departmentLoading" @click="retryDepartments">
-                {{ t('asset.departmentLoadFailed') }}
-              </el-button>
             </div>
           </template>
           <template #actions>

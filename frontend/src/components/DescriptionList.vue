@@ -13,7 +13,7 @@ type DescriptionListItem = {
   title?: string;
 };
 type DescriptionListSize = "large" | "default" | "small";
-type DescriptionListLayout = "horizontal" | "stacked";
+type DescriptionListLayout = "horizontal" | "stacked" | "compact";
 
 const props = withDefaults(
   defineProps<{
@@ -63,13 +63,38 @@ function hasContent(value: unknown): boolean {
 function displayValue(value: unknown): string {
   if (!hasContent(value)) return props.emptyValue || t("common.notAvailable");
   if (Array.isArray(value)) return value.map(displayValue).join("、");
-  if (typeof value === "boolean") return value ? t("common.yes") : t("common.no");
+  if (typeof value === "boolean")
+    return value ? t("common.yes") : t("common.no");
   return String(value);
 }
 </script>
 
 <template>
+  <dl
+    v-if="layout === 'compact'"
+    class="description-list description-list--compact"
+    :class="{ 'description-list--single': descriptionColumns === 1 }"
+  >
+    <div
+      v-for="item in items"
+      :key="item.key"
+      :class="{ 'description-list__pair--wide': item.wide }"
+    >
+      <dt>{{ item.label }}</dt>
+      <dd :title="item.title || displayValue(item.value)">
+        <slot :name="`value-${item.key}`" :item="item">
+          <span
+            :class="{
+              'description-list__empty': item.empty || !hasContent(item.value),
+            }"
+            >{{ displayValue(item.value) }}</span
+          >
+        </slot>
+      </dd>
+    </div>
+  </dl>
   <el-descriptions
+    v-else
     class="description-list"
     :class="`description-list--${layout}`"
     :border="border"
@@ -90,7 +115,11 @@ function displayValue(value: unknown): string {
         :title="item.title || displayValue(item.value)"
       >
         <slot :name="`value-${item.key}`" :item="item">
-          <span :class="{ 'description-list__empty': item.empty || !hasContent(item.value) }">
+          <span
+            :class="{
+              'description-list__empty': item.empty || !hasContent(item.value),
+            }"
+          >
             {{ displayValue(item.value) }}
           </span>
         </slot>
@@ -100,6 +129,37 @@ function displayValue(value: unknown): string {
 </template>
 
 <style scoped>
+.description-list--compact {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 14px 28px;
+  margin: 0;
+  font-size: 14px;
+  line-height: 1.6;
+}
+.description-list--compact > div {
+  display: grid;
+  grid-template-columns: 96px minmax(0, 1fr);
+  gap: 12px;
+  align-items: baseline;
+  min-width: 0;
+}
+.description-list--compact dt {
+  color: var(--el-text-color-secondary);
+  overflow-wrap: anywhere;
+}
+.description-list--compact dd {
+  margin: 0;
+  min-width: 0;
+  overflow-wrap: anywhere;
+  font-weight: 400;
+}
+.description-list__pair--wide {
+  grid-column: 1 / -1;
+}
+.description-list--single {
+  grid-template-columns: minmax(0, 1fr);
+}
 .description-list__value {
   overflow-wrap: anywhere;
   word-break: break-word;

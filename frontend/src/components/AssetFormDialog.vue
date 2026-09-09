@@ -31,10 +31,10 @@ const {
   activeDeviceTypes,
   syncAssetDeviceType,
   manufacturerOptions,
-  departments,
-  departmentLoading,
-  departmentError,
-  retryDepartments,
+  people,
+  peopleLoading,
+  peopleError,
+  retryPeople,
   activeDataCenters,
   changeAssetDataCenter,
   assetRoomOptions,
@@ -84,6 +84,13 @@ const selectableTags = computed<Tag[]>(() => {
 const rackPlacementHelp = computed(() => t("assetForm.rackPlacementHelp"));
 const depreciationHelp = computed(() => t("assetForm.depreciationHelp"));
 const residualRateHelp = computed(() => t("assetForm.residualRateHelp"));
+
+function personOptionLabel(person: (typeof people.value)[number]): string {
+  const parts = [person.name || person.display_name];
+  if (person.employee_no) parts.push(person.employee_no);
+  if (person.department_name) parts.push(person.department_name);
+  return parts.filter(Boolean).join(" · ");
+}
 
 const rackMountedSelectValue = computed({
   get: () => (assetForm.value.rack_mounted ? "mounted" : "unmounted"),
@@ -431,25 +438,33 @@ watch(() => assetForm.value.purchase_date, () => {
         <el-form-item :label="t('asset.model')" :error="fieldError('model')"><el-input v-model="assetForm.model" :placeholder="t('assetForm.modelPlaceholder')" /></el-form-item>
         <el-form-item :label="t('asset.serialNumber')" :error="fieldError('serial_number')"><el-input v-model="assetForm.serial_number" /></el-form-item>
         <el-form-item :label="t('asset.purpose')" :error="fieldError('purpose')"><el-input v-model="assetForm.purpose" /></el-form-item>
-        <el-form-item :label="t('asset.department')" :error="fieldError('department')">
+        <el-form-item :label="t('asset.assignedPerson')" :error="fieldError('assigned_person')">
           <el-select
-            v-model="assetForm.department"
+            v-model="assetForm.assigned_person"
             clearable
             filterable
-            :loading="departmentLoading"
-            :placeholder="t('assetForm.selectDepartment')"
+            :loading="peopleLoading"
+            :placeholder="t('assetForm.selectAssignedPerson')"
           >
             <el-option
-              v-for="item in departments"
+              v-for="item in people"
               :key="item.id"
-              :label="`${item.name} · ${item.code}`"
+              :label="personOptionLabel(item)"
               :value="String(item.id)"
             />
           </el-select>
-          <div v-if="departmentError" class="asset-form-related-state asset-form-related-state--error">
-            <span>{{ departmentError }}</span>
-            <el-button link type="primary" :disabled="departmentLoading" @click="retryDepartments">{{ t('common.retry') }}</el-button>
+          <div v-if="peopleError" class="asset-form-related-state asset-form-related-state--error">
+            <span>{{ peopleError }}</span>
+            <el-button link type="primary" :disabled="peopleLoading" @click="retryPeople">{{ t('common.retry') }}</el-button>
           </div>
+        </el-form-item>
+        <el-form-item :label="t('asset.assignmentReason')" :error="fieldError('assignment_reason')">
+          <el-input
+            v-model="assetForm.assignment_reason"
+            type="textarea"
+            :rows="2"
+            :placeholder="t('assetForm.assignmentReasonPlaceholder')"
+          />
         </el-form-item>
         </div>
       </section>

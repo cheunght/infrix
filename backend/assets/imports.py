@@ -27,8 +27,8 @@ from .audit import asset_audit_snapshot, write_audit_log
 from .custom_fields import validate_custom_field_value
 from .enum_contracts import ASSET_STATUS_LABELS
 from .lifecycle import validate_asset_status_transition
-from .models import Asset, CustomField, DataCenter, Department, DeviceType, Manufacturer, Rack, ServerRoom, Tag
-from .serializers import AssetWriteSerializer, LEGACY_OWNER_NAME_DEPRECATED_MESSAGE
+from .models import Asset, CustomField, DataCenter, Department, DeviceType, Manufacturer, Person, Rack, ServerRoom, Tag
+from .serializers import AssetWriteSerializer
 from .system_settings import get_system_settings
 
 
@@ -45,8 +45,11 @@ IMPORT_COLUMNS = (
     ("manufacturer_model", "厂商/型号", False, "厂商和型号组合显示文本；通常填写型号即可。"),
     ("serial_number", "序列号", False, "留空表示没有序列号；序列号不能与其他资产重复。"),
     ("purpose", "用途", False, "资产用途。"),
-    ("department", "部门", False, "填写现有部门名称或编码；部门不存在时导入会被拒绝。"),
     ("status", "状态", False, "可填 in_stock、in_use、idle、retired，或对应显示值在库、在用、闲置、已报废；维修中由故障流程维护。"),
+    ("assigned_person_employee_no", "使用人员工编号", False, "优先按员工编号匹配启用人员；不能自动创建人员。"),
+    ("assigned_person_name", "使用人姓名", False, "没有员工编号时必填，并结合使用人所属部门匹配；没有部门时姓名必须唯一。"),
+    ("assigned_person_department", "使用人部门", False, "用于匹配人员资料，不代表资产归属部门；填写时必须与人员所属部门一致。"),
+    ("assignment_reason", "使用人变更原因", False, "导入指定使用人的操作原因。"),
     ("notes", "备注", False, "资产备注。"),
     ("asset_data_center", "未上架所属数据中心", False, "未上架资产的所属数据中心；填写启用中的数据中心名称。"),
     ("data_center", "机柜所属数据中心", False, "上架时与机房、机柜、起止 U 一起填写；使用真实层级名称。"),
@@ -80,12 +83,6 @@ ASSET_STATUS_IMPORT_ALIASES = {
     **{value: value for value in ASSET_STATUS_LABELS},
     **{label: value for value, label in ASSET_STATUS_LABELS.items()},
 }
-DEPRECATED_IMPORT_HEADERS = {
-    "owner_name": LEGACY_OWNER_NAME_DEPRECATED_MESSAGE,
-    "使用人": LEGACY_OWNER_NAME_DEPRECATED_MESSAGE,
-}
-
-
 class ImportFileError(ValueError):
     """A structural or parsing error that should be shown inside the dialog."""
 
@@ -162,9 +159,6 @@ def _normalize_headers(values):
         raise ImportFileError("导入文件第一行必须包含完整的字段名")
     if len(headers) != len(set(headers)):
         raise ImportFileError("导入文件包含重复字段名，请保留每个字段一列")
-    deprecated = [header for header in headers if header in DEPRECATED_IMPORT_HEADERS]
-    if deprecated:
-        raise ImportFileError(DEPRECATED_IMPORT_HEADERS[deprecated[0]])
     unknown = [
         header for header in headers
         if header not in IMPORT_BASE_HEADERS and not IMPORT_CUSTOM_HEADER_RE.fullmatch(header)
@@ -390,6 +384,53 @@ def _depreciation_preview_text(row):
     return f"{years or '—'} 年 · 残值率 {residual_rate or '—'}% · {start_date or '—'} 起"
 
 
+def _resolve_assigned_person(row):
+    employee_no = row.get("assigned_person_employee_no", "").strip()
+    name = row.get("assigned_person_name", "").strip()
+    department_name = row.get("assigned_person_department", "").strip()
+    reason = row.get("assignment_reason", "").strip()
+    if not any((employee_no, name, department_name, reason)):
+        return None
+    if reason and not (employee_no or name):
+        raise DjangoValidationError({"assignment_reason": "填写使用人变更原因时必须同时指定使用人"})
+
+    department = None
+    if department_name:
+        department = _named_active(
+            Department.objects,
+            department_name,
+            "assigned_person_department",
+            "使用人部门",
+            allow_code=True,
+        )
+
+    if employee_no:
+        matches = list(Person.objects.filter(employee_no__iexact=employee_no).select_related("department"))
+        if not matches:
+            raise DjangoValidationError({"assigned_person_employee_no": "未找到对应的人员"})
+        person = matches[0]
+        if name and person.name.casefold() != name.casefold():
+            raise DjangoValidationError({"assigned_person_name": "姓名与员工编号对应的人员不一致"})
+        if department is not None and person.department_id != department.pk:
+            raise DjangoValidationError({"assigned_person_department": "部门与员工编号对应的人员不一致"})
+    else:
+        if not name:
+            raise DjangoValidationError({"assigned_person_name": "没有员工编号时必须填写使用人姓名"})
+        query = Person.objects.filter(name__iexact=name).select_related("department")
+        if department is not None:
+            query = query.filter(department_id=department.pk)
+        matches = list(query)
+        if not matches:
+            raise DjangoValidationError({"assigned_person_name": "未找到对应的人员"})
+        if len(matches) > 1:
+            raise DjangoValidationError({"assigned_person_name": "姓名匹配到多名人员，请填写员工编号或所属部门"})
+        person = matches[0]
+
+    if not person.is_active:
+        raise DjangoValidationError({"assigned_person_name": "停用人员不能作为使用人导入"})
+    return {"action": "assign", "target_person": person.pk, "reason": reason}
+
+
 def _prepare_payload(row, headers):
     asset_no = row.get("asset_no", "").strip()
     asset_name = row.get("name", "").strip()
@@ -404,15 +445,6 @@ def _prepare_payload(row, headers):
     if not device_type_name:
         raise DjangoValidationError({"device_type": "设备类型不能为空"})
     device_type = _named_active(DeviceType.objects, device_type_name, "device_type", "设备类型")
-
-    department_name = row.get("department", "").strip()
-    department = _named_active(
-        Department.objects,
-        department_name,
-        "department",
-        "部门",
-        allow_code=True,
-    ) if department_name else None
 
     asset_data_center_name = row.get("asset_data_center", "").strip()
     asset_data_center = _named_active(DataCenter.objects, asset_data_center_name, "asset_data_center", "数据中心") if asset_data_center_name else None
@@ -550,7 +582,6 @@ def _prepare_payload(row, headers):
         "manufacturer_id": manufacturer.pk if manufacturer else None,
         "device_type": device_type.pk,
         "asset_data_center": asset_data_center.pk if asset_data_center else None,
-        "department": department.pk if department else None,
         "model": row.get("model", "").strip(),
         "manufacturer_model": row.get("manufacturer_model", "").strip(),
         "serial_number": row.get("serial_number", "").strip() or None,
@@ -564,6 +595,7 @@ def _prepare_payload(row, headers):
         "configuration": configuration,
         "tags": tag_values,
         "custom_values": custom_values,
+        "assignment": _resolve_assigned_person(row),
     }
 
 

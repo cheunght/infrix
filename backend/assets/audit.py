@@ -115,8 +115,8 @@ def asset_audit_snapshot(asset_id):
     from .serializers import AssetDetailSerializer
 
     asset = Asset.objects.select_related(
-        "department",
-        "responsible_user",
+        "assigned_person__department",
+        "assigned_person__account",
         "manufacturer",
         "device_type",
         "asset_data_center",
@@ -216,7 +216,9 @@ def write_audit_log(
     if extra:
         payload["extra"] = json_value(extra)
     return AuditLog.objects.create(
-        actor=actor if actor is not None else (request.user if request.user.is_authenticated else None),
+        actor=actor if actor is not None else (
+            request.user if request is not None and request.user.is_authenticated else None
+        ),
         action=action,
         resource_type=resource_type,
         resource_id=str(resource_id),

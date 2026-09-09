@@ -15,12 +15,16 @@ import PagedTable from "./PagedTable.vue";
 import ResourceState from "./ResourceState.vue";
 import StatusTag, { type StatusTagType } from "./StatusTag.vue";
 
-const props = withDefaults(defineProps<{
-  context: AssetInventoryHistoryContext;
-  collapsible?: boolean;
-}>(), {
-  collapsible: false,
-});
+const props = withDefaults(
+  defineProps<{
+    context: AssetInventoryHistoryContext;
+    collapsible?: boolean;
+    compact?: boolean;
+  }>(),
+  {
+    collapsible: false,
+  },
+);
 const { t } = useI18n();
 const context = props.context;
 
@@ -30,7 +34,9 @@ const error = computed(() => context.inventoryHistoryError.value);
 const page = computed(() => context.inventoryHistoryPage.value);
 const pageSize = computed(() => context.inventoryHistoryPageSize.value);
 const total = computed(() => context.inventoryHistoryTotal.value);
-const empty = computed(() => !loading.value && !error.value && total.value === 0);
+const empty = computed(
+  () => !loading.value && !error.value && total.value === 0,
+);
 
 function formatDateTime(value: string | null): string {
   if (!value) return t("common.notAvailable");
@@ -42,7 +48,11 @@ function statusTone(status: string): StatusTagType {
 }
 
 function resolutionTone(status: string): StatusTagType {
-  return businessOptionTone(INVENTORY_RESOLUTION_STATUS_OPTIONS, status, "info");
+  return businessOptionTone(
+    INVENTORY_RESOLUTION_STATUS_OPTIONS,
+    status,
+    "info",
+  );
 }
 
 function resolutionActionLabel(action: string | null): string {
@@ -71,6 +81,7 @@ function changePageSize(value: number) {
     :collapsible="collapsible"
     :summary="t('units.item', total)"
   >
+    <slot />
     <ResourceState
       :loading="loading"
       :error="error"
@@ -86,32 +97,91 @@ function changePageSize(value: number) {
         @update:current-page="changePage"
         @update:page-size="changePageSize"
       >
-        <el-table :data="items" row-key="id" table-layout="fixed">
-          <el-table-column prop="task_name" :label="t('inventory.taskName')" min-width="180" show-overflow-tooltip />
+        <div v-if="compact" class="asset-history-list">
+          <article
+            v-for="item in items"
+            :key="item.id"
+            class="asset-history-record"
+          >
+            <strong>{{ item.task_name }}</strong>
+            <span
+              >{{ t("inventory.result") }} ·
+              {{
+                businessOptionLabel(INVENTORY_ITEM_STATUS_OPTIONS, item.status)
+              }}</span
+            >
+            <span
+              >{{ t("inventory.inspector") }} ·
+              {{ item.checked_by_name || t("common.notAvailable") }}</span
+            >
+            <time>{{ formatDateTime(item.checked_at) }}</time>
+            <span
+              >{{ t("inventory.processStatus") }} ·
+              {{
+                businessOptionLabel(
+                  INVENTORY_RESOLUTION_STATUS_OPTIONS,
+                  item.resolution_status,
+                )
+              }}</span
+            >
+            <span
+              >{{ t("inventory.processResult") }} ·
+              {{ resolutionActionLabel(item.resolution_action) }}</span
+            >
+          </article>
+        </div>
+        <el-table v-else :data="items" row-key="id" table-layout="fixed">
+          <el-table-column
+            prop="task_name"
+            :label="t('inventory.taskName')"
+            min-width="180"
+            show-overflow-tooltip
+          />
           <el-table-column :label="t('inventory.result')" width="120">
             <template #default="{ row }">
               <StatusTag
                 :tone="statusTone(row.status)"
-                :label="businessOptionLabel(INVENTORY_ITEM_STATUS_OPTIONS, row.status)"
+                :label="
+                  businessOptionLabel(INVENTORY_ITEM_STATUS_OPTIONS, row.status)
+                "
               />
             </template>
           </el-table-column>
-          <el-table-column :label="t('inventory.inspector')" width="120" show-overflow-tooltip>
-            <template #default="{ row }">{{ row.checked_by_name || t('common.notAvailable') }}</template>
+          <el-table-column
+            :label="t('inventory.inspector')"
+            width="120"
+            show-overflow-tooltip
+          >
+            <template #default="{ row }">{{
+              row.checked_by_name || t("common.notAvailable")
+            }}</template>
           </el-table-column>
           <el-table-column :label="t('inventory.checkedAt')" width="166">
-            <template #default="{ row }">{{ formatDateTime(row.checked_at) }}</template>
+            <template #default="{ row }">{{
+              formatDateTime(row.checked_at)
+            }}</template>
           </el-table-column>
           <el-table-column :label="t('inventory.processStatus')" width="120">
             <template #default="{ row }">
               <StatusTag
                 :tone="resolutionTone(row.resolution_status)"
-                :label="businessOptionLabel(INVENTORY_RESOLUTION_STATUS_OPTIONS, row.resolution_status)"
+                :label="
+                  businessOptionLabel(
+                    INVENTORY_RESOLUTION_STATUS_OPTIONS,
+                    row.resolution_status,
+                  )
+                "
               />
             </template>
           </el-table-column>
-          <el-table-column :label="t('inventory.processResult')" min-width="150" show-overflow-tooltip>
-            <template #default="{ row }">{{ resolutionActionLabel(row.resolution_action) }}</template>
+          <el-table-column
+            :label="t('inventory.processResult')"
+            min-width="150"
+            show-overflow-tooltip
+          >
+            <template #default="{ row }">{{
+              resolutionActionLabel(row.resolution_action)
+            }}</template>
           </el-table-column>
         </el-table>
       </PagedTable>

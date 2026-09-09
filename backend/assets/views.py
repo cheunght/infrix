@@ -31,7 +31,7 @@ from openpyxl import Workbook
 from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
 from openpyxl.utils import get_column_letter
 from urllib.parse import quote
-from .models import AuthThrottleState, AuditLog, Asset, AssetCustomValue, AssetNetworkAddress, AssetResponsibilityEvent, AssetTag, CustomField, CustomFieldOption, DataCenter, Department, DeviceType, DirectoryIdentity, FaultEvent, InventoryItem, InventoryTask, MaintenanceContract, Manufacturer, NotificationDelivery, ProcurementRecord, Rack, RackUnitAllocation, RepairPartUsage, RepairRecord, ServerRoom, SoftwareLicense, SparePart, SparePartCategory, SpareStock, SpareStockTransaction, SystemSetting, Tag, UserSecurityProfile
+from .models import AuthThrottleState, AuditLog, Asset, AssetAssignmentEvent, AssetCustomValue, AssetNetworkAddress, AssetTag, CustomField, CustomFieldOption, DataCenter, Department, DeviceType, DirectoryIdentity, FaultEvent, InventoryItem, InventoryTask, MaintenanceContract, Manufacturer, NotificationDelivery, Person, ProcurementRecord, Rack, RackUnitAllocation, RepairPartUsage, RepairRecord, ServerRoom, SoftwareLicense, SparePart, SparePartCategory, SpareStock, SpareStockTransaction, SystemSetting, Tag, UserSecurityProfile
 from .enum_contracts import (
     ASSET_STATUS_LABELS,
     ASSET_STATUS_VALUES,
@@ -45,7 +45,7 @@ from .enum_contracts import (
     STOCK_OPERATION_TYPE_LABELS,
     STOCK_OPERATION_TYPE_VALUES,
 )
-from .serializers import AdminPasswordResetSerializer, AssetBatchDeleteResponseSerializer, AssetBatchDeleteSerializer, AssetDetailSerializer, AssetListSerializer, AssetResponsibilityEventSerializer, AssetResponsibilityReturnSerializer, AssetResponsibilityTargetSerializer, AssetResponsibilityUserSerializer, AssetSerializer, AssetWriteSerializer, AuditLogSerializer, CurrentUserProfileSerializer, CustomFieldOptionSerializer, CustomFieldRuntimeSchemaSerializer, CustomFieldSerializer, DataCenterSerializer, DepartmentSerializer, DeviceTypeSerializer, FaultEventSerializer, GroupSerializer, InventoryBulkNormalResponseSerializer, InventoryBulkNormalSerializer, InventoryBulkResolutionResponseSerializer, InventoryBulkResolutionSerializer, InventoryInspectorSerializer, InventoryItemPageSerializer, InventoryItemSerializer, InventoryResolutionSerializer, InventoryScopePreviewQuerySerializer, InventoryScopePreviewSerializer, InventoryTaskSerializer, LdapConfigurationUpdateSerializer, ManufacturerSerializer, NotificationDeliverySerializer, RackSerializer, RepairPartUsageCreateSerializer, RepairPartUsageSerializer, RepairRecordSerializer, ServerRoomSerializer, SoftwareLicenseSerializer, SparePartCategorySerializer, SparePartDetailSerializer, SparePartSerializer, SpareStockSerializer, SpareStockTransactionSerializer, SmtpTestEmailSerializer, SystemResetSerializer, SystemSettingsSerializer, TagSerializer, UserBatchStatusResponseSerializer, UserBatchStatusSerializer, UserSerializer, _default_references_option, _responsibility_user_name
+from .serializers import AdminPasswordResetSerializer, AssetAssignmentEventSerializer, AssetAssignmentReturnSerializer, AssetAssignmentTargetSerializer, AssetBatchDeleteResponseSerializer, AssetBatchDeleteSerializer, AssetDetailSerializer, AssetListSerializer, AssetSerializer, AssetWriteSerializer, AuditLogSerializer, CurrentUserProfileSerializer, CustomFieldOptionSerializer, CustomFieldRuntimeSchemaSerializer, CustomFieldSerializer, DataCenterSerializer, DepartmentSerializer, DeviceTypeSerializer, FaultEventSerializer, GroupSerializer, InventoryBulkNormalResponseSerializer, InventoryBulkNormalSerializer, InventoryBulkResolutionResponseSerializer, InventoryBulkResolutionSerializer, InventoryInspectorSerializer, InventoryItemPageSerializer, InventoryItemSerializer, InventoryResolutionSerializer, InventoryScopePreviewQuerySerializer, InventoryScopePreviewSerializer, InventoryTaskSerializer, LdapConfigurationUpdateSerializer, ManufacturerSerializer, NotificationDeliverySerializer, PersonSerializer, RackSerializer, RepairPartUsageCreateSerializer, RepairPartUsageSerializer, RepairRecordSerializer, ServerRoomSerializer, SoftwareLicenseSerializer, SparePartCategorySerializer, SparePartDetailSerializer, SparePartSerializer, SpareStockSerializer, SpareStockTransactionSerializer, SmtpTestEmailSerializer, SystemResetSerializer, SystemSettingsSerializer, TagSerializer, UserBatchStatusResponseSerializer, UserBatchStatusSerializer, UserSerializer, _default_references_option
 from .services import (
     apply_spare_stock_transaction,
     confirm_inventory_item_normal,
@@ -91,7 +91,7 @@ from .ldap_configuration import (
 )
 from .configuration_secrets import encrypt_secret
 from .smtp import SmtpConfigurationError, send_smtp_test_email
-from .permissions import BusinessRolePermission, CanExportAssets, CanExportFaults, CanExportInventory, CanExportLicenses, CanExportRacks, CanExportSpares, CanImportAssets, CanManageInventory, CanManageSystemSettings, CanResetSystem, CanViewAssetCustomFieldSchema, CanViewAssetTagsRuntime, CanViewAuditLog, CanViewDashboard, CanViewDepartmentRuntime, CanViewInventory, CanViewLicenses, CanViewManufacturerRuntime, CanViewSparePartCategoryRuntime, IsSystemAdministrator
+from .permissions import BusinessRolePermission, CanExportAssets, CanExportFaults, CanExportInventory, CanExportLicenses, CanExportRacks, CanExportSpares, CanImportAssets, CanManageInventory, CanManageSystemSettings, CanResetSystem, CanViewAssetCustomFieldSchema, CanViewAssetTagsRuntime, CanViewAuditLog, CanViewDashboard, CanViewDepartmentRuntime, CanViewInventory, CanViewLicenses, CanViewManufacturerRuntime, CanViewPeopleRuntime, CanViewSparePartCategoryRuntime, IsSystemAdministrator
 from .roles import ROLE_DEFINITIONS, ROLE_NAME_TO_CODE, user_capabilities, user_has_capability, user_role_code, user_role_codes
 from .reporting import (
     DashboardScopeError,
@@ -365,8 +365,8 @@ def _delete_asset_with_audit(instance, request, *, batch_operation_id=None):
             raise DRFValidationError("资产存在历史盘点记录，不能删除") from exc
         if any(isinstance(item, FaultEvent) for item in protected):
             raise DRFValidationError("资产存在关联故障记录，不能删除") from exc
-        if any(isinstance(item, AssetResponsibilityEvent) for item in protected):
-            raise DRFValidationError("资产存在责任变化历史，不能删除") from exc
+        if any(isinstance(item, AssetAssignmentEvent) for item in protected):
+            raise DRFValidationError("资产存在使用人变化历史，不能删除") from exc
         raise DRFValidationError("资产存在关联数据，不能删除") from exc
     extra = {"batch_operation_id": str(batch_operation_id)} if batch_operation_id else None
     write_audit_log(
@@ -379,21 +379,78 @@ def _delete_asset_with_audit(instance, request, *, batch_operation_id=None):
     )
 
 
+class PersonViewSet(AuditedModelViewSetMixin, viewsets.ModelViewSet):
+    queryset = Person.objects.select_related("department", "account").annotate(
+        asset_count=Count("assigned_assets", distinct=True),
+    ).order_by("name", "employee_no", "id")
+    serializer_class = PersonSerializer
+    permission_classes = [BusinessRolePermission]
+    permission_resource = "settings"
+    audit_resource = "person"
+    filter_backends = [SearchFilter, OrderingFilter]
+    search_fields = ["name", "employee_no", "organization", "contact", "department__name", "account__username", "account__first_name", "account__last_name", "account__email"]
+    ordering_fields = ["name", "employee_no", "organization", "created_at", "updated_at"]
+    ordering = ["name", "employee_no", "id"]
+
+    def get_permissions(self):
+        if self.request.method in {"GET", "HEAD", "OPTIONS"} or self.action in {"list", "retrieve"}:
+            return [CanViewPeopleRuntime()]
+        return super().get_permissions()
+
+    def get_queryset(self):
+        queryset = super().get_queryset()
+        if self.action in {"retrieve", "update", "partial_update", "destroy"}:
+            return queryset
+        active = self.request.query_params.get("is_active", "true").strip().lower()
+        if active in {"true", "false"}:
+            queryset = queryset.filter(is_active=active == "true")
+        department = self.request.query_params.get("department", "").strip()
+        if department:
+            try:
+                queryset = queryset.filter(department_id=int(department))
+            except (TypeError, ValueError):
+                queryset = queryset.none()
+        account = self.request.query_params.get("account", "").strip().lower()
+        if account == "unlinked":
+            queryset = queryset.filter(account__isnull=True)
+        elif account == "linked":
+            queryset = queryset.filter(account__isnull=False)
+        if self.request.query_params.get("search", "").strip():
+            queryset = queryset.distinct()
+        return queryset
+
+    @transaction.atomic
+    def perform_update(self, serializer):
+        person = Person.objects.select_for_update().get(pk=serializer.instance.pk)
+        if person.is_active and serializer.validated_data.get("is_active") is False and person.assigned_assets.exists():
+            raise DRFValidationError({"is_active": "该人员仍有资产，处理名下资产后才能停用"})
+        serializer.instance = person
+        super().perform_update(serializer)
+
+    @transaction.atomic
+    def perform_destroy(self, instance):
+        person = Person.objects.select_for_update().get(pk=instance.pk)
+        if person.assigned_assets.exists():
+            raise DRFValidationError("人员仍被资产使用，不能删除，请先归还或转交资产")
+        super().perform_destroy(person)
+
+
 class AssetViewSet(AuditedModelViewSetMixin, viewsets.ModelViewSet):
     max_custom_columns = 12
-    queryset = Asset.objects.select_related("department", "responsible_user", "manufacturer", "device_type", "asset_data_center", "rack_allocation__rack__room__data_center").prefetch_related("network_addresses", "procurement_records", "maintenance_contracts", "asset_tags__tag", "custom_values__field__options").order_by("asset_no", "id")
+    queryset = Asset.objects.select_related("assigned_person__department", "assigned_person__account", "manufacturer", "device_type", "asset_data_center", "rack_allocation__rack__room__data_center").prefetch_related("network_addresses", "procurement_records", "maintenance_contracts", "asset_tags__tag", "custom_values__field__options").order_by("asset_no", "id")
     serializer_class = AssetSerializer
     permission_classes = [BusinessRolePermission]
     permission_resource = "assets"
     audit_resource = "asset"
     filter_backends = [DjangoFilterBackend, SearchFilter, OrderingFilter]
-    filterset_fields = ["status", "department", "manufacturer", "device_type", "model"]
+    filterset_fields = ["status", "manufacturer", "device_type", "model"]
     ordering_fields = ["asset_no", "name", "manufacturer_model", "serial_number"]
     ordering = ["asset_no", "id"]
     search_fields = [
         "asset_no", "name", "manufacturer_model", "serial_number", "purpose", "notes", "status",
-        "manufacturer__name", "device_type__name", "device_type__color", "model", "department__name", "department__code",
-        "responsible_user__username", "responsible_user__first_name", "responsible_user__last_name", "responsible_user__email",
+        "manufacturer__name", "device_type__name", "device_type__color", "model",
+        "assigned_person__name", "assigned_person__employee_no", "assigned_person__organization", "assigned_person__contact", "assigned_person__department__name",
+        "assigned_person__account__username", "assigned_person__account__first_name", "assigned_person__account__last_name", "assigned_person__account__email",
         "network_addresses__address", "network_addresses__role", "network_addresses__status", "network_addresses__notes",
         "rack_allocation__rack__code", "rack_allocation__rack__room__name", "rack_allocation__rack__room__data_center__name",
         "rack_allocation__start_u", "rack_allocation__end_u",
@@ -465,7 +522,7 @@ class AssetViewSet(AuditedModelViewSetMixin, viewsets.ModelViewSet):
         if self.action == "list" and self.request.query_params.get("compact", "").lower() in {"1", "true", "yes"}:
             requested_custom_columns = self._requested_custom_columns()
             queryset = queryset.select_related(
-                "responsible_user", "manufacturer", "device_type", "asset_data_center", "rack_allocation__rack__room__data_center"
+                "assigned_person__department", "assigned_person__account", "manufacturer", "device_type", "asset_data_center", "rack_allocation__rack__room__data_center"
             ).prefetch_related(None).prefetch_related(
                 Prefetch(
                     "network_addresses",
@@ -697,63 +754,33 @@ class AssetViewSet(AuditedModelViewSetMixin, viewsets.ModelViewSet):
         return AssetSerializer
 
     @extend_schema(
-        responses=AssetResponsibilityUserSerializer(many=True),
-        parameters=[
-            OpenApiParameter(
-                name="search",
-                type=OpenApiTypes.STR,
-                required=False,
-                description="按用户名、姓名或邮箱搜索可作为资产责任人的启用用户。",
-            ),
-        ],
-        description="返回资产责任动作可选择的启用用户，使用标准分页。",
+        responses=AssetAssignmentEventSerializer(many=True),
+        description="按时间倒序分页返回资产使用人变化历史。历史记录只读。",
     )
-    @action(detail=False, methods=["get"], url_path="responsibility-users")
-    def responsibility_users(self, request):
-        queryset = User.objects.filter(is_active=True)
-        search = request.query_params.get("search", "").strip()
-        if search:
-            queryset = queryset.filter(
-                Q(username__icontains=search)
-                | Q(first_name__icontains=search)
-                | Q(last_name__icontains=search)
-                | Q(email__icontains=search)
-            )
-        queryset = queryset.order_by("username", "id")
-        page = self.paginate_queryset(queryset)
-        serializer = AssetResponsibilityUserSerializer(page if page is not None else queryset, many=True)
-        if page is not None:
-            return self.get_paginated_response(serializer.data)
-        return Response(serializer.data)
-
-    @extend_schema(
-        responses=AssetResponsibilityEventSerializer(many=True),
-        description="按时间倒序分页返回资产责任人变化历史。历史记录只读。",
-    )
-    @action(detail=True, methods=["get"], url_path="responsibility-history")
-    def responsibility_history(self, request, pk=None):
+    @action(detail=True, methods=["get"], url_path="assignment-history")
+    def assignment_history(self, request, pk=None):
         asset = self.get_object()
-        queryset = AssetResponsibilityEvent.objects.filter(asset_id=asset.pk).select_related(
-            "from_user", "to_user", "operator"
+        queryset = AssetAssignmentEvent.objects.filter(asset_id=asset.pk).select_related(
+            "from_person__department", "to_person__department", "operator"
         ).order_by("-created_at", "-id")
         page = self.paginate_queryset(queryset)
-        serializer = AssetResponsibilityEventSerializer(page if page is not None else queryset, many=True)
+        serializer = AssetAssignmentEventSerializer(page if page is not None else queryset, many=True)
         if page is not None:
             return self.get_paginated_response(serializer.data)
         return Response(serializer.data)
 
     @extend_schema(
-        request=AssetResponsibilityTargetSerializer,
+        request=AssetAssignmentTargetSerializer,
         responses=AssetDetailSerializer,
-        description="将当前未分配责任人的资产领用给一个启用用户。",
+        description="将当前未分配使用人的资产指定给一个启用人员。",
     )
     @action(detail=True, methods=["post"], url_path="assign")
     def assign(self, request, pk=None):
-        serializer = AssetResponsibilityTargetSerializer(data=request.data)
+        serializer = AssetAssignmentTargetSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
         asset, _event = assign_asset(
             asset_id=pk,
-            target_user_id=serializer.validated_data["target_user"].pk,
+            target_person_id=serializer.validated_data["target_person"].pk,
             actor=request.user,
             request=request,
             reason=serializer.validated_data.get("reason", ""),
@@ -761,13 +788,13 @@ class AssetViewSet(AuditedModelViewSetMixin, viewsets.ModelViewSet):
         return Response(AssetDetailSerializer(asset, context=self.get_serializer_context()).data)
 
     @extend_schema(
-        request=AssetResponsibilityReturnSerializer,
+        request=AssetAssignmentReturnSerializer,
         responses=AssetDetailSerializer,
-        description="归还当前有责任人的资产并清空当前责任人。",
+        description="归还当前资产的使用人。",
     )
     @action(detail=True, methods=["post"], url_path="return")
     def return_asset(self, request, pk=None):
-        serializer = AssetResponsibilityReturnSerializer(data=request.data)
+        serializer = AssetAssignmentReturnSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
         asset, _event = return_asset(
             asset_id=pk,
@@ -778,17 +805,17 @@ class AssetViewSet(AuditedModelViewSetMixin, viewsets.ModelViewSet):
         return Response(AssetDetailSerializer(asset, context=self.get_serializer_context()).data)
 
     @extend_schema(
-        request=AssetResponsibilityTargetSerializer,
+        request=AssetAssignmentTargetSerializer,
         responses=AssetDetailSerializer,
-        description="将资产责任人从当前用户调拨给另一个启用用户。",
+        description="将资产使用人转交给另一个启用人员。",
     )
     @action(detail=True, methods=["post"], url_path="transfer")
     def transfer(self, request, pk=None):
-        serializer = AssetResponsibilityTargetSerializer(data=request.data)
+        serializer = AssetAssignmentTargetSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
         asset, _event = transfer_asset(
             asset_id=pk,
-            target_user_id=serializer.validated_data["target_user"].pk,
+            target_person_id=serializer.validated_data["target_person"].pk,
             actor=request.user,
             request=request,
             reason=serializer.validated_data.get("reason", ""),
@@ -1209,7 +1236,7 @@ class DictionaryViewSet(AuditedModelViewSetMixin, viewsets.ModelViewSet):
 
 class DepartmentViewSet(AuditedModelViewSetMixin, viewsets.ModelViewSet):
     queryset = Department.objects.select_related("parent").annotate(
-        assets_count=Count("assets", distinct=True),
+        people_count=Count("people", distinct=True),
     ).order_by("name", "id")
     serializer_class = DepartmentSerializer
     permission_classes = [BusinessRolePermission]
@@ -1227,8 +1254,8 @@ class DepartmentViewSet(AuditedModelViewSetMixin, viewsets.ModelViewSet):
         return super().get_permissions()
 
     def perform_destroy(self, instance):
-        if instance.assets.exists():
-            raise DRFValidationError("部门正在被资产使用，不能删除，请先调整资产归属")
+        if instance.people.exists():
+            raise DRFValidationError("部门仍被人员使用，不能删除，请先调整人员资料")
         try:
             super().perform_destroy(instance)
         except ProtectedError as exc:
@@ -1878,8 +1905,6 @@ class UserViewSet(viewsets.ModelViewSet):
                     "code": "directory_user_protected",
                 }
             )
-        if Asset.objects.filter(responsible_user_id=instance.pk).exists():
-            raise DRFValidationError("用户仍是资产责任人，归还或调拨资产后才能删除")
         if InventoryTask.objects.filter(inspector_id=instance.pk).exists():
             raise DRFValidationError("用户仍被盘点任务引用，不能删除")
         before = _user_audit_snapshot(instance)
@@ -3466,7 +3491,7 @@ def asset_export(request):
         ).distinct().prefetch_related("options").order_by("device_type__name", "sort_order", "id")
     ) if assets else []
     headers = [
-        "资产编号", "资产名称", "设备类型", "厂商", "型号", "厂商/型号", "序列号", "用途", "状态", "当前责任人", "部门",
+        "资产编号", "资产名称", "设备类型", "厂商", "型号", "厂商/型号", "序列号", "用途", "状态", "使用人", "使用人员工编号", "使用人部门", "使用人单位", "使用人联系方式",
         "数据中心", "机房", "机柜", "起始 U", "结束 U", "业务 IP", "管理 IP", "带外 IP", "采购日期",
         "供应商", "采购单号", "采购金额", "折旧方法", "折旧起算日", "折旧年限", "残值率", "资产原值", "预计残值", "月折旧额", "累计折旧", "当前净值", "折旧状态",
         "维保厂商", "维保合同号", "维保开始日", "维保到期日", "维保备注", "备注", "标签",
@@ -3505,8 +3530,12 @@ def asset_export(request):
         tag_text = ", ".join(item.tag.name for item in asset.asset_tags.all())
         row_values = [
             asset.asset_no, asset.name, asset.device_type.name if asset.device_type_id else "",
-            asset.manufacturer.name if asset.manufacturer_id else "", asset.model or "", asset.manufacturer_model, asset.serial_number or "", asset.purpose, status_labels.get(asset.status, asset.status), _responsibility_user_name(asset.responsible_user),
-            asset.department.name if asset.department_id else "",
+            asset.manufacturer.name if asset.manufacturer_id else "", asset.model or "", asset.manufacturer_model, asset.serial_number or "", asset.purpose, status_labels.get(asset.status, asset.status),
+            asset.assigned_person.name if asset.assigned_person_id else "",
+            asset.assigned_person.employee_no if asset.assigned_person_id else "",
+            asset.assigned_person.department.name if asset.assigned_person_id and asset.assigned_person.department_id else "",
+            asset.assigned_person.organization if asset.assigned_person_id else "",
+            asset.assigned_person.contact if asset.assigned_person_id else "",
             rack.rack.room.data_center.name if rack else (asset.asset_data_center.name if asset.asset_data_center_id else ""), rack.rack.room.name if rack else "", rack.rack.code if rack else "",
             rack.start_u if rack else "", rack.end_u if rack else "", networks.get("business", ""), networks.get("management", ""), networks.get("oob", ""),
             procurement.purchase_date if procurement else "", procurement.supplier if procurement else "", procurement.order_no if procurement else "", procurement.amount if procurement else "",

@@ -47,6 +47,8 @@ for model in [
     SparePart,
     SoftwareLicense,
     Asset,
+    Person,
+    AssetAssignmentEvent,
     AssetNetworkAddress,
     AssetCustomValue,
     AssetTag,

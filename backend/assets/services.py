@@ -14,7 +14,8 @@ from .models import (
     Asset,
     AssetCustomValue,
     AssetNetworkAddress,
-    AssetResponsibilityEvent,
+    AssetAssignmentEvent,
+    Person,
     AssetTag,
     CustomField,
     DataCenter,
@@ -588,7 +589,7 @@ def synchronize_asset_location_hierarchy(*, rack_ids, data_center_id) -> int:
     return changed
 
 
-def _responsibility_error(code, message):
+def _assignment_error(code, message):
     raise DRFValidationError({"code": code, "detail": message})
 
 
@@ -598,19 +599,43 @@ def _user_display_name(user):
     return user.get_full_name().strip() or user.username
 
 
-def _locked_responsibility_user(user_id):
-    if user_id in (None, ""):
-        _responsibility_error("assignment_target_required", "必须选择责任人")
+def _person_display_name(person):
+    if person is None:
+        return ""
+    return person.display_name()
+
+
+def _person_snapshot(person):
+    if person is None:
+        return {
+            "employee_no": "",
+            "name": "",
+            "department": "",
+            "organization": "",
+            "contact": "",
+        }
+    return {
+        "employee_no": person.employee_no or "",
+        "name": _person_display_name(person),
+        "department": person.department.name if person.department_id and person.department else "",
+        "organization": person.organization or "",
+        "contact": person.contact or "",
+    }
+
+
+def _locked_person(person_id):
+    if person_id in (None, ""):
+        _assignment_error("assignment_target_required", "必须选择使用人")
     try:
-        user = User.objects.select_for_update().get(pk=user_id)
-    except (User.DoesNotExist, TypeError, ValueError) as exc:
-        raise DRFValidationError({"code": "assignment_target_not_found", "detail": "责任人不存在"}) from exc
-    if not user.is_active:
-        _responsibility_error("assignment_target_inactive", "停用用户不能成为资产责任人")
-    return user
+        person = Person.objects.select_for_update().select_related("department").get(pk=person_id)
+    except (Person.DoesNotExist, TypeError, ValueError) as exc:
+        raise DRFValidationError({"code": "assignment_target_not_found", "detail": "使用人不存在"}) from exc
+    if not person.is_active:
+        _assignment_error("assignment_target_inactive", "停用人员不能被指定为资产使用人")
+    return person
 
 
-def _apply_responsibility_status(asset, target_status):
+def _apply_assignment_status(asset, target_status):
     if target_status is None or asset.status == target_status:
         return False
     try:
@@ -624,63 +649,75 @@ def _apply_responsibility_status(asset, target_status):
         )
         raise DRFValidationError({
             "code": "asset_status_transition_blocked",
-            "detail": message or "资产状态不允许随责任动作变更",
+            "detail": message or "资产状态不允许随使用人动作变更",
         }) from exc
 
 
 @transaction.atomic
-def _change_asset_responsibility(*, asset_id, action, target_user_id=None, actor, request, reason=""):
+def _change_asset_assignment(*, asset_id, action, target_person_id=None, actor, request, reason=""):
     from .audit import asset_audit_snapshot, write_audit_log
 
-    asset = Asset.objects.select_for_update().select_related("responsible_user").get(pk=asset_id)
+    asset = Asset.objects.select_for_update().select_related("assigned_person__department").get(pk=asset_id)
     if asset.status == "retired" and action in {"assign", "transfer"}:
-        _responsibility_error("asset_retired", "已报废资产不能执行责任人操作")
+        _assignment_error("asset_retired", "已报废资产不能指定或转交使用人")
     if asset.status == "repair":
-        _responsibility_error("asset_in_repair", "维修中资产由故障维修流程维护，不能执行责任人操作")
+        _assignment_error("asset_in_repair", "维修中资产由故障维修流程维护，不能执行使用人操作")
     if FaultEvent.objects.filter(asset_id=asset.pk, is_closed=False).exists():
-        _responsibility_error("asset_has_open_fault", "存在未关闭故障时，资产责任关系由维修流程维护")
+        _assignment_error("asset_has_open_fault", "存在未关闭故障时，资产使用关系由维修流程维护")
 
-    current_user = asset.responsible_user
-    target_user = None
+    current_person = asset.assigned_person
+    target_person = None
     target_status = None
     if action == "assign":
-        if current_user is not None:
-            _responsibility_error("asset_already_assigned", "资产已有责任人，请使用调拨操作")
-        target_user = _locked_responsibility_user(target_user_id)
+        if current_person is not None:
+            _assignment_error("asset_already_assigned", "资产已有使用人，请使用转交使用人操作")
+        target_person = _locked_person(target_person_id)
         target_status = "in_use" if asset.status != "in_use" else None
     elif action == "return":
-        if current_user is None:
-            _responsibility_error("asset_not_assigned", "资产当前没有责任人，不能归还")
+        if current_person is None:
+            _assignment_error("asset_not_assigned", "资产当前没有使用人，不能归还")
         # Keep retired terminal while allowing legacy inconsistent data to be
         # corrected by clearing its current assignee and recording the return.
         target_status = None if asset.status == "retired" else "in_stock"
     elif action == "transfer":
-        if current_user is None:
-            _responsibility_error("asset_not_assigned", "资产当前没有责任人，不能调拨")
-        target_user = _locked_responsibility_user(target_user_id)
-        if target_user.pk == current_user.pk:
-            _responsibility_error("same_assignee", "调拨目标不能与当前责任人相同")
-        target_status = "in_use" if asset.status != "in_use" else None
+        if current_person is None:
+            _assignment_error("asset_not_assigned", "资产当前没有使用人，不能转交")
+        target_person = _locked_person(target_person_id)
+        if target_person.pk == current_person.pk:
+            _assignment_error("same_assignee", "转交目标不能与当前使用人相同")
+        # A transfer changes only the person and the history.  In particular,
+        # an asset in idle/in_stock/repair-compatible legacy state keeps its
+        # exact current status.
     else:
-        raise ValueError(f"unsupported responsibility action: {action}")
+        raise ValueError(f"unsupported assignment action: {action}")
 
     before = asset_audit_snapshot(asset.pk)
-    status_changed = _apply_responsibility_status(asset, target_status)
-    from_user = current_user if action in {"return", "transfer"} else None
-    to_user = target_user if action in {"assign", "transfer"} else None
-    asset.responsible_user = to_user
-    update_fields = ["responsible_user", "updated_at"]
+    status_changed = _apply_assignment_status(asset, target_status)
+    from_person = current_person if action in {"return", "transfer"} else None
+    to_person = target_person if action in {"assign", "transfer"} else None
+    asset.assigned_person = to_person
+    update_fields = ["assigned_person", "updated_at"]
     if status_changed:
         update_fields.append("status")
     asset.save(update_fields=update_fields)
 
-    event = AssetResponsibilityEvent.objects.create(
+    from_snapshot = _person_snapshot(from_person)
+    to_snapshot = _person_snapshot(to_person)
+    event = AssetAssignmentEvent.objects.create(
         asset=asset,
         action=action,
-        from_user=from_user,
-        from_user_name=_user_display_name(from_user),
-        to_user=to_user,
-        to_user_name=_user_display_name(to_user),
+        from_person=from_person,
+        from_person_employee_no=from_snapshot["employee_no"],
+        from_person_name=from_snapshot["name"],
+        from_person_department=from_snapshot["department"],
+        from_person_organization=from_snapshot["organization"],
+        from_person_contact=from_snapshot["contact"],
+        to_person=to_person,
+        to_person_employee_no=to_snapshot["employee_no"],
+        to_person_name=to_snapshot["name"],
+        to_person_department=to_snapshot["department"],
+        to_person_organization=to_snapshot["organization"],
+        to_person_contact=to_snapshot["contact"],
         operator=actor,
         operator_name=_user_display_name(actor),
         reason=str(reason or "").strip(),
@@ -694,11 +731,11 @@ def _change_asset_responsibility(*, asset_id, action, target_user_id=None, actor
         before=before,
         after=after,
         extra={
-            "source": "asset_responsibility",
-            "responsibility_event_id": event.pk,
-            "from_user": from_user.pk if from_user else None,
-            "to_user": to_user.pk if to_user else None,
-            "operator": actor.pk,
+            "source": "asset_assignment",
+            "assignment_event_id": event.pk,
+            "from_person": from_person.pk if from_person else None,
+            "to_person": to_person.pk if to_person else None,
+            "operator": actor.pk if actor else None,
             "reason": event.reason,
             "occurred_at": event.created_at,
         },
@@ -706,11 +743,11 @@ def _change_asset_responsibility(*, asset_id, action, target_user_id=None, actor
     return asset, event
 
 
-def assign_asset(*, asset_id, target_user_id, actor, request, reason=""):
-    return _change_asset_responsibility(
+def assign_asset(*, asset_id, target_person_id, actor, request, reason=""):
+    return _change_asset_assignment(
         asset_id=asset_id,
         action="assign",
-        target_user_id=target_user_id,
+        target_person_id=target_person_id,
         actor=actor,
         request=request,
         reason=reason,
@@ -718,7 +755,7 @@ def assign_asset(*, asset_id, target_user_id, actor, request, reason=""):
 
 
 def return_asset(*, asset_id, actor, request, reason=""):
-    return _change_asset_responsibility(
+    return _change_asset_assignment(
         asset_id=asset_id,
         action="return",
         actor=actor,
@@ -727,16 +764,15 @@ def return_asset(*, asset_id, actor, request, reason=""):
     )
 
 
-def transfer_asset(*, asset_id, target_user_id, actor, request, reason=""):
-    return _change_asset_responsibility(
+def transfer_asset(*, asset_id, target_person_id, actor, request, reason=""):
+    return _change_asset_assignment(
         asset_id=asset_id,
         action="transfer",
-        target_user_id=target_user_id,
+        target_person_id=target_person_id,
         actor=actor,
         request=request,
         reason=reason,
     )
-
 
 @transaction.atomic
 def configure_asset(asset: Asset, data):

@@ -136,7 +136,7 @@ export type Department = {
   code: string;
   parent: number | null;
   parent_name?: string | null;
-  assets_count?: number;
+  people_count?: number;
   created_at?: string;
   updated_at?: string;
 };
@@ -417,15 +417,47 @@ export type DashboardOverview = {
 export type AssetNetwork = { id: number; address: string; role: string; is_primary: boolean; status?: string; notes?: string };
 export type AssetProcurement = { id: number; purchase_date: string; supplier: string; order_no: string; amount: string | null; notes: string };
 export type AssetMaintenance = { id: number; provider: string; contract_no: string; start_date: string | null; expiry_date: string | null; notes: string };
-export type AssetResponsibilityUser = { id: number; username: string; display_name: string; is_active: boolean };
-export type AssetResponsibilityEvent = {
+export type Person = {
+  id: number;
+  account: number | null;
+  display_name: string;
+  name: string;
+  employee_no: string | null;
+  department: number | null;
+  department_name: string | null;
+  organization: string;
+  contact: string;
+  account_username?: string | null;
+  account_email?: string | null;
+  is_active: boolean;
+  asset_count?: number;
+  created_at?: string;
+  updated_at?: string;
+};
+export type PersonFormState = {
+  name: string;
+  employee_no: string;
+  department: string;
+  organization: string;
+  contact: string;
+  is_active: boolean;
+};
+export type AssetAssignmentEvent = {
   id: number;
   asset: number;
   action: "assign" | "return" | "transfer" | string;
-  from_user: number | null;
-  from_user_name: string;
-  to_user: number | null;
-  to_user_name: string;
+  from_person: number | null;
+  from_person_employee_no: string;
+  from_person_name: string;
+  from_person_department: string;
+  from_person_organization: string;
+  from_person_contact: string;
+  to_person: number | null;
+  to_person_employee_no: string;
+  to_person_name: string;
+  to_person_department: string;
+  to_person_organization: string;
+  to_person_contact: string;
   operator: number | null;
   operator_name: string;
   reason: string;
@@ -448,11 +480,7 @@ export type Asset = {
   allowed_statuses?: AssetStatus[];
   purpose: string;
   serial_number: string | null;
-  department?: number | null;
-  department_name?: string | null;
-  responsible_user?: number | null;
-  responsible_user_name?: string;
-  owner_name?: string;
+  assigned_person?: Person | null;
   notes?: string;
   asset_data_center?: number | null;
   asset_data_center_name?: string;
@@ -486,7 +514,7 @@ export type AssetDetail = Asset & {
   allowed_statuses: AssetStatus[];
   created_at: string;
   updated_at: string;
-  department_name: string | null;
+  assigned_person: Person | null;
   network_addresses: AssetNetwork[];
   rack_allocation: { rack: number; rack_code: string; data_center: string; data_center_id?: number; server_room: string; server_room_id: number; rack_total_u: number; start_u: number; end_u: number; units: number } | null;
   procurement_records: Array<{ id: number; purchase_date: string; supplier: string; order_no: string; amount: string | null; notes: string }>;
@@ -738,6 +766,7 @@ export type ManagedUser = {
   directory_provider: string | null;
   directory_login_identifier: string | null;
   directory_last_seen_at: string | null;
+  person?: Pick<Person, "id" | "name" | "employee_no" | "department" | "department_name"> | null;
   last_login: string | null;
   date_joined: string;
 };

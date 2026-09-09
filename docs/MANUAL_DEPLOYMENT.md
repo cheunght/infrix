@@ -201,6 +201,30 @@ test it from **System Settings → SMTP**. If the daily digest is needed, enable
 it under **System Settings → Notifications**, configure the recipients, and set
 the public HTTPS application URL used in email links.
 
+### People and asset users
+
+The **Organization & Permissions** tabs are ordered as Users, People,
+Departments, Roles, and LDAP / AD. The available tabs depend on the current
+account's permissions.
+
+People records can exist without login accounts. Each record has a required
+name and optional employee number, department, organization, contact details,
+and active status. When creating a local account, an administrator can link an
+existing unlinked person. If no person is selected, the account creation flow
+creates a person record automatically.
+
+Assets have one optional assigned person. Select a person while creating or
+editing an asset, or use the asset detail actions to assign, transfer, or
+return it. Only active people can be assigned. A transfer writes an assignment
+history entry and leaves the asset status unchanged. The person's department
+is profile information and is not stored as an asset ownership field.
+
+The asset import fields `assigned_person_employee_no`,
+`assigned_person_name`, `assigned_person_department`, and `assignment_reason`
+match an existing person. Imports do not create people. Asset exports include
+the assigned person's name, employee number, department, organization, and
+contact details.
+
 ## 7. Production configuration check
 
 Run the configuration check before starting the application:

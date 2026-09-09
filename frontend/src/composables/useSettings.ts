@@ -9,6 +9,7 @@ import {
 } from "../error-handling";
 import type {
   AuditLog,
+  Person,
   CustomField,
   CustomFieldForm,
   CustomFieldOption,
@@ -27,6 +28,7 @@ import type {
   SystemSettingsForm,
   Tag,
   UserBatchStatusResponse,
+  PersonFormState,
 } from "../types";
 import type { SettingsSection } from "../router";
 import type { CapabilityFn, RequestFn } from "../page-context";
@@ -242,6 +244,7 @@ export function useSettings(deps: SettingsDeps) {
     confirm_password: "",
     is_active: true,
     role_code: "auditor",
+    person_id: "",
   });
   const userFormRef = ref<FormInstance>();
   const userResetFormRef = ref<FormInstance>();
@@ -253,6 +256,10 @@ export function useSettings(deps: SettingsDeps) {
   const userSaving = ref(false);
   const userPendingId = ref<number | null>(null);
   const userFormErrors = ref<FormErrors>({});
+  const unlinkedPeople = ref<Person[]>([]);
+  const unlinkedPeopleLoading = ref(false);
+  const unlinkedPeopleError = ref("");
+  const unlinkedPeopleRequestId = ref(0);
   const userFormRules = computed<FormRules>(() => ({
     username: [{ required: true, message: tr("settings.usernameRequired"), trigger: "blur" }],
     last_name: [{ required: true, message: tr("settings.lastNameRequired"), trigger: "blur" }],
@@ -346,6 +353,31 @@ export function useSettings(deps: SettingsDeps) {
   const showDepartmentModal = ref(false);
   const editingDepartment = ref<Department | null>(null);
   const departmentForm = ref({ name: "", code: "", parent: "" });
+
+  const responsibilityDirectorySubjects = ref<Person[]>([]);
+  const responsibilityDirectoryTotal = ref(0);
+  const responsibilityDirectoryPage = ref(1);
+  const responsibilityDirectoryPageSize = ref(20);
+  const responsibilityDirectorySearch = ref("");
+  const responsibilityDirectoryType = ref("");
+  const responsibilityDirectoryActive = ref("true");
+  const responsibilityDirectoryLoading = ref(false);
+  const responsibilityDirectoryError = ref("");
+  const responsibilityDirectorySaving = ref(false);
+  const responsibilityDirectoryActionId = ref<number | null>(null);
+  const responsibilityDirectoryFormErrors = ref<FormErrors>({});
+  const responsibilityDirectoryForm = ref<PersonFormState>({
+    name: "",
+    employee_no: "",
+    department: "",
+    organization: "",
+    contact: "",
+    is_active: true,
+  });
+  const editingResponsibilitySubject = ref<Person | null>(null);
+  const showResponsibilitySubjectModal = ref(false);
+  const responsibilityDirectoryRequestId = ref(0);
+  let responsibilityDirectoryController: AbortController | null = null;
 
   const auditLogs = ref<AuditLog[]>([]);
   const auditCount = ref(0);
@@ -464,11 +496,12 @@ export function useSettings(deps: SettingsDeps) {
   watchFormFieldErrors(customFieldOptionForm, customFieldOptionFormErrors, ["value", "label", "sort_order"]);
   watchFormFieldErrors(tagForm, tagFormErrors, ["name"]);
   watchFormFieldErrors(userForm, userFormErrors, [
-    "username", "first_name", "last_name", "email", "password", "confirm_password", "role_code",
+    "username", "first_name", "last_name", "email", "password", "confirm_password", "role_code", "person_id",
   ]);
   watchFormFieldErrors(userResetForm, userResetFormErrors, ["new_password", "confirm_password"]);
   watchFormFieldErrors(dictionaryForm, dictionaryFormErrors, ["name", "code", "color"]);
   watchFormFieldErrors(departmentForm, departmentFormErrors, ["name", "code", "parent"]);
+  watchFormFieldErrors(responsibilityDirectoryForm, responsibilityDirectoryFormErrors, ["name", "employee_no", "department", "organization", "contact", "is_active"]);
   watchFormFieldErrors(systemSettingsForm, systemSettingsFormErrors, [
     ...SYSTEM_SETTINGS_VALUE_KEYS,
     "smtp_password",
@@ -1013,6 +1046,164 @@ export function useSettings(deps: SettingsDeps) {
     await loadDepartments();
   }
 
+  async function loadResponsibilityDirectory(version = deps.beginLoad(), allowPageClamp = true): Promise<boolean> {
+    if (!deps.can("settings.manage") && !deps.can("settings.view")) return false;
+    responsibilityDirectoryController?.abort();
+    const controller = new AbortController();
+    responsibilityDirectoryController = controller;
+    const requestId = ++responsibilityDirectoryRequestId.value;
+    responsibilityDirectoryLoading.value = true;
+    responsibilityDirectoryError.value = "";
+    const params = new URLSearchParams({
+      page: String(responsibilityDirectoryPage.value),
+      page_size: String(responsibilityDirectoryPageSize.value),
+    });
+    if (responsibilityDirectorySearch.value.trim()) params.set("search", responsibilityDirectorySearch.value.trim());
+    if (responsibilityDirectoryType.value) params.set("department", responsibilityDirectoryType.value);
+    if (responsibilityDirectoryActive.value && responsibilityDirectoryActive.value !== "all") {
+      params.set("is_active", responsibilityDirectoryActive.value);
+    }
+    try {
+      const result = await deps.request<PageResult<Person> | Person[]>(
+        `/people/?${params.toString()}`,
+        { signal: controller.signal },
+      );
+      if (result == null || requestId !== responsibilityDirectoryRequestId.value || controller.signal.aborted || !deps.isCurrentLoad(version)) return false;
+      const nextTotal = pageTotal(result);
+      const maxPage = totalPages(nextTotal, responsibilityDirectoryPageSize.value);
+      if (responsibilityDirectoryPage.value > maxPage && allowPageClamp) {
+        responsibilityDirectoryPage.value = maxPage;
+        return await loadResponsibilityDirectory(version, false);
+      }
+      responsibilityDirectorySubjects.value = pageItems(result);
+      responsibilityDirectoryTotal.value = nextTotal;
+      return true;
+    } catch (error) {
+      if (requestId === responsibilityDirectoryRequestId.value && !isAbortError(error) && deps.isCurrentLoad(version)) {
+        responsibilityDirectoryError.value = errorMessage(error, tr("settings.peopleDataLoadFailed"));
+      }
+      return false;
+    } finally {
+      if (requestId === responsibilityDirectoryRequestId.value) {
+        responsibilityDirectoryLoading.value = false;
+        if (responsibilityDirectoryController === controller) responsibilityDirectoryController = null;
+      }
+    }
+  }
+
+  function retryResponsibilityDirectory() {
+    return loadResponsibilityDirectory();
+  }
+
+  async function searchResponsibilityDirectory() {
+    responsibilityDirectoryPage.value = 1;
+    await loadResponsibilityDirectory();
+  }
+
+  async function changeResponsibilityDirectoryPage(page: number) {
+    responsibilityDirectoryPage.value = Math.max(1, page);
+    await loadResponsibilityDirectory();
+  }
+
+  async function changeResponsibilityDirectoryPageSize(size: number) {
+    if (![20, 50, 100].includes(size)) return;
+    responsibilityDirectoryPageSize.value = size;
+    responsibilityDirectoryPage.value = 1;
+    await loadResponsibilityDirectory();
+  }
+
+  function openResponsibilitySubjectModal(subject?: Person) {
+    if (!deps.can("settings.manage")) return;
+    if (departmentOptions.value.length === 0 && !departmentLoading.value) {
+      void loadDepartments();
+    }
+    editingResponsibilitySubject.value = subject || null;
+    responsibilityDirectoryFormErrors.value = {};
+    responsibilityDirectoryForm.value = subject
+      ? {
+          name: subject.name || subject.display_name || "",
+          employee_no: subject.employee_no || "",
+          department: subject.department ? String(subject.department) : "",
+          organization: subject.organization || "",
+          contact: subject.contact || "",
+          is_active: subject.is_active,
+        }
+      : { name: "", employee_no: "", department: "", organization: "", contact: "", is_active: true };
+    showResponsibilitySubjectModal.value = true;
+  }
+
+  async function saveResponsibilitySubject() {
+    if (!deps.can("settings.manage") || responsibilityDirectorySaving.value) return;
+    const name = responsibilityDirectoryForm.value.name.trim();
+    if (!name) {
+      responsibilityDirectoryFormErrors.value = { name: tr("settings.personNameRequired") };
+      return;
+    }
+    responsibilityDirectorySaving.value = true;
+    responsibilityDirectoryFormErrors.value = {};
+    const editingId = editingResponsibilitySubject.value?.id;
+    try {
+      await deps.request(editingId ? `/people/${editingId}/` : "/people/", {
+        method: editingId ? "PATCH" : "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          name,
+          employee_no: responsibilityDirectoryForm.value.employee_no.trim() || null,
+          department: responsibilityDirectoryForm.value.department ? Number(responsibilityDirectoryForm.value.department) : null,
+          organization: responsibilityDirectoryForm.value.organization.trim(),
+          contact: responsibilityDirectoryForm.value.contact.trim(),
+          is_active: responsibilityDirectoryForm.value.is_active,
+        }),
+      });
+      showResponsibilitySubjectModal.value = false;
+      editingResponsibilitySubject.value = null;
+      setActionMessage(tr("settings.personSaved"));
+      await loadResponsibilityDirectory();
+    } catch (error) {
+      responsibilityDirectoryFormErrors.value = extractFieldErrors(error, ["name", "employee_no", "department", "organization", "contact", "is_active"]);
+      setActionError(error, tr("settings.personSaveFailed"));
+    } finally {
+      responsibilityDirectorySaving.value = false;
+    }
+  }
+
+  async function toggleResponsibilitySubject(subject: Person) {
+    if (!deps.can("settings.manage") || responsibilityDirectoryActionId.value === subject.id) return;
+    responsibilityDirectoryActionId.value = subject.id;
+    try {
+      await deps.request(`/people/${subject.id}/`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ is_active: !subject.is_active }),
+      });
+      setActionMessage(subject.is_active ? tr("settings.personDisabled") : tr("settings.personEnabled"));
+      await loadResponsibilityDirectory();
+    } catch (error) {
+      setActionError(error, tr("settings.personStatusFailed"));
+    } finally {
+      responsibilityDirectoryActionId.value = null;
+    }
+  }
+
+  async function deleteResponsibilitySubject(subject: Person) {
+    if (!deps.can("settings.manage") || responsibilityDirectoryActionId.value === subject.id) return;
+    if ((subject.asset_count || 0) > 0) {
+      setActionMessage(tr("settings.personInUse"), "error");
+      return;
+    }
+    if (!(await deps.confirmAction(tr("settings.personDeleteConfirm", { name: subject.display_name || subject.name })))) return;
+    responsibilityDirectoryActionId.value = subject.id;
+    try {
+      await deps.request(`/people/${subject.id}/`, { method: "DELETE" });
+      setActionMessage(tr("settings.personDeleted"));
+      await loadResponsibilityDirectory();
+    } catch (error) {
+      setActionError(error, tr("settings.personDeleteFailed"));
+    } finally {
+      responsibilityDirectoryActionId.value = null;
+    }
+  }
+
   function openDepartmentModal(department?: Department) {
     if (!deps.can("settings.manage")) return;
     editingDepartment.value = department || null;
@@ -1057,7 +1248,7 @@ export function useSettings(deps: SettingsDeps) {
 
   async function deleteDepartment(department: Department) {
     if (!deps.can("settings.manage") || departmentActionId.value === department.id) return;
-    if ((department.assets_count || 0) > 0) {
+    if ((department.people_count || 0) > 0) {
       setActionMessage(tr("settings.departmentInUse"), "error");
       return;
     }
@@ -1353,6 +1544,7 @@ export function useSettings(deps: SettingsDeps) {
           confirm_password: "",
           is_active: user.is_active,
           role_code: user.assigned_role_code || "",
+          person_id: user.person?.id ? String(user.person.id) : "",
         }
       : {
           username: "",
@@ -1363,9 +1555,33 @@ export function useSettings(deps: SettingsDeps) {
           confirm_password: "",
           is_active: true,
           role_code: "auditor",
+          person_id: "",
         };
+    if (!user) void loadUnlinkedPeople();
     showUserModal.value = true;
     nextTick(() => userFormRef.value?.clearValidate());
+  }
+
+  async function loadUnlinkedPeople(): Promise<boolean> {
+    if (!deps.can("organization.manage")) return false;
+    const requestId = ++unlinkedPeopleRequestId.value;
+    unlinkedPeopleLoading.value = true;
+    unlinkedPeopleError.value = "";
+    try {
+      const result = await deps.request<PageResult<Person> | Person[]>(
+        "/people/?page=1&page_size=100&is_active=true&account=unlinked",
+      );
+      if (requestId !== unlinkedPeopleRequestId.value || result == null) return false;
+      unlinkedPeople.value = pageItems(result);
+      return true;
+    } catch (error) {
+      if (requestId === unlinkedPeopleRequestId.value) {
+        unlinkedPeopleError.value = errorMessage(error, tr("settings.peopleDataLoadFailed"));
+      }
+      return false;
+    } finally {
+      if (requestId === unlinkedPeopleRequestId.value) unlinkedPeopleLoading.value = false;
+    }
   }
 
   function userProtectionReason(user: ManagedUser): string {
@@ -1425,6 +1641,9 @@ export function useSettings(deps: SettingsDeps) {
           email: userForm.value.email,
           is_active: userForm.value.is_active,
           role_code: userForm.value.role_code,
+          ...(!editingUser.value && userForm.value.person_id
+            ? { person_id: Number(userForm.value.person_id) }
+            : {}),
           ...(!editingUser.value && userForm.value.password ? { password: userForm.value.password } : {}),
         }),
       });
@@ -1436,6 +1655,7 @@ export function useSettings(deps: SettingsDeps) {
         "last_name",
         "email",
         "role_code",
+        "person_id",
         "password",
       ]);
       setActionError(error, tr("settings.userSaveFailed"));
@@ -2374,6 +2594,10 @@ export function useSettings(deps: SettingsDeps) {
     userSaving,
     userPendingId,
     userFormErrors,
+    unlinkedPeople,
+    unlinkedPeopleLoading,
+    unlinkedPeopleError,
+    loadUnlinkedPeople,
     dictionarySection,
     dictionaryPage,
     dictionaryPageSize,
@@ -2401,6 +2625,30 @@ export function useSettings(deps: SettingsDeps) {
     departmentForm,
     editingDepartment,
     showDepartmentModal,
+    responsibilityDirectorySubjects,
+    responsibilityDirectoryTotal,
+    responsibilityDirectoryPage,
+    responsibilityDirectoryPageSize,
+    responsibilityDirectorySearch,
+    responsibilityDirectoryType,
+    responsibilityDirectoryActive,
+    responsibilityDirectoryLoading,
+    responsibilityDirectoryError,
+    responsibilityDirectorySaving,
+    responsibilityDirectoryActionId,
+    responsibilityDirectoryFormErrors,
+    responsibilityDirectoryForm,
+    editingResponsibilitySubject,
+    showResponsibilitySubjectModal,
+    loadResponsibilityDirectory,
+    searchResponsibilityDirectory,
+    retryResponsibilityDirectory,
+    changeResponsibilityDirectoryPage,
+    changeResponsibilityDirectoryPageSize,
+    openResponsibilitySubjectModal,
+    saveResponsibilitySubject,
+    toggleResponsibilitySubject,
+    deleteResponsibilitySubject,
     loadDepartments,
     searchDepartments,
     changeDepartmentPage,

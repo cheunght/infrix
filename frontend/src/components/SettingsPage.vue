@@ -7,6 +7,7 @@ import SearchField from "./SearchField.vue";
 import CustomFieldSettingsPage from "./CustomFieldSettingsPage.vue";
 import TagSettingsPage from "./TagSettingsPage.vue";
 import LdapConfigurationPage from "./LdapConfigurationPage.vue";
+import PeopleSettingsPage from "./ResponsibilitySubjectSettingsPage.vue";
 import BrandingSettings from "./BrandingSettings.vue";
 import SystemOperations from "./SystemOperations.vue";
 import NotificationDeliveryLogs from "./NotificationDeliveryLogs.vue";
@@ -106,6 +107,29 @@ const {
   openDepartmentModal,
   saveDepartment,
   deleteDepartment,
+  responsibilityDirectorySubjects,
+  responsibilityDirectoryTotal,
+  responsibilityDirectoryPage,
+  responsibilityDirectoryPageSize,
+  responsibilityDirectorySearch,
+  responsibilityDirectoryType,
+  responsibilityDirectoryActive,
+  responsibilityDirectoryLoading,
+  responsibilityDirectoryError,
+  responsibilityDirectorySaving,
+  responsibilityDirectoryActionId,
+  responsibilityDirectoryFormErrors,
+  responsibilityDirectoryForm,
+  editingResponsibilitySubject,
+  showResponsibilitySubjectModal,
+  searchResponsibilityDirectory,
+  retryResponsibilityDirectory,
+  changeResponsibilityDirectoryPage,
+  changeResponsibilityDirectoryPageSize,
+  openResponsibilitySubjectModal,
+  saveResponsibilitySubject,
+  toggleResponsibilitySubject,
+  deleteResponsibilitySubject,
   currentUsername,
   organizationLoading,
   userListError,
@@ -173,14 +197,17 @@ const dictionaryTabs = computed<PageTabItem[]>(() => [
   { label: t("settings.spareCategoriesTab"), value: "spare-categories" },
 ]);
 const organizationTabs = computed<PageTabItem[]>(() => [
+  ...(can("organization.manage") ? [{ label: t("settings.usersTab"), value: "users" }] : []),
+  ...(can("settings.view") || can("settings.manage")
+    ? [{ label: t("settings.peopleTab"), value: "people" }]
+    : []),
+  ...(can("settings.manage") ? [{ label: t("settings.departmentsTab"), value: "departments" }] : []),
   ...(can("organization.manage")
     ? [
-        { label: t("settings.usersTab"), value: "users" },
         { label: t("settings.rolesTab"), value: "roles" },
         { label: t("settings.ldapOrganizationTab"), value: "ldap" },
       ]
     : []),
-  ...(can("settings.manage") ? [{ label: t("settings.departmentsTab"), value: "departments" }] : []),
 ]);
 const canManageCurrentDictionary = computed(() => can("settings.manage"));
 const smtpTestRecipientError = computed(() => {
@@ -829,7 +856,7 @@ function userDirectoryTooltip(user: { auth_source: string; directory_provider: s
       </PageContent>
     </PageContainer>
 
-    <PageContainer v-else-if="settingsSection === 'organization' && (can('organization.manage') || can('settings.manage'))">
+    <PageContainer v-else-if="settingsSection === 'organization' && (can('organization.manage') || can('settings.manage') || can('settings.view'))">
       <template #subnav>
         <PageTabs v-model="organizationTab" :items="organizationTabs" @update:model-value="changeOrganizationTab" />
       </template>
@@ -885,9 +912,37 @@ function userDirectoryTooltip(user: { auth_source: string; directory_provider: s
               {{ t('settings.addDepartment') }}
             </el-button>
           </template>
+          <template v-if="organizationTab === 'people'" #search>
+            <SearchField
+              v-model="responsibilityDirectorySearch"
+              :loading="responsibilityDirectoryLoading"
+              :disabled="responsibilityDirectoryLoading"
+              :placeholder="t('settings.personSearchPlaceholder')"
+              :aria-label="t('settings.peopleTab')"
+              @search="searchResponsibilityDirectory"
+            />
+          </template>
+          <template v-if="organizationTab === 'people'" #filters>
+            <div class="page-toolbar__filter-group">
+              <el-select v-model="responsibilityDirectoryType" :placeholder="t('settings.personDepartment')" clearable :disabled="responsibilityDirectoryLoading" @change="searchResponsibilityDirectory">
+                <el-option v-for="department in departmentOptions" :key="department.id" :label="`${department.name} · ${department.code}`" :value="String(department.id)" />
+              </el-select>
+              <el-select v-model="responsibilityDirectoryActive" :placeholder="t('common.all')" :disabled="responsibilityDirectoryLoading" @change="searchResponsibilityDirectory">
+                <el-option :label="t('common.all')" value="all" />
+                <el-option :label="t('status.active')" value="true" />
+                <el-option :label="t('status.inactive')" value="false" />
+              </el-select>
+            </div>
+          </template>
+          <template v-if="organizationTab === 'people'" #primary>
+            <el-button v-if="can('settings.manage')" class="page-primary-action" type="primary" :loading="responsibilityDirectorySaving" :disabled="responsibilityDirectorySaving" @click="openResponsibilitySubjectModal()">
+              {{ t('settings.addPerson') }}
+            </el-button>
+          </template>
         </PageToolbar>
       </template>
       <LdapConfigurationPage v-if="organizationTab === 'ldap'" :context="props.context" />
+      <PeopleSettingsPage v-else-if="organizationTab === 'people'" :context="props.context" />
       <PageContent v-else-if="organizationTab === 'departments'" surface>
         <el-alert v-if="departmentError" :title="t('settings.departmentDataLoadFailed')" type="error" show-icon :closable="false">
           <template #default>

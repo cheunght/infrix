@@ -287,6 +287,34 @@ optional integrations; configure them from the administration UI only after
 the base application is healthy. Keep the Fernet key available before saving
 LDAP or other protected passwords.
 
+### People and asset users
+
+Under **Organization & Permissions**, the tabs appear in this order: Users,
+People, Departments, Roles, and LDAP / AD. A tab is shown only when the
+current account has the required permission.
+
+The People tab stores people who may use assets. A person does not need a
+login account. The record requires a name and can also contain a unique
+employee number, department, organization, contact details, and active status.
+Creating a local account can link an existing unlinked person. If no person is
+selected, Infrix creates a person record for the new account. Disabling or
+deleting a login account does not remove the person record or release the
+person's assigned assets.
+
+An asset can have one optional assigned person. You can choose that person in
+the asset form, or use the asset detail actions to assign, transfer, or return
+the asset. Only active people can be selected. Transferring an asset changes
+the assigned person and writes an assignment history entry; it does not
+change the asset status. The asset detail also shows the assignment history.
+The department belongs to the person's profile and is not an asset ownership
+field.
+
+Asset import accepts `assigned_person_employee_no`, `assigned_person_name`,
+`assigned_person_department`, and `assignment_reason`. The importer matches
+an existing person and does not create one automatically. Asset exports
+include the assigned person's name, employee number, department,
+organization, and contact details.
+
 Check the deployment with:
 
 ```bash

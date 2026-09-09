@@ -7,8 +7,8 @@ import type {
   Asset,
   AssetBatchDeleteResponse,
   AssetDetail,
-  AssetResponsibilityEvent,
-  AssetResponsibilityUser,
+  AssetAssignmentEvent,
+  Person,
   AssetStatus,
   AssetCustomFieldValue,
   AssetCustomFilter,
@@ -47,7 +47,7 @@ import {
 const tr = (key: string, params?: Record<string, unknown>): string =>
   String(params ? i18n.global.t(key, params) : i18n.global.t(key));
 
-const RESPONSIBILITY_ACTION_FIELDS = ["target_user", "reason"] as const;
+const RESPONSIBILITY_ACTION_FIELDS = ["target_person", "reason"] as const;
 
 export type StaticAssetColumnKey =
   | "asset_no"
@@ -56,10 +56,9 @@ export type StaticAssetColumnKey =
   | "manufacturer"
   | "manufacturer_model"
   | "purpose"
-  | "department"
   | "status"
   | "serial_number"
-  | "responsible_user"
+  | "assigned_person"
   | "data_center"
   | "server_room"
   | "rack_code"
@@ -200,9 +199,11 @@ const IMPORT_FIELD_LABEL_KEYS: Record<string, string> = {
   maintenance_start_date: "asset.maintenanceStart",
   maintenance_expiry_date: "asset.maintenanceExpiry",
   maintenance_notes: "asset.maintenanceNotes",
-  responsible_user: "asset.responsibleUser",
-  department: "asset.department",
-  department_id: "asset.department",
+  assigned_person: "asset.assignedPerson",
+  assigned_person_employee_no: "asset.assignedPersonEmployeeNo",
+  assigned_person_name: "asset.assignedPersonName",
+  assigned_person_department: "asset.assignedPersonDepartment",
+  assignment_reason: "asset.assignmentReason",
   tags: "asset.tags",
   configuration: "asset.locationOwnership",
   custom_values: "asset.customFields",
@@ -335,9 +336,8 @@ const defaultColumns: AssetColumnOption[] = [
   { key: "manufacturer_model", label: "型号" },
   { key: "maintenance_expiry_date", label: "保修到期" },
   { key: "purpose", label: "用途" },
-  { key: "department", label: "部门" },
   { key: "serial_number", label: "序列号" },
-  { key: "responsible_user", label: "责任人", defaultVisible: true },
+  { key: "assigned_person", label: "使用人", defaultVisible: true },
   { key: "business_ip", label: "业务 IP" },
   { key: "management_ip", label: "管理 IP" },
   { key: "oob_ip", label: "带外 IP" },
@@ -385,7 +385,8 @@ function emptyAssetForm(defaultStatus = systemSettingsState.defaultAssetStatus):
     manufacturer_model: "",
     serial_number: "",
     purpose: "",
-    department: "",
+    assigned_person: "",
+    assignment_reason: "",
     status: defaultStatus,
     notes: "",
     rack_mounted: false,
@@ -454,7 +455,8 @@ const assetFormFieldNames = new Set([
   "manufacturer_model",
   "serial_number",
   "purpose",
-  "department",
+  "assigned_person",
+  "assignment_reason",
   "status",
   "notes",
   "asset_data_center",
@@ -529,7 +531,6 @@ export function useAssets(deps: AssetsDeps) {
     manufacturer: "",
     model: "",
     dataCenter: "",
-    department: "",
     warranty: "",
   });
   const assetTagFilter = computed({
@@ -647,7 +648,8 @@ export function useAssets(deps: AssetsDeps) {
     "manufacturer_model",
     "serial_number",
     "purpose",
-    "department",
+    "assigned_person",
+    "assignment_reason",
     "status",
     "notes",
     "rack_mounted",
@@ -714,7 +716,7 @@ export function useAssets(deps: AssetsDeps) {
   const inventoryHistoryCanView = ref(false);
   const inventoryHistoryRequestId = ref(0);
   let inventoryHistoryController: AbortController | null = null;
-  const responsibilityHistoryItems = ref<AssetResponsibilityEvent[]>([]);
+  const responsibilityHistoryItems = ref<AssetAssignmentEvent[]>([]);
   const responsibilityHistoryPage = ref(1);
   const responsibilityHistoryPageSize = ref(systemSettingsState.defaultPageSize);
   const responsibilityHistoryTotal = ref(0);
@@ -723,11 +725,11 @@ export function useAssets(deps: AssetsDeps) {
   const responsibilityHistoryCanView = ref(false);
   const responsibilityHistoryRequestId = ref(0);
   let responsibilityHistoryController: AbortController | null = null;
-  const responsibilityUsers = ref<AssetResponsibilityUser[]>([]);
-  const responsibilityUsersLoading = ref(false);
-  const responsibilityUsersError = ref("");
-  const responsibilityUsersRequestId = ref(0);
-  let responsibilityUsersController: AbortController | null = null;
+  const responsibilitySubjects = ref<Person[]>([]);
+  const responsibilitySubjectsLoading = ref(false);
+  const responsibilitySubjectsError = ref("");
+  const responsibilitySubjectsRequestId = ref(0);
+  let responsibilitySubjectsController: AbortController | null = null;
   const responsibilityActionSaving = ref(false);
   const responsibilityActionError = ref("");
   const responsibilityActionFieldErrors = ref<Record<string, string>>({});
@@ -920,7 +922,6 @@ export function useAssets(deps: AssetsDeps) {
       manufacturer: assetFilters.manufacturer || undefined,
       model: assetFilters.model.trim() || undefined,
       data_center: assetFilters.dataCenter || undefined,
-      department: assetFilters.department || undefined,
       warranty: assetFilters.warranty || undefined,
       ordering: assetOrderingValue(),
     };
@@ -952,7 +953,6 @@ export function useAssets(deps: AssetsDeps) {
     if (assetFilters.manufacturer) params.set("manufacturer", assetFilters.manufacturer);
     if (assetFilters.model.trim()) params.set("model", assetFilters.model.trim());
     if (assetFilters.dataCenter) params.set("data_center", assetFilters.dataCenter);
-    if (assetFilters.department) params.set("department", assetFilters.department);
     if (assetFilters.warranty) params.set("warranty", assetFilters.warranty);
     const ordering = assetOrderingValue();
     if (ordering) params.set("ordering", ordering);
@@ -1297,8 +1297,8 @@ export function useAssets(deps: AssetsDeps) {
     });
 
     try {
-      const payload = await deps.request<PageResult<AssetResponsibilityEvent>>(
-        `/assets/${assetId}/responsibility-history/?${params.toString()}`,
+      const payload = await deps.request<PageResult<AssetAssignmentEvent>>(
+        `/assets/${assetId}/assignment-history/?${params.toString()}`,
         { signal: controller.signal },
       );
       if (
@@ -1317,7 +1317,7 @@ export function useAssets(deps: AssetsDeps) {
       ) {
         const normalized = normalizeApiError(error);
         responsibilityHistoryError.value = normalized.kind === "unknown"
-          ? tr("asset.responsibilityHistoryLoadFailed")
+          ? tr("asset.assignmentHistoryLoadFailed")
           : normalized.message;
       }
       return false;
@@ -1329,36 +1329,37 @@ export function useAssets(deps: AssetsDeps) {
     }
   }
 
-  async function loadResponsibilityUsers(search = ""): Promise<boolean> {
+  async function loadResponsibilitySubjects(search = ""): Promise<boolean> {
     if (!deps.can("assets.view")) return false;
-    responsibilityUsersController?.abort();
+    responsibilitySubjectsController?.abort();
     const controller = new AbortController();
-    responsibilityUsersController = controller;
-    const requestId = ++responsibilityUsersRequestId.value;
-    responsibilityUsersLoading.value = true;
-    responsibilityUsersError.value = "";
+    responsibilitySubjectsController = controller;
+    const requestId = ++responsibilitySubjectsRequestId.value;
+    responsibilitySubjectsLoading.value = true;
+    responsibilitySubjectsError.value = "";
     const params = new URLSearchParams({ page: "1", page_size: "50" });
     if (search.trim()) params.set("search", search.trim());
+    params.set("is_active", "true");
     try {
-      const payload = await deps.request<PageResult<AssetResponsibilityUser>>(
-        `/assets/responsibility-users/?${params.toString()}`,
+      const payload = await deps.request<PageResult<Person>>(
+        `/people/?${params.toString()}`,
         { signal: controller.signal },
       );
-      if (requestId !== responsibilityUsersRequestId.value || controller.signal.aborted) return false;
-      responsibilityUsers.value = pageItems(payload);
+      if (requestId !== responsibilitySubjectsRequestId.value || controller.signal.aborted) return false;
+      responsibilitySubjects.value = pageItems(payload);
       return true;
     } catch (error) {
-      if (requestId === responsibilityUsersRequestId.value && !isAbortError(error)) {
+      if (requestId === responsibilitySubjectsRequestId.value && !isAbortError(error)) {
         const normalized = normalizeApiError(error);
-        responsibilityUsersError.value = normalized.kind === "unknown"
-          ? tr("asset.responsibilityUsersLoadFailed")
+        responsibilitySubjectsError.value = normalized.kind === "unknown"
+          ? tr("asset.peopleLoadFailed")
           : normalized.message;
       }
       return false;
     } finally {
-      if (requestId === responsibilityUsersRequestId.value) {
-        responsibilityUsersLoading.value = false;
-        if (responsibilityUsersController === controller) responsibilityUsersController = null;
+      if (requestId === responsibilitySubjectsRequestId.value) {
+        responsibilitySubjectsLoading.value = false;
+        if (responsibilitySubjectsController === controller) responsibilitySubjectsController = null;
       }
     }
   }
@@ -1408,7 +1409,7 @@ export function useAssets(deps: AssetsDeps) {
         responsibilityActionError.value = normalized.kind === "field-validation" && !hasUnknownField
           ? ""
           : normalized.kind === "unknown"
-            ? tr("asset.responsibilityActionFailed")
+            ? tr("asset.assignmentActionFailed")
             : normalized.message;
       }
       return false;
@@ -1431,12 +1432,12 @@ export function useAssets(deps: AssetsDeps) {
     }
   }
 
-  function assignAsset(assetId: number, targetUserId: number, reason: string): Promise<boolean> {
+  function assignAsset(assetId: number, targetPersonId: number, reason: string): Promise<boolean> {
     return mutateAssetResponsibility(
       assetId,
       `/assets/${assetId}/assign/`,
-      { target_user: targetUserId, reason },
-      tr("asset.assignSuccess"),
+      { target_person: targetPersonId, reason },
+      tr("asset.assignPersonSuccess"),
     );
   }
 
@@ -1445,16 +1446,16 @@ export function useAssets(deps: AssetsDeps) {
       assetId,
       `/assets/${assetId}/return/`,
       { reason },
-      tr("asset.returnSuccess"),
+      tr("asset.returnPersonSuccess"),
     );
   }
 
-  function transferAsset(assetId: number, targetUserId: number, reason: string): Promise<boolean> {
+  function transferAsset(assetId: number, targetPersonId: number, reason: string): Promise<boolean> {
     return mutateAssetResponsibility(
       assetId,
       `/assets/${assetId}/transfer/`,
-      { target_user: targetUserId, reason },
-      tr("asset.transferSuccess"),
+      { target_person: targetPersonId, reason },
+      tr("asset.transferPersonSuccess"),
     );
   }
 
@@ -1567,7 +1568,7 @@ export function useAssets(deps: AssetsDeps) {
     resetAssetCustomSchemaState();
     showAssetModal.value = true;
     try {
-      await Promise.all([deps.loadRackManagement(), loadDepartments()]);
+      await Promise.all([deps.loadRackManagement(), loadResponsibilitySubjects()]);
       const detail = await deps.request<AssetDetail>(`/assets/${assetId}/`);
       if (!detail || requestId !== assetFormRequestId.value) return;
       const network = (role: string) =>
@@ -1585,7 +1586,8 @@ export function useAssets(deps: AssetsDeps) {
         manufacturer_model: detail.manufacturer_model || "",
         serial_number: detail.serial_number || "",
         purpose: detail.purpose || "",
-        department: detail.department ? String(detail.department) : "",
+        assigned_person: detail.assigned_person ? String(detail.assigned_person.id) : "",
+        assignment_reason: "",
         status: detail.status,
         notes: detail.notes || "",
         rack_mounted: Boolean(rack),
@@ -1647,6 +1649,8 @@ export function useAssets(deps: AssetsDeps) {
         assetForm.value.rack_id = "";
         assetForm.value.rack_start_u = "";
         assetForm.value.rack_end_u = "";
+        assetForm.value.assigned_person = "";
+        assetForm.value.assignment_reason = "";
         assetForm.value.business_ip = "";
         assetForm.value.management_ip = "";
         assetForm.value.oob_ip = "";
@@ -1675,7 +1679,7 @@ export function useAssets(deps: AssetsDeps) {
     showAssetModal.value = true;
     assetFormLoading.value = true;
     try {
-      await Promise.all([deps.loadRackManagement(), loadDepartments()]);
+      await Promise.all([deps.loadRackManagement(), loadResponsibilitySubjects()]);
       await loadAssetCustomSchema("");
     } catch (error) {
       if (requestId === assetFormRequestId.value && !isAbortError(error)) {
@@ -1766,10 +1770,25 @@ export function useAssets(deps: AssetsDeps) {
         maintenance_expiry_date,
         maintenance_notes,
         rack_mounted,
+        assigned_person,
+        assignment_reason,
         tags,
         custom_values,
         ...asset
       } = assetForm.value;
+      const targetPersonId = assigned_person ? Number(assigned_person) : null;
+      const currentPersonId = editingAsset.value?.assigned_person?.id ?? null;
+      const assignment = !targetPersonId && currentPersonId == null
+        ? undefined
+        : !editingAsset.value && targetPersonId
+          ? { action: "assign", target_person: targetPersonId, reason: assignment_reason }
+          : currentPersonId == null && targetPersonId
+            ? { action: "assign", target_person: targetPersonId, reason: assignment_reason }
+            : currentPersonId != null && !targetPersonId
+              ? { action: "return", reason: assignment_reason }
+              : currentPersonId != null && targetPersonId && currentPersonId !== targetPersonId
+                ? { action: "transfer", target_person: targetPersonId, reason: assignment_reason }
+                : undefined;
       const submittedCustomValues = currentCustomValuesForSubmit(custom_values || {});
       const depreciation = depreciation_enabled
         ? {
@@ -1804,9 +1823,9 @@ export function useAssets(deps: AssetsDeps) {
           asset_data_center: asset_data_center || null,
           manufacturer_model: model || "",
           manufacturer_id: asset.manufacturer_id ? Number(asset.manufacturer_id) : null,
-          department: asset.department ? Number(asset.department) : null,
           model: model || "",
           device_type: asset.device_type || null,
+          ...(assignment ? { assignment } : {}),
           tags: (tags || []).map((value) => Number(value)).filter((value) => Number.isFinite(value)),
           custom_values: submittedCustomValues,
           configuration: {
@@ -1995,10 +2014,9 @@ export function useAssets(deps: AssetsDeps) {
       manufacturer: asset.manufacturer_name || "—",
       manufacturer_model: asset.model || asset.manufacturer_model || "—",
       purpose: asset.purpose || "—",
-      department: asset.department_name || "—",
       status: deps.statusLabel(asset.status),
       serial_number: asset.serial_number || "—",
-      responsible_user: asset.responsible_user_name || "—",
+      assigned_person: asset.assigned_person?.display_name || asset.assigned_person?.name || "—",
       data_center: asset.data_center || rack?.data_center || asset.asset_data_center_name || "—",
       server_room: asset.server_room || rack?.server_room || "—",
       rack_code: asset.rack_code || rack?.rack_code || "—",
@@ -2264,7 +2282,6 @@ export function useAssets(deps: AssetsDeps) {
     const manufacturer = queryValue(query, "manufacturer");
     const model = queryValue(query, "model");
     const dataCenter = queryValue(query, "data_center");
-    const department = queryValue(query, "department");
     const warranty = queryValue(query, "warranty");
     const tagIds = queryList(query, "tags");
     const validWarranties = new Set(["within_30_days", "expired"]);
@@ -2274,7 +2291,6 @@ export function useAssets(deps: AssetsDeps) {
     assetFilters.manufacturer = /^\d+$/.test(manufacturer) && Number(manufacturer) > 0 ? manufacturer : "";
     assetFilters.model = model;
     assetFilters.dataCenter = /^\d+$/.test(dataCenter) && Number(dataCenter) > 0 ? dataCenter : "";
-    assetFilters.department = /^\d+$/.test(department) && Number(department) > 0 ? department : "";
     assetFilters.warranty = validWarranties.has(warranty) ? warranty : "";
     assetFilters.tag = tagIds;
     const parsedOrdering = assetSortFromOrdering(queryValue(query, "ordering"));
@@ -2294,7 +2310,6 @@ export function useAssets(deps: AssetsDeps) {
     assetFilters.manufacturer = "";
     assetFilters.model = "";
     assetFilters.dataCenter = "";
-    assetFilters.department = "";
     assetFilters.warranty = "";
     draftCustomFilters.value = [];
     appliedCustomFilters.value = [];
@@ -2306,7 +2321,6 @@ export function useAssets(deps: AssetsDeps) {
       "manufacturer",
       "model",
       "data_center",
-      "department",
       "warranty",
       "tags",
     ])) return;
@@ -2423,6 +2437,10 @@ export function useAssets(deps: AssetsDeps) {
     activeDeviceTypes,
     activeDataCenters,
     activeDepartments,
+    people: responsibilitySubjects,
+    peopleLoading: responsibilitySubjectsLoading,
+    peopleError: responsibilitySubjectsError,
+    retryPeople: () => loadResponsibilitySubjects(),
     departments: deps.departmentOptions,
     departmentLoading: deps.departmentLoading,
     departmentError: deps.departmentError,
@@ -2508,10 +2526,10 @@ export function useAssets(deps: AssetsDeps) {
     retryResponsibilityHistory,
     changeResponsibilityHistoryPage,
     changeResponsibilityHistoryPageSize,
-    responsibilityUsers,
-    responsibilityUsersLoading,
-    responsibilityUsersError,
-    loadResponsibilityUsers,
+    responsibilitySubjects,
+    responsibilitySubjectsLoading,
+    responsibilitySubjectsError,
+    loadResponsibilitySubjects,
     responsibilityActionSaving,
     responsibilityActionError,
     responsibilityActionFieldErrors,

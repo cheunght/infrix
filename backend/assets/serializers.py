@@ -14,7 +14,7 @@ from typing import Any
 import json
 import re
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
-from .models import AuditLog, Asset, AssetCustomValue, AssetNetworkAddress, AssetResponsibilityEvent, AssetTag, CustomField, CustomFieldOption, DataCenter, Department, DeviceType, DirectoryIdentity, FaultEvent, InventoryItem, InventoryTask, MaintenanceContract, Manufacturer, NotificationDelivery, ProcurementRecord, Rack, RackUnitAllocation, RepairPartUsage, RepairRecord, ServerRoom, SoftwareLicense, SparePart, SparePartCategory, SpareStock, SpareStockTransaction, SystemSetting, Tag, UserSecurityProfile
+from .models import AuditLog, Asset, AssetAssignmentEvent, AssetCustomValue, AssetNetworkAddress, AssetTag, CustomField, CustomFieldOption, DataCenter, Department, DeviceType, DirectoryIdentity, FaultEvent, InventoryItem, InventoryTask, MaintenanceContract, Manufacturer, NotificationDelivery, Person, ProcurementRecord, Rack, RackUnitAllocation, RepairPartUsage, RepairRecord, ServerRoom, SoftwareLicense, SparePart, SparePartCategory, SpareStock, SpareStockTransaction, SystemSetting, Tag, UserSecurityProfile
 from .depreciation import DepreciationValidationError, calculate_asset_depreciation, validate_depreciation_configuration
 from .enum_contracts import (
     INVENTORY_ITEM_STATUS_LABELS,
@@ -32,7 +32,7 @@ from .enum_contracts import (
 )
 from .license_status import LICENSE_STATUS_LABELS, license_status_value
 from .reporting.capacity import rack_effective_used_u
-from .services import apply_asset_custom_values, apply_asset_tags, apply_spare_stock_transaction, configure_asset, inventory_snapshot_location, inventory_task_can_delete, synchronize_asset_location_hierarchy, validate_inventory_resolution_request
+from .services import apply_asset_custom_values, apply_asset_tags, apply_spare_stock_transaction, assign_asset, configure_asset, inventory_snapshot_location, inventory_task_can_delete, return_asset, synchronize_asset_location_hierarchy, transfer_asset, validate_inventory_resolution_request
 from .custom_fields import normalize_validation_config as _normalize_validation_config, normalize_validation_date as _validation_date
 from .lifecycle import allowed_asset_status_values, transition_asset_status, validate_asset_status_transition
 from .roles import ROLE_AUDITOR, ROLE_DEFINITIONS, ROLE_NAME_TO_CODE, preset_group_for_code, user_role_code
@@ -95,6 +95,14 @@ class UserSerializer(serializers.ModelSerializer):
     directory_provider = serializers.SerializerMethodField()
     directory_login_identifier = serializers.SerializerMethodField()
     directory_last_seen_at = serializers.SerializerMethodField()
+    person = serializers.SerializerMethodField()
+    person_id = serializers.PrimaryKeyRelatedField(
+        source="person",
+        queryset=Person.objects.filter(account__isnull=True, is_active=True),
+        required=False,
+        allow_null=True,
+        write_only=True,
+    )
 
     def get_display_name(self, obj) -> str:
         return obj.get_full_name() or obj.username
@@ -128,6 +136,18 @@ class UserSerializer(serializers.ModelSerializer):
         identity = self._directory_identity(obj)
         return identity.last_seen_at if identity is not None else None
 
+    def get_person(self, obj):
+        person = getattr(obj, "person", None)
+        if person is None:
+            return None
+        return {
+            "id": person.pk,
+            "name": person.name,
+            "employee_no": person.employee_no,
+            "department": person.department_id,
+            "department_name": person.department.name if person.department_id and person.department else None,
+        }
+
     def get_extra_kwargs(self):
         extra_kwargs = super().get_extra_kwargs()
         if self.instance is not None:
@@ -146,6 +166,8 @@ class UserSerializer(serializers.ModelSerializer):
     def validate(self, attrs):
         if self.instance is not None and "password" in attrs:
             raise serializers.ValidationError({"password": "请使用独立的重置密码操作"})
+        if self.instance is not None and "person" in attrs:
+            raise serializers.ValidationError({"person_id": "系统账号只能在创建时关联人员"})
         if self.instance is None and not attrs.get("password"):
             minimum = get_system_settings().password_min_length
             raise serializers.ValidationError({"password": f"新用户必须设置至少 {minimum} 位密码"})
@@ -161,7 +183,10 @@ class UserSerializer(serializers.ModelSerializer):
     def create(self, validated_data):
         role_code = validated_data.pop("role_code", ROLE_AUDITOR)
         password = validated_data.pop("password")
+        person = validated_data.pop("person", None)
         user = User(**validated_data)
+        if person is not None:
+            user._selected_person_id = person.pk
         user.set_password(password)
         user.save()
         UserSecurityProfile.objects.update_or_create(
@@ -186,7 +211,7 @@ class UserSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = User
-        fields = ["id", "username", "display_name", "first_name", "last_name", "email", "is_active", "is_staff", "is_superuser", "groups", "role_code", "assigned_role_code", "assigned_role_name", "auth_source", "directory_provider", "directory_login_identifier", "directory_last_seen_at", "password", "last_login", "date_joined"]
+        fields = ["id", "username", "display_name", "first_name", "last_name", "email", "is_active", "is_staff", "is_superuser", "groups", "role_code", "assigned_role_code", "assigned_role_name", "auth_source", "directory_provider", "directory_login_identifier", "directory_last_seen_at", "person", "person_id", "password", "last_login", "date_joined"]
         read_only_fields = ["id", "display_name", "is_staff", "is_superuser", "groups", "assigned_role_code", "assigned_role_name", "last_login", "date_joined"]
 
 
@@ -475,7 +500,7 @@ class BaseDictionarySerializer(serializers.ModelSerializer):
 
 class DepartmentSerializer(serializers.ModelSerializer):
     parent_name = serializers.CharField(source="parent.name", read_only=True, allow_null=True)
-    assets_count = serializers.IntegerField(read_only=True, default=0)
+    people_count = serializers.IntegerField(read_only=True, default=0)
 
     def validate_name(self, value):
         value = (value or "").strip()
@@ -513,8 +538,8 @@ class DepartmentSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = Department
-        fields = ["id", "name", "code", "parent", "parent_name", "assets_count", "created_at", "updated_at"]
-        read_only_fields = ["id", "parent_name", "assets_count", "created_at", "updated_at"]
+        fields = ["id", "name", "code", "parent", "parent_name", "people_count", "created_at", "updated_at"]
+        read_only_fields = ["id", "parent_name", "people_count", "created_at", "updated_at"]
 
 
 class ManufacturerSerializer(BaseDictionarySerializer):
@@ -1284,54 +1309,128 @@ def _asset_custom_values(obj):
     return {field["key"]: field["value"] for field in _asset_custom_fields(obj) if field["value"] is not None}
 
 
-def _responsibility_user_name(user) -> str:
-    if user is None:
-        return ""
-    return user.get_full_name().strip() or user.username
-
-
-LEGACY_OWNER_NAME_DEPRECATED_MESSAGE = "旧版 owner_name（使用人）字段已停用，请使用资产领用、归还或调拨操作维护正式责任人"
-
-
-class AssetResponsibilityUserSerializer(serializers.ModelSerializer):
-    display_name = serializers.SerializerMethodField()
-
-    def get_display_name(self, obj) -> str:
-        return _responsibility_user_name(obj)
+class PersonSummarySerializer(serializers.ModelSerializer):
+    display_name = serializers.CharField(source="name", read_only=True)
+    department_name = serializers.CharField(source="department.name", read_only=True, allow_null=True)
+    account_username = serializers.CharField(source="account.username", read_only=True, allow_null=True)
+    account_email = serializers.CharField(source="account.email", read_only=True, allow_null=True)
 
     class Meta:
-        model = User
-        fields = ["id", "username", "display_name", "is_active"]
+        model = Person
+        fields = [
+            "id", "name", "display_name", "employee_no", "department", "department_name",
+            "organization", "contact", "account", "account_username", "account_email", "is_active",
+        ]
         read_only_fields = fields
 
 
-class AssetResponsibilityTargetSerializer(serializers.Serializer):
-    target_user = serializers.PrimaryKeyRelatedField(
-        queryset=User.objects.all(),
-        required=True,
-    )
+class PersonSerializer(PersonSummarySerializer):
+    asset_count = serializers.IntegerField(read_only=True, default=0)
+    created_at = serializers.DateTimeField(read_only=True)
+    updated_at = serializers.DateTimeField(read_only=True)
+
+    def validate_name(self, value):
+        value = (value or "").strip()
+        if not value:
+            raise serializers.ValidationError("姓名不能为空")
+        return value
+
+    def validate_employee_no(self, value):
+        value = (value or "").strip()
+        if not value:
+            return None
+        queryset = Person.objects.filter(employee_no__iexact=value)
+        if self.instance:
+            queryset = queryset.exclude(pk=self.instance.pk)
+        if queryset.exists():
+            raise serializers.ValidationError("员工编号已存在")
+        return value
+
+    def validate_department(self, value):
+        if value is not None and getattr(value, "is_active", True) is False:
+            raise serializers.ValidationError("停用的部门不能作为人员所属部门")
+        return value
+
+    def validate(self, attrs):
+        current_active = self.instance.is_active if self.instance else True
+        target_active = attrs.get("is_active", current_active)
+        if current_active and not target_active and self.instance and self.instance.assigned_assets.exists():
+            raise serializers.ValidationError({"is_active": "该人员仍有资产，处理名下资产后才能停用"})
+        for field in ("organization", "contact"):
+            if field in attrs:
+                attrs[field] = (attrs[field] or "").strip()
+        return attrs
+
+    class Meta(PersonSummarySerializer.Meta):
+        fields = PersonSummarySerializer.Meta.fields + [
+            "asset_count", "created_at", "updated_at",
+        ]
+        read_only_fields = [
+            "id", "display_name", "department_name", "account", "account_username", "account_email",
+            "asset_count", "created_at", "updated_at",
+        ]
+
+
+class AssetAssignmentTargetSerializer(serializers.Serializer):
+    REMOVED_FIELDS = frozenset({
+        "target_subject", "target_user", "responsible_user", "responsible_user_id",
+        "responsible_user_name", "responsibility_subject", "responsibility_subject_id",
+        "assigned_to", "assignee",
+    })
+    target_person = serializers.PrimaryKeyRelatedField(queryset=Person.objects.all(), required=True)
     reason = serializers.CharField(required=False, allow_blank=True, max_length=2000)
 
+    def to_internal_value(self, data):
+        submitted = self.REMOVED_FIELDS.intersection(data)
+        if submitted:
+            field = sorted(submitted)[0]
+            raise serializers.ValidationError({field: "该字段已移除，请使用 target_person"})
+        return super().to_internal_value(data)
 
-class AssetResponsibilityReturnSerializer(serializers.Serializer):
+    def validate_target_person(self, value):
+        if not value.is_active:
+            raise serializers.ValidationError("停用人员不能被指定为使用人")
+        return value
+
+
+class AssetAssignmentReturnSerializer(serializers.Serializer):
+    REMOVED_FIELDS = AssetAssignmentTargetSerializer.REMOVED_FIELDS
     reason = serializers.CharField(required=False, allow_blank=True, max_length=2000)
 
+    def to_internal_value(self, data):
+        submitted = self.REMOVED_FIELDS.intersection(data)
+        if submitted:
+            field = sorted(submitted)[0]
+            raise serializers.ValidationError({field: "该字段已移除，请使用使用人操作"})
+        return super().to_internal_value(data)
 
-class AssetResponsibilityEventSerializer(serializers.ModelSerializer):
+
+class AssetAssignmentSerializer(AssetAssignmentTargetSerializer):
+    action = serializers.ChoiceField(choices=("assign", "transfer", "return"), required=True)
+    target_person = serializers.PrimaryKeyRelatedField(queryset=Person.objects.all(), required=False, allow_null=True)
+
+    def validate(self, attrs):
+        action = attrs["action"]
+        target = attrs.get("target_person")
+        if action in {"assign", "transfer"} and target is None:
+            raise serializers.ValidationError({"target_person": "指定或转交必须选择使用人"})
+        if action == "return" and target is not None:
+            raise serializers.ValidationError({"target_person": "归还不能同时指定使用人"})
+        if target is not None and not target.is_active:
+            raise serializers.ValidationError({"target_person": "停用人员不能被指定为使用人"})
+        return attrs
+
+
+class AssetAssignmentEventSerializer(serializers.ModelSerializer):
     class Meta:
-        model = AssetResponsibilityEvent
+        model = AssetAssignmentEvent
         fields = [
-            "id",
-            "asset",
-            "action",
-            "from_user",
-            "from_user_name",
-            "to_user",
-            "to_user_name",
-            "operator",
-            "operator_name",
-            "reason",
-            "created_at",
+            "id", "asset", "action",
+            "from_person", "from_person_employee_no", "from_person_name", "from_person_department",
+            "from_person_organization", "from_person_contact",
+            "to_person", "to_person_employee_no", "to_person_name", "to_person_department",
+            "to_person_organization", "to_person_contact",
+            "operator", "operator_name", "reason", "created_at",
         ]
         read_only_fields = fields
 
@@ -1341,8 +1440,7 @@ class AssetSerializer(serializers.ModelSerializer):
     device_type_name = serializers.CharField(source="device_type.name", read_only=True, allow_null=True)
     asset_data_center_name = serializers.CharField(source="asset_data_center.name", read_only=True, allow_null=True)
     model_name = serializers.CharField(source="model", read_only=True)
-    responsible_user = serializers.PrimaryKeyRelatedField(read_only=True, allow_null=True)
-    responsible_user_name = serializers.SerializerMethodField()
+    assigned_person = PersonSummarySerializer(read_only=True, allow_null=True)
     network_addresses = AssetNetworkAddressSerializer(many=True, read_only=True)
     rack_allocation = RackUnitAllocationSerializer(read_only=True)
     procurement_records = ProcurementRecordSerializer(many=True, read_only=True)
@@ -1351,9 +1449,6 @@ class AssetSerializer(serializers.ModelSerializer):
 
     def get_tag_names(self, obj) -> list[str]:
         return [item.tag.name for item in obj.asset_tags.select_related("tag").all()]
-
-    def get_responsible_user_name(self, obj) -> str:
-        return _responsibility_user_name(getattr(obj, "responsible_user", None))
 
     class Meta:
         model = Asset
@@ -1382,8 +1477,7 @@ class AssetListSerializer(serializers.ModelSerializer):
     device_type_name = serializers.CharField(source="device_type.name", read_only=True, allow_null=True)
     asset_data_center_name = serializers.CharField(source="asset_data_center.name", read_only=True, allow_null=True)
     model_name = serializers.CharField(source="model", read_only=True)
-    responsible_user = serializers.PrimaryKeyRelatedField(read_only=True, allow_null=True)
-    responsible_user_name = serializers.SerializerMethodField()
+    assigned_person = PersonSummarySerializer(read_only=True, allow_null=True)
     business_ip = serializers.SerializerMethodField()
     management_ip = serializers.SerializerMethodField()
     oob_ip = serializers.SerializerMethodField()
@@ -1486,11 +1580,6 @@ class AssetListSerializer(serializers.ModelSerializer):
     def get_tag_names(self, obj) -> list[str]:
         return [item.tag.name for item in obj.asset_tags.select_related("tag").all()]
 
-    def get_responsible_user_name(self, obj) -> str:
-        return _responsibility_user_name(getattr(obj, "responsible_user", None))
-
-    department_name = serializers.CharField(source="department.name", read_only=True, allow_null=True)
-
     def get_custom_values(self, obj) -> dict[str, object]:
         values = {}
         for item in getattr(obj, "list_custom_values", ()):
@@ -1506,7 +1595,7 @@ class AssetListSerializer(serializers.ModelSerializer):
             "id", "created_at", "updated_at", "asset_no", "name",
             "manufacturer", "manufacturer_name", "device_type",
             "device_type_name", "asset_data_center", "asset_data_center_name", "model", "model_name", "manufacturer_model",
-            "serial_number", "purpose", "status", "department", "department_name", "responsible_user", "responsible_user_name", "owner_name", "notes",
+            "serial_number", "purpose", "status", "assigned_person", "notes",
             "business_ip", "management_ip", "oob_ip", "data_center", "server_room",
             "rack_code", "u_range", "purchase_date", "supplier", "purchase_order_no",
             "maintenance_provider", "maintenance_expiry_date", "depreciation",
@@ -1537,10 +1626,8 @@ class AssetDetailSerializer(serializers.ModelSerializer):
     manufacturer_name = serializers.CharField(source="manufacturer.name", read_only=True, allow_null=True)
     device_type_name = serializers.CharField(source="device_type.name", read_only=True, allow_null=True)
     asset_data_center_name = serializers.CharField(source="asset_data_center.name", read_only=True, allow_null=True)
-    department_name = serializers.CharField(source="department.name", read_only=True, allow_null=True)
     model_name = serializers.CharField(source="model", read_only=True)
-    responsible_user = serializers.PrimaryKeyRelatedField(read_only=True, allow_null=True)
-    responsible_user_name = serializers.SerializerMethodField()
+    assigned_person = PersonSummarySerializer(read_only=True, allow_null=True)
     network_addresses = AssetNetworkAddressSerializer(many=True, read_only=True)
     rack_allocation = RackUnitAllocationDetailSerializer(read_only=True)
     procurement_records = ProcurementRecordSerializer(many=True, read_only=True)
@@ -1559,9 +1646,6 @@ class AssetDetailSerializer(serializers.ModelSerializer):
 
     def get_inventory_records_count(self, obj) -> int:
         return obj.inventory_items.count()
-
-    def get_responsible_user_name(self, obj) -> str:
-        return _responsibility_user_name(getattr(obj, "responsible_user", None))
 
     def get_latest_inventory_record(self, obj) -> dict[str, Any] | None:
         record = (
@@ -1601,7 +1685,7 @@ class AssetDetailSerializer(serializers.ModelSerializer):
         model = Asset
         fields = [
             "id", "created_at", "updated_at", "asset_no", "name", "manufacturer", "manufacturer_name", "device_type", "device_type_name", "asset_data_center", "asset_data_center_name", "model", "model_name", "manufacturer_model",
-            "serial_number", "purpose", "status", "department", "department_name", "responsible_user", "responsible_user_name", "owner_name", "notes", "depreciation_start_date", "depreciation_years", "residual_rate", "depreciation_method",
+            "serial_number", "purpose", "status", "assigned_person", "notes", "depreciation_start_date", "depreciation_years", "residual_rate", "depreciation_method",
             "network_addresses", "rack_allocation", "procurement_records", "maintenance_contracts", "inventory_records_count", "latest_inventory_record", "tags", "custom_fields", "custom_values", "allowed_statuses",
             "depreciation",
         ]
@@ -1632,10 +1716,10 @@ class AssetWriteSerializer(serializers.ModelSerializer):
     created_at = serializers.DateTimeField(read_only=True)
     updated_at = serializers.DateTimeField(read_only=True)
     configuration = serializers.JSONField(write_only=True, required=False)
+    assignment = AssetAssignmentSerializer(write_only=True, required=False)
     tags = serializers.PrimaryKeyRelatedField(many=True, queryset=Tag.objects.all(), required=False, write_only=True)
     custom_values = serializers.JSONField(required=False, write_only=True)
     manufacturer = serializers.PrimaryKeyRelatedField(read_only=True)
-    owner_name = serializers.CharField(read_only=True, allow_blank=True)
     manufacturer_id = serializers.PrimaryKeyRelatedField(
         source="manufacturer",
         queryset=Manufacturer.objects.all(),
@@ -1646,7 +1730,7 @@ class AssetWriteSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = Asset
-        fields = ["id", "created_at", "updated_at", "asset_no", "name", "manufacturer", "manufacturer_id", "device_type", "asset_data_center", "model", "manufacturer_model", "serial_number", "purpose", "status", "department", "owner_name", "notes", "depreciation_start_date", "depreciation_years", "residual_rate", "depreciation_method", "configuration", "tags", "custom_values"]
+        fields = ["id", "created_at", "updated_at", "asset_no", "name", "manufacturer", "manufacturer_id", "device_type", "asset_data_center", "model", "manufacturer_model", "serial_number", "purpose", "status", "notes", "depreciation_start_date", "depreciation_years", "residual_rate", "depreciation_method", "configuration", "assignment", "tags", "custom_values"]
         read_only_fields = ["id", "created_at", "updated_at"]
 
     def _stored_procurement_amount(self):
@@ -1784,13 +1868,16 @@ class AssetWriteSerializer(serializers.ModelSerializer):
             })
 
     def validate(self, attrs):
-        responsibility_fields = {"responsible_user", "responsible_user_id", "assigned_to", "assignee"}
-        submitted_responsibility_fields = responsibility_fields.intersection(self.initial_data)
-        if submitted_responsibility_fields:
-            field = sorted(submitted_responsibility_fields)[0]
-            raise serializers.ValidationError({field: "请使用资产领用、归还或调拨操作维护责任人"})
-        if "owner_name" in self.initial_data:
-            raise serializers.ValidationError({"owner_name": LEGACY_OWNER_NAME_DEPRECATED_MESSAGE})
+        removed_fields = {
+            "responsible_user", "responsible_user_id", "responsible_user_name",
+            "responsibility_subject", "responsibility_subject_id", "assigned_to", "assignee", "target_user",
+            "target_subject", "target_person", "assigned_person", "assigned_person_id",
+            "department", "department_id", "owner_name",
+        }
+        submitted_removed_fields = removed_fields.intersection(self.initial_data)
+        if submitted_removed_fields:
+            field = sorted(submitted_removed_fields)[0]
+            raise serializers.ValidationError({field: "该字段已移除，请使用 assignment 或使用人操作"})
         derived_fields = self.DERIVED_DEPRECIATION_FIELDS & set(self.initial_data)
         if derived_fields:
             field = sorted(derived_fields)[0]
@@ -1821,11 +1908,48 @@ class AssetWriteSerializer(serializers.ModelSerializer):
                 raise serializers.ValidationError(
                     getattr(exc, "message_dict", {"status": exc.messages})
                 ) from exc
+        assignment = attrs.get("assignment")
+        if assignment and assignment.get("action") == "transfer" and "status" in attrs:
+            if self.instance is not None and attrs["status"] != self.instance.status:
+                raise serializers.ValidationError({"status": "转交使用人不会改变资产状态"})
         self._validate_depreciation(attrs)
         return attrs
 
+    def _apply_assignment(self, asset, assignment):
+        if not assignment:
+            return asset
+        request = self.context.get("request")
+        actor = request.user if request is not None and request.user.is_authenticated else None
+        action = assignment["action"]
+        reason = assignment.get("reason", "")
+        if action == "assign":
+            asset, _event = assign_asset(
+                asset_id=asset.pk,
+                target_person_id=assignment["target_person"].pk,
+                actor=actor,
+                request=request,
+                reason=reason,
+            )
+        elif action == "transfer":
+            asset, _event = transfer_asset(
+                asset_id=asset.pk,
+                target_person_id=assignment["target_person"].pk,
+                actor=actor,
+                request=request,
+                reason=reason,
+            )
+        else:
+            asset, _event = return_asset(
+                asset_id=asset.pk,
+                actor=actor,
+                request=request,
+                reason=reason,
+            )
+        return asset
+
     def create(self, validated_data):
         configuration = validated_data.pop("configuration", {})
+        assignment = validated_data.pop("assignment", None)
         tags = validated_data.pop("tags", None)
         custom_values = validated_data.pop("custom_values", {})
         if "status" not in validated_data:
@@ -1842,6 +1966,7 @@ class AssetWriteSerializer(serializers.ModelSerializer):
                 configure_asset(asset, configuration)
                 apply_asset_custom_values(asset, custom_values)
                 apply_asset_tags(asset, tags or [])
+                asset = self._apply_assignment(asset, assignment)
         except DjangoValidationError as exc:
             raise serializers.ValidationError(getattr(exc, "message_dict", {"configuration": exc.messages})) from exc
         except IntegrityError as exc:
@@ -1850,6 +1975,7 @@ class AssetWriteSerializer(serializers.ModelSerializer):
 
     def update(self, instance, validated_data):
         configuration = validated_data.pop("configuration", None)
+        assignment = validated_data.pop("assignment", None)
         tags = validated_data.pop("tags", None)
         custom_values = validated_data.pop("custom_values", None)
         missing = object()
@@ -1881,6 +2007,7 @@ class AssetWriteSerializer(serializers.ModelSerializer):
                 )
                 if tags is not None:
                     apply_asset_tags(instance, tags)
+                instance = self._apply_assignment(instance, assignment)
         except DjangoValidationError as exc:
             raise serializers.ValidationError(getattr(exc, "message_dict", {"configuration": exc.messages})) from exc
         except IntegrityError as exc:

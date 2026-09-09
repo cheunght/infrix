@@ -15,7 +15,7 @@ export type SettingsSection =
   | "tags"
   | "maintenance";
 export type AssetConfigSection = "custom-fields" | "tags";
-export type OrganizationTab = "users" | "roles" | "ldap" | "departments";
+export type OrganizationTab = "users" | "roles" | "ldap" | "departments" | "people";
 export type SystemSettingsTab = "general" | "localization" | "security" | "smtp" | "notifications" | "branding";
 
 export type RackSection = "locations" | "view";

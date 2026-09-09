@@ -47,11 +47,13 @@ production host.
 
 ## Features
 
-- Asset records, imports, exports, custom fields, tags, and lifecycle data.
+- Asset records, imports, exports, custom fields, tags, lifecycle data, and
+  optional assigned people.
 - Data centers, server rooms, racks, U-position allocation, and capacity views.
 - Fault registration, repair workflows, costs, and repair history.
 - Software licenses, inventory tasks, spare parts, stock, and transactions.
-- Organizations, roles, LDAP/Active Directory integration, and audit logs.
+- User accounts, people, departments, roles, LDAP/Active Directory integration,
+  and audit logs.
 - System settings for localization, security, SMTP, notifications, branding,
   and maintenance.
 
