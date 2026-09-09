@@ -6,6 +6,12 @@ Infrix is an IT asset management platform for infrastructure teams. It brings
 asset records, locations, maintenance, licenses, inventory, spare parts,
 notifications, and audit history into one application.
 
+## Product preview
+
+<p align="center">
+  <img src="docs/assets/dashboard.png" alt="Infrix dashboard preview" width="1200">
+</p>
+
 ## Quick start
 
 The supported automatic installation target is Rocky Linux 9.x. From the

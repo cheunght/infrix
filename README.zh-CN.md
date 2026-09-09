@@ -4,6 +4,12 @@
 
 Infrix 是面向基础设施团队的 IT 资产管理平台，统一管理资产台账、位置、维修、软件许可、盘点、备件、通知和审计记录。
 
+## 产品预览
+
+<p align="center">
+  <img src="docs/assets/dashboard.png" alt="Infrix 仪表盘预览" width="1200">
+</p>
+
 ## 快速开始
 
 官方自动安装目标为 Rocky Linux 9.x。在项目根目录或解压后的发布包目录执行：
