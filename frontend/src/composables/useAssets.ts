@@ -301,7 +301,7 @@ export interface AssetsDeps {
   actionMessage: Ref<string>;
   actionMessageType: Ref<ActionMessageType | null>;
   dataCenters: Ref<DataCenter[]>;
-  departments: Ref<Department[]>;
+  departmentOptions: Ref<Department[]>;
   departmentLoading: Ref<boolean>;
   departmentError: Ref<string>;
   serverRooms: Ref<ServerRoom[]>;
@@ -310,7 +310,7 @@ export interface AssetsDeps {
   deviceTypes: Ref<DictionaryItem[]>;
   tags: Ref<Tag[]>;
   loadRackManagement: () => void | Promise<void>;
-  goToLedger: () => void;
+  goToLedger: (query?: Record<string, string>) => void;
   clearRouteQuery?: (keys: string[]) => boolean;
   updateRouteQuery?: (updates: Record<string, string | undefined>) => boolean;
   showAssetDetail: Ref<boolean>;
@@ -590,6 +590,8 @@ export function useAssets(deps: AssetsDeps) {
   const assetFormLoading = ref(false);
   const assetFormLoadError = ref("");
   const departmentRequestId = ref(0);
+  const departmentOptionsLoaded = ref(false);
+  let departmentOptionsPromise: Promise<boolean> | null = null;
   let departmentController: AbortController | null = null;
   const assetFormSaving = ref(false);
   const assetFormFieldErrors = ref<Record<string, string>>({});
@@ -771,7 +773,7 @@ export function useAssets(deps: AssetsDeps) {
       (item) => item.is_active !== false || currentIds.has(String(item.id)),
     );
   });
-  const activeDepartments = computed(() => deps.departments.value);
+  const activeDepartments = computed(() => deps.departmentOptions.value);
 
   function saveVisibleColumns() {
     localStorage.setItem(ASSET_COLUMNS_STORAGE_KEY, JSON.stringify(visibleAssetColumns.value));
@@ -967,49 +969,64 @@ export function useAssets(deps: AssetsDeps) {
 
   async function loadDepartments(force = false): Promise<boolean> {
     if (!deps.authenticated.value || !deps.can("assets.view")) return false;
-    if (!force && deps.departmentLoading.value) return true;
+    if (!force && departmentOptionsPromise) return departmentOptionsPromise;
+    if (!force && (departmentOptionsLoaded.value || deps.departmentOptions.value.length > 0)) {
+      departmentOptionsLoaded.value = true;
+      return true;
+    }
 
+    departmentOptionsLoaded.value = false;
     departmentController?.abort();
     const controller = new AbortController();
     departmentController = controller;
     const requestId = ++departmentRequestId.value;
     deps.departmentLoading.value = true;
     deps.departmentError.value = "";
-    const rows: Department[] = [];
-    try {
-      let page = 1;
-      while (!controller.signal.aborted) {
-        const result = await deps.request<PageResult<Department> | Department[]>(
-          `/departments/?page_size=100&ordering=name&page=${page}`,
-          { signal: controller.signal },
-        );
-        if (requestId !== departmentRequestId.value || controller.signal.aborted || !result) return false;
-        if (Array.isArray(result)) {
-          rows.push(...result);
-          break;
+    const request = (async () => {
+      const rows: Department[] = [];
+      try {
+        let page = 1;
+        while (!controller.signal.aborted) {
+          const result = await deps.request<PageResult<Department> | Department[]>(
+            `/departments/?page_size=100&ordering=name&page=${page}`,
+            { signal: controller.signal },
+          );
+          if (requestId !== departmentRequestId.value || controller.signal.aborted || !result) return false;
+          if (Array.isArray(result)) {
+            rows.push(...result);
+            break;
+          }
+          rows.push(...(result.results || []));
+          const hasMore = result.next !== undefined
+            ? Boolean(result.next)
+            : typeof result.count === "number"
+              ? rows.length < result.count
+              : (result.results || []).length >= 100;
+          if (!(result.results || []).length || !hasMore) break;
+          page += 1;
         }
-        rows.push(...(result.results || []));
-        const hasMore = result.next !== undefined
-          ? Boolean(result.next)
-          : typeof result.count === "number"
-            ? rows.length < result.count
-            : (result.results || []).length >= 100;
-        if (!(result.results || []).length || !hasMore) break;
-        page += 1;
+        if (requestId !== departmentRequestId.value || controller.signal.aborted) return false;
+        deps.departmentOptions.value = rows;
+        departmentOptionsLoaded.value = true;
+        return true;
+      } catch (error) {
+        if (requestId === departmentRequestId.value && !isAbortError(error)) {
+          departmentOptionsLoaded.value = false;
+          deps.departmentError.value = errorMessage(error, tr("asset.departmentLoadFailed"));
+        }
+        return false;
+      } finally {
+        if (requestId === departmentRequestId.value) {
+          deps.departmentLoading.value = false;
+          if (departmentController === controller) departmentController = null;
+        }
       }
-      if (requestId !== departmentRequestId.value || controller.signal.aborted) return false;
-      deps.departments.value = rows;
-      return true;
-    } catch (error) {
-      if (requestId === departmentRequestId.value && !isAbortError(error)) {
-        deps.departmentError.value = errorMessage(error, tr("asset.departmentLoadFailed"));
-      }
-      return false;
+    })();
+    departmentOptionsPromise = request;
+    try {
+      return await request;
     } finally {
-      if (requestId === departmentRequestId.value) {
-        deps.departmentLoading.value = false;
-        if (departmentController === controller) departmentController = null;
-      }
+      if (departmentOptionsPromise === request) departmentOptionsPromise = null;
     }
   }
 
@@ -2201,6 +2218,10 @@ export function useAssets(deps: AssetsDeps) {
       deps.goToLedger();
       return;
     }
+    // Keep the standard ledger view shareable and refresh-safe. Dynamic
+    // filters are intentionally excluded because they are currently held in
+    // local state and cannot be reconstructed from the route query yet.
+    if (!appliedCustomFilters.value.length && deps.updateRouteQuery?.(assetRouteQueryUpdates())) return;
     await loadAssets();
   }
   async function applyAssetCustomFilters(filters: AssetCustomFilter[]): Promise<void> {
@@ -2322,7 +2343,7 @@ export function useAssets(deps: AssetsDeps) {
           : tr("asset.quickLookupNotFound", { query }),
         matches.length ? "success" : "error",
       );
-      deps.goToLedger();
+      deps.goToLedger({ search: query });
     } catch (error) {
       setActionError(error, tr("asset.quickLookupFailed"));
     }
@@ -2392,7 +2413,7 @@ export function useAssets(deps: AssetsDeps) {
     activeDeviceTypes,
     activeDataCenters,
     activeDepartments,
-    departments: deps.departments,
+    departments: deps.departmentOptions,
     departmentLoading: deps.departmentLoading,
     departmentError: deps.departmentError,
     retryDepartments,

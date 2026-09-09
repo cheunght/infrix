@@ -35,12 +35,6 @@ function formatDate(value?: string) {
 
 <template>
   <el-card class="rack-summary-panel" shadow="never">
-    <template #header>
-      <div class="rack-summary-panel__header">
-        <strong>{{ t('rack.rackDetails') }}</strong>
-      </div>
-    </template>
-
     <el-descriptions class="rack-summary-descriptions" :column="1">
       <el-descriptions-item :label="t('rack.rackCode')">{{ rack.code }}</el-descriptions-item>
       <el-descriptions-item :label="t('rack.rackName')">{{ displayValue(rack.name) }}</el-descriptions-item>

@@ -60,45 +60,31 @@ function rackStatus(rack: Rack) {
           :empty-text="emptyDescription"
           @retry="retryRackView"
         >
-          <el-table
-            class="rack-list-table"
-            v-loading="rackListLoading"
-            :data="visibleRacks"
-            row-key="id"
-            table-layout="fixed"
-            highlight-current-row
-            :current-row-key="focusedRack?.id ?? undefined"
-            :aria-label="t('rack.list')"
-            @row-click="selectRack"
-          >
-            <el-table-column :label="t('rack.rackCode')" width="96">
-              <template #default="{ row }">
-                <strong class="rack-list-code">{{ row.code }}</strong>
-              </template>
-            </el-table-column>
-            <el-table-column :label="t('common.status')" width="90" align="center">
-              <template #default="{ row }">
-                <StatusTag
-                  :tone="rackStatusTone(rackStatus(row), row.is_active)"
-                  :label="rackStatusLabel(rackStatus(row), row.is_active)"
-                />
-              </template>
-            </el-table-column>
-            <el-table-column :label="t('common.location')" min-width="150">
-              <template #default="{ row }">
-                {{ row.data_center_name || t('common.notAvailable') }} · {{ row.server_room_name || t('common.notAvailable') }}
-              </template>
-            </el-table-column>
-            <el-table-column :label="`${t('rack.usedU')} / ${t('rack.totalU')}`" width="110" align="right">
-              <template #default="{ row }">{{ rackUsedU(row) }} / {{ row.total_u }} U</template>
-            </el-table-column>
-            <el-table-column :label="t('rack.utilization')" width="90" align="right">
-              <template #default="{ row }">{{ rackUtilization(row) }}%</template>
-            </el-table-column>
-            <el-table-column :label="t('rack.assetCount')" width="90" align="right">
-              <template #default="{ row }">{{ t('common.deviceCount', row.allocations.length) }}</template>
-            </el-table-column>
-          </el-table>
+          <div class="rack-list-rows" v-loading="rackListLoading" :aria-label="t('rack.list')">
+            <button
+              v-for="rack in visibleRacks"
+              :key="rack.id"
+              type="button"
+              class="rack-list-row"
+              :class="{ 'is-current': focusedRack?.id === rack.id }"
+              :aria-label="`${rack.code}, ${rackStatusLabel(rackStatus(rack), rack.is_active)}, ${t('rack.usedU')} ${rackUsedU(rack)} / ${rack.total_u} U, ${t('rack.utilization')} ${rackUtilization(rack)}%`"
+              :aria-pressed="focusedRack?.id === rack.id"
+              @click="selectRack(rack)"
+            >
+              <span class="rack-list-row__main">
+                <strong class="rack-list-row__code" :title="rack.code">{{ rack.code }}</strong>
+                <span class="rack-list-row__status">
+                  <StatusTag
+                    size="small"
+                    :tone="rackStatusTone(rackStatus(rack), rack.is_active)"
+                    :label="rackStatusLabel(rackStatus(rack), rack.is_active)"
+                  />
+                </span>
+                <span class="rack-list-row__capacity">{{ rackUsedU(rack) }} / {{ rack.total_u }} U</span>
+                <span class="rack-list-row__utilization">{{ rackUtilization(rack) }}%</span>
+              </span>
+            </button>
+          </div>
         </ResourceState>
       </div>
       <div v-if="rackCount > rackPageSize" class="paged-table__footer">

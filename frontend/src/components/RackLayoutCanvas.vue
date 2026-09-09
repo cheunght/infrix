@@ -71,7 +71,7 @@ function isMajorUnit(totalU: number, rowIndex: number) {
       >
         <template #header>
           <div class="rack-u-head">
-            <strong>{{ rack.code }}</strong>
+            <span class="rack-u-head__label">{{ t("rack.uPosition") }}</span>
             <span class="rack-u-head__capacity">
               {{ rackUsedU(rack) }} / {{ rack.total_u }} U · {{ rackUtilization(rack) }}%
             </span>

@@ -120,10 +120,20 @@ body {
   --el-menu-active-color: var(--infrix-primary-blue);
   border-right: 0;
 }
+.ep-sidebar-menu .el-menu-item,
+.ep-sidebar-menu .el-sub-menu__title {
+  font-family: inherit;
+  font-weight: 400;
+}
+.ep-sidebar-menu > .el-menu-item,
+.ep-sidebar-menu > .el-sub-menu > .el-sub-menu__title {
+  font-weight: 600;
+}
 .ep-sidebar-menu .el-menu-item.is-active,
 .ep-sidebar-menu .el-menu-item.is-active:hover {
   background-color: var(--el-color-primary-light-9);
   color: var(--el-color-primary);
+  font-weight: 600;
 }
 .ep-main {
   min-width: 0;

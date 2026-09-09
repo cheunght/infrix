@@ -30,6 +30,17 @@
   max-width: none;
 }
 
+.settings-operations {
+  display: grid;
+  gap: var(--space-lg, 16px);
+}
+
+.settings-operations__toolbar {
+  display: flex;
+  align-items: center;
+  min-height: var(--el-component-size, 40px);
+}
+
 .settings-system {
   display: grid;
   gap: 20px;

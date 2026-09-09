@@ -3902,6 +3902,12 @@ def _rack_layout_export_limit_response(rack_count, total_u):
     )
 
 
+RACK_LAYOUT_UNIT_ROW_HEIGHT = 20
+RACK_LAYOUT_SIDE_COLUMN_WIDTH = 7
+RACK_LAYOUT_INFO_COLUMN_WIDTH = 32
+RACK_LAYOUT_DEFAULT_DEVICE_FILL = "D9EAF7"
+
+
 @extend_schema(
     parameters=[
         OpenApiParameter(
@@ -3945,13 +3951,7 @@ def rack_layout_export(request):
     used_sheet_names = set()
     thin = Side(style="thin", color="B8C5D6")
     border = Border(left=thin, right=thin, top=thin, bottom=thin)
-    status_fills = {
-        "in_use": PatternFill("solid", fgColor="C6EFCE"),
-        "repair": PatternFill("solid", fgColor="FCE4D6"),
-        "idle": PatternFill("solid", fgColor="E4DFEC"),
-        "in_stock": PatternFill("solid", fgColor="D9EAF7"),
-        "retired": PatternFill("solid", fgColor="E7E6E6"),
-    }
+    device_type_fills = {}
     grouped = {}
     for rack in racks:
         grouped.setdefault(rack.room.data_center.name, []).append(rack)
@@ -3968,7 +3968,7 @@ def rack_layout_export(request):
             by_prefix.setdefault(_rack_prefix(rack.code), []).append(rack)
         for prefix, prefix_racks in sorted(by_prefix.items(), key=lambda item: item[0]):
             prefix_racks.sort(key=_rack_sort_key)
-            rack_width, gap = 5, 2
+            rack_width, gap = 3, 2
             group_start = 1
             group_end = group_start + len(prefix_racks) * (rack_width + gap) - gap - 1
             sheet.merge_cells(start_row=row_cursor, start_column=group_start, end_row=row_cursor, end_column=group_end)
@@ -3992,18 +3992,19 @@ def rack_layout_export(request):
                 meta = sheet.cell(rack_top + 1, start_col, f"{rack.room.name} | {rack.total_u} U | 已用 {effective_used_u} U | 可用 {rack.total_u - effective_used_u} U")
                 meta.font = Font(size=9, color="44546A")
                 meta.alignment = Alignment(horizontal="center")
-                for col in (start_col, end_col):
-                    sheet.column_dimensions[get_column_letter(col)].width = 7
-                for col in range(start_col + 1, end_col):
-                    sheet.column_dimensions[get_column_letter(col)].width = 13
+                sheet.column_dimensions[get_column_letter(start_col)].width = RACK_LAYOUT_SIDE_COLUMN_WIDTH
+                sheet.column_dimensions[get_column_letter(start_col + 1)].width = RACK_LAYOUT_INFO_COLUMN_WIDTH
+                sheet.column_dimensions[get_column_letter(end_col)].width = RACK_LAYOUT_SIDE_COLUMN_WIDTH
                 for col in range(start_col, end_col + 1):
                     sheet.cell(rack_top + 2, col).border = border
                 sheet.cell(rack_top + 2, start_col, "U").alignment = Alignment(horizontal="center")
                 sheet.cell(rack_top + 2, start_col + 1, "设备信息").alignment = Alignment(horizontal="center")
-                sheet.merge_cells(start_row=rack_top + 2, start_column=start_col + 1, end_row=rack_top + 2, end_column=end_col - 1)
                 sheet.cell(rack_top + 2, end_col, "U").alignment = Alignment(horizontal="center")
+                unit_start_row = rack_top + 3
+                for row in range(unit_start_row, unit_start_row + max_u):
+                    sheet.row_dimensions[row].height = RACK_LAYOUT_UNIT_ROW_HEIGHT
                 for offset in range(rack.total_u):
-                    row = rack_top + 3 + offset
+                    row = unit_start_row + offset
                     u = rack.total_u - offset
                     sheet.cell(row, start_col, u)
                     sheet.cell(row, end_col, u)
@@ -4023,10 +4024,19 @@ def rack_layout_export(request):
                     top_row = rack_top + 3 + (rack.total_u - allocation.end_u)
                     bottom_row = rack_top + 3 + (rack.total_u - allocation.start_u)
                     asset = allocation.asset
-                    text = "\n".join(filter(None, [asset.asset_no, asset.name, asset.device_type.name if asset.device_type_id else "", asset.manufacturer_model, f"SN: {asset.serial_number}" if asset.serial_number else ""]))
+                    asset_name = (asset.name or "").strip()
+                    asset_model = (asset.model or asset.manufacturer_model or "").strip()
+                    text = "\n".join(filter(None, [asset_name, asset_model]))
+                    device_type_color = str(getattr(asset.device_type, "color", "") or "").strip().lstrip("#").upper()
+                    if not re.fullmatch(r"[0-9A-F]{6}", device_type_color):
+                        device_type_color = RACK_LAYOUT_DEFAULT_DEVICE_FILL
+                    device_fill = device_type_fills.setdefault(
+                        device_type_color,
+                        PatternFill("solid", fgColor=device_type_color),
+                    )
                     for row in range(top_row, bottom_row + 1):
                         for col in range(start_col + 1, end_col):
-                            sheet.cell(row, col).fill = status_fills.get(asset.status, PatternFill("solid", fgColor="D9EAF7"))
+                            sheet.cell(row, col).fill = device_fill
                     if top_row != bottom_row:
                         sheet.merge_cells(start_row=top_row, start_column=start_col + 1, end_row=bottom_row, end_column=end_col - 1)
                     cell = sheet.cell(top_row, start_col + 1, text)

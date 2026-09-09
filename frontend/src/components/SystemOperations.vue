@@ -48,8 +48,10 @@ function state(value: string | undefined) { return t(`operations.${value || 'una
 onMounted(load);
 </script>
 <template>
-  <section v-loading="busy">
-    <el-button :disabled="busy" @click="load">{{ t('common.refresh') }}</el-button>
+  <section v-loading="busy" class="settings-operations">
+    <div class="settings-operations__toolbar">
+      <el-button :disabled="busy" @click="load">{{ t('common.refresh') }}</el-button>
+    </div>
     <el-alert v-if="error" :title="error" type="error" :closable="false" />
     <template v-if="data">
       <el-alert v-if="data.configuration_status" :title="state(data.configuration_status)" type="warning" :closable="false" />

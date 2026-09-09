@@ -1,7 +1,7 @@
 <script setup lang="ts">
-import { computed, ref, watch } from "vue";
+import { computed } from "vue";
 import { useI18n } from "vue-i18n";
-import { MoreFilled } from "@element-plus/icons-vue";
+import { Download } from "@element-plus/icons-vue";
 import RackAssetInspector from "./RackAssetInspector.vue";
 import RackDetailPanel from "./RackDetailPanel.vue";
 import RackFormDialog from "./RackFormDialog.vue";
@@ -9,14 +9,12 @@ import RackLayoutCanvas from "./RackLayoutCanvas.vue";
 import RackListPanel from "./RackListPanel.vue";
 import LocationManagementPage from "./LocationManagementPage.vue";
 import SearchField from "./SearchField.vue";
-import DescriptionList from "./DescriptionList.vue";
 import PageContainer from "./page/PageContainer.vue";
 import PageContent from "./page/PageContent.vue";
 import PageToolbar from "./page/PageToolbar.vue";
 import type { Rack, RackStatus, ServerRoom } from "../types";
 import type { RackSharedContext } from "../page-context";
 import { rackStatusValue } from "../business-enums";
-import { formatSystemDate } from "../system-settings";
 
 const props = defineProps<{ context: RackSharedContext }>();
 const { t } = useI18n();
@@ -45,7 +43,6 @@ const rackUtilization = context.rackUtilization;
 const rackUtilizationColor = context.rackUtilizationColor;
 
 const rooms = computed<ServerRoom[]>(() => serverRooms.value || []);
-const showRackInfo = ref(false);
 
 const viewRoom = computed(() =>
   rooms.value.find((room) => String(room.id) === context.selectedRoom.value)
@@ -58,23 +55,6 @@ const currentRack = context.focusedRack;
 const currentRackHasAssets = computed(() => Boolean(
   currentRack.value?.assets_count || currentRack.value?.allocations?.length,
 ));
-const rackInfoItems = computed(() => {
-  const rack = currentRack.value;
-  if (!rack) return [];
-  return [
-    { key: "rackCode", label: t("rack.rackCode"), value: rack.code },
-    { key: "location", label: t("rack.belongsToLocation"), value: rackLocationLabel(rack) },
-    { key: "deviceType", label: t("rack.deviceType"), value: rack.rack_type },
-    { key: "owner", label: t("rack.owner"), value: rack.owner_name },
-    { key: "createdAt", label: t("rack.createdAt"), value: formatRackDate(rack.created_at) },
-    {
-      key: "notes",
-      label: t("common.notes"),
-      value: rack.notes,
-      className: "rack-info-description__notes",
-    },
-  ];
-});
 
 const rackDeleteHint = computed(() => t("rack.rackOccupiedDeleteHint"));
 
@@ -90,18 +70,17 @@ function rackStatusAction(rack: Rack): RackStatus {
   return rackStatusCode(rack) === "disabled" ? "in_use" : "disabled";
 }
 
+function rackReservationAction(rack: Rack): RackStatus {
+  return rackStatusCode(rack) === "reserved" ? "in_use" : "reserved";
+}
+
+function rackReservationActionLabel(rack: Rack) {
+  return rackStatusCode(rack) === "reserved" ? t("rack.setInUse") : t("rack.setReserved");
+}
+
 function rackLocationLabel(rack: Rack | null) {
   return [rack?.data_center_name, rack?.server_room_name].filter(Boolean).join(" / ") || t("rack.unlinkedLocation");
 }
-
-function formatRackDate(value?: string) {
-  if (!value) return "—";
-  return formatSystemDate(value) || t("common.notAvailable");
-}
-
-watch(currentRack, () => {
-  showRackInfo.value = false;
-});
 
 function changeViewRoom(value: string | number | null | undefined) {
   const roomId = value == null ? "" : String(value);
@@ -116,28 +95,22 @@ function changeViewRoom(value: string | number | null | undefined) {
   });
 }
 
-function handleCurrentRackCommand(command: string) {
+function updateCurrentRackStatus() {
   const rack = currentRack.value;
-  if (!rack) return;
-  if (command === "info") {
-    if (!can("racks.view")) return;
-    showRackInfo.value = true;
-    return;
-  }
-  if (command === "export") {
-    if (!can("racks.export")) return;
-    void context.exportRackLayout();
-    return;
-  }
-  if (command === "delete") {
-    if (!can("racks.manage")) return;
-    if (!currentRackHasAssets.value) void context.deleteRack(rack);
-    return;
-  }
-  if (command === "in_use" || command === "reserved" || command === "disabled") {
-    if (!can("racks.manage")) return;
-    void context.updateRackStatus(rack, command);
-  }
+  if (!rack || !can("racks.manage")) return;
+  void context.updateRackStatus(rack, rackStatusAction(rack));
+}
+
+function updateCurrentRackReservation() {
+  const rack = currentRack.value;
+  if (!rack || !can("racks.manage")) return;
+  void context.updateRackStatus(rack, rackReservationAction(rack));
+}
+
+function deleteCurrentRack() {
+  const rack = currentRack.value;
+  if (!rack || !can("racks.manage") || currentRackHasAssets.value) return;
+  void context.deleteRack(rack);
 }
 </script>
 
@@ -237,6 +210,18 @@ function handleCurrentRackCommand(command: string) {
               </el-select>
             </div>
           </template>
+          <template v-if="rackSection === 'view'" #actions>
+            <el-button
+              v-if="can('racks.export')"
+              class="toolbar-secondary-action toolbar-export-action"
+              :icon="Download"
+              :loading="exportingRackLayout"
+              :disabled="exportingRackLayout"
+              @click="context.exportRackLayout"
+            >
+              {{ t('rack.exportLayout') }}
+            </el-button>
+          </template>
           <template #primary>
             <el-button v-if="can('racks.manage') && rackSection === 'locations'" class="page-primary-action" type="primary" @click="context.openDataCenterModal()">
               {{ t('location.createDataCenter') }}
@@ -267,47 +252,33 @@ function handleCurrentRackCommand(command: string) {
                   <span v-if="currentRack">{{ rackLocationLabel(currentRack) }}</span>
                   <span v-else>{{ t('rack.selectRackHint') }}</span>
                 </div>
-                <div v-if="currentRack && can('racks.view')" class="resource-detail-actions">
+                <div v-if="currentRack && can('racks.view') && can('racks.manage')" class="resource-detail-actions">
                   <el-button
-                    v-if="can('racks.manage')"
                     link
                     type="primary"
                     :disabled="deletingRackId === currentRack.id || updatingRackId === currentRack.id"
                     @click="context.openRackModal(currentRack, viewRoom || undefined)"
                   >{{ t('common.edit') }}</el-button>
-                  <el-dropdown
-                    trigger="click"
+                  <el-button
+                    link
+                    :loading="updatingRackId === currentRack.id"
                     :disabled="deletingRackId === currentRack.id || updatingRackId === currentRack.id || exportingRackLayout"
-                    @command="handleCurrentRackCommand"
-                  >
-                    <el-button
-                      link
-                      :loading="exportingRackLayout"
-                      :disabled="deletingRackId === currentRack.id || updatingRackId === currentRack.id || exportingRackLayout"
-                    >
-                      {{ t('common.more') }}<el-icon><MoreFilled /></el-icon>
-                    </el-button>
-                    <template #dropdown>
-                      <el-dropdown-menu>
-                        <el-dropdown-item command="info">{{ t('rack.viewRackInfo') }}</el-dropdown-item>
-                        <template v-if="can('racks.manage')">
-                          <el-dropdown-item :command="rackStatusAction(currentRack)">
-                            {{ rackStatusActionLabel(currentRack) }}
-                          </el-dropdown-item>
-                          <el-dropdown-item v-if="rackStatusCode(currentRack) !== 'reserved'" command="reserved">{{ t('rack.setReserved') }}</el-dropdown-item>
-                          <el-dropdown-item v-else command="in_use">{{ t('rack.setInUse') }}</el-dropdown-item>
-                        </template>
-                        <el-dropdown-item v-if="can('racks.export')" divided command="export" :disabled="exportingRackLayout">{{ t('rack.exportLayout') }}</el-dropdown-item>
-                        <el-dropdown-item
-                          v-if="can('racks.manage')"
-                          divided
-                          command="delete"
-                          :disabled="currentRackHasAssets"
-                          :title="currentRackHasAssets ? rackDeleteHint : undefined"
-                        >{{ t('common.delete') }}</el-dropdown-item>
-                      </el-dropdown-menu>
-                    </template>
-                  </el-dropdown>
+                    @click="updateCurrentRackStatus"
+                  >{{ rackStatusActionLabel(currentRack) }}</el-button>
+                  <el-button
+                    link
+                    :loading="updatingRackId === currentRack.id"
+                    :disabled="deletingRackId === currentRack.id || updatingRackId === currentRack.id || exportingRackLayout"
+                    @click="updateCurrentRackReservation"
+                  >{{ rackReservationActionLabel(currentRack) }}</el-button>
+                  <el-button
+                    link
+                    type="danger"
+                    :loading="deletingRackId === currentRack.id"
+                    :disabled="currentRackHasAssets || deletingRackId === currentRack.id || updatingRackId === currentRack.id || exportingRackLayout"
+                    :title="currentRackHasAssets ? rackDeleteHint : undefined"
+                    @click="deleteCurrentRack"
+                  >{{ t('common.delete') }}</el-button>
                 </div>
               </div>
             </template>
@@ -348,16 +319,6 @@ function handleCurrentRackCommand(command: string) {
         </section>
       </PageContent>
     </PageContainer>
-
-    <el-drawer v-model="showRackInfo" :title="t('rack.rackInfo')" size="360px">
-      <DescriptionList
-        v-if="currentRack"
-        class="rack-info-descriptions"
-        :items="rackInfoItems"
-        :columns="1"
-        size="small"
-      />
-    </el-drawer>
 
     <RackFormDialog :context="context" />
   </div>

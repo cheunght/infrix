@@ -1,5 +1,6 @@
 <script setup lang="ts">
-import { computed } from "vue";
+import { computed, ref } from "vue";
+import type { TableInstance, TableColumnCtx } from "element-plus";
 import { useI18n } from "vue-i18n";
 import { CircleCheck, CircleClose, Delete, Edit, FolderAdd, Grid } from "@element-plus/icons-vue";
 import ResourceState from "./ResourceState.vue";
@@ -43,6 +44,17 @@ type LocationTreeRow = {
 };
 
 const treeProps = { children: "children" };
+const locationTable = ref<TableInstance>();
+
+function toggleLocationRow(row: LocationTreeRow, column: TableColumnCtx<LocationTreeRow>, event: MouseEvent) {
+  if (!row.children?.length || column?.columnKey === "actions") return;
+  if (event.target instanceof Element && event.target.closest(".el-table__expand-icon, button, a, input")) return;
+  locationTable.value?.toggleRowExpansion(row);
+}
+
+function locationRowClass({ row }: { row: LocationTreeRow }) {
+  return row.children?.length ? "location-row--expandable" : "";
+}
 
 const roomCapacityById = computed(() => new Map(
   (facilitySummary.value?.rooms || []).map((room) => [
@@ -186,12 +198,14 @@ function handleRoomCommand(row: LocationTreeRow, command: string) {
       @retry="context.retryLocationManagement"
     >
       <el-table
+        ref="locationTable"
         class="location-management-table"
         v-loading="locationManagementLoading"
         :data="locationRows"
         row-key="key"
-        default-expand-all
         :tree-props="treeProps"
+        :row-class-name="locationRowClass"
+        @row-click="toggleLocationRow"
       >
         <template #empty>
           <el-empty :image-size="56" :description="emptyDescription">
@@ -233,7 +247,7 @@ function handleRoomCommand(row: LocationTreeRow, command: string) {
             <StatusTag size="small" :tone="row.is_active ? 'success' : 'info'" :label="row.is_active ? t('status.active') : t('status.inactive')" />
           </template>
         </el-table-column>
-        <el-table-column :label="t('common.operation')" width="132" fixed="right">
+        <el-table-column :label="t('common.operation')" column-key="actions" width="132" fixed="right">
           <template #default="{ row }">
             <div class="ep-table-actions" @click.stop>
               <template v-if="row.nodeType === 'data-center'">
