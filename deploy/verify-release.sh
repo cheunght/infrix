@@ -33,6 +33,18 @@ env_value() {
   awk -F= -v key="$key" '$1 == key { sub(/^[^=]*=/, ""); print; exit }' "$ENV_FILE"
 }
 
+verify_nginx_https_contract() {
+  if grep -Eq '^[[:space:]]*listen[[:space:]]+(443|\[::\]:443)[[:space:]]+ssl([[:space:]]|;|$)' "$NGINX_CONF_FILE"; then
+    grep -Fq 'proxy_set_header X-Forwarded-Proto https;' "$NGINX_CONF_FILE" || \
+      fail "本机 TLS Nginx 必须向 Gunicorn 转发 X-Forwarded-Proto https。"
+    log "Nginx HTTPS 契约通过：本机 TLS 终止。"
+  else
+    grep -Fq 'proxy_set_header X-Forwarded-Proto $http_x_forwarded_proto;' "$NGINX_CONF_FILE" || \
+      fail "网关模式 Nginx 必须转发可信外部网关提供的 X-Forwarded-Proto。"
+    log "Nginx HTTPS 契约通过：外部网关终止 TLS。"
+  fi
+}
+
 production_security_gate() {
   local env_value_value debug_value secret_value hosts_value csrf_origins_value
   local https_mode ssl_redirect session_secure csrf_secure hsts_seconds forwarded_host base_url_lower
@@ -80,8 +92,7 @@ production_security_gate() {
     "$APP_DIR/scripts/check-production-config.py" \
     --env-file "$ENV_FILE" --require-proxy || fail "生产配置 preflight 未通过。"
   [[ -f "$NGINX_CONF_FILE" ]] || fail "未找到 Nginx 配置：$NGINX_CONF_FILE"
-  grep -Fq 'proxy_set_header X-Forwarded-Proto $http_x_forwarded_proto;' "$NGINX_CONF_FILE" || \
-    fail "Nginx 未保留受信任外部网关的 X-Forwarded-Proto 转发契约。"
+  verify_nginx_https_contract
   log "生产安全配置门禁通过（密钥值不会输出）。"
 }
 

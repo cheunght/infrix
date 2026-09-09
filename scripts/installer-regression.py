@@ -97,6 +97,39 @@ class InstallerRegression(unittest.TestCase):
         self.assertEqual(result.returncode, 1)
         self.assertIn('RECOVERY:start infrix', result.stderr)
 
+    def test_verify_release_accepts_local_tls_and_gateway_contracts(self):
+        source = (ROOT / 'deploy/verify-release.sh').read_text()
+        start = source.index('verify_nginx_https_contract() {')
+        end = source.index('\n}\n\nproduction_security_gate()', start) + 2
+        function_source = source[start:end]
+
+        def run_contract(configuration):
+            current = self.directory / 'verify-release-nginx.conf'
+            current.write_text(configuration)
+            return subprocess.run(
+                ['bash', '-c', 'fail() { printf "%s\\n" "$*" >&2; exit 1; }; log() { :; };\n'
+                 + function_source + '\nverify_nginx_https_contract'],
+                env=dict(os.environ, NGINX_CONF_FILE=str(current)),
+                text=True,
+                capture_output=True,
+            )
+
+        local_tls = run_contract(
+            'server {\n    listen 443 ssl;\n'
+            '    proxy_set_header X-Forwarded-Proto https;\n}\n'
+        )
+        gateway = run_contract(
+            'server {\n    listen 80;\n'
+            '    proxy_set_header X-Forwarded-Proto $http_x_forwarded_proto;\n}\n'
+        )
+        invalid = run_contract(
+            'server {\n    listen 443 ssl;\n'
+            '    proxy_set_header X-Forwarded-Proto $http_x_forwarded_proto;\n}\n'
+        )
+        self.assertEqual(local_tls.returncode, 0, local_tls.stderr)
+        self.assertEqual(gateway.returncode, 0, gateway.stderr)
+        self.assertNotEqual(invalid.returncode, 0)
+
 
 if __name__ == '__main__':
     unittest.main(verbosity=2)
