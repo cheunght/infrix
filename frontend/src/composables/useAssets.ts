@@ -702,6 +702,7 @@ export function useAssets(deps: AssetsDeps) {
   const importResult = ref<ImportResult>({ created: 0, total: 0, errors: [] });
   let importController: AbortController | null = null;
   const detailRequestId = ref(0);
+  let detailController: AbortController | null = null;
   const detailAssetId = ref<number | null>(null);
   const inventoryHistoryItems = ref<InventoryItem[]>([]);
   const inventoryHistoryLatest = ref<InventoryItem | null>(null);
@@ -1459,6 +1460,12 @@ export function useAssets(deps: AssetsDeps) {
 
   async function openAssetDetail(assetId: number) {
     if (!deps.can("assets.view")) return;
+    // Asset details can be opened by a QR deep link while the routed page is
+    // still loading its list. Keep this request independent from the page
+    // load controller so a subsequent list refresh cannot cancel the detail.
+    detailController?.abort();
+    const controller = new AbortController();
+    detailController = controller;
     const requestId = ++detailRequestId.value;
     detailAssetId.value = assetId;
     resetInventoryHistoryState();
@@ -1469,7 +1476,7 @@ export function useAssets(deps: AssetsDeps) {
     deps.detailAsset.value = null;
     let detailLoaded = false;
     try {
-      const asset = await deps.request<AssetDetail>(`/assets/${assetId}/`);
+      const asset = await deps.request<AssetDetail>(`/assets/${assetId}/`, { signal: controller.signal });
       if (requestId === detailRequestId.value) {
         deps.detailAsset.value = asset;
         inventoryHistoryTotal.value = asset.inventory_records_count || 0;
@@ -1481,7 +1488,10 @@ export function useAssets(deps: AssetsDeps) {
         deps.detailError.value = errorMessage(error, tr("asset.assetDetailLoadFailed"));
       }
     } finally {
-      if (requestId === detailRequestId.value) deps.detailLoading.value = false;
+      if (requestId === detailRequestId.value) {
+        deps.detailLoading.value = false;
+        if (detailController === controller) detailController = null;
+      }
     }
     if (detailLoaded && requestId === detailRequestId.value) {
       await Promise.all([
@@ -2471,6 +2481,8 @@ export function useAssets(deps: AssetsDeps) {
     setAssetRackMounted,
     closeAssetDetail: deps.closeAssetDetail,
     invalidateDetail: () => {
+      detailController?.abort();
+      detailController = null;
       detailRequestId.value += 1;
       resetInventoryHistoryState();
       resetResponsibilityHistoryState();
