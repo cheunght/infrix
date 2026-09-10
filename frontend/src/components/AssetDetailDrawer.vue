@@ -96,7 +96,7 @@ const assetIdentityMeta = computed(() => {
             type="primary"
             :icon="Grid"
             @click="showQrDialog = true"
-            >{{ t("asset.generateQr") }}</el-button
+            >{{ t("asset.printLabels") }}</el-button
           >
         </div>
       </div>

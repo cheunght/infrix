@@ -14,6 +14,16 @@ VALIDATION_CONFIG_KEYS = {
     "boolean": set(),
 }
 
+# AssetCustomValue.number_value remains stored in DecimalField(max_digits=20,
+# decimal_places=6) for compatibility with existing data. New logical values
+# are limited to two decimal places before they reach the database.
+CUSTOM_VALUE_NUMBER_MAX_DIGITS = 20
+CUSTOM_VALUE_NUMBER_STORAGE_DECIMAL_PLACES = 6
+CUSTOM_VALUE_NUMBER_DECIMAL_PLACES = 2
+CUSTOM_VALUE_NUMBER_MAX_INTEGER_DIGITS = (
+    CUSTOM_VALUE_NUMBER_MAX_DIGITS - CUSTOM_VALUE_NUMBER_STORAGE_DECIMAL_PLACES
+)
+
 
 def _validation_integer(value, label, *, maximum=None):
     if isinstance(value, bool) or not isinstance(value, int) or value < 0:
@@ -61,7 +71,7 @@ def normalize_validation_config(field_type, value):
         if key in {"min_length", "max_length", "min_items", "max_items"}:
             normalized[key] = _validation_integer(raw, key)
         elif key == "precision":
-            normalized[key] = _validation_integer(raw, key, maximum=6)
+            normalized[key] = _validation_integer(raw, key, maximum=CUSTOM_VALUE_NUMBER_DECIMAL_PLACES)
         elif key in {"min", "max"}:
             normalized[key] = _validation_decimal(raw, key)
         elif key in {"min_date", "max_date"}:
@@ -134,6 +144,13 @@ def _decimal_places(value):
     return max(0, -exponent - trailing_zeroes)
 
 
+def _decimal_integer_digits(value):
+    """Return the number of digits to the left of the decimal point."""
+    if value == 0:
+        return 1
+    return max(1, value.adjusted() + 1)
+
+
 def _normalized_decimal(value):
     text = format(value, "f")
     if "." in text:
@@ -141,7 +158,14 @@ def _normalized_decimal(value):
     return text or "0"
 
 
-def validate_custom_field_value(field, value, *, allowed_inactive_options=None):
+def validate_custom_field_value(
+    field,
+    value,
+    *,
+    allowed_inactive_options=None,
+    allowed_option_values=None,
+    validate_empty=False,
+):
     """Validate one logical custom field value and return a JSON-safe value.
 
     Required/optional presence is intentionally handled by the asset value
@@ -153,7 +177,7 @@ def validate_custom_field_value(field, value, *, allowed_inactive_options=None):
     config = normalize_validation_config(field_type, field.validation_config or {})
     label = getattr(field, "name", "自定义字段")
 
-    if custom_field_value_is_empty(value, field_type):
+    if custom_field_value_is_empty(value, field_type) and not validate_empty:
         return None
 
     if field_type in {"text", "textarea"}:
@@ -168,12 +192,17 @@ def validate_custom_field_value(field, value, *, allowed_inactive_options=None):
 
     if field_type == "number":
         number = _parse_decimal(value, label)
+        if _decimal_integer_digits(number) > CUSTOM_VALUE_NUMBER_MAX_INTEGER_DIGITS:
+            raise ValueError(
+                f"{label}整数部分不能超过 {CUSTOM_VALUE_NUMBER_MAX_INTEGER_DIGITS} 位"
+            )
         if "min" in config and number < Decimal(config["min"]):
             raise ValueError(f"{label}不能小于 {config['min']}")
         if "max" in config and number > Decimal(config["max"]):
             raise ValueError(f"{label}不能大于 {config['max']}")
-        if "precision" in config and _decimal_places(number) > config["precision"]:
-            raise ValueError(f"{label}最多支持 {config['precision']} 位小数")
+        precision = config.get("precision", CUSTOM_VALUE_NUMBER_DECIMAL_PLACES)
+        if _decimal_places(number) > precision:
+            raise ValueError(f"{label}最多支持 {precision} 位小数")
         return _normalized_decimal(number)
 
     if field_type == "date":
@@ -198,7 +227,11 @@ def validate_custom_field_value(field, value, *, allowed_inactive_options=None):
             if not isinstance(value, list):
                 raise ValueError(f"{label}必须是选项数组")
             submitted_values = value
-        options = {option.value for option in field.options.all() if option.is_active}
+        options = (
+            set(allowed_option_values)
+            if allowed_option_values is not None
+            else {option.value for option in field.options.all() if option.is_active}
+        )
         if allowed_inactive_options:
             inactive_options = {
                 option.value

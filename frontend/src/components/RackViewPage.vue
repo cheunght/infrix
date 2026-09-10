@@ -12,6 +12,7 @@ import SearchField from "./SearchField.vue";
 import PageContainer from "./page/PageContainer.vue";
 import PageContent from "./page/PageContent.vue";
 import PageToolbar from "./page/PageToolbar.vue";
+import ToolbarIconButton from "./page/ToolbarIconButton.vue";
 import type { Rack, RackStatus, ServerRoom } from "../types";
 import type { RackSharedContext } from "../page-context";
 import { rackStatusValue } from "../business-enums";
@@ -211,16 +212,14 @@ function deleteCurrentRack() {
             </div>
           </template>
           <template v-if="rackSection === 'view'" #actions>
-            <el-button
+            <ToolbarIconButton
               v-if="can('racks.export')"
-              class="toolbar-secondary-action toolbar-export-action"
               :icon="Download"
+              :label="t('rack.exportLayout')"
               :loading="exportingRackLayout"
               :disabled="exportingRackLayout"
               @click="context.exportRackLayout"
-            >
-              {{ t('rack.exportLayout') }}
-            </el-button>
+            />
           </template>
           <template #primary>
             <el-button v-if="can('racks.manage') && rackSection === 'locations'" class="page-primary-action" type="primary" @click="context.openDataCenterModal()">

@@ -48,6 +48,7 @@ export type AuditDetail = {
 
 const RESOURCE_LABELS: Record<string, string> = {
   asset: "auditLog.resources.asset",
+  asset_model: "auditLog.resources.asset_model",
   manufacturer: "auditLog.resources.manufacturer",
   device_type: "auditLog.resources.device_type",
   data_center: "auditLog.resources.data_center",
@@ -99,6 +100,7 @@ export const auditActionOptions = Object.entries(ACTION_LABELS).map(([value, lab
 const REFERENCE_KEYS = new Set([
   "actor",
   "asset",
+  "asset_model",
   "manufacturer",
   "device_type",
   "data_center",

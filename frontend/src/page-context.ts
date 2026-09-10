@@ -11,6 +11,8 @@ import type {
 } from "./router";
 import type {
   Asset,
+  AssetModel,
+  AssetBatchAssignmentAction,
   AssetStatus,
   AssetCustomFilter,
   AssetSortField,
@@ -34,6 +36,7 @@ import type {
   LdapDiagnosticResult,
   LdapStatus,
   ManagedUser,
+  PersonOption,
   Rack,
   RackFormState,
   RackStatus,
@@ -64,7 +67,9 @@ export interface AssetFormState {
   asset_no: string;
   name: string;
   manufacturer_id: string;
+  asset_model_id: string;
   model: string;
+  warranty_months: string;
   device_type: string;
   manufacturer_model: string;
   serial_number: string;
@@ -184,13 +189,30 @@ export interface AssetLedgerContext {
   retryAssetListCustomSchema: () => void | Promise<void>;
   can: CapabilityFn;
   openNewAssetModal: () => void | Promise<void>;
+  people: Ref<PersonOption[]>;
+  peopleLoading: Ref<boolean>;
+  peopleError: Ref<string>;
+  loadResponsibilitySubjects: (search?: string) => void | Promise<boolean>;
   selectedAssetIds: Ref<number[]>;
   assetBatchDeleteSaving: Ref<boolean>;
   assetBatchDeleteResult: Ref<import("./types").AssetBatchDeleteResponse | null>;
   showAssetBatchDeleteResult: Ref<boolean>;
+  assetBatchAssignmentSaving: Ref<boolean>;
+  assetBatchAssignmentError: Ref<string>;
+  assetBatchAssignmentResult: Ref<import("./types").AssetBatchAssignmentResponse | null>;
+  showAssetBatchAssignmentResult: Ref<boolean>;
+  assetLabelPrintLoading: Ref<boolean>;
+  batchAssignAssets: (
+    action: AssetBatchAssignmentAction,
+    assetIds: number[],
+    targetPersonId: number,
+    reason: string,
+  ) => void | Promise<boolean>;
+  closeAssetBatchAssignmentResult: () => void;
   deleteSelectedAssets: () => void | Promise<void>;
   closeAssetBatchDeleteResult: () => void;
   exportAssets: () => void | Promise<void>;
+  loadAllAssetsForLabels: () => Promise<Asset[] | null>;
   registerFaultFromSelection: () => void | Promise<void>;
   downloadImportTemplate: () => void | Promise<void>;
   openImportDialog: () => void;
@@ -219,6 +241,7 @@ export interface AssetFormContext {
   assetFormLoadError: Ref<string>;
   assetFormSaving: Ref<boolean>;
   assetFormFieldErrors: Ref<Record<string, string>>;
+  assetCloneCustomValueWarning: Ref<string>;
   retryAssetFormLoad: () => void | Promise<void>;
   clearAssetFormErrors: () => void;
   assetCustomSchemaLoading: Ref<boolean>;
@@ -231,7 +254,11 @@ export interface AssetFormContext {
   activeDeviceTypes: ComputedRef<DictionaryItem[]>;
   syncAssetDeviceType: () => void | Promise<void>;
   manufacturerOptions: ComputedRef<DictionaryItem[]>;
-  people: Ref<Person[]>;
+  assetModels: Ref<AssetModel[]>;
+  assetModelsLoading: Ref<boolean>;
+  assetModelsError: Ref<string>;
+  retryAssetModels: () => void | Promise<boolean>;
+  people: Ref<PersonOption[]>;
   peopleLoading: Ref<boolean>;
   peopleError: Ref<string>;
   retryPeople: () => void | Promise<boolean>;
@@ -266,7 +293,7 @@ export interface AssetResponsibilityHistoryContext {
 
 export interface AssetResponsibilityContext extends AssetResponsibilityHistoryContext {
   can: CapabilityFn;
-  responsibilitySubjects: Ref<Person[]>;
+  responsibilitySubjects: Ref<PersonOption[]>;
   responsibilitySubjectsLoading: Ref<boolean>;
   responsibilitySubjectsError: Ref<string>;
   loadResponsibilitySubjects: (search?: string) => void | Promise<boolean>;
@@ -566,6 +593,7 @@ export interface InventoryContext {
 
 export interface SettingsContext extends CustomFieldContext, TagContext {
   request: RequestFn;
+  confirmAction: (message: string) => Promise<boolean>;
   loading: Ref<boolean>;
   settingsSection: Ref<SettingsSection>;
   organizationTab: Ref<OrganizationTab>;

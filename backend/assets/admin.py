@@ -40,6 +40,7 @@ for model in [
     Rack,
     Manufacturer,
     DeviceType,
+    AssetModel,
     CustomField,
     CustomFieldOption,
     Tag,
@@ -58,7 +59,6 @@ for model in [
     FaultEvent,
     RepairRecord,
     RepairPartUsage,
-    AssetRelation,
     InventoryTask,
     InventoryItem,
 ]:

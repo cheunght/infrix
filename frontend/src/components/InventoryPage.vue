@@ -28,6 +28,7 @@ import ActionDialogShell from "./ActionDialogShell.vue";
 import FieldHelp from "./FieldHelp.vue";
 import FormDialogShell from "./FormDialogShell.vue";
 import TableIconButton from "./TableIconButton.vue";
+import ToolbarIconButton from "./page/ToolbarIconButton.vue";
 import AssetQrScanner from "./AssetQrScanner.vue";
 import { ElMessageBox } from "element-plus/es/components/message-box/index.mjs";
 import type { FormInstance, FormRules } from "element-plus";
@@ -57,7 +58,7 @@ const scanReadyForNext = ref(false);
 const selectionSyncing = ref(false);
 const taskRules = computed<FormRules>(() => ({
   name: [{ required: true, message: t("validation.required", { field: t("inventory.taskName") }), trigger: "blur" }],
-  data_center: [{ required: true, message: t("validation.selectRequired", { field: t("common.dataCenter") }), trigger: "change" }],
+  data_center: [{ required: true, message: t("validation.selectRequired", { field: t("inventory.scope") }), trigger: "change" }],
   start_at: [{ required: true, message: t("validation.selectRequired", { field: t("inventory.startTime") }), trigger: "change" }],
   end_at: [{ required: true, message: t("validation.selectRequired", { field: t("inventory.endTime") }), trigger: "change" }],
 }));
@@ -89,7 +90,7 @@ const {
   canRecordInventory, canResolveInventoryAnomaly,
   selectedBatchItems, batchSelectionMode, isBatchSelectable, onBatchSelectionChange, batchSelectionModeFor,
   isBatchSelectableForMode, batchResolutionActionOptions, clearBatchSelection,
-  taskScope, loadInitialData, loadTasks, loadItems, retryActiveTask, openTask, closeTask,
+  taskScope, scopePreviewLabel, loadInitialData, loadTasks, loadItems, retryActiveTask, openTask, closeTask,
   openNewTask, changeTaskDataCenter, saveTask, deleteTask, completeTask, reopenTask, exportTask, exportingTaskId,
   changeTaskServerRoom, retryScopePreview, closeTaskDialog,
   openItem, changeItemStatus, saveItem, saveItemAndNext, changeTaskPage, changeTaskPageSize,
@@ -186,9 +187,18 @@ const bulkNormalFailures = computed(() =>
 const scopePreviewWarnings = computed(() => {
   const preview = scopePreview.value;
   if (!preview) return [];
-  const warnings = [...(preview.warnings || [])];
+  const warnings: string[] = [];
+  if (preview.unracked > 0) {
+    warnings.push(t("inventory.unmountedWarning", { count: preview.unracked }));
+  }
   if (preview.retired > 0) {
     warnings.push(t("inventory.retiredWarning", { count: preview.retired }));
+  }
+  if (preview.unassigned > 0) {
+    warnings.push(t("inventory.unassignedWarning", { count: preview.unassigned }));
+  }
+  if (preview.inactive_location > 0) {
+    warnings.push(t("inventory.inactiveLocationWarning", { count: preview.inactive_location }));
   }
   return Array.from(new Set(warnings));
 });
@@ -506,9 +516,14 @@ onMounted(async () => {
           </template>
           <template #actions>
             <StatusTag :tone="statusTone(activeTask.status)" :label="taskStatusLabel(activeTask.status)" />
-            <el-button v-if="can('inventory.export')" :icon="Download" :loading="exportingTaskId === activeTask.id" :disabled="exportingTaskId !== null" @click="exportTask()">
-              {{ t('common.export') }}
-            </el-button>
+            <ToolbarIconButton
+              v-if="can('inventory.export')"
+              :icon="Download"
+              :label="t('common.export')"
+              :loading="exportingTaskId === activeTask.id"
+              :disabled="exportingTaskId !== null"
+              @click="exportTask()"
+            />
             <el-button
               v-if="can('inventory.manage') && activeTask.status === 'in_progress'"
               type="primary"
@@ -587,7 +602,12 @@ onMounted(async () => {
             <template #actions>
               <el-popover v-if="activeTask.status === 'in_progress'" v-model:visible="scanPopoverVisible" placement="bottom-end" :width="380" trigger="click" @show="focusAssetScanner">
                 <template #reference>
-                  <el-button :icon="Grid">{{ t('inventory.scanAsset') }}</el-button>
+                  <el-button
+                    class="page-toolbar-icon-action"
+                    :icon="Grid"
+                    :aria-label="t('inventory.scanAsset')"
+                    :title="t('inventory.scanAsset')"
+                  />
                 </template>
                 <AssetQrScanner
                   ref="scannerRef"
@@ -778,9 +798,9 @@ onMounted(async () => {
       <el-form ref="taskFormRef" class="horizontal-form inventory-task-form" :model="taskForm" :rules="taskRules" :validate-on-rule-change="false" label-position="right" @submit.prevent="submitTask">
         <div class="horizontal-form__rows">
           <el-form-item :label="t('inventory.taskName')" prop="name" :error="taskFormErrors.name"><el-input v-model="taskForm.name" :placeholder="t('inventory.taskNamePlaceholder')" /></el-form-item>
-          <el-form-item :label="t('common.dataCenter')" prop="data_center" :error="taskFormErrors.data_center"><el-select v-model="taskForm.data_center" :loading="auxLoading" @change="changeTaskDataCenter"><el-option v-for="center in activeDataCenters" :key="center.id" :label="center.name" :value="String(center.id)" /></el-select></el-form-item>
+          <el-form-item :label="t('inventory.scope')" prop="data_center" :error="taskFormErrors.data_center"><el-select v-model="taskForm.data_center" :loading="auxLoading" @change="changeTaskDataCenter"><el-option :label="t('inventory.allAssets')" value="all_assets" /><el-option v-for="center in activeDataCenters" :key="center.id" :label="center.name" :value="String(center.id)" /></el-select></el-form-item>
           <el-form-item :label="t('common.room')" :error="taskFormErrors.server_room">
-            <el-select v-model="taskForm.server_room" clearable :disabled="Boolean(taskAuxError)" :placeholder="t('inventory.wholeDataCenter')" @change="changeTaskServerRoom"><el-option v-for="room in activeRooms" :key="room.id" :label="room.name" :value="String(room.id)" /></el-select>
+            <el-select v-model="taskForm.server_room" clearable :disabled="taskForm.data_center === 'all_assets' || Boolean(taskAuxError)" :placeholder="t('inventory.wholeDataCenter')" @change="changeTaskServerRoom"><el-option v-for="room in activeRooms" :key="room.id" :label="room.name" :value="String(room.id)" /></el-select>
             <FieldHelp :text="taskRoomHelp" />
           </el-form-item>
         </div>
@@ -796,7 +816,7 @@ onMounted(async () => {
             <div class="inventory-scope-preview__state inventory-scope-preview__state--error">{{ t('inventory.rangeLoadFailed') }}</div>
           </template>
           <template v-else-if="scopePreview">
-            <div class="inventory-scope-preview__scope">{{ scopePreview.scope_label }}</div>
+            <div class="inventory-scope-preview__scope">{{ scopePreviewLabel(scopePreview) }}</div>
             <div class="inventory-scope-preview__total"><strong>{{ scopePreview.total }}</strong><span>{{ t('inventory.rangeAssets') }}</span></div>
             <div class="inventory-scope-preview__stats">
               <span>{{ t('inventory.mounted') }}<strong>{{ scopePreview.racked }}</strong></span>
@@ -807,10 +827,11 @@ onMounted(async () => {
             <ul v-if="scopePreviewWarnings.length" class="inventory-scope-preview__warnings">
               <li v-for="warning in scopePreviewWarnings" :key="warning">{{ warning }}</li>
             </ul>
-            <p class="inventory-scope-preview__help">
+            <p v-if="scopePreview.scope === 'all_assets'" class="inventory-scope-preview__help">{{ t('inventory.allAssetsIncludes') }}</p>
+            <p v-else class="inventory-scope-preview__help">
               {{ scopePreview.includes_unracked ? t('inventory.wholeCenterIncludesUnmounted') : t('inventory.roomIncludesMounted') }}
             </p>
-            <p class="inventory-scope-preview__help">{{ t('inventory.inactiveExcluded') }}</p>
+            <p v-if="scopePreview.scope !== 'all_assets'" class="inventory-scope-preview__help">{{ t('inventory.inactiveExcluded') }}</p>
             <p class="inventory-scope-preview__help">{{ t('inventory.snapshotNotice') }}</p>
           </template>
           <div v-else class="inventory-scope-preview__state">{{ t('inventory.selectDataCenterHint') }}</div>

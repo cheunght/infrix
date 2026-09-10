@@ -2,12 +2,20 @@ import { reactive } from "vue";
 import { currentLocale } from "./i18n";
 import type { AssetStatus, CurrencyCode, DateFormat, SystemLocale, SystemSettings } from "./types";
 
+function detectedTimeZone(): string {
+  try {
+    return Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC";
+  } catch {
+    return "UTC";
+  }
+}
+
 /** Small shared snapshot for defaults consumed by more than one composable. */
 export const systemSettingsState = reactive({
   defaultPageSize: 50,
   defaultAssetStatus: "in_stock" as AssetStatus,
   defaultLocale: "zh-CN" as SystemLocale,
-  timezone: "Asia/Shanghai",
+  timezone: detectedTimeZone(),
   dateFormat: "YYYY-MM-DD" as DateFormat,
   currency: "CNY" as CurrencyCode,
   passwordMinLength: 8,
@@ -28,7 +36,7 @@ function safeTimeZone(value: string): string {
     new Intl.DateTimeFormat("en-US", { timeZone: value }).format();
     return value;
   } catch {
-    return "Asia/Shanghai";
+    return detectedTimeZone();
   }
 }
 

@@ -11,6 +11,7 @@ class Migration(migrations.Migration):
     dependencies = [
         migrations.swappable_dependency(settings.AUTH_USER_MODEL),
     ]
+
     operations = [
         migrations.CreateModel(
             name='DataCenter',
@@ -126,7 +127,6 @@ class Migration(migrations.Migration):
                 ('default_page_size', models.PositiveSmallIntegerField(choices=[(20, '20'), (50, '50'), (100, '100')], default=50)),
                 ('default_asset_status', models.CharField(choices=[('in_stock', '在库'), ('in_use', '在用'), ('idle', '闲置'), ('retired', '已报废')], default='in_stock', max_length=20)),
                 ('default_locale', models.CharField(choices=[('zh-CN', '简体中文'), ('en-US', 'English')], default='zh-CN', max_length=10)),
-                ('timezone', models.CharField(default='Asia/Shanghai', max_length=64)),
                 ('date_format', models.CharField(choices=[('YYYY-MM-DD', 'YYYY-MM-DD'), ('DD/MM/YYYY', 'DD/MM/YYYY'), ('MM/DD/YYYY', 'MM/DD/YYYY')], default='YYYY-MM-DD', max_length=20)),
                 ('currency', models.CharField(choices=[('CNY', 'CNY (¥)'), ('USD', 'USD ($)'), ('EUR', 'EUR (€)'), ('GBP', 'GBP (£)'), ('JPY', 'JPY (¥)'), ('HKD', 'HKD (HK$)')], default='CNY', max_length=3)),
                 ('password_min_length', models.PositiveSmallIntegerField(default=8)),
@@ -249,21 +249,21 @@ class Migration(migrations.Migration):
             },
         ),
         migrations.CreateModel(
-            name='Person',
+            name='AssetModel',
             fields=[
                 ('id', models.BigAutoField(auto_created=True, primary_key=True, serialize=False, verbose_name='ID')),
                 ('created_at', models.DateTimeField(auto_now_add=True)),
                 ('updated_at', models.DateTimeField(auto_now=True)),
-                ('account', models.OneToOneField(blank=True, null=True, on_delete=django.db.models.deletion.SET_NULL, related_name='person', to=settings.AUTH_USER_MODEL)),
                 ('name', models.CharField(max_length=160)),
-                ('employee_no', models.CharField(blank=True, max_length=80, null=True, unique=True)),
-                ('organization', models.CharField(blank=True, max_length=160)),
-                ('contact', models.CharField(blank=True, max_length=160)),
+                ('model_number', models.CharField(blank=True, max_length=160)),
+                ('default_warranty_months', models.PositiveIntegerField(blank=True, null=True)),
+                ('expected_life_months', models.PositiveIntegerField(blank=True, null=True)),
                 ('is_active', models.BooleanField(default=True)),
-                ('department', models.ForeignKey(blank=True, null=True, on_delete=django.db.models.deletion.PROTECT, related_name='people', to='assets.department')),
+                ('device_type', models.ForeignKey(blank=True, null=True, on_delete=django.db.models.deletion.SET_NULL, related_name='asset_models', to='assets.devicetype')),
+                ('manufacturer', models.ForeignKey(blank=True, null=True, on_delete=django.db.models.deletion.SET_NULL, related_name='asset_models', to='assets.manufacturer')),
             ],
             options={
-                'ordering': ['name', 'employee_no', 'id'],
+                'ordering': ['name', 'manufacturer__name', 'id'],
             },
         ),
         migrations.CreateModel(
@@ -284,9 +284,10 @@ class Migration(migrations.Migration):
                 ('residual_rate', models.DecimalField(blank=True, decimal_places=4, max_digits=5, null=True)),
                 ('depreciation_method', models.CharField(blank=True, choices=[('straight_line', '直线法')], default=None, max_length=20, null=True)),
                 ('model', models.CharField(blank=True, max_length=160)),
+                ('warranty_months', models.PositiveIntegerField(blank=True, null=True)),
                 ('notes', models.TextField(blank=True)),
                 ('asset_data_center', models.ForeignKey(blank=True, help_text='未上架资产的所属数据中心；已上架资产以机柜归属为准', null=True, on_delete=django.db.models.deletion.PROTECT, related_name='unmounted_assets', to='assets.datacenter')),
-                ('assigned_person', models.ForeignKey(blank=True, help_text='当前使用人；指定、归还和转交通过使用人操作维护', null=True, on_delete=django.db.models.deletion.PROTECT, related_name='assigned_assets', to='assets.person')),
+                ('asset_model', models.ForeignKey(blank=True, help_text='结构化资产型号；型号元数据仅用于创建资产时的默认值', null=True, on_delete=django.db.models.deletion.PROTECT, related_name='assets', to='assets.assetmodel')),
                 ('device_type', models.ForeignKey(blank=True, null=True, on_delete=django.db.models.deletion.SET_NULL, related_name='assets', to='assets.devicetype')),
                 ('manufacturer', models.ForeignKey(blank=True, null=True, on_delete=django.db.models.deletion.SET_NULL, related_name='assets', to='assets.manufacturer')),
             ],
@@ -330,6 +331,29 @@ class Migration(migrations.Migration):
             options={
                 'constraints': [models.UniqueConstraint(fields=('window_date', 'recipient_key'), name='unique_digest_recipient_day')],
             },
+        ),
+        migrations.CreateModel(
+            name='Person',
+            fields=[
+                ('id', models.BigAutoField(auto_created=True, primary_key=True, serialize=False, verbose_name='ID')),
+                ('created_at', models.DateTimeField(auto_now_add=True)),
+                ('updated_at', models.DateTimeField(auto_now=True)),
+                ('name', models.CharField(max_length=160)),
+                ('employee_no', models.CharField(blank=True, max_length=80, null=True, unique=True)),
+                ('organization', models.CharField(blank=True, max_length=160)),
+                ('contact', models.CharField(blank=True, max_length=160)),
+                ('is_active', models.BooleanField(default=True)),
+                ('account', models.OneToOneField(blank=True, null=True, on_delete=django.db.models.deletion.SET_NULL, related_name='person', to=settings.AUTH_USER_MODEL)),
+                ('department', models.ForeignKey(blank=True, null=True, on_delete=django.db.models.deletion.PROTECT, related_name='people', to='assets.department')),
+            ],
+            options={
+                'ordering': ['name', 'employee_no', 'id'],
+            },
+        ),
+        migrations.AddField(
+            model_name='asset',
+            name='assigned_person',
+            field=models.ForeignKey(blank=True, help_text='当前使用人；指定、归还和转交通过使用人操作维护', null=True, on_delete=django.db.models.deletion.PROTECT, related_name='assigned_assets', to='assets.person'),
         ),
         migrations.CreateModel(
             name='RackUnitAllocation',
@@ -389,12 +413,13 @@ class Migration(migrations.Migration):
                 ('created_at', models.DateTimeField(auto_now_add=True)),
                 ('updated_at', models.DateTimeField(auto_now=True)),
                 ('name', models.CharField(max_length=160)),
+                ('scope', models.CharField(choices=[('all_assets', '全部资产'), ('data_center', '数据中心'), ('server_room', '机房')], default='data_center', max_length=20)),
                 ('start_at', models.DateTimeField()),
                 ('end_at', models.DateTimeField()),
                 ('status', models.CharField(choices=[('in_progress', '进行中'), ('completed', '已完成')], default='in_progress', max_length=20)),
                 ('completed_at', models.DateTimeField(blank=True, null=True)),
                 ('notes', models.TextField(blank=True)),
-                ('data_center', models.ForeignKey(on_delete=django.db.models.deletion.PROTECT, related_name='inventory_tasks', to='assets.datacenter')),
+                ('data_center', models.ForeignKey(blank=True, null=True, on_delete=django.db.models.deletion.PROTECT, related_name='inventory_tasks', to='assets.datacenter')),
                 ('inspector', models.ForeignKey(on_delete=django.db.models.deletion.PROTECT, related_name='inventory_tasks', to=settings.AUTH_USER_MODEL)),
                 ('server_room', models.ForeignKey(blank=True, null=True, on_delete=django.db.models.deletion.PROTECT, related_name='inventory_tasks', to='assets.serverroom')),
             ],
@@ -550,51 +575,6 @@ class Migration(migrations.Migration):
             },
         ),
         migrations.CreateModel(
-            name='AssetRelation',
-            fields=[
-                ('id', models.BigAutoField(auto_created=True, primary_key=True, serialize=False, verbose_name='ID')),
-                ('created_at', models.DateTimeField(auto_now_add=True)),
-                ('updated_at', models.DateTimeField(auto_now=True)),
-                ('relation_type', models.CharField(max_length=60)),
-                ('metadata', models.JSONField(blank=True, default=dict)),
-                ('effective_from', models.DateTimeField(blank=True, null=True)),
-                ('effective_to', models.DateTimeField(blank=True, null=True)),
-                ('source_asset', models.ForeignKey(on_delete=django.db.models.deletion.CASCADE, related_name='outgoing_relations', to='assets.asset')),
-                ('target_asset', models.ForeignKey(on_delete=django.db.models.deletion.CASCADE, related_name='incoming_relations', to='assets.asset')),
-            ],
-            options={
-                'constraints': [models.UniqueConstraint(fields=('source_asset', 'target_asset', 'relation_type'), name='uniq_asset_relation'), models.CheckConstraint(condition=models.Q(('source_asset', models.F('target_asset')), _negated=True), name='asset_relation_not_self')],
-            },
-        ),
-        migrations.CreateModel(
-            name='AssetAssignmentEvent',
-            fields=[
-                ('id', models.BigAutoField(auto_created=True, primary_key=True, serialize=False, verbose_name='ID')),
-                ('action', models.CharField(choices=[('assign', '领用'), ('return', '归还'), ('transfer', '调拨')], max_length=20)),
-                ('from_person_employee_no', models.CharField(blank=True, max_length=80)),
-                ('from_person_name', models.CharField(blank=True, max_length=160)),
-                ('from_person_department', models.CharField(blank=True, max_length=120)),
-                ('from_person_organization', models.CharField(blank=True, max_length=160)),
-                ('from_person_contact', models.CharField(blank=True, max_length=160)),
-                ('to_person_employee_no', models.CharField(blank=True, max_length=80)),
-                ('to_person_name', models.CharField(blank=True, max_length=160)),
-                ('to_person_department', models.CharField(blank=True, max_length=120)),
-                ('to_person_organization', models.CharField(blank=True, max_length=160)),
-                ('to_person_contact', models.CharField(blank=True, max_length=160)),
-                ('operator_name', models.CharField(blank=True, max_length=150)),
-                ('reason', models.TextField(blank=True)),
-                ('created_at', models.DateTimeField(auto_now_add=True)),
-                ('asset', models.ForeignKey(on_delete=django.db.models.deletion.PROTECT, related_name='assignment_events', to='assets.asset')),
-                ('from_person', models.ForeignKey(blank=True, null=True, on_delete=django.db.models.deletion.SET_NULL, related_name='assignment_from_events', to='assets.person')),
-                ('to_person', models.ForeignKey(blank=True, null=True, on_delete=django.db.models.deletion.SET_NULL, related_name='assignment_to_events', to='assets.person')),
-                ('operator', models.ForeignKey(blank=True, null=True, on_delete=django.db.models.deletion.SET_NULL, related_name='asset_assignment_events', to=settings.AUTH_USER_MODEL)),
-            ],
-            options={
-                'ordering': ['-created_at', '-id'],
-                'indexes': [models.Index(fields=['asset', '-created_at', '-id'], name='assets_asse_asset_i_d7247e_idx')],
-            },
-        ),
-        migrations.CreateModel(
             name='AssetCustomValue',
             fields=[
                 ('id', models.BigAutoField(auto_created=True, primary_key=True, serialize=False, verbose_name='ID')),
@@ -664,6 +644,34 @@ class Migration(migrations.Migration):
             },
         ),
         migrations.CreateModel(
+            name='AssetAssignmentEvent',
+            fields=[
+                ('id', models.BigAutoField(auto_created=True, primary_key=True, serialize=False, verbose_name='ID')),
+                ('action', models.CharField(choices=[('assign', '领用'), ('return', '归还'), ('transfer', '调拨')], max_length=20)),
+                ('from_person_employee_no', models.CharField(blank=True, max_length=80)),
+                ('from_person_name', models.CharField(blank=True, max_length=160)),
+                ('from_person_department', models.CharField(blank=True, max_length=120)),
+                ('from_person_organization', models.CharField(blank=True, max_length=160)),
+                ('from_person_contact', models.CharField(blank=True, max_length=160)),
+                ('to_person_employee_no', models.CharField(blank=True, max_length=80)),
+                ('to_person_name', models.CharField(blank=True, max_length=160)),
+                ('to_person_department', models.CharField(blank=True, max_length=120)),
+                ('to_person_organization', models.CharField(blank=True, max_length=160)),
+                ('to_person_contact', models.CharField(blank=True, max_length=160)),
+                ('operator_name', models.CharField(blank=True, max_length=150)),
+                ('reason', models.TextField(blank=True)),
+                ('created_at', models.DateTimeField(auto_now_add=True)),
+                ('asset', models.ForeignKey(on_delete=django.db.models.deletion.PROTECT, related_name='assignment_events', to='assets.asset')),
+                ('operator', models.ForeignKey(blank=True, null=True, on_delete=django.db.models.deletion.SET_NULL, related_name='asset_assignment_events', to=settings.AUTH_USER_MODEL)),
+                ('from_person', models.ForeignKey(blank=True, null=True, on_delete=django.db.models.deletion.SET_NULL, related_name='assignment_from_events', to='assets.person')),
+                ('to_person', models.ForeignKey(blank=True, null=True, on_delete=django.db.models.deletion.SET_NULL, related_name='assignment_to_events', to='assets.person')),
+            ],
+            options={
+                'ordering': ['-created_at', '-id'],
+                'indexes': [models.Index(fields=['asset', '-created_at', '-id'], name='assets_asse_asset_i_d7247e_idx')],
+            },
+        ),
+        migrations.CreateModel(
             name='ProcurementRecord',
             fields=[
                 ('id', models.BigAutoField(auto_created=True, primary_key=True, serialize=False, verbose_name='ID')),
@@ -715,6 +723,10 @@ class Migration(migrations.Migration):
         migrations.AddConstraint(
             model_name='rack',
             constraint=models.UniqueConstraint(fields=('room', 'code'), name='uniq_rack_per_room'),
+        ),
+        migrations.AddConstraint(
+            model_name='inventorytask',
+            constraint=models.CheckConstraint(condition=models.Q(models.Q(('data_center__isnull', True), ('scope', 'all_assets'), ('server_room__isnull', True)), models.Q(('data_center__isnull', False), ('scope', 'data_center'), ('server_room__isnull', True)), models.Q(('data_center__isnull', False), ('scope', 'server_room'), ('server_room__isnull', False)), _connector='OR'), name='inventory_task_scope_locations_consistent'),
         ),
         migrations.AddConstraint(
             model_name='softwarelicense',

@@ -347,12 +347,28 @@ body {
 .ep-column-list {
   display: grid;
   gap: 8px;
+  max-width: 100%;
   max-height: 360px;
-  overflow: auto;
+  overflow-x: hidden;
+  overflow-y: auto;
 }
 .asset-column-section {
   display: grid;
   gap: 8px;
+  min-width: 0;
+}
+.ep-column-list .el-checkbox {
+  display: flex;
+  align-items: flex-start;
+  max-width: 100%;
+  min-width: 0;
+  height: auto;
+  white-space: normal;
+}
+.ep-column-list .el-checkbox__label {
+  min-width: 0;
+  overflow-wrap: anywhere;
+  white-space: normal;
 }
 .asset-column-section__title {
   color: var(--el-text-color-secondary);
@@ -1136,43 +1152,142 @@ body {
   overflow-wrap: anywhere;
 }
 
+.repair-part-usage-paged-table {
+  width: 100%;
+  min-width: 0;
+  max-width: 100%;
+  overflow-x: hidden;
+}
+
 .repair-part-usage-table {
-  min-width: 0;
+  width: 100%;
+  max-width: 100%;
+  border-collapse: collapse;
+  border-spacing: 0;
+  table-layout: fixed;
+  color: var(--el-text-color-regular);
+  font-size: 13px;
 }
 
-.repair-part-usage-table .cell {
-  line-height: 18px;
-  white-space: normal;
+.repair-part-usage-table__part-column {
+  width: 46%;
+}
+
+.repair-part-usage-table__source-column {
+  width: 36%;
+}
+
+.repair-part-usage-table__quantity-column {
+  width: 18%;
+}
+
+.repair-part-usage-table th,
+.repair-part-usage-table td {
+  min-width: 0;
+  max-width: 100%;
+  padding: 9px 8px;
   overflow-wrap: anywhere;
+  vertical-align: top;
+  word-break: break-word;
 }
 
-.repair-part-usage-table__part {
+.repair-part-usage-table th {
+  border-bottom: 1px solid var(--el-border-color-lighter);
+  color: var(--el-text-color-secondary);
+  font-size: 12px;
+  font-weight: 600;
+  line-height: 18px;
+  text-align: left;
+}
+
+.repair-part-usage-table tbody > tr:not(.repair-part-usage-table__meta-row):not(.repair-part-usage-table__notes-row) > td {
+  border-top: 1px solid var(--el-border-color-lighter);
+}
+
+.repair-part-usage-table__part,
+.repair-part-usage-table__source {
   display: grid;
-  gap: 2px;
+  gap: 3px;
   min-width: 0;
+  max-width: 100%;
 }
 
 .repair-part-usage-table__part strong,
 .repair-part-usage-table__part span,
-.repair-part-usage-table__notes {
+.repair-part-usage-table__origin {
   min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-
-.repair-part-usage-table__part strong,
-.repair-part-usage-table__part span {
-  white-space: nowrap;
+  max-width: 100%;
+  overflow-wrap: anywhere;
+  white-space: normal;
 }
 
 .repair-part-usage-table__part span,
-.repair-part-usage-table__notes {
+.repair-part-usage-table__origin {
   color: var(--el-text-color-secondary);
 }
 
+.repair-part-usage-table .status-tag {
+  width: fit-content;
+  max-width: 100%;
+  height: auto;
+  min-height: 24px;
+  white-space: normal;
+  text-align: left;
+}
+
+.repair-part-usage-table__quantity {
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+}
+
+.repair-part-usage-table__meta-row td,
+.repair-part-usage-table__notes-row td {
+  padding-top: 0;
+  border-top: 0;
+}
+
+.repair-part-usage-table__meta-row td {
+  padding-bottom: 7px;
+}
+
+.repair-part-usage-table__notes-row td {
+  padding-bottom: 10px;
+}
+
+.repair-part-usage-table__meta,
 .repair-part-usage-table__notes {
-  display: block;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 18px;
+  min-width: 0;
+  max-width: 100%;
+  color: var(--el-text-color-secondary);
+  font-size: 12px;
+  line-height: 18px;
+}
+
+.repair-part-usage-table__notes {
+  gap: 4px 8px;
   white-space: pre-wrap;
+}
+
+.repair-part-usage-table__meta-item {
+  display: inline-flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  min-width: 0;
+  max-width: 100%;
+}
+
+.repair-part-usage-table__meta-label {
+  flex: 0 0 auto;
+  color: var(--el-text-color-secondary);
+}
+
+.repair-part-usage-table__meta-value {
+  min-width: 0;
+  max-width: 100%;
+  color: var(--el-text-color-secondary);
   overflow-wrap: anywhere;
 }
 
@@ -1930,6 +2045,40 @@ body,
   white-space: nowrap;
 }
 
+.asset-batch-actions {
+  flex: 0 0 auto;
+  flex-wrap: nowrap;
+  white-space: nowrap;
+}
+
+.asset-batch-actions > * {
+  flex: 0 0 auto;
+}
+
+.asset-batch-actions__dropdown {
+  display: inline-flex;
+  flex: 0 0 auto;
+}
+
+.asset-batch-actions__trigger {
+  min-width: 108px;
+  white-space: nowrap;
+}
+
+.asset-batch-actions__menu {
+  min-width: 176px;
+}
+
+.asset-batch-actions__danger {
+  color: var(--el-color-danger);
+}
+
+.asset-batch-actions__menu .asset-batch-actions__danger:not(.is-disabled):hover,
+.asset-batch-actions__menu .asset-batch-actions__danger:not(.is-disabled):focus {
+  color: var(--el-color-danger);
+  background: var(--el-color-danger-light-9);
+}
+
 .settings-user-primary-actions {
   justify-content: flex-end;
 }
@@ -1939,8 +2088,105 @@ body,
   margin-left: 0;
 }
 
+.asset-ledger-toolbar .page-toolbar__actions {
+  gap: 8px;
+}
+
+.page-toolbar-icon-action__wrapper {
+  display: inline-flex;
+  flex: 0 0 auto;
+  align-items: center;
+  justify-content: center;
+}
+
+.page-toolbar-icon-action.el-button {
+  box-sizing: border-box;
+  flex: 0 0 36px;
+  width: 36px;
+  height: 36px;
+  margin-left: 0;
+  padding: 0;
+  border-radius: 9px;
+}
+
+.page-toolbar-icon-action.el-button .el-icon {
+  font-size: 17px;
+}
+
+.page-toolbar-icon-action.el-button:hover,
+.page-toolbar-icon-action.el-button:focus-visible {
+  border-color: var(--el-color-primary-light-5);
+  color: var(--el-color-primary);
+  background: var(--el-color-primary-light-9);
+}
+
+.asset-ledger-action-group {
+  display: inline-flex;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+.asset-ledger-action-divider {
+  display: inline-block;
+  width: 1px;
+  height: 22px;
+  margin: 0 2px;
+  background: var(--el-border-color-lighter);
+}
+
+.page-toolbar .page-toolbar-icon-action__wrapper + .page-toolbar-icon-action__wrapper {
+  margin-left: 0;
+}
+
+@media (max-width: 760px) {
+  .asset-ledger-toolbar .page-toolbar__actions {
+    justify-content: flex-start;
+  }
+
+  .asset-ledger-toolbar .page-toolbar__right {
+    justify-content: flex-start;
+  }
+
+  .asset-ledger-action-group {
+    flex-wrap: wrap;
+  }
+
+  .asset-ledger-action-divider {
+    margin-inline: 4px;
+  }
+}
+
 .batch-result-table {
   margin-top: 16px;
+}
+
+.asset-batch-assignment__summary {
+  margin: 0 0 20px;
+  padding: 12px 14px;
+  border: 1px solid var(--el-border-color-lighter);
+  border-radius: 8px;
+  background: var(--el-fill-color-lighter);
+}
+
+.asset-batch-assignment__summary dt {
+  margin-bottom: 8px;
+  color: var(--el-text-color-secondary);
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.asset-batch-assignment__summary dd {
+  margin: 0;
+}
+
+.asset-batch-assignment__asset-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  max-height: 132px;
+  overflow: auto;
 }
 
 @media (max-width: 640px) {
@@ -2573,6 +2819,68 @@ body,
 
 .action-dialog .el-textarea__inner {
   min-height: 80px;
+}
+
+/* Repair dialogs keep their header and footer fixed while the body scrolls.
+   Reserve the scrollbar gutter so long forms never let the native scrollbar
+   cover the right edge of an input or textarea. */
+.repair-dialog .el-dialog__body,
+.repair-dialog .action-dialog__body {
+  box-sizing: border-box;
+  min-width: 0;
+  max-width: 100%;
+  scrollbar-gutter: stable;
+}
+
+/* Some Chromium environments draw overlay scrollbars above the layout even
+   when scrollbar-gutter is supported. Keep a small explicit safety inset on
+   the two actual scrolling surfaces so controls cannot sit underneath it. */
+.repair-dialog.form-dialog .el-dialog__body,
+.repair-dialog.action-dialog .action-dialog__body {
+  padding-inline-end: 18px;
+}
+
+.repair-dialog .fault-form,
+.repair-dialog .repair-action-form,
+.repair-dialog .repair-part-usage-form,
+.repair-dialog .el-form-item,
+.repair-dialog .el-form-item__content,
+.repair-dialog .repair-part-usage-panel,
+.repair-dialog .repair-part-usage-paged-table {
+  box-sizing: border-box;
+  min-width: 0;
+  max-width: 100%;
+}
+
+.repair-dialog .el-input,
+.repair-dialog .el-textarea,
+.repair-dialog .el-textarea__inner,
+.repair-dialog .el-select,
+.repair-dialog .el-date-editor,
+.repair-dialog .money-input,
+.repair-dialog .asset-select {
+  box-sizing: border-box;
+  width: 100%;
+  min-width: 0;
+  max-width: 100%;
+}
+
+.repair-dialog .el-textarea__inner {
+  display: block;
+  resize: vertical;
+  scrollbar-gutter: stable;
+}
+
+@media (max-width: 560px) {
+  .repair-part-usage-table th,
+  .repair-part-usage-table td {
+    padding-inline: 5px;
+  }
+
+  .repair-dialog.form-dialog .el-dialog__body,
+  .repair-dialog.action-dialog .action-dialog__body {
+    padding-inline-end: 14px;
+  }
 }
 
 .action-dialog .form-grid {

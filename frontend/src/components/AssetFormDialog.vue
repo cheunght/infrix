@@ -11,6 +11,12 @@ import FieldHelp from "./FieldHelp.vue";
 import FormDialogShell from "./FormDialogShell.vue";
 import MoneyInput from "./MoneyInput.vue";
 import { businessOptionLabel } from "../business-enums";
+import {
+  compareDecimalText,
+  decimalPrecisionLimit,
+  decimalStorageIssue,
+  isValidIsoDate,
+} from "../custom-field-validation";
 import { systemDatePickerFormat } from "../system-settings";
 
 const props = defineProps<{ context: AssetFormContext }>();
@@ -26,11 +32,16 @@ const {
   assetFormLoadError,
   assetFormSaving,
   assetFormFieldErrors,
+  assetCloneCustomValueWarning,
   retryAssetFormLoad,
   clearAssetFormErrors,
   activeDeviceTypes,
   syncAssetDeviceType,
   manufacturerOptions,
+  assetModels,
+  assetModelsLoading,
+  assetModelsError,
+  retryAssetModels,
   people,
   peopleLoading,
   peopleError,
@@ -84,6 +95,41 @@ const selectableTags = computed<Tag[]>(() => {
 const rackPlacementHelp = computed(() => t("assetForm.rackPlacementHelp"));
 const depreciationHelp = computed(() => t("assetForm.depreciationHelp"));
 const residualRateHelp = computed(() => t("assetForm.residualRateHelp"));
+
+const selectedAssetModel = computed(() =>
+  assetModels.value.find((item) => String(item.id) === assetForm.value.asset_model_id) || null,
+);
+
+const warrantyMonthsValue = computed<number | null>({
+  get: () => numberFromText(assetForm.value.warranty_months),
+  set: (value) => {
+    assetForm.value.warranty_months = value == null ? "" : String(value);
+  },
+});
+
+const assetModelOptions = computed(() => {
+  const current = selectedAssetModel.value;
+  return assetModels.value.filter((item) => item.is_active || item.id === current?.id);
+});
+
+function assetModelOptionLabel(model: (typeof assetModels.value)[number]): string {
+  return [model.name, model.model_number, model.manufacturer_name, model.device_type_name]
+    .filter(Boolean)
+    .join(" · ");
+}
+
+async function applyAssetModel(modelId: string | null) {
+  const model = modelId ? assetModels.value.find((item) => String(item.id) === modelId) : null;
+  if (!model) return;
+  assetForm.value.manufacturer_id = model.manufacturer ? String(model.manufacturer) : "";
+  assetForm.value.device_type = model.device_type ? String(model.device_type) : "";
+  assetForm.value.model = "";
+  assetForm.value.manufacturer_model = "";
+  if (!assetForm.value.warranty_months && model.default_warranty_months != null) {
+    assetForm.value.warranty_months = String(model.default_warranty_months);
+  }
+  await syncAssetDeviceType();
+}
 
 function personOptionLabel(person: (typeof people.value)[number]): string {
   const parts = [person.name || person.display_name];
@@ -231,22 +277,15 @@ function isCustomFieldEmpty(field: CustomFieldSchema, value: unknown) {
   return value === null || value === undefined;
 }
 
-function finiteConfigNumber(value: unknown): number | undefined {
-  if (value === null || value === undefined || value === "") return undefined;
-  const parsed = Number(value);
-  return Number.isFinite(parsed) ? parsed : undefined;
-}
-
 function existingInactiveOptionValues(field: CustomFieldSchema): Set<string> {
-  const existing = editingAsset.value?.custom_fields?.find((candidate) => candidate.key === field.key);
-  if (!existing) return new Set();
   const selected = new Set<string>();
-  if (field.field_type === "select" && typeof existing.value === "string") selected.add(existing.value);
-  if (field.field_type === "multiselect" && Array.isArray(existing.value)) {
-    for (const value of existing.value) if (typeof value === "string") selected.add(value);
+  const currentValue = assetForm.value.custom_values[field.key];
+  if (field.field_type === "select" && typeof currentValue === "string") selected.add(currentValue);
+  if (field.field_type === "multiselect" && Array.isArray(currentValue)) {
+    for (const value of currentValue) if (typeof value === "string") selected.add(value);
   }
   return new Set(
-    (existing.options || [])
+    (field.options || [])
       .filter((option) => !option.is_active && selected.has(option.value))
       .map((option) => option.value),
   );
@@ -270,24 +309,26 @@ function customFieldRule(field: CustomFieldSchema) {
       }
 
       if (field.field_type === "number") {
-        const number = Number(value);
-        if (!Number.isFinite(number)) return callback(new Error(t("assetForm.fieldNumber", { field: field.name })));
-        const min = finiteConfigNumber(config.min);
-        const max = finiteConfigNumber(config.max);
-        if (min !== undefined && number < min) return callback(new Error(t("assetForm.fieldMin", { field: field.name, count: min })));
-        if (max !== undefined && number > max) return callback(new Error(t("assetForm.fieldMax", { field: field.name, count: max })));
-        const precision = finiteConfigNumber(config.precision);
-        if (precision !== undefined && Number.isInteger(precision) && precision >= 0) {
-          const factor = 10 ** precision;
-          if (Number.isFinite(factor) && Math.abs(number * factor - Math.round(number * factor)) > 1e-8) {
-            return callback(new Error(t("assetForm.fieldPrecision", { field: field.name, count: precision })));
-          }
+        const precision = decimalPrecisionLimit(config.precision);
+        const storageIssue = decimalStorageIssue(value, precision);
+        if (storageIssue === "invalid") return callback(new Error(t("assetForm.fieldNumber", { field: field.name })));
+        if (storageIssue === "integer") return callback(new Error(t("assetForm.fieldIntegerDigits", { field: field.name })));
+        if (storageIssue === "precision") return callback(new Error(t("assetForm.fieldPrecision", { field: field.name, count: precision })));
+        if (config.min != null && config.min !== "") {
+          const comparison = compareDecimalText(value, config.min);
+          if (comparison === null) return callback(new Error(t("assetForm.fieldNumber", { field: field.name })));
+          if (comparison < 0) return callback(new Error(t("assetForm.fieldMin", { field: field.name, count: config.min })));
+        }
+        if (config.max != null && config.max !== "") {
+          const comparison = compareDecimalText(value, config.max);
+          if (comparison === null) return callback(new Error(t("assetForm.fieldNumber", { field: field.name })));
+          if (comparison > 0) return callback(new Error(t("assetForm.fieldMax", { field: field.name, count: config.max })));
         }
       }
 
       if (field.field_type === "date") {
         const date = String(value);
-        if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) return callback(new Error(t("assetForm.fieldDateFormat", { field: field.name })));
+        if (!isValidIsoDate(date)) return callback(new Error(t("assetForm.fieldDateFormat", { field: field.name })));
         if (config.min_date && date < config.min_date) return callback(new Error(t("assetForm.fieldDateMin", { field: field.name, date: config.min_date })));
         if (config.max_date && date > config.max_date) return callback(new Error(t("assetForm.fieldDateMax", { field: field.name, date: config.max_date })));
       }
@@ -420,13 +461,46 @@ watch(() => assetForm.value.purchase_date, () => {
         <el-form-item :label="t('asset.name')" prop="name" required :error="fieldError('name')">
           <el-input v-model="assetForm.name" />
         </el-form-item>
+        <el-form-item :label="t('assetForm.assetModel')" :error="fieldError('asset_model_id')">
+          <el-select
+            v-model="assetForm.asset_model_id"
+            :placeholder="t('assetForm.selectAssetModel')"
+            clearable
+            filterable
+            :loading="assetModelsLoading"
+            @change="applyAssetModel"
+          >
+            <el-option
+              v-for="item in assetModelOptions"
+              :key="item.id"
+              :label="assetModelOptionLabel(item)"
+              :value="String(item.id)"
+            />
+          </el-select>
+          <div v-if="assetModelsError" class="asset-form-related-state asset-form-related-state--error">
+            <span>{{ assetModelsError }}</span>
+            <el-button link type="primary" :disabled="assetModelsLoading" @click="retryAssetModels">{{ t('common.retry') }}</el-button>
+          </div>
+          <div v-if="selectedAssetModel" class="asset-model-metadata">
+            <span>{{ selectedAssetModel.manufacturer_name || t('assetForm.unsetMetadata') }}</span>
+            <span>{{ selectedAssetModel.device_type_name || t('assetForm.unsetMetadata') }}</span>
+            <span v-if="selectedAssetModel.model_number">{{ selectedAssetModel.model_number }}</span>
+            <span v-if="selectedAssetModel.default_warranty_months != null">{{ t('assetForm.defaultWarrantyMonths', { months: selectedAssetModel.default_warranty_months }) }}</span>
+            <span v-if="selectedAssetModel.expected_life_months != null">{{ t('assetForm.expectedLifeMonths', { months: selectedAssetModel.expected_life_months }) }}</span>
+          </div>
+          <FieldHelp v-if="selectedAssetModel" :text="t('assetForm.assetModelSelectionHint')" />
+        </el-form-item>
+        <el-form-item v-if="!assetForm.asset_model_id" :label="t('assetForm.customModel')" :error="fieldError('model')">
+          <el-input v-model="assetForm.model" :placeholder="t('assetForm.modelPlaceholder')" />
+          <FieldHelp :text="t('assetForm.customModelHint')" />
+        </el-form-item>
         <el-form-item :label="t('asset.deviceType')" prop="device_type" required :error="fieldError('device_type')">
-          <el-select v-model="assetForm.device_type" :placeholder="t('assetForm.unlinkedDeviceType')" clearable @change="syncAssetDeviceType">
+          <el-select v-model="assetForm.device_type" :placeholder="t('assetForm.unlinkedDeviceType')" clearable :disabled="!!assetForm.asset_model_id && !!selectedAssetModel?.device_type" @change="syncAssetDeviceType">
             <el-option v-for="item in activeDeviceTypes" :key="item.id" :label="item.name" :value="String(item.id)" />
           </el-select>
         </el-form-item>
         <el-form-item :label="t('asset.manufacturer')" :error="fieldError('manufacturer_id')">
-          <el-select v-model="assetForm.manufacturer_id" :placeholder="t('assetForm.unlinkedManufacturer')" clearable>
+          <el-select v-model="assetForm.manufacturer_id" :placeholder="t('assetForm.unlinkedManufacturer')" clearable :disabled="!!assetForm.asset_model_id && !!selectedAssetModel?.manufacturer">
             <el-option v-for="item in manufacturerOptions" :key="item.id" :label="item.name" :value="String(item.id)" />
           </el-select>
         </el-form-item>
@@ -435,7 +509,10 @@ watch(() => assetForm.value.purchase_date, () => {
             <el-option v-for="option in assetStatusOptions" :key="option.value" :label="businessOptionLabel(assetStatusOptions, option.value)" :value="option.value" />
           </el-select>
         </el-form-item>
-        <el-form-item :label="t('asset.model')" :error="fieldError('model')"><el-input v-model="assetForm.model" :placeholder="t('assetForm.modelPlaceholder')" /></el-form-item>
+        <el-form-item :label="t('assetForm.warrantyMonths')" :error="fieldError('warranty_months')">
+          <el-input-number v-model="warrantyMonthsValue" :min="0" :precision="0" :step="1" :value-on-clear="null" />
+          <FieldHelp :text="t('assetForm.warrantyMonthsHint')" />
+        </el-form-item>
         <el-form-item :label="t('asset.serialNumber')" :error="fieldError('serial_number')"><el-input v-model="assetForm.serial_number" /></el-form-item>
         <el-form-item :label="t('asset.purpose')" :error="fieldError('purpose')"><el-input v-model="assetForm.purpose" /></el-form-item>
         <el-form-item :label="t('asset.assignedPerson')" :error="fieldError('assigned_person')">
@@ -589,6 +666,14 @@ watch(() => assetForm.value.purchase_date, () => {
         </div>
         <div v-if="assetCustomSchemaLoading || assetCustomSchemaError || dynamicFieldGroups.length" class="form-dialog__subsection">
           <div class="form-dialog__subsection-title">{{ t('assetForm.dynamicFields') }}</div>
+          <el-alert
+            v-if="assetCloneCustomValueWarning"
+            :title="assetCloneCustomValueWarning"
+            type="warning"
+            :closable="false"
+            show-icon
+            class="asset-custom-clone-warning"
+          />
           <div v-if="assetCustomSchemaLoading" class="asset-custom-schema-state">
             <el-skeleton :rows="4" animated />
           </div>

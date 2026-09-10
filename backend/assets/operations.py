@@ -7,7 +7,7 @@ from django.db.migrations.executor import MigrationExecutor
 from rest_framework.decorators import api_view, permission_classes
 from rest_framework.response import Response
 from .permissions import CanManageSystemSettings
-from .system_settings import get_system_settings, system_now
+from .system_settings import get_system_settings, system_now, system_timezone_name
 from .ldap_auth import ldap_status_snapshot
 from .smtp import _configured_password, SmtpConfigurationError
 
@@ -37,7 +37,7 @@ def operational_status(request):
         pass
     try:
         setting = get_system_settings()
-        result["application"].update(time=system_now(setting).isoformat(), timezone=setting.timezone)
+        result["application"].update(time=system_now(setting).isoformat(), timezone=system_timezone_name())
         smtp_state = "disabled" if not setting.smtp_enabled else "healthy"
         if setting.smtp_enabled:
             if not setting.smtp_host or not setting.smtp_from_email:

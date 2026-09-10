@@ -309,6 +309,11 @@ change the asset status. The asset detail also shows the assignment history.
 The department belongs to the person's profile and is not an asset ownership
 field.
 
+From the asset ledger, administrators can batch assign or transfer the
+currently selected assets. A batch is limited to 100 assets and returns a
+per-asset result; successful items are cleared from the selection while failed
+items remain selected for correction and retry.
+
 Asset import accepts `assigned_person_employee_no`, `assigned_person_name`,
 `assigned_person_department`, and `assignment_reason`. The importer matches
 an existing person and does not create one automatically. Asset exports

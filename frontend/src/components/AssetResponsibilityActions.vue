@@ -2,7 +2,7 @@
 import { computed, ref, watch } from "vue";
 import { useI18n } from "vue-i18n";
 import type { AssetResponsibilityContext } from "../page-context";
-import type { AssetDetail, Person } from "../types";
+import type { AssetDetail, PersonOption } from "../types";
 import { normalizeApiError } from "../error-handling";
 
 type ResponsibilityAction = "assign" | "transfer" | "return";
@@ -72,12 +72,12 @@ const canSubmit = computed(() =>
   ),
 );
 
-function personLabel(person: Person): string {
+function personLabel(person: PersonOption): string {
   return person.display_name || person.name;
 }
 
-function personMeta(person: Person): string {
-  return [person.employee_no, person.department_name, person.organization, person.contact]
+function personMeta(person: PersonOption): string {
+  return [person.employee_no, person.department_name]
     .filter((value) => Boolean(value && value.trim()))
     .join(" · ");
 }
@@ -95,7 +95,7 @@ function handleTargetPersonChange() {
   clearResponsibilityFieldError("target_person");
 }
 
-function isCurrentTarget(person: Person): boolean {
+function isCurrentTarget(person: PersonOption): boolean {
   return (
     props.asset?.assigned_person?.id != null &&
     person.id === props.asset.assigned_person.id

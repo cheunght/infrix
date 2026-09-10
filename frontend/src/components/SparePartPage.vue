@@ -15,6 +15,7 @@ import FieldHelp from "./FieldHelp.vue";
 import FormDialogShell from "./FormDialogShell.vue";
 import StatusTag from "./StatusTag.vue";
 import TableIconButton from "./TableIconButton.vue";
+import ToolbarIconButton from "./page/ToolbarIconButton.vue";
 import type { DataCenter, DictionaryItem, ServerRoom, SparePart, SparePartCategory, SpareStock, SpareTransaction } from "../types";
 import type { SpareContext } from "../page-context";
 import type { StockOperationType } from "../types";
@@ -256,9 +257,14 @@ watch(showSpareOperationModal, (open, wasOpen) => { if (!open && wasOpen) refres
             <SearchField v-model="spareSearch" :placeholder="t('spare.searchPlaceholder')" :aria-label="t('spare.title')" :loading="spareListLoading" @search="searchSpareParts" />
           </template>
           <template #actions>
-            <el-button v-if="can('spares.export')" class="toolbar-secondary-action toolbar-export-action" :icon="Download" :loading="exportingSpares" :disabled="exportingSpares" @click="exportSpareParts">
-              {{ t('asset.exportData') }}
-            </el-button>
+            <ToolbarIconButton
+              v-if="can('spares.export')"
+              :icon="Download"
+              :label="t('asset.exportData')"
+              :loading="exportingSpares"
+              :disabled="exportingSpares"
+              @click="exportSpareParts"
+            />
           </template>
           <template #primary>
             <el-button v-if="can('spares.manage')" class="page-primary-action" type="primary" @click="openSparePartModal()">{{ t('spare.addSpare') }}</el-button>

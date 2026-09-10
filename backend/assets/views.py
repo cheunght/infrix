@@ -31,7 +31,7 @@ from openpyxl import Workbook
 from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
 from openpyxl.utils import get_column_letter
 from urllib.parse import quote
-from .models import AuthThrottleState, AuditLog, Asset, AssetAssignmentEvent, AssetCustomValue, AssetNetworkAddress, AssetTag, CustomField, CustomFieldOption, DataCenter, Department, DeviceType, DirectoryIdentity, FaultEvent, InventoryItem, InventoryTask, MaintenanceContract, Manufacturer, NotificationDelivery, Person, ProcurementRecord, Rack, RackUnitAllocation, RepairPartUsage, RepairRecord, ServerRoom, SoftwareLicense, SparePart, SparePartCategory, SpareStock, SpareStockTransaction, SystemSetting, Tag, UserSecurityProfile
+from .models import AuthThrottleState, AuditLog, Asset, AssetAssignmentEvent, AssetCustomValue, AssetModel, AssetNetworkAddress, AssetTag, CustomField, CustomFieldOption, DataCenter, Department, DeviceType, DirectoryIdentity, FaultEvent, InventoryItem, InventoryTask, MaintenanceContract, Manufacturer, NotificationDelivery, Person, ProcurementRecord, Rack, RackUnitAllocation, RepairPartUsage, RepairRecord, ServerRoom, SoftwareLicense, SparePart, SparePartCategory, SpareStock, SpareStockTransaction, SystemSetting, Tag, UserSecurityProfile
 from .enum_contracts import (
     ASSET_STATUS_LABELS,
     ASSET_STATUS_VALUES,
@@ -45,7 +45,7 @@ from .enum_contracts import (
     STOCK_OPERATION_TYPE_LABELS,
     STOCK_OPERATION_TYPE_VALUES,
 )
-from .serializers import AdminPasswordResetSerializer, AssetAssignmentEventSerializer, AssetAssignmentReturnSerializer, AssetAssignmentTargetSerializer, AssetBatchDeleteResponseSerializer, AssetBatchDeleteSerializer, AssetDetailSerializer, AssetListSerializer, AssetSerializer, AssetWriteSerializer, AuditLogSerializer, CurrentUserProfileSerializer, CustomFieldOptionSerializer, CustomFieldRuntimeSchemaSerializer, CustomFieldSerializer, DataCenterSerializer, DepartmentSerializer, DeviceTypeSerializer, FaultEventSerializer, GroupSerializer, InventoryBulkNormalResponseSerializer, InventoryBulkNormalSerializer, InventoryBulkResolutionResponseSerializer, InventoryBulkResolutionSerializer, InventoryInspectorSerializer, InventoryItemPageSerializer, InventoryItemSerializer, InventoryResolutionSerializer, InventoryScopePreviewQuerySerializer, InventoryScopePreviewSerializer, InventoryTaskSerializer, LdapConfigurationUpdateSerializer, ManufacturerSerializer, NotificationDeliverySerializer, PersonSerializer, RackSerializer, RepairPartUsageCreateSerializer, RepairPartUsageSerializer, RepairRecordSerializer, ServerRoomSerializer, SoftwareLicenseSerializer, SparePartCategorySerializer, SparePartDetailSerializer, SparePartSerializer, SpareStockSerializer, SpareStockTransactionSerializer, SmtpTestEmailSerializer, SystemResetSerializer, SystemSettingsSerializer, TagSerializer, UserBatchStatusResponseSerializer, UserBatchStatusSerializer, UserSerializer, _default_references_option
+from .serializers import AdminPasswordResetSerializer, AssetAssignmentEventSerializer, AssetAssignmentReturnSerializer, AssetAssignmentTargetSerializer, AssetBatchAssignmentResponseSerializer, AssetBatchAssignmentSerializer, AssetBatchDeleteResponseSerializer, AssetBatchDeleteSerializer, AssetDetailSerializer, AssetListSerializer, AssetModelOptionSerializer, AssetModelSerializer, AssetSerializer, AssetWriteSerializer, AuditLogSerializer, CurrentUserProfileSerializer, CustomFieldOptionSerializer, CustomFieldRuntimeSchemaSerializer, CustomFieldSerializer, DataCenterSerializer, DepartmentSerializer, DeviceTypeSerializer, FaultEventSerializer, GroupSerializer, InventoryBulkNormalResponseSerializer, InventoryBulkNormalSerializer, InventoryBulkResolutionResponseSerializer, InventoryBulkResolutionSerializer, InventoryInspectorSerializer, InventoryItemPageSerializer, InventoryItemSerializer, InventoryResolutionSerializer, InventoryScopePreviewQuerySerializer, InventoryScopePreviewSerializer, InventoryTaskSerializer, LdapConfigurationUpdateSerializer, ManufacturerSerializer, NotificationDeliverySerializer, PersonOptionSerializer, PersonSerializer, RackSerializer, RepairPartUsageCreateSerializer, RepairPartUsageSerializer, RepairRecordSerializer, ServerRoomSerializer, SoftwareLicenseSerializer, SparePartCategorySerializer, SparePartDetailSerializer, SparePartSerializer, SpareStockSerializer, SpareStockTransactionSerializer, SmtpTestEmailSerializer, SystemResetSerializer, SystemSettingsSerializer, TagSerializer, UserBatchStatusResponseSerializer, UserBatchStatusSerializer, UserSerializer, _default_references_option
 from .services import (
     apply_spare_stock_transaction,
     confirm_inventory_item_normal,
@@ -279,7 +279,7 @@ def _date_filter_errors(request, fields):
 
 
 def _filter_system_date_range(queryset, field_name, start_value, end_value):
-    """Filter a timestamp field by dates in the configured system timezone."""
+    """Filter a timestamp field by dates in the deployment timezone."""
 
     try:
         start = date.fromisoformat(start_value) if start_value else None
@@ -354,6 +354,13 @@ def _batch_error_message(error, fallback):
     return flatten(detail) or fallback
 
 
+def _batch_error_code(error, fallback):
+    detail = getattr(error, "detail", error)
+    if isinstance(detail, dict) and detail.get("code"):
+        return str(detail["code"]).upper()
+    return fallback
+
+
 def _delete_asset_with_audit(instance, request, *, batch_operation_id=None):
     before = asset_audit_snapshot(instance.pk)
     resource_id = instance.pk
@@ -397,6 +404,28 @@ class PersonViewSet(AuditedModelViewSetMixin, viewsets.ModelViewSet):
             return [CanViewPeopleRuntime()]
         return super().get_permissions()
 
+    def get_serializer_class(self):
+        if (
+            self.action == "list"
+            and self.request.query_params.get("compact", "").strip().lower() in {"1", "true", "yes"}
+        ):
+            return PersonOptionSerializer
+        return super().get_serializer_class()
+
+    @extend_schema(
+        parameters=[
+            OpenApiParameter(
+                name="compact",
+                type=OpenApiTypes.BOOL,
+                required=False,
+                description="返回人员选择器所需的轻量字段；默认返回人员管理列表的完整字段。",
+            ),
+        ],
+        description="人员列表；compact=true 时仅返回选择器所需的人员标识、员工编号、部门和状态字段。",
+    )
+    def list(self, request, *args, **kwargs):
+        return super().list(request, *args, **kwargs)
+
     def get_queryset(self):
         queryset = super().get_queryset()
         if self.action in {"retrieve", "update", "partial_update", "destroy"}:
@@ -437,18 +466,18 @@ class PersonViewSet(AuditedModelViewSetMixin, viewsets.ModelViewSet):
 
 class AssetViewSet(AuditedModelViewSetMixin, viewsets.ModelViewSet):
     max_custom_columns = 12
-    queryset = Asset.objects.select_related("assigned_person__department", "assigned_person__account", "manufacturer", "device_type", "asset_data_center", "rack_allocation__rack__room__data_center").prefetch_related("network_addresses", "procurement_records", "maintenance_contracts", "asset_tags__tag", "custom_values__field__options").order_by("asset_no", "id")
+    queryset = Asset.objects.select_related("assigned_person__department", "assigned_person__account", "manufacturer", "device_type", "asset_model", "asset_model__manufacturer", "asset_model__device_type", "asset_data_center", "rack_allocation__rack__room__data_center").prefetch_related("network_addresses", "procurement_records", "maintenance_contracts", "asset_tags__tag", "custom_values__field__options").order_by("asset_no", "id")
     serializer_class = AssetSerializer
     permission_classes = [BusinessRolePermission]
     permission_resource = "assets"
     audit_resource = "asset"
     filter_backends = [DjangoFilterBackend, SearchFilter, OrderingFilter]
-    filterset_fields = ["status", "manufacturer", "device_type", "model"]
-    ordering_fields = ["asset_no", "name", "manufacturer_model", "serial_number"]
+    filterset_fields = ["status", "manufacturer", "device_type", "asset_model", "model"]
+    ordering_fields = ["asset_no", "name", "manufacturer_model", "serial_number", "asset_model__name"]
     ordering = ["asset_no", "id"]
     search_fields = [
         "asset_no", "name", "manufacturer_model", "serial_number", "purpose", "notes", "status",
-        "manufacturer__name", "device_type__name", "device_type__color", "model",
+        "manufacturer__name", "device_type__name", "device_type__color", "asset_model__name", "asset_model__model_number", "model",
         "assigned_person__name", "assigned_person__employee_no", "assigned_person__organization", "assigned_person__contact", "assigned_person__department__name",
         "assigned_person__account__username", "assigned_person__account__first_name", "assigned_person__account__last_name", "assigned_person__account__email",
         "network_addresses__address", "network_addresses__role", "network_addresses__status", "network_addresses__notes",
@@ -522,7 +551,7 @@ class AssetViewSet(AuditedModelViewSetMixin, viewsets.ModelViewSet):
         if self.action == "list" and self.request.query_params.get("compact", "").lower() in {"1", "true", "yes"}:
             requested_custom_columns = self._requested_custom_columns()
             queryset = queryset.select_related(
-                "assigned_person__department", "assigned_person__account", "manufacturer", "device_type", "asset_data_center", "rack_allocation__rack__room__data_center"
+                "assigned_person__department", "assigned_person__account", "manufacturer", "device_type", "asset_model", "asset_model__manufacturer", "asset_model__device_type", "asset_data_center", "rack_allocation__rack__room__data_center"
             ).prefetch_related(None).prefetch_related(
                 Prefetch(
                     "network_addresses",
@@ -914,6 +943,91 @@ class AssetViewSet(AuditedModelViewSetMixin, viewsets.ModelViewSet):
             "results": results,
         }
         return Response(AssetBatchDeleteResponseSerializer(response_data).data)
+
+    @extend_schema(
+        request=AssetBatchAssignmentSerializer,
+        responses=AssetBatchAssignmentResponseSerializer,
+        description="批量指定或转交资产使用人；每条记录会重新执行单项使用人规则并返回逐条结果。",
+    )
+    @action(detail=False, methods=["post"], url_path="batch-assignment")
+    def batch_assignment(self, request):
+        request_serializer = AssetBatchAssignmentSerializer(data=request.data)
+        request_serializer.is_valid(raise_exception=True)
+        validated = request_serializer.validated_data
+        asset_ids = validated["ids"]
+        action = validated["action"]
+        target_person_id = validated["target_person"].pk
+        reason = validated.get("reason", "")
+        batch_operation_id = uuid4()
+        results = []
+        succeeded = 0
+        actor = request.user if request.user.is_authenticated else None
+
+        for asset_id in asset_ids:
+            asset_no = f"ID {asset_id}"
+            try:
+                with transaction.atomic():
+                    instance = Asset.objects.select_for_update().get(pk=asset_id)
+                    asset_no = instance.asset_no
+                    if action == "assign":
+                        assign_asset(
+                            asset_id=asset_id,
+                            target_person_id=target_person_id,
+                            actor=actor,
+                            request=request,
+                            reason=reason,
+                            batch_operation_id=batch_operation_id,
+                        )
+                    else:
+                        transfer_asset(
+                            asset_id=asset_id,
+                            target_person_id=target_person_id,
+                            actor=actor,
+                            request=request,
+                            reason=reason,
+                            batch_operation_id=batch_operation_id,
+                        )
+            except Asset.DoesNotExist:
+                results.append({
+                    "id": asset_id,
+                    "asset_no": asset_no,
+                    "success": False,
+                    "code": "NOT_FOUND",
+                    "reason": "资产不存在或已被删除",
+                })
+            except DRFValidationError as exc:
+                results.append({
+                    "id": asset_id,
+                    "asset_no": asset_no,
+                    "success": False,
+                    "code": _batch_error_code(exc, "ASSIGNMENT_REJECTED"),
+                    "reason": _batch_error_message(exc, "资产当前不能执行使用人操作"),
+                })
+            except DatabaseError:
+                results.append({
+                    "id": asset_id,
+                    "asset_no": asset_no,
+                    "success": False,
+                    "code": "CONFLICT",
+                    "reason": "资产当前存在并发变更，未执行使用人操作",
+                })
+            else:
+                succeeded += 1
+                results.append({
+                    "id": asset_id,
+                    "asset_no": asset_no,
+                    "success": True,
+                    "code": "",
+                    "reason": "",
+                })
+
+        response_data = {
+            "requested": len(asset_ids),
+            "succeeded": succeeded,
+            "failed": len(asset_ids) - succeeded,
+            "results": results,
+        }
+        return Response(AssetBatchAssignmentResponseSerializer(response_data).data)
 
 
 class RackViewSet(AuditedModelViewSetMixin, viewsets.ModelViewSet):
@@ -1341,6 +1455,28 @@ class DeviceTypeViewSet(DictionaryViewSet):
             super().perform_destroy(instance)
         except ProtectedError as exc:
             raise DRFValidationError("设备类型仍被业务数据使用，不能删除，请先停用") from exc
+
+
+class AssetModelViewSet(DictionaryViewSet):
+    queryset = AssetModel.objects.select_related("manufacturer", "device_type").all()
+    serializer_class = AssetModelSerializer
+    audit_resource = "asset_model"
+    filterset_fields = ["manufacturer", "device_type", "is_active"]
+    search_fields = ["name", "model_number", "manufacturer__name", "device_type__name"]
+    ordering_fields = ["name", "model_number", "created_at", "updated_at"]
+
+    def get_permissions(self):
+        if self.action in {"list", "retrieve"}:
+            return [CanViewManufacturerRuntime()]
+        return super().get_permissions()
+
+    def get_serializer_class(self):
+        if self.action == "list" and self.request.query_params.get("compact", "").lower() in {"1", "true", "yes"}:
+            return AssetModelOptionSerializer
+        return super().get_serializer_class()
+
+    def get_queryset(self):
+        return super().get_queryset().select_related("manufacturer", "device_type")
 
 
 class SparePartCategoryViewSet(AuditedModelViewSetMixin, viewsets.ModelViewSet):
@@ -2166,7 +2302,7 @@ class InventoryTaskViewSet(AuditedModelViewSetMixin, viewsets.ModelViewSet):
     @transaction.atomic
     def perform_create(self, serializer):
         task = serializer.save(inspector=serializer.validated_data.get("inspector") or self.request.user)
-        assets = get_inventory_scope_assets(task.data_center, task.server_room)
+        assets = get_inventory_scope_assets(task.data_center, task.server_room, scope=task.scope)
         InventoryItem.objects.bulk_create([
             InventoryItem(task=task, asset=asset, system_snapshot=_inventory_snapshot(asset))
             for asset in assets
@@ -2203,34 +2339,57 @@ class InventoryTaskViewSet(AuditedModelViewSetMixin, viewsets.ModelViewSet):
     @action(detail=False, methods=["get"], url_path="scope-preview")
     def scope_preview(self, request):
         query_params = {
+            "scope": request.query_params.get("scope"),
             "data_center": request.query_params.get("data_center"),
             "server_room": request.query_params.get("server_room") or None,
         }
         serializer = InventoryScopePreviewQuerySerializer(data=query_params)
         serializer.is_valid(raise_exception=True)
-        data_center = serializer.validated_data["data_center"]
+        scope = serializer.validated_data["scope"]
+        data_center = serializer.validated_data.get("data_center")
         server_room = serializer.validated_data.get("server_room")
-        assets = get_inventory_scope_assets(data_center, server_room)
+        assets = get_inventory_scope_assets(data_center, server_room, scope=scope)
 
         total = assets.count()
         racked = assets.filter(rack_allocation__isnull=False).count()
         unracked = assets.filter(rack_allocation__isnull=True).count()
         retired = assets.filter(status="retired").count()
+        unassigned = assets.filter(
+            rack_allocation__isnull=True,
+            asset_data_center__isnull=True,
+        ).count()
+        inactive_location = assets.filter(
+            Q(rack_allocation__rack__is_active=False)
+            | Q(rack_allocation__rack__room__is_active=False)
+            | Q(rack_allocation__rack__room__data_center__is_active=False)
+            | Q(rack_allocation__isnull=True, asset_data_center__is_active=False),
+        ).distinct().count()
         warnings = []
         if unracked:
             warnings.append(f"当前范围包含 {unracked} 台未上架资产")
+        if unassigned:
+            warnings.append(f"当前范围包含 {unassigned} 台未分配数据中心的资产")
+        if inactive_location:
+            warnings.append(f"当前范围包含 {inactive_location} 台位于停用位置的资产")
         if retired:
             warnings.append(f"当前范围包含 {retired} 台已报废资产")
 
         payload = {
-            "data_center": {"id": data_center.id, "name": data_center.name},
+            "scope": scope,
+            "data_center": (
+                {"id": data_center.id, "name": data_center.name}
+                if data_center is not None
+                else None
+            ),
             "server_room": (
                 {"id": server_room.id, "name": server_room.name}
                 if server_room is not None
                 else None
             ),
             "scope_label": (
-                f"{data_center.name} / {server_room.name}"
+                "全部资产"
+                if scope == "all_assets"
+                else f"{data_center.name} / {server_room.name}"
                 if server_room is not None
                 else f"{data_center.name} / 整个数据中心"
             ),
@@ -2238,7 +2397,9 @@ class InventoryTaskViewSet(AuditedModelViewSetMixin, viewsets.ModelViewSet):
             "racked": racked,
             "unracked": unracked,
             "retired": retired,
-            "includes_unracked": server_room is None,
+            "unassigned": unassigned,
+            "inactive_location": inactive_location,
+            "includes_unracked": scope != "server_room",
             "warnings": warnings,
         }
         return Response(InventoryScopePreviewSerializer(payload).data)
@@ -2288,6 +2449,11 @@ class InventoryTaskViewSet(AuditedModelViewSetMixin, viewsets.ModelViewSet):
     @transaction.atomic
     def reopen(self, request, pk=None):
         task = InventoryTask.objects.select_for_update().get(pk=self.get_object().pk)
+        if task.status != "completed":
+            raise DRFValidationError({
+                "code": "inventory_task_not_completed",
+                "detail": "只有已完成的盘点任务才能重新打开",
+            })
         task.status = "in_progress"
         task.completed_at = None
         task.save(update_fields=["status", "completed_at", "updated_at"])
@@ -2336,8 +2502,10 @@ class InventoryTaskViewSet(AuditedModelViewSetMixin, viewsets.ModelViewSet):
             actual_u = ""
             if item.actual_start_u is not None:
                 actual_u = f"U{item.actual_start_u}–U{item.actual_end_u}"
+            task_data_center = snapshot.get("data_center", "") if task.scope == "all_assets" else (task.data_center.name if task.data_center_id else "")
+            task_server_room = snapshot.get("server_room", "") if task.scope == "all_assets" else (task.server_room.name if task.server_room_id else "整个数据中心")
             _append_excel_row(sheet, [
-                task.name, task.data_center.name, task.server_room.name if task.server_room_id else "整个数据中心",
+                task.name, task_data_center, task_server_room,
                 task.inspector.get_full_name() or task.inspector.username, item.asset.asset_no, item.asset.name,
                 item.asset.serial_number or "", snapshot.get("device_type_name", ""),
                 snapshot.get("business_ip", ""), snapshot.get("management_ip", ""), snapshot.get("oob_ip", ""),
@@ -3491,7 +3659,7 @@ def asset_export(request):
         ).distinct().prefetch_related("options").order_by("device_type__name", "sort_order", "id")
     ) if assets else []
     headers = [
-        "资产编号", "资产名称", "设备类型", "厂商", "型号", "厂商/型号", "序列号", "用途", "状态", "使用人", "使用人员工编号", "使用人部门", "使用人单位", "使用人联系方式",
+        "资产编号", "资产名称", "设备类型", "厂商", "型号", "资产型号", "型号编号", "厂商/型号", "实际保修月数", "预计使用寿命（月）", "序列号", "用途", "状态", "使用人", "使用人员工编号", "使用人部门", "使用人单位", "使用人联系方式",
         "数据中心", "机房", "机柜", "起始 U", "结束 U", "业务 IP", "管理 IP", "带外 IP", "采购日期",
         "供应商", "采购单号", "采购金额", "折旧方法", "折旧起算日", "折旧年限", "残值率", "资产原值", "预计残值", "月折旧额", "累计折旧", "当前净值", "折旧状态",
         "维保厂商", "维保合同号", "维保开始日", "维保到期日", "维保备注", "备注", "标签",
@@ -3530,7 +3698,11 @@ def asset_export(request):
         tag_text = ", ".join(item.tag.name for item in asset.asset_tags.all())
         row_values = [
             asset.asset_no, asset.name, asset.device_type.name if asset.device_type_id else "",
-            asset.manufacturer.name if asset.manufacturer_id else "", asset.model or "", asset.manufacturer_model, asset.serial_number or "", asset.purpose, status_labels.get(asset.status, asset.status),
+            asset.manufacturer.name if asset.manufacturer_id else "", asset.model or "",
+            asset.asset_model.name if asset.asset_model_id else "", asset.asset_model.model_number if asset.asset_model_id else "",
+            asset.manufacturer_model, asset.warranty_months if asset.warranty_months is not None else "",
+            asset.asset_model.expected_life_months if asset.asset_model_id and asset.asset_model.expected_life_months is not None else "",
+            asset.serial_number or "", asset.purpose, status_labels.get(asset.status, asset.status),
             asset.assigned_person.name if asset.assigned_person_id else "",
             asset.assigned_person.employee_no if asset.assigned_person_id else "",
             asset.assigned_person.department.name if asset.assigned_person_id and asset.assigned_person.department_id else "",

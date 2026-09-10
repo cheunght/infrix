@@ -97,6 +97,36 @@ class DeviceType(Timestamped):
         return self.name
 
 
+class AssetModel(Timestamped):
+    """Reusable asset model metadata used as a create-time template."""
+
+    name = models.CharField(max_length=160)
+    manufacturer = models.ForeignKey(
+        Manufacturer,
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+        related_name="asset_models",
+    )
+    device_type = models.ForeignKey(
+        DeviceType,
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+        related_name="asset_models",
+    )
+    model_number = models.CharField(max_length=160, blank=True)
+    default_warranty_months = models.PositiveIntegerField(null=True, blank=True)
+    expected_life_months = models.PositiveIntegerField(null=True, blank=True)
+    is_active = models.BooleanField(default=True)
+
+    class Meta:
+        ordering = ["name", "manufacturer__name", "id"]
+
+    def __str__(self):
+        return self.name
+
+
 class CustomField(Timestamped):
     FIELD_TYPES = [
         ("text", "单行文本"),
@@ -410,7 +440,16 @@ class Asset(Timestamped):
         related_name="unmounted_assets",
         help_text="未上架资产的所属数据中心；已上架资产以机柜归属为准",
     )
+    asset_model = models.ForeignKey(
+        AssetModel,
+        null=True,
+        blank=True,
+        on_delete=models.PROTECT,
+        related_name="assets",
+        help_text="结构化资产型号；型号元数据仅用于创建资产时的默认值",
+    )
     model = models.CharField(max_length=160, blank=True)
+    warranty_months = models.PositiveIntegerField(null=True, blank=True)
     assigned_person = models.ForeignKey(
         "Person",
         null=True,
@@ -537,7 +576,6 @@ class SystemSetting(Timestamped):
         choices=SYSTEM_LOCALE_CHOICES,
         default="zh-CN",
     )
-    timezone = models.CharField(max_length=64, default="Asia/Shanghai")
     date_format = models.CharField(
         max_length=20,
         choices=SYSTEM_DATE_FORMAT_CHOICES,
@@ -869,26 +907,23 @@ class RepairPartUsage(Timestamped):
         ]
 
 
-class AssetRelation(Timestamped):
-    source_asset = models.ForeignKey(Asset, on_delete=models.CASCADE, related_name="outgoing_relations")
-    target_asset = models.ForeignKey(Asset, on_delete=models.CASCADE, related_name="incoming_relations")
-    relation_type = models.CharField(max_length=60)
-    metadata = models.JSONField(default=dict, blank=True)
-    effective_from = models.DateTimeField(null=True, blank=True)
-    effective_to = models.DateTimeField(null=True, blank=True)
-
-    class Meta:
-        constraints = [
-            models.UniqueConstraint(fields=["source_asset", "target_asset", "relation_type"], name="uniq_asset_relation"),
-            models.CheckConstraint(condition=~models.Q(source_asset=models.F("target_asset")), name="asset_relation_not_self"),
-        ]
-
-
 class InventoryTask(Timestamped):
     STATUS = [("in_progress", "进行中"), ("completed", "已完成")]
+    SCOPE = [
+        ("all_assets", "全部资产"),
+        ("data_center", "数据中心"),
+        ("server_room", "机房"),
+    ]
 
     name = models.CharField(max_length=160)
-    data_center = models.ForeignKey(DataCenter, on_delete=models.PROTECT, related_name="inventory_tasks")
+    scope = models.CharField(max_length=20, choices=SCOPE, default="data_center")
+    data_center = models.ForeignKey(
+        DataCenter,
+        null=True,
+        blank=True,
+        on_delete=models.PROTECT,
+        related_name="inventory_tasks",
+    )
     server_room = models.ForeignKey(
         ServerRoom,
         null=True,
@@ -909,6 +944,16 @@ class InventoryTask(Timestamped):
 
     class Meta:
         ordering = ["-created_at", "-id"]
+        constraints = [
+            models.CheckConstraint(
+                condition=(
+                    models.Q(scope="all_assets", data_center__isnull=True, server_room__isnull=True)
+                    | models.Q(scope="data_center", data_center__isnull=False, server_room__isnull=True)
+                    | models.Q(scope="server_room", data_center__isnull=False, server_room__isnull=False)
+                ),
+                name="inventory_task_scope_locations_consistent",
+            ),
+        ]
 
 
 class InventoryItem(Timestamped):

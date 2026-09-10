@@ -1,9 +1,9 @@
 <!-- UX Reference: standard data-list page. Reuse interaction patterns, not asset-specific fields. -->
 <script setup lang="ts">
-import { computed, ref, watch } from "vue";
+import { computed, nextTick, ref, watch } from "vue";
 import { useI18n } from "vue-i18n";
-import { ArrowDown, Check, CopyDocument, Delete, Download, Edit, Grid, Operation, Upload } from "@element-plus/icons-vue";
-import type { Asset } from "../types";
+import { ArrowDown, Check, CopyDocument, Delete, Download, Edit, Operation, Printer, Upload } from "@element-plus/icons-vue";
+import type { Asset, AssetBatchAssignmentAction, PersonOption } from "../types";
 import PagedTable from "./PagedTable.vue";
 import SearchField from "./SearchField.vue";
 import PageContainer from "./page/PageContainer.vue";
@@ -16,6 +16,7 @@ import ActionDialogShell from "./ActionDialogShell.vue";
 import TableIconButton from "./TableIconButton.vue";
 import AssetQrDialog from "./AssetQrDialog.vue";
 import DynamicFieldDisplay from "./fields/DynamicFieldDisplay.vue";
+import ToolbarIconButton from "./page/ToolbarIconButton.vue";
 import type { AssetLedgerContext } from "../page-context";
 import { ASSET_STATUS_OPTIONS, businessOptionLabel, isAssetStatus } from "../business-enums";
 import {
@@ -53,9 +54,17 @@ const {
   assetBatchDeleteSaving,
   assetBatchDeleteResult,
   showAssetBatchDeleteResult,
+  assetBatchAssignmentSaving,
+  assetBatchAssignmentError,
+  assetBatchAssignmentResult,
+  showAssetBatchAssignmentResult,
+  assetLabelPrintLoading,
+  batchAssignAssets,
+  closeAssetBatchAssignmentResult,
   closeAssetBatchDeleteResult,
   deleteSelectedAssets,
   exportAssets,
+  loadAllAssetsForLabels,
   registerFaultFromSelection,
   openImportDialog,
   assets,
@@ -74,10 +83,18 @@ const {
   changeAssetSort,
   changeAssetPage,
   changeAssetPageSize,
+  people,
+  peopleLoading,
+  peopleError,
+  loadResponsibilitySubjects,
 } = context;
 
-const assetTableRef = ref<{ clearSelection: () => void } | null>(null);
+const assetTableRef = ref<{
+  clearSelection: () => void;
+  toggleRowSelection: (row: Asset, selected?: boolean, ignoreSelectable?: boolean) => void;
+} | null>(null);
 const showQrDialog = ref(false);
+const qrDialogAssets = ref<Asset[]>([]);
 
 const selectedQrAssets = computed(() => assets.value.filter((asset) => selectedAssetIds.value.includes(asset.id)));
 
@@ -88,6 +105,111 @@ const assetTableDefaultSort = computed(() => assetSortField.value && assetSortOr
 const assetBatchDeleteFailures = computed(() =>
   (assetBatchDeleteResult.value?.results || []).filter((result) => !result.success),
 );
+const assetBatchAssignmentFailures = computed(() =>
+  (assetBatchAssignmentResult.value?.results || []).filter((result) => !result.success),
+);
+
+const showBatchAssignmentDialog = ref(false);
+const batchAssignmentAction = ref<AssetBatchAssignmentAction>("assign");
+const batchAssignmentTargetPersonId = ref("");
+const batchAssignmentReason = ref("");
+const batchAssignmentFormError = ref("");
+
+const selectedAssetsForBatch = computed(() => selectedAssetIds.value.map((id) =>
+  assets.value.find((asset) => asset.id === id) || ({ id, asset_no: `ID ${id}`, name: "" } as Asset),
+));
+const batchAssignmentTitle = computed(() => t(
+  batchAssignmentAction.value === "assign" ? "asset.batchAssignPerson" : "asset.batchTransferPerson",
+));
+const batchAssignmentActionLabel = computed(() => t(
+  batchAssignmentAction.value === "assign" ? "asset.assignPerson" : "asset.transferPerson",
+));
+const batchAssignmentSubmitLabel = computed(() => t("asset.batchAssignmentSubmit", {
+  action: batchAssignmentActionLabel.value,
+  count: selectedAssetIds.value.length,
+}));
+const batchAssignmentCanSubmit = computed(() => Boolean(
+  selectedAssetIds.value.length &&
+  selectedAssetIds.value.length <= 100 &&
+  Number.isSafeInteger(Number(batchAssignmentTargetPersonId.value)) &&
+  Number(batchAssignmentTargetPersonId.value) > 0 &&
+  !assetBatchAssignmentSaving.value,
+));
+
+function handleAssetBatchAction(command: string) {
+  if (command === "assign" || command === "transfer") {
+    openBatchAssignment(command);
+    return;
+  }
+  if (command === "qr") {
+    openSelectedQrDialog();
+    return;
+  }
+  if (command === "fault") {
+    registerFaultFromSelection();
+    return;
+  }
+  if (command === "delete") deleteSelectedAssets();
+}
+
+function personLabel(person: PersonOption): string {
+  return person.display_name || person.name;
+}
+
+function personMeta(person: PersonOption): string {
+  return [person.employee_no, person.department_name]
+    .filter((value) => Boolean(value && value.trim()))
+    .join(" · ");
+}
+
+function openBatchAssignment(action: AssetBatchAssignmentAction) {
+  if (!can("assets.manage") || !selectedAssetIds.value.length || assetBatchAssignmentSaving.value) return;
+  batchAssignmentAction.value = action;
+  batchAssignmentTargetPersonId.value = "";
+  batchAssignmentReason.value = "";
+  batchAssignmentFormError.value = "";
+  context.assetBatchAssignmentError.value = "";
+  showBatchAssignmentDialog.value = true;
+  if (selectedAssetIds.value.length > 100) {
+    context.assetBatchAssignmentError.value = t("asset.batchAssignmentLimit");
+    return;
+  }
+  void loadResponsibilitySubjects("");
+}
+
+function closeBatchAssignment() {
+  if (assetBatchAssignmentSaving.value) return;
+  showBatchAssignmentDialog.value = false;
+  batchAssignmentFormError.value = "";
+  context.assetBatchAssignmentError.value = "";
+}
+
+function searchBatchPeople(query: string) {
+  void loadResponsibilitySubjects(query);
+}
+
+async function submitBatchAssignment() {
+  if (!batchAssignmentCanSubmit.value) {
+    batchAssignmentFormError.value = t("asset.selectPerson");
+    return;
+  }
+  batchAssignmentFormError.value = "";
+  const completed = await batchAssignAssets(
+    batchAssignmentAction.value,
+    [...selectedAssetIds.value],
+    Number(batchAssignmentTargetPersonId.value),
+    batchAssignmentReason.value,
+  );
+  if (completed) {
+    closeBatchAssignment();
+    await nextTick();
+    const selectedIds = new Set(selectedAssetIds.value);
+    assetTableRef.value?.clearSelection();
+    for (const asset of assets.value) {
+      if (selectedIds.has(asset.id)) assetTableRef.value?.toggleRowSelection(asset, true);
+    }
+  }
+}
 
 watch(selectedAssetIds, (ids) => {
   if (!ids.length) assetTableRef.value?.clearSelection();
@@ -230,6 +352,14 @@ function clearAssetSelection() {
 
 function openSelectedQrDialog() {
   if (!selectedQrAssets.value.length) return;
+  qrDialogAssets.value = [...selectedQrAssets.value];
+  showQrDialog.value = true;
+}
+
+async function openAllQrDialog() {
+  const allAssets = await loadAllAssetsForLabels();
+  if (!allAssets?.length) return;
+  qrDialogAssets.value = allAssets;
   showQrDialog.value = true;
 }
 </script>
@@ -237,7 +367,7 @@ function openSelectedQrDialog() {
 <template>
   <PageContainer class="infrix-page">
       <template #toolbar>
-        <PageToolbar>
+        <PageToolbar class="asset-ledger-toolbar">
           <template #search>
             <SearchField
               v-model="assetSearch"
@@ -266,52 +396,94 @@ function openSelectedQrDialog() {
           <template #actions>
             <div v-if="selectedAssetIds.length" class="asset-batch-actions">
               <el-tag type="info">{{ t('common.selectedItems', { count: selectedAssetIds.length }) }}</el-tag>
-              <el-button :icon="Grid" :disabled="!selectedQrAssets.length" @click="openSelectedQrDialog">
-                {{ t('asset.generateQr') }}
-              </el-button>
-              <el-button v-if="can('faults.manage') && selectedAssetIds.length === 1" @click="registerFaultFromSelection">
-                {{ t('asset.registerFault') }}
-              </el-button>
-              <el-button
-                v-if="can('assets.manage')"
-                type="danger"
-                :loading="assetBatchDeleteSaving"
-                :disabled="assetBatchDeleteSaving"
-                @click="deleteSelectedAssets"
+              <el-dropdown
+                class="asset-batch-actions__dropdown"
+                trigger="click"
+                placement="bottom-start"
+                :disabled="assetBatchDeleteSaving || assetBatchAssignmentSaving"
+                @command="handleAssetBatchAction"
               >
-                {{ t('common.delete') }}
-              </el-button>
-              <el-button link :disabled="assetBatchDeleteSaving" @click="clearAssetSelection">{{ t('common.cancel') }}</el-button>
+                <el-button
+                  type="primary"
+                  plain
+                  class="asset-batch-actions__trigger"
+                  :disabled="assetBatchDeleteSaving || assetBatchAssignmentSaving"
+                  :aria-label="t('asset.batchActions')"
+                >
+                  {{ t('asset.batchActions') }}
+                  <el-icon class="el-icon--right" aria-hidden="true"><ArrowDown /></el-icon>
+                </el-button>
+                <template #dropdown>
+                  <el-dropdown-menu class="asset-batch-actions__menu">
+                    <el-dropdown-item v-if="can('assets.manage')" command="assign">
+                      {{ t('asset.batchAssignPerson') }}
+                    </el-dropdown-item>
+                    <el-dropdown-item v-if="can('assets.manage')" command="transfer">
+                      {{ t('asset.batchTransferPerson') }}
+                    </el-dropdown-item>
+                    <el-dropdown-item command="qr" :disabled="!selectedQrAssets.length">
+                      {{ t('asset.printLabels') }}
+                    </el-dropdown-item>
+                    <el-dropdown-item v-if="can('faults.manage') && selectedAssetIds.length === 1" command="fault">
+                      {{ t('asset.registerFault') }}
+                    </el-dropdown-item>
+                    <el-dropdown-item v-if="can('assets.manage')" command="delete" divided class="asset-batch-actions__danger">
+                      {{ t('common.delete') }}
+                    </el-dropdown-item>
+                  </el-dropdown-menu>
+                </template>
+              </el-dropdown>
+              <el-button link :disabled="assetBatchDeleteSaving || assetBatchAssignmentSaving" @click="clearAssetSelection">{{ t('common.cancel') }}</el-button>
             </div>
-            <el-popover placement="bottom" :width="300" trigger="click">
-              <template #reference><el-button :icon="Operation">{{ t('asset.showColumns') }}</el-button></template>
-              <div class="ep-column-list">
-                <el-button link type="primary" @click="resetAssetColumns">{{ t('asset.restoreColumns') }}</el-button>
-                <div class="asset-column-section">
-                  <div class="asset-column-section__title">{{ t('asset.basicFields') }}</div>
-                  <el-checkbox v-for="column in assetColumnOptions" :key="column.key" :model-value="visibleAssetColumns.includes(column.key)" :disabled="column.required" :title="column.required ? t('asset.coreFieldFixed') : undefined" @change="toggleAssetColumn(column.key)">{{ assetColumnLabel(column) }}<span v-if="column.required" class="asset-ledger-column-fixed">{{ t('asset.coreFieldFixed') }}</span></el-checkbox>
-                </div>
-                <div class="asset-column-section">
-                  <div class="asset-column-section__title">{{ t('asset.extendedFields') }}</div>
-                  <div v-if="assetListCustomSchemaLoading" class="asset-column-section__state">{{ t('asset.loadingExtendedColumns') }}</div>
-                  <div v-else-if="assetListCustomSchemaError" class="asset-column-section__state asset-column-section__state--error">
-                    <span>{{ t('asset.extendedColumnsLoadFailed') }}</span>
-                    <el-button link type="primary" @click="retryAssetListCustomSchema">{{ t('common.retry') }}</el-button>
-                  </div>
-                  <template v-else>
-                    <el-checkbox v-for="column in assetDynamicColumnOptions" :key="column.key" :model-value="visibleAssetColumns.includes(column.key)" :disabled="dynamicColumnDisabled(column.key)" :title="[column.scopeLabel, column.field?.help_text].filter(Boolean).join(' · ') || undefined" @change="toggleAssetColumn(column.key)">
-                      <span>{{ column.label }}</span>
-                      <span v-if="column.scopeLabel" class="asset-column-option-scope">（{{ column.scopeLabel }}）</span>
-                    </el-checkbox>
-                    <div v-if="!assetDynamicColumnOptions.length" class="asset-column-section__state">{{ t('asset.noExtendedColumns') }}</div>
+            <template v-else>
+              <div class="asset-ledger-action-group asset-ledger-action-group--view" role="group" :aria-label="t('asset.viewTools')">
+                <el-popover placement="bottom" trigger="click">
+                  <template #reference>
+                    <el-button
+                      class="page-toolbar-icon-action"
+                      :icon="Operation"
+                      :aria-label="t('asset.showColumns')"
+                      :title="t('asset.showColumns')"
+                    />
                   </template>
-                </div>
+                  <div class="ep-column-list">
+                    <el-button link type="primary" @click="resetAssetColumns">{{ t('asset.restoreColumns') }}</el-button>
+                    <div class="asset-column-section">
+                      <div class="asset-column-section__title">{{ t('asset.basicFields') }}</div>
+                      <el-checkbox v-for="column in assetColumnOptions" :key="column.key" :model-value="visibleAssetColumns.includes(column.key)" :disabled="column.required" :title="column.required ? t('asset.coreFieldFixed') : undefined" @change="toggleAssetColumn(column.key)">{{ assetColumnLabel(column) }}<span v-if="column.required" class="asset-ledger-column-fixed">{{ t('asset.coreFieldFixed') }}</span></el-checkbox>
+                    </div>
+                    <div class="asset-column-section">
+                      <div class="asset-column-section__title">{{ t('asset.extendedFields') }}</div>
+                      <div v-if="assetListCustomSchemaLoading" class="asset-column-section__state">{{ t('asset.loadingExtendedColumns') }}</div>
+                      <div v-else-if="assetListCustomSchemaError" class="asset-column-section__state asset-column-section__state--error">
+                        <span>{{ t('asset.extendedColumnsLoadFailed') }}</span>
+                        <el-button link type="primary" @click="retryAssetListCustomSchema">{{ t('common.retry') }}</el-button>
+                      </div>
+                      <template v-else>
+                        <el-checkbox v-for="column in assetDynamicColumnOptions" :key="column.key" :model-value="visibleAssetColumns.includes(column.key)" :disabled="dynamicColumnDisabled(column.key)" :title="[column.scopeLabel, column.field?.help_text].filter(Boolean).join(' · ') || undefined" @change="toggleAssetColumn(column.key)">
+                          <span>{{ column.label }}</span>
+                          <span v-if="column.scopeLabel" class="asset-column-option-scope">（{{ column.scopeLabel }}）</span>
+                        </el-checkbox>
+                        <div v-if="!assetDynamicColumnOptions.length" class="asset-column-section__state">{{ t('asset.noExtendedColumns') }}</div>
+                      </template>
+                    </div>
+                  </div>
+                </el-popover>
+                <ToolbarIconButton
+                  v-if="can('assets.view') && assetCount"
+                  :icon="Printer"
+                  :label="t('asset.printFilteredLabels', { count: assetCount })"
+                  :loading="assetLabelPrintLoading"
+                  :disabled="assetLabelPrintLoading"
+                  @click="openAllQrDialog"
+                />
               </div>
-            </el-popover>
-            <el-button v-if="can('assets.manage')" :icon="Upload" @click="openImportDialog">{{ t('asset.importAssets') }}</el-button>
-            <el-button v-if="can('assets.export')" class="toolbar-secondary-action toolbar-export-action" :icon="Download" :loading="exportingAssets" :disabled="exportingAssets" @click="exportAssets">
-              {{ t('asset.exportData') }}
-            </el-button>
+              <span v-if="can('assets.manage') || can('assets.export')" class="asset-ledger-action-divider" aria-hidden="true" />
+              <div v-if="can('assets.manage') || can('assets.export')" class="asset-ledger-action-group asset-ledger-action-group--data" role="group" :aria-label="t('asset.dataTools')">
+                <ToolbarIconButton v-if="can('assets.manage')" :icon="Upload" :label="t('asset.importAssets')" @click="openImportDialog" />
+                <ToolbarIconButton v-if="can('assets.export')" :icon="Download" :label="t('asset.exportData')" :loading="exportingAssets" :disabled="exportingAssets" @click="exportAssets" />
+              </div>
+            </template>
           </template>
           <template #primary>
             <el-button v-if="can('assets.manage')" class="page-primary-action" type="primary" @click="openNewAssetModal">{{ t('asset.addAsset') }}</el-button>
@@ -435,5 +607,118 @@ function openSelectedQrDialog() {
       <el-button :disabled="assetBatchDeleteSaving" @click="closeAssetBatchDeleteResult">{{ t('common.close') }}</el-button>
     </template>
   </ActionDialogShell>
-  <AssetQrDialog v-model="showQrDialog" :assets="selectedQrAssets" />
+
+  <ActionDialogShell
+    v-model="showBatchAssignmentDialog"
+    :title="batchAssignmentTitle"
+    :description="t('asset.batchAssignmentDescription', { count: selectedAssetIds.length })"
+    size="medium"
+    :pending="assetBatchAssignmentSaving"
+    :close-disabled="assetBatchAssignmentSaving"
+    @close="closeBatchAssignment"
+  >
+    <el-alert
+      v-if="assetBatchAssignmentError"
+      :title="t('asset.batchAssignmentFailed')"
+      :description="assetBatchAssignmentError"
+      type="error"
+      :closable="false"
+      show-icon
+      class="action-dialog__alert"
+    />
+    <el-alert
+      v-if="peopleError"
+      :title="t('asset.peopleLoadFailed')"
+      :description="peopleError"
+      type="error"
+      :closable="false"
+      show-icon
+      class="action-dialog__alert"
+    />
+    <dl class="asset-batch-assignment__summary">
+      <div>
+        <dt>{{ t('asset.batchAssignmentSelected') }}</dt>
+        <dd>
+          <div class="asset-batch-assignment__asset-list">
+            <el-tag v-for="asset in selectedAssetsForBatch" :key="asset.id" type="info">
+              {{ asset.asset_no || `ID ${asset.id}` }}
+            </el-tag>
+          </div>
+        </dd>
+      </div>
+    </dl>
+    <el-form label-position="top" @submit.prevent="submitBatchAssignment">
+      <el-form-item
+        :label="t('asset.batchAssignmentTarget')"
+        required
+        :error="batchAssignmentFormError"
+      >
+        <el-select
+          v-model="batchAssignmentTargetPersonId"
+          filterable
+          remote
+          reserve-keyword
+          clearable
+          :remote-method="searchBatchPeople"
+          :loading="peopleLoading"
+          :placeholder="t('asset.selectPerson')"
+          :no-data-text="t('common.noData')"
+          :no-match-text="t('common.noData')"
+          :aria-label="t('asset.batchAssignmentTarget')"
+          @change="batchAssignmentFormError = ''"
+        >
+          <el-option
+            v-for="person in people"
+            :key="person.id"
+            :label="personLabel(person)"
+            :value="String(person.id)"
+          >
+            <span>{{ personLabel(person) }}</span>
+            <small v-if="personMeta(person)"> · {{ personMeta(person) }}</small>
+          </el-option>
+        </el-select>
+      </el-form-item>
+      <el-form-item :label="t('asset.batchAssignmentReason')">
+        <el-input
+          v-model="batchAssignmentReason"
+          type="textarea"
+          :rows="3"
+          maxlength="2000"
+          show-word-limit
+          :placeholder="t('common.reason')"
+        />
+      </el-form-item>
+    </el-form>
+    <template #footer>
+      <el-button :disabled="assetBatchAssignmentSaving" @click="closeBatchAssignment">{{ t('common.cancel') }}</el-button>
+      <el-button type="primary" :loading="assetBatchAssignmentSaving" :disabled="!batchAssignmentCanSubmit" @click="submitBatchAssignment">
+        {{ batchAssignmentSubmitLabel }}
+      </el-button>
+    </template>
+  </ActionDialogShell>
+
+  <ActionDialogShell
+    v-model="showAssetBatchAssignmentResult"
+    :title="t('asset.batchAssignmentResult')"
+    :description="t('asset.batchAssignmentResultDescription')"
+    size="medium"
+    :close-disabled="assetBatchAssignmentSaving"
+    @close="closeAssetBatchAssignmentResult"
+  >
+    <section v-if="assetBatchAssignmentResult" class="action-dialog__result">
+      <el-alert
+        :type="assetBatchAssignmentResult.failed ? 'warning' : 'success'"
+        :closable="false"
+        :title="t('asset.batchAssignmentSummary', { succeeded: assetBatchAssignmentResult.succeeded, failed: assetBatchAssignmentResult.failed })"
+      />
+      <el-table v-if="assetBatchAssignmentFailures.length" :data="assetBatchAssignmentFailures" table-layout="fixed" class="batch-result-table">
+        <el-table-column prop="asset_no" :label="t('asset.batchAssignmentResultAsset')" min-width="180" />
+        <el-table-column prop="reason" :label="t('asset.batchAssignmentResultReason')" min-width="300" show-overflow-tooltip />
+      </el-table>
+    </section>
+    <template #footer>
+      <el-button :disabled="assetBatchAssignmentSaving" @click="closeAssetBatchAssignmentResult">{{ t('common.close') }}</el-button>
+    </template>
+  </ActionDialogShell>
+  <AssetQrDialog v-model="showQrDialog" :assets="qrDialogAssets" />
 </template>

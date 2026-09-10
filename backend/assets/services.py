@@ -654,7 +654,16 @@ def _apply_assignment_status(asset, target_status):
 
 
 @transaction.atomic
-def _change_asset_assignment(*, asset_id, action, target_person_id=None, actor, request, reason=""):
+def _change_asset_assignment(
+    *,
+    asset_id,
+    action,
+    target_person_id=None,
+    actor,
+    request,
+    reason="",
+    batch_operation_id=None,
+):
     from .audit import asset_audit_snapshot, write_audit_log
 
     asset = Asset.objects.select_for_update().select_related("assigned_person__department").get(pk=asset_id)
@@ -723,6 +732,17 @@ def _change_asset_assignment(*, asset_id, action, target_person_id=None, actor, 
         reason=str(reason or "").strip(),
     )
     after = asset_audit_snapshot(asset.pk)
+    audit_extra = {
+        "source": "asset_assignment",
+        "assignment_event_id": event.pk,
+        "from_person": from_person.pk if from_person else None,
+        "to_person": to_person.pk if to_person else None,
+        "operator": actor.pk if actor else None,
+        "reason": event.reason,
+        "occurred_at": event.created_at,
+    }
+    if batch_operation_id:
+        audit_extra["batch_operation_id"] = str(batch_operation_id)
     write_audit_log(
         request,
         action=action,
@@ -730,20 +750,12 @@ def _change_asset_assignment(*, asset_id, action, target_person_id=None, actor, 
         resource_id=asset.pk,
         before=before,
         after=after,
-        extra={
-            "source": "asset_assignment",
-            "assignment_event_id": event.pk,
-            "from_person": from_person.pk if from_person else None,
-            "to_person": to_person.pk if to_person else None,
-            "operator": actor.pk if actor else None,
-            "reason": event.reason,
-            "occurred_at": event.created_at,
-        },
+        extra=audit_extra,
     )
     return asset, event
 
 
-def assign_asset(*, asset_id, target_person_id, actor, request, reason=""):
+def assign_asset(*, asset_id, target_person_id, actor, request, reason="", batch_operation_id=None):
     return _change_asset_assignment(
         asset_id=asset_id,
         action="assign",
@@ -751,20 +763,22 @@ def assign_asset(*, asset_id, target_person_id, actor, request, reason=""):
         actor=actor,
         request=request,
         reason=reason,
+        batch_operation_id=batch_operation_id,
     )
 
 
-def return_asset(*, asset_id, actor, request, reason=""):
+def return_asset(*, asset_id, actor, request, reason="", batch_operation_id=None):
     return _change_asset_assignment(
         asset_id=asset_id,
         action="return",
         actor=actor,
         request=request,
         reason=reason,
+        batch_operation_id=batch_operation_id,
     )
 
 
-def transfer_asset(*, asset_id, target_person_id, actor, request, reason=""):
+def transfer_asset(*, asset_id, target_person_id, actor, request, reason="", batch_operation_id=None):
     return _change_asset_assignment(
         asset_id=asset_id,
         action="transfer",
@@ -772,6 +786,7 @@ def transfer_asset(*, asset_id, target_person_id, actor, request, reason=""):
         actor=actor,
         request=request,
         reason=reason,
+        batch_operation_id=batch_operation_id,
     )
 
 @transaction.atomic

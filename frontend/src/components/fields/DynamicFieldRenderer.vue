@@ -24,10 +24,9 @@ const textValue = computed(() => {
   return String(props.modelValue);
 });
 
-const numberValue = computed<number | null>(() => {
-  if (props.modelValue === null || props.modelValue === undefined || props.modelValue === "") return null;
-  const value = Number(props.modelValue);
-  return Number.isFinite(value) ? value : null;
+const numberTextValue = computed(() => {
+  if (props.modelValue === null || props.modelValue === undefined || props.modelValue === "") return "";
+  return String(props.modelValue);
 });
 
 const dateValue = computed(() =>
@@ -68,8 +67,8 @@ function update(value: unknown) {
   emit("update:modelValue", value);
 }
 
-function updateNumber(value: number | null | undefined) {
-  emit("update:modelValue", value ?? null);
+function updateNumber(value: string | number | null | undefined) {
+  emit("update:modelValue", value ?? "");
 }
 </script>
 
@@ -90,13 +89,13 @@ function updateNumber(value: number | null | undefined) {
     :placeholder="inputPlaceholder"
     @update:model-value="update"
   />
-  <el-input-number
+  <el-input
     v-else-if="field.field_type === 'number'"
-    :model-value="numberValue"
+    :model-value="numberTextValue"
     :disabled="disabled"
+    inputmode="decimal"
     :placeholder="inputPlaceholder"
     :aria-label="field.name"
-    :value-on-clear="null"
     @update:model-value="updateNumber"
   />
   <el-date-picker

@@ -219,6 +219,11 @@ return it. Only active people can be assigned. A transfer writes an assignment
 history entry and leaves the asset status unchanged. The person's department
 is profile information and is not stored as an asset ownership field.
 
+Administrators can batch assign or transfer the currently selected assets from
+the asset ledger. Each batch accepts at most 100 assets and returns a result for
+each asset; successful items are unselected and failed items remain selected so
+they can be corrected and retried.
+
 The asset import fields `assigned_person_employee_no`,
 `assigned_person_name`, `assigned_person_department`, and `assignment_reason`
 match an existing person. Imports do not create people. Asset exports include

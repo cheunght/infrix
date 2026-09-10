@@ -13,6 +13,7 @@ import { statusTone } from "../status";
 import { businessOptionLabel, LICENSE_STATUS_OPTIONS } from "../business-enums";
 import ResourceState from "./ResourceState.vue";
 import TableIconButton from "./TableIconButton.vue";
+import ToolbarIconButton from "./page/ToolbarIconButton.vue";
 import { formatSystemDate } from "../system-settings";
 
 const props = defineProps<{ context: LicenseContext }>();
@@ -77,9 +78,14 @@ function formatLicenseExpiry(value: string | null | undefined): string {
           </div>
         </template>
         <template #actions>
-          <el-button v-if="can('licenses.export')" class="toolbar-secondary-action toolbar-export-action" :icon="Download" :loading="exportingLicenses" :disabled="exportingLicenses" @click="exportLicenses">
-            {{ t('asset.exportData') }}
-          </el-button>
+          <ToolbarIconButton
+            v-if="can('licenses.export')"
+            :icon="Download"
+            :label="t('asset.exportData')"
+            :loading="exportingLicenses"
+            :disabled="exportingLicenses"
+            @click="exportLicenses"
+          />
         </template>
         <template #primary>
           <el-button v-if="can('licenses.manage')" class="page-primary-action" type="primary" @click="openLicenseModal()">

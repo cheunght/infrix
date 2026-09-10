@@ -54,8 +54,8 @@ production host.
 - Software licenses, inventory tasks, spare parts, stock, and transactions.
 - User accounts, people, departments, roles, LDAP/Active Directory integration,
   and audit logs.
-- System settings for localization, security, SMTP, notifications, branding,
-  and maintenance.
+- System settings for general defaults, interface language, date and currency,
+  security, SMTP, notifications, branding, and maintenance.
 
 ## Documentation
 

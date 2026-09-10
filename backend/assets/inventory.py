@@ -11,15 +11,18 @@ from .models import Asset, DataCenter, ServerRoom
 
 
 def get_inventory_scope_assets(
-    data_center: DataCenter,
+    data_center: DataCenter | None = None,
     server_room: ServerRoom | None = None,
+    *,
+    scope: str | None = None,
 ) -> QuerySet:
-    """Return assets included in an inventory task for the given location.
+    """Return assets included in an inventory task for the requested scope.
 
-    A whole-data-center inventory contains active-rack assets in active rooms
-    plus unracked assets assigned directly to the data center.  Selecting a
-    specific room intentionally narrows the scope to assets mounted in active
-    racks in that room; direct data-center assignments are not included.
+    ``all_assets`` includes every asset in the ledger.  A whole-data-center
+    inventory contains active-rack assets in active rooms plus unracked assets
+    assigned directly to the data center.  Selecting a specific room
+    intentionally narrows the scope to assets mounted in active racks in that
+    room; direct data-center assignments are not included.
 
     The query deliberately does not filter ``Asset.status`` or rack ``status``
     beyond the existing ``is_active`` rule.  This preserves the current task
@@ -32,12 +35,18 @@ def get_inventory_scope_assets(
         "rack_allocation__rack__room__data_center",
     ).prefetch_related("network_addresses")
 
+    if scope == "all_assets":
+        return queryset.order_by("asset_no")
+
     if server_room is not None:
         return queryset.filter(
             rack_allocation__rack__room_id=server_room.id,
             rack_allocation__rack__is_active=True,
             rack_allocation__rack__room__is_active=True,
         ).order_by("asset_no")
+
+    if data_center is None:
+        raise ValueError("data_center is required for a location inventory scope")
 
     return queryset.filter(
         Q(

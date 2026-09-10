@@ -98,9 +98,14 @@ const route = useRoute();
 const router = useRouter();
 const { t } = useI18n();
 const page = ref<Page>(route.meta.page || "dashboard");
+const customFieldSchemaVersion = ref(0);
 const pageTitle = computed(() => {
   if (route.meta.page === "asset-config") {
-    return assetConfigSection.value === "tags" ? t("nav.tags") : t("nav.customFields");
+    return assetConfigSection.value === "tags"
+      ? t("nav.tags")
+      : assetConfigSection.value === "models"
+        ? t("nav.assetModels")
+        : t("nav.customFields");
   }
   const titleKey = route.meta.titleKey;
   if (titleKey) return t(titleKey);
@@ -310,6 +315,7 @@ const settings = useSettings({
   settingsSection,
   actionMessage,
   actionMessageType,
+  customFieldSchemaVersion,
 });
 const {
   systemSettings,
@@ -633,6 +639,7 @@ const assetsApi = useAssets({
   page,
   actionMessage,
   actionMessageType,
+  customFieldSchemaVersion,
   dataCenters,
   departmentOptions,
   departmentLoading,
@@ -663,6 +670,14 @@ const {
   assetBatchDeleteSaving,
   assetBatchDeleteResult,
   showAssetBatchDeleteResult,
+  assetBatchAssignmentSaving,
+  assetBatchAssignmentError,
+  assetBatchAssignmentResult,
+  showAssetBatchAssignmentResult,
+  assetLabelPrintLoading,
+  loadAllAssetsForLabels,
+  batchAssignAssets,
+  closeAssetBatchAssignmentResult,
   assetCount,
   assetPage,
   assetPageSize,
@@ -701,6 +716,7 @@ const {
   assetFormLoadError,
   assetFormSaving,
   assetFormFieldErrors,
+  assetCloneCustomValueWarning,
   retryAssetFormLoad,
   clearAssetFormErrors,
   assetCustomFieldSchema,
@@ -714,6 +730,10 @@ const {
   updateAssetCustomFieldValue,
   manufacturerOptions,
   activeDeviceTypes,
+  assetModels,
+  assetModelsLoading,
+  assetModelsError,
+  retryAssetModels,
   activeDataCenters,
   people,
   peopleLoading,
@@ -1039,10 +1059,10 @@ function syncRouteState(): boolean {
     settingsSection.value = route.meta.settingsSection || "system";
     if (settingsSection.value === "system") {
       const requestedTab = routeQueryValue("tab");
-      systemSettingsTab.value = requestedTab === "localization" || requestedTab === "security" || requestedTab === "smtp" || requestedTab === "notifications" || requestedTab === "branding"
+      systemSettingsTab.value = requestedTab === "security" || requestedTab === "smtp" || requestedTab === "notifications" || requestedTab === "branding"
         ? requestedTab
         : "general";
-      if (hasQueryKey("tab") && requestedTab !== "general" && requestedTab !== "localization" && requestedTab !== "security" && requestedTab !== "smtp" && requestedTab !== "notifications" && requestedTab !== "branding") {
+      if (hasQueryKey("tab") && requestedTab !== "general" && requestedTab !== "security" && requestedTab !== "smtp" && requestedTab !== "notifications" && requestedTab !== "branding") {
         queryKeysToClear.push("tab");
       }
     } else if (settingsSection.value === "organization") {
@@ -1062,12 +1082,14 @@ function syncRouteState(): boolean {
   }
   if (routePage === "asset-config") {
     const assetConfigQuery = routeQueryValue("tab");
-    assetConfigSection.value = assetConfigQuery === "tags"
+    assetConfigSection.value = assetConfigQuery === "models" && can("settings.view")
+      ? "models"
+      : assetConfigQuery === "tags"
       ? "tags"
       : assetConfigQuery === "custom-fields" || can("custom_fields.view")
         ? "custom-fields"
         : "tags";
-    if (hasQueryKey("tab") && assetConfigQuery !== "tags" && assetConfigQuery !== "custom-fields") {
+    if (hasQueryKey("tab") && assetConfigQuery !== "models" && assetConfigQuery !== "tags" && assetConfigQuery !== "custom-fields") {
       queryKeysToClear.push("tab");
     }
   }
@@ -1169,12 +1191,14 @@ function routeIsAllowed() {
   }
   if (routePage === "asset-config") {
     const requestedSection = routeQueryValue("tab");
-    const section = requestedSection === "tags"
+    const section = requestedSection === "models" && can("settings.view")
+      ? "models"
+      : requestedSection === "tags"
       ? "tags"
       : requestedSection === "custom-fields" || can("custom_fields.view")
         ? "custom-fields"
         : "tags";
-    return can(section === "tags" ? "tags.view" : "custom_fields.view");
+    return can(section === "tags" ? "tags.view" : section === "models" ? "settings.view" : "custom_fields.view");
   }
   if (routePage !== "settings") return true;
   const section = route.meta.settingsSection || "system";
@@ -1659,7 +1683,7 @@ function changeOrganizationTab(value: string) {
 }
 function changeSystemSettingsTab(value: string) {
   if (!can("settings.view")) return;
-  if (value !== "general" && value !== "localization" && value !== "security" && value !== "smtp" && value !== "notifications" && value !== "branding") return;
+  if (value !== "general" && value !== "security" && value !== "smtp" && value !== "notifications" && value !== "branding") return;
   systemSettingsTab.value = value;
   navigateToRoute(routeForPage("settings", {
     settingsSection: "system",
@@ -1669,6 +1693,7 @@ function changeSystemSettingsTab(value: string) {
 function openAssetConfiguration(section: AssetConfigSection) {
   if (section === "custom-fields" && !can("custom_fields.view")) return;
   if (section === "tags" && !can("tags.view")) return;
+  if (section === "models" && !can("settings.view")) return;
   closeTransientUi();
   assetConfigSection.value = section;
   nextTick(() => openActiveSidebarSubmenu());
@@ -1695,7 +1720,7 @@ function handleMenuSelect(index: string) {
     return;
   }
   if (index.startsWith("asset-config-")) {
-    openAssetConfiguration(index.endsWith("-tags") ? "tags" : "custom-fields");
+    openAssetConfiguration(index.endsWith("-tags") ? "tags" : index.endsWith("-models") ? "models" : "custom-fields");
     return;
   }
   if (index.startsWith("asset-")) {
@@ -1823,6 +1848,7 @@ onBeforeUnmount(() => {
 // markup can evolve independently without changing API contracts.
 const pageContext = {
   request,
+  confirmAction,
   downloadFile: download,
   currentUsername: username,
   actionMessage,
@@ -1846,6 +1872,9 @@ const pageContext = {
   people, peopleLoading, peopleError, retryPeople,
   toggleAssetColumn, resetAssetColumns, visibleAssetColumnOptions, can,
   openNewAssetModal, selectedAssetIds, assetBatchDeleteSaving, assetBatchDeleteResult, showAssetBatchDeleteResult,
+  assetBatchAssignmentSaving, assetBatchAssignmentError, assetBatchAssignmentResult, showAssetBatchAssignmentResult,
+  assetLabelPrintLoading, loadAllAssetsForLabels,
+  batchAssignAssets, closeAssetBatchAssignmentResult,
   deleteSelectedAssets, closeAssetBatchDeleteResult, exportAssets,
   registerFaultFromSelection, downloadImportTemplate, openImportDialog,
   handleElementAssetSelection, clearAssetSelection, assetValue, openAssetClone, openAssetEditor,
@@ -1961,8 +1990,10 @@ const pageContext = {
   showCustomFieldOptionModal, editingCustomFieldOption, tagSearch, tagActive, tagTableItems, tagPage, tagPageSize, tagCount, tagListLoading, tagListError, tagSaving, tagActionId,
   loadTags, retryTagList, refreshTagList, changeTagPage, changeTagPageSize, openTagModal, saveTag, toggleTag, deleteTag, tagForm, tagFormErrors, showTagModal, editingTag,
   manufacturers,
+  assetModels, assetModelsLoading, assetModelsError, retryAssetModels,
   showAssetModal, assetModalMode, editingAsset, assetForm, assetStatusOptions, activeDeviceTypes,
   assetFormLoading, assetFormLoadError, assetFormSaving, assetFormFieldErrors,
+  assetCloneCustomValueWarning,
   retryAssetFormLoad, clearAssetFormErrors,
   assetCustomFieldSchema,
   assetCustomSchemaLoading, assetCustomSchemaError, retryAssetCustomSchema, updateAssetCustomFieldValue,
@@ -2125,13 +2156,13 @@ watch(hasOpenGlobalOverlay, (isOpen) => {
           ><template #title>{{ t('nav.dashboard') }}</template></el-menu-item
         >
         <el-sub-menu
-          v-if="can('assets.view') || can('custom_fields.view') || can('tags.view') || can('spares.view')"
+          v-if="can('assets.view') || can('custom_fields.view') || can('tags.view') || can('settings.view') || can('spares.view')"
           index="asset-menu"
           ><template #title><el-icon><Monitor /></el-icon><span>{{ t('nav.assets') }}</span></template
           ><el-menu-item v-if="can('assets.view')" index="asset-list">{{ t('nav.assetList') }}</el-menu-item
           ><el-menu-item v-if="can('spares.view')" index="spares">{{ t('nav.spareParts') }}</el-menu-item
           ><el-sub-menu
-            v-if="can('custom_fields.view') || can('tags.view')"
+            v-if="can('custom_fields.view') || can('tags.view') || can('settings.view')"
             index="asset-config-menu"
           >
             <template #title>{{ t('nav.assetConfiguration') }}</template>
@@ -2140,6 +2171,9 @@ watch(hasOpenGlobalOverlay, (isOpen) => {
             >
             <el-menu-item v-if="can('tags.view')" index="asset-config-tags"
               >{{ t('nav.tags') }}</el-menu-item
+            >
+            <el-menu-item v-if="can('settings.view')" index="asset-config-models"
+              >{{ t('nav.assetModels') }}</el-menu-item
             >
           </el-sub-menu>
         </el-sub-menu>

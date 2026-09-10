@@ -18,7 +18,7 @@ import AssetSummary from "../AssetSummary.vue";
 import MoneyInput from "../MoneyInput.vue";
 import PagedTable from "../PagedTable.vue";
 import StatusTag from "../StatusTag.vue";
-import type { Asset, AssetDetail, Page, Person } from "../../types";
+import type { Asset, AssetDetail, Page, PersonOption } from "../../types";
 import type { AssetFormContext, PageContext, RequestFn } from "../../page-context";
 import { statusTone } from "../../status";
 import { type Locale } from "../../i18n";
@@ -690,7 +690,7 @@ function importRowErrorText(row: { errors: Array<{ label: string; message: strin
   return row.errors.map((error) => `${error.label}：${error.message}`).join("；");
 }
 
-function personOptionLabel(person: Person): string {
+function personOptionLabel(person: PersonOption): string {
   return [person.name || person.display_name, person.employee_no, person.department_name]
     .filter(Boolean)
     .join(" · ");
@@ -1050,6 +1050,7 @@ function handleUnlinkedPeopleVisible(visible: boolean): void {
 
   <FormDialogShell
     v-model="showFaultModal"
+    class="repair-dialog repair-dialog--fault"
     :title="t('repair.addFault')"
     :description="t('overlay.faultDialogDescription')"
     size="medium"
@@ -1083,6 +1084,7 @@ function handleUnlinkedPeopleVisible(visible: boolean): void {
 
   <ActionDialogShell
     v-model="showRepairModal"
+    class="repair-dialog repair-dialog--action"
     :title="repairDialogTitle"
     :description="repairDialogDescription"
     size="medium"
@@ -1138,42 +1140,67 @@ function handleUnlinkedPeopleVisible(visible: boolean): void {
           layout="prev, pager, next"
           @update:current-page="changeRepairPartUsagePage"
         >
-          <el-table
+          <table
             v-if="!repairPartUsageLoading"
-            :data="repairPartUsageItems"
-            size="small"
             class="repair-part-usage-table"
-            row-key="id"
+            :aria-label="t('repair.partUsageHistory')"
           >
-            <el-table-column :label="t('repair.partUsageTime')" min-width="154">
-              <template #default="{ row }">{{ formatRepairPartUsageDateTime(row.created_at) }}</template>
-            </el-table-column>
-            <el-table-column :label="t('repair.partUsageSource')" min-width="92">
-              <template #default="{ row }">
-                <StatusTag :tone="businessOptionTone(repairPartUsageSourceOptions, row.source)" :label="businessOptionLabel(repairPartUsageSourceOptions, row.source)" />
+            <colgroup>
+              <col class="repair-part-usage-table__part-column" />
+              <col class="repair-part-usage-table__source-column" />
+              <col class="repair-part-usage-table__quantity-column" />
+            </colgroup>
+            <thead>
+              <tr>
+                <th scope="col">{{ t('repair.partUsagePart') }}</th>
+                <th scope="col">{{ t('repair.partUsageSource') }}</th>
+                <th scope="col" class="repair-part-usage-table__quantity">{{ t('repair.partUsageQuantity') }}</th>
+              </tr>
+            </thead>
+            <tbody>
+              <template v-for="row in repairPartUsageItems" :key="row.id">
+                <tr>
+                  <td>
+                    <div class="repair-part-usage-table__part" :title="repairPartUsageOptionLabel({ code: row.part_code, name: row.part_name, model: row.part_model })">
+                      <strong>{{ row.part_name || row.part_code || t('common.notAvailable') }}</strong>
+                      <span v-if="row.part_code || row.part_model">
+                        {{ row.part_code }}<template v-if="row.part_code && row.part_model"> · </template>{{ row.part_model }}
+                      </span>
+                    </div>
+                  </td>
+                  <td>
+                    <div class="repair-part-usage-table__source">
+                      <StatusTag :tone="businessOptionTone(repairPartUsageSourceOptions, row.source)" :label="businessOptionLabel(repairPartUsageSourceOptions, row.source)" />
+                      <span class="repair-part-usage-table__origin" :title="repairPartUsageOrigin(row)">{{ repairPartUsageOrigin(row) }}</span>
+                    </div>
+                  </td>
+                  <td class="repair-part-usage-table__quantity">{{ row.quantity }} {{ spareUnitLabel(row.unit) }}</td>
+                </tr>
+                <tr class="repair-part-usage-table__meta-row">
+                  <td colspan="3">
+                    <div class="repair-part-usage-table__meta">
+                      <span class="repair-part-usage-table__meta-item">
+                        <span class="repair-part-usage-table__meta-label">{{ t('repair.partUsageTime') }}</span>
+                        <time class="repair-part-usage-table__meta-value" :datetime="row.created_at">{{ formatRepairPartUsageDateTime(row.created_at) }}</time>
+                      </span>
+                      <span class="repair-part-usage-table__meta-item">
+                        <span class="repair-part-usage-table__meta-label">{{ t('repair.partUsageOperator') }}</span>
+                        <span class="repair-part-usage-table__meta-value">{{ row.operator_name || t('common.notAvailable') }}</span>
+                      </span>
+                    </div>
+                  </td>
+                </tr>
+                <tr v-if="row.notes" class="repair-part-usage-table__notes-row">
+                  <td colspan="3">
+                    <div class="repair-part-usage-table__notes">
+                      <span class="repair-part-usage-table__meta-label">{{ t('common.notes') }}</span>
+                      <span class="repair-part-usage-table__meta-value">{{ row.notes }}</span>
+                    </div>
+                  </td>
+                </tr>
               </template>
-            </el-table-column>
-            <el-table-column :label="t('repair.partUsagePart')" min-width="180">
-              <template #default="{ row }">
-                <div class="repair-part-usage-table__part" :title="repairPartUsageOptionLabel({ code: row.part_code, name: row.part_name, model: row.part_model })">
-                  <strong>{{ row.part_code }}</strong>
-                  <span>{{ row.part_name }}<template v-if="row.part_model"> · {{ row.part_model }}</template></span>
-                </div>
-              </template>
-            </el-table-column>
-            <el-table-column :label="t('repair.partUsageQuantity')" width="92" align="right">
-              <template #default="{ row }">{{ row.quantity }} {{ spareUnitLabel(row.unit) }}</template>
-            </el-table-column>
-            <el-table-column :label="t('repair.partUsageOrigin')" min-width="150">
-              <template #default="{ row }"><span :title="repairPartUsageOrigin(row)">{{ repairPartUsageOrigin(row) }}</span></template>
-            </el-table-column>
-            <el-table-column :label="t('repair.partUsageOperator')" min-width="110">
-              <template #default="{ row }">{{ row.operator_name || t('common.notAvailable') }}</template>
-            </el-table-column>
-            <el-table-column :label="t('common.notes')" min-width="180">
-              <template #default="{ row }"><span class="repair-part-usage-table__notes">{{ row.notes || t('common.notAvailable') }}</span></template>
-            </el-table-column>
-          </el-table>
+            </tbody>
+          </table>
         </PagedTable>
         <el-empty v-else-if="!repairPartUsageError" :description="t('repair.noPartUsage')" :image-size="56" />
       </section>
@@ -1197,6 +1224,7 @@ function handleUnlinkedPeopleVisible(visible: boolean): void {
 
   <ActionDialogShell
     v-model="showRepairPartUsageModal"
+    class="repair-dialog repair-dialog--part-usage"
     :title="t('repair.recordPartUsage')"
     :description="t('repair.partUsageDialogDescription')"
     size="medium"

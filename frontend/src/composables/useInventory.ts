@@ -385,9 +385,18 @@ export function useInventory(context: InventoryContext) {
     return options;
   }
   function taskScope(task: InventoryTask) {
+    if (task.scope === "all_assets") return i18n.global.t("inventory.allAssets");
     return task.server_room_name
-      ? `${task.data_center_name} / ${task.server_room_name}`
-      : `${task.data_center_name} / ${i18n.global.t("inventory.wholeDataCenter")}`;
+      ? `${task.data_center_name || ""} / ${task.server_room_name}`
+      : `${task.data_center_name || ""} / ${i18n.global.t("inventory.wholeDataCenter")}`;
+  }
+
+  function scopePreviewLabel(preview: InventoryScopePreview) {
+    if (preview.scope === "all_assets") return i18n.global.t("inventory.allAssets");
+    const dataCenter = preview.data_center?.name || "";
+    return preview.server_room
+      ? `${dataCenter} / ${preview.server_room.name}`
+      : `${dataCenter} / ${i18n.global.t("inventory.wholeDataCenter")}`;
   }
 
   function clearScopePreview() {
@@ -410,13 +419,19 @@ export function useInventory(context: InventoryContext) {
       return false;
     }
     const serverRoom = taskForm.value.server_room;
+    const scope = dataCenter === "all_assets"
+      ? "all_assets"
+      : serverRoom
+        ? "server_room"
+        : "data_center";
     const requestId = ++scopePreviewRequestId;
     scopePreviewController?.abort();
     const controller = new AbortController();
     scopePreviewController = controller;
     scopePreviewLoading.value = true;
     scopePreviewError.value = "";
-    const params = new URLSearchParams({ data_center: dataCenter });
+    const params = new URLSearchParams({ scope });
+    if (scope !== "all_assets") params.set("data_center", dataCenter);
     if (serverRoom) params.set("server_room", serverRoom);
     try {
       const result = await context.request<InventoryScopePreview>(
@@ -880,9 +895,7 @@ export function useInventory(context: InventoryContext) {
     );
     taskForm.value = {
       name: "",
-      data_center: activeDataCenters.value[0]
-        ? String(activeDataCenters.value[0].id)
-        : "",
+      data_center: "all_assets",
       server_room: "",
       inspector: currentInspector ? String(currentInspector.id) : "",
       start_at: "",
@@ -959,12 +972,18 @@ export function useInventory(context: InventoryContext) {
     }
     taskCreating.value = true;
     try {
+      const scope = taskForm.value.data_center === "all_assets"
+        ? "all_assets"
+        : taskForm.value.server_room
+          ? "server_room"
+          : "data_center";
       const createdTask = await context.request<InventoryTask>("/inventory-tasks/", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           ...taskForm.value,
-          data_center: Number(taskForm.value.data_center),
+          scope,
+          data_center: scope === "all_assets" ? null : Number(taskForm.value.data_center),
           server_room: taskForm.value.server_room
             ? Number(taskForm.value.server_room)
             : null,
@@ -1079,6 +1098,10 @@ export function useInventory(context: InventoryContext) {
 
   async function reopenTask() {
     if (!context.can("inventory.manage") || !activeTask.value || taskReopening.value) return;
+    if (activeTask.value.status !== "completed") {
+      ElMessage.warning(i18n.global.t("inventory.reopenOnlyCompleted"));
+      return;
+    }
     const taskId = activeTask.value.id;
     taskReopening.value = true;
     try {
@@ -1833,6 +1856,7 @@ export function useInventory(context: InventoryContext) {
     resolutionActionOptions,
     batchResolutionActionOptions,
     taskScope,
+    scopePreviewLabel,
     loadRooms,
     loadInspectors,
     loadRacks,

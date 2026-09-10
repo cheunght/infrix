@@ -211,7 +211,18 @@ const basicFields = computed<DetailField[]>(() => {
         makeField(
           "model",
           t("asset.model"),
-          current.model_name || current.model,
+          current.asset_model_name || current.model_name || current.model,
+        ),
+        makeField(
+          "model-number",
+          t("asset.modelNumber"),
+          current.asset_model_number || current.asset_model?.model_number,
+        ),
+        makeField(
+          "warranty-months",
+          t("asset.warrantyMonths"),
+          current.warranty_months,
+          (value) => `${value} ${t("common.months")}`,
         ),
         makeField(
           "serial-number",
@@ -234,7 +245,7 @@ const basicFields = computed<DetailField[]>(() => {
         makeField(
           "model",
           t("asset.model"),
-          current.model_name || current.model,
+          current.asset_model_name || current.model_name || current.model,
         ),
         makeField(
           "manufacturer-model",
@@ -249,7 +260,31 @@ const basicFields = computed<DetailField[]>(() => {
         makeField("purpose", t("asset.purpose"), current.purpose),
         makeField("assigned-person", t("asset.assignedPerson"), current.assigned_person?.display_name),
       ];
-  const currentModel = current.model_name || current.model;
+  const currentModel = current.asset_model_name || current.model_name || current.model;
+  if (isDrawer.value && current.asset_model?.default_warranty_months != null) {
+    fields.splice(
+      fields.findIndex((field) => field.key === "warranty-months") + 1,
+      0,
+      makeField(
+        "model-default-warranty",
+        t("asset.defaultWarranty"),
+        current.asset_model.default_warranty_months,
+        (value) => `${value} ${t("common.months")}`,
+      ),
+    );
+  }
+  if (isDrawer.value && current.asset_model?.expected_life_months != null) {
+    fields.splice(
+      fields.findIndex((field) => field.key === "model-default-warranty" || field.key === "warranty-months") + 1,
+      0,
+      makeField(
+        "expected-life",
+        t("asset.expectedLife"),
+        current.asset_model.expected_life_months,
+        (value) => `${value} ${t("common.months")}`,
+      ),
+    );
+  }
   const historicalModel = hasContent(current.manufacturer_model)
     ? String(current.manufacturer_model).trim()
     : "";

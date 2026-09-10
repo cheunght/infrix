@@ -22,7 +22,7 @@ _LEVEL_ORDER = {"critical": 0, "warning": 1, "notice": 2}
 
 
 def _system_now(setting):
-    """Use the configured system timezone for alert date boundaries."""
+    """Use the deployment timezone for alert date boundaries."""
 
     return system_now(setting)
 

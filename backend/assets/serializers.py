@@ -9,12 +9,11 @@ from rest_framework.exceptions import ValidationError as DRFValidationError
 from django.contrib.auth.models import Group, User
 from drf_spectacular.utils import extend_schema_field
 from datetime import date, datetime
-from decimal import Decimal, InvalidOperation
+from decimal import Decimal
 from typing import Any
 import json
 import re
-from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
-from .models import AuditLog, Asset, AssetAssignmentEvent, AssetCustomValue, AssetNetworkAddress, AssetTag, CustomField, CustomFieldOption, DataCenter, Department, DeviceType, DirectoryIdentity, FaultEvent, InventoryItem, InventoryTask, MaintenanceContract, Manufacturer, NotificationDelivery, Person, ProcurementRecord, Rack, RackUnitAllocation, RepairPartUsage, RepairRecord, ServerRoom, SoftwareLicense, SparePart, SparePartCategory, SpareStock, SpareStockTransaction, SystemSetting, Tag, UserSecurityProfile
+from .models import AssetModel, AuditLog, Asset, AssetAssignmentEvent, AssetCustomValue, AssetNetworkAddress, AssetTag, CustomField, CustomFieldOption, DataCenter, Department, DeviceType, DirectoryIdentity, FaultEvent, InventoryItem, InventoryTask, MaintenanceContract, Manufacturer, NotificationDelivery, Person, ProcurementRecord, Rack, RackUnitAllocation, RepairPartUsage, RepairRecord, ServerRoom, SoftwareLicense, SparePart, SparePartCategory, SpareStock, SpareStockTransaction, SystemSetting, Tag, UserSecurityProfile
 from .depreciation import DepreciationValidationError, calculate_asset_depreciation, validate_depreciation_configuration
 from .enum_contracts import (
     INVENTORY_ITEM_STATUS_LABELS,
@@ -33,7 +32,8 @@ from .enum_contracts import (
 from .license_status import LICENSE_STATUS_LABELS, license_status_value
 from .reporting.capacity import rack_effective_used_u
 from .services import apply_asset_custom_values, apply_asset_tags, apply_spare_stock_transaction, assign_asset, configure_asset, inventory_snapshot_location, inventory_task_can_delete, return_asset, synchronize_asset_location_hierarchy, transfer_asset, validate_inventory_resolution_request
-from .custom_fields import normalize_validation_config as _normalize_validation_config, normalize_validation_date as _validation_date
+from .custom_fields import validate_custom_field_value
+from .custom_fields import normalize_validation_config as _normalize_validation_config
 from .lifecycle import allowed_asset_status_values, transition_asset_status, validate_asset_status_transition
 from .roles import ROLE_AUDITOR, ROLE_DEFINITIONS, ROLE_NAME_TO_CODE, preset_group_for_code, user_role_code
 from .ldap_auth import AUTH_SOURCE_LDAP, AUTH_SOURCE_LOCAL
@@ -44,13 +44,14 @@ from .system_settings import (
     get_system_settings,
     system_localdate,
     system_timezone,
+    system_timezone_name,
     system_setting_definitions,
     validate_local_password,
 )
 
 
 class SystemDateTimeInputField(serializers.DateTimeField):
-    """Interpret timezone-less client datetimes in the configured system timezone."""
+    """Interpret timezone-less client datetimes in the deployment timezone."""
 
     def to_internal_value(self, value):
         parsed = parse_datetime(value) if isinstance(value, str) else value
@@ -258,6 +259,7 @@ class SystemResetSerializer(serializers.Serializer):
 class SystemSettingsSerializer(serializers.ModelSerializer):
     """Serialize the fixed, editable system-settings contract."""
 
+    timezone = serializers.SerializerMethodField()
     definitions = serializers.SerializerMethodField()
     email_digest_recipients = serializers.ListField(child=serializers.EmailField(max_length=254), max_length=20, required=False, allow_empty=True)
 
@@ -292,6 +294,7 @@ class SystemSettingsSerializer(serializers.ModelSerializer):
         model = SystemSetting
         fields = [
             *SETTING_METADATA,
+            "timezone",
             "smtp_password",
             "smtp_password_configured",
             "definitions",
@@ -300,16 +303,11 @@ class SystemSettingsSerializer(serializers.ModelSerializer):
     def get_definitions(self, _obj):
         return system_setting_definitions()
 
+    def get_timezone(self, _obj):
+        return system_timezone_name()
+
     def get_smtp_password_configured(self, obj):
         return bool(obj.smtp_password_encrypted)
-
-    def validate_timezone(self, value):
-        candidate = value.strip()
-        try:
-            ZoneInfo(candidate)
-        except (ZoneInfoNotFoundError, ValueError):
-            raise serializers.ValidationError("请输入有效的 IANA 时区名称")
-        return candidate
 
     def validate(self, attrs):
         unknown = sorted(set(self.initial_data.keys()) - self.EDITABLE_FIELDS)
@@ -434,6 +432,49 @@ class AssetBatchDeleteResponseSerializer(serializers.Serializer):
     succeeded = serializers.IntegerField()
     failed = serializers.IntegerField()
     results = AssetBatchDeleteResultSerializer(many=True)
+
+
+class AssetBatchAssignmentSerializer(serializers.Serializer):
+    ids = serializers.ListField(
+        child=serializers.IntegerField(min_value=1),
+        allow_empty=False,
+    )
+    action = serializers.ChoiceField(choices=("assign", "transfer"), required=True)
+    target_person = serializers.PrimaryKeyRelatedField(queryset=Person.objects.all(), required=True)
+    reason = serializers.CharField(required=False, allow_blank=True, max_length=2000)
+
+    def validate(self, attrs):
+        unknown = sorted(set(self.initial_data.keys()) - set(self.fields))
+        if unknown:
+            raise serializers.ValidationError({key: "该批量操作字段不受支持" for key in unknown})
+        return attrs
+
+    def validate_ids(self, value):
+        if len(value) != len(set(value)):
+            raise serializers.ValidationError("资产 ID 不能重复")
+        if len(value) > 100:
+            raise serializers.ValidationError("一次最多处理 100 项资产")
+        return value
+
+    def validate_target_person(self, value):
+        if not value.is_active:
+            raise serializers.ValidationError("停用人员不能被指定为使用人")
+        return value
+
+
+class AssetBatchAssignmentResultSerializer(serializers.Serializer):
+    id = serializers.IntegerField()
+    asset_no = serializers.CharField(allow_blank=True)
+    success = serializers.BooleanField()
+    code = serializers.CharField(allow_blank=True)
+    reason = serializers.CharField(allow_blank=True)
+
+
+class AssetBatchAssignmentResponseSerializer(serializers.Serializer):
+    requested = serializers.IntegerField()
+    succeeded = serializers.IntegerField()
+    failed = serializers.IntegerField()
+    results = AssetBatchAssignmentResultSerializer(many=True)
 
 
 class UserBatchStatusSerializer(serializers.Serializer):
@@ -590,43 +631,97 @@ class DeviceTypeSerializer(BaseDictionarySerializer):
         ]
 
 
-def _validate_default_value(field_type, value, active_options):
+class AssetModelReferenceSerializer(serializers.ModelSerializer):
+    manufacturer_name = serializers.CharField(source="manufacturer.name", read_only=True, allow_null=True)
+    device_type_name = serializers.CharField(source="device_type.name", read_only=True, allow_null=True)
+
+    class Meta:
+        model = AssetModel
+        fields = [
+            "id", "name", "manufacturer", "manufacturer_name", "device_type", "device_type_name",
+            "model_number", "default_warranty_months", "expected_life_months", "is_active",
+        ]
+        read_only_fields = fields
+
+
+class AssetModelOptionSerializer(AssetModelReferenceSerializer):
+    class Meta(AssetModelReferenceSerializer.Meta):
+        fields = [
+            "id", "name", "manufacturer", "manufacturer_name", "device_type", "device_type_name",
+            "model_number", "default_warranty_months", "expected_life_months", "is_active",
+        ]
+
+
+class AssetModelSerializer(serializers.ModelSerializer):
+    manufacturer_name = serializers.CharField(source="manufacturer.name", read_only=True, allow_null=True)
+    device_type_name = serializers.CharField(source="device_type.name", read_only=True, allow_null=True)
+    assets_count = serializers.IntegerField(read_only=True, default=0)
+
+    def validate_name(self, value):
+        value = (value or "").strip()
+        if not value:
+            raise serializers.ValidationError("型号名称不能为空")
+        queryset = AssetModel.objects.filter(name__iexact=value)
+        if self.instance:
+            queryset = queryset.exclude(pk=self.instance.pk)
+        if queryset.exists():
+            raise serializers.ValidationError("型号名称已存在")
+        return value
+
+    def validate_model_number(self, value):
+        return (value or "").strip()
+
+    def validate(self, attrs):
+        for field in ("manufacturer", "device_type"):
+            value = attrs.get(field)
+            if value is not None and not value.is_active:
+                current_id = getattr(self.instance, f"{field}_id", None) if self.instance else None
+                if current_id != value.pk:
+                    raise serializers.ValidationError({field: "停用的选项不能用于资产型号"})
+        for field in ("default_warranty_months", "expected_life_months"):
+            value = attrs.get(field)
+            if value is not None and value < 0:
+                raise serializers.ValidationError({field: "月数不能为负数"})
+        return attrs
+
+    class Meta:
+        model = AssetModel
+        fields = [
+            "id", "name", "manufacturer", "manufacturer_name", "device_type", "device_type_name",
+            "model_number", "default_warranty_months", "expected_life_months", "is_active",
+            "assets_count", "created_at", "updated_at",
+        ]
+        read_only_fields = ["id", "manufacturer_name", "device_type_name", "assets_count", "created_at", "updated_at"]
+
+
+def _validate_default_value(field, value, active_options):
     if not isinstance(value, str):
         raise ValueError("默认值必须是字符串")
     if not value.strip():
         return ""
-    if field_type in {"text", "textarea"}:
-        return value
-    if field_type == "number":
-        try:
-            parsed = Decimal(value.strip())
-        except InvalidOperation as exc:
-            raise ValueError("数字字段的默认值必须能解析为数字") from exc
-        if not parsed.is_finite():
-            raise ValueError("数字字段的默认值必须是有限数字")
-        if parsed.as_tuple().exponent < -6:
-            raise ValueError("数字字段的默认值最多支持 6 位小数")
-        return value.strip()
-    if field_type == "date":
-        return _validation_date(value.strip(), "日期字段的默认值")
+    field_type = field.field_type
+    candidate = value if field_type in {"text", "textarea"} else value.strip()
     if field_type == "boolean":
-        normalized = value.strip()
-        if normalized not in {"true", "false"}:
-            raise ValueError("布尔字段的默认值只能是 true 或 false")
-        return normalized
-    if field_type == "select":
-        if value not in active_options:
-            raise ValueError("下拉字段的默认值必须是启用中的选项值")
-        return value
-    if field_type == "multiselect":
+        if candidate not in {"true", "false"}:
+            raise ValueError("是/否字段的默认值只能是 true 或 false")
+        candidate = candidate == "true"
+    elif field_type == "multiselect":
         try:
-            parsed = json.loads(value)
+            candidate = json.loads(candidate)
         except (TypeError, ValueError) as exc:
             raise ValueError("多选字段的默认值必须是 JSON 字符串数组") from exc
-        if not isinstance(parsed, list) or any(not isinstance(item, str) or item not in active_options for item in parsed):
-            raise ValueError("多选字段的默认值必须只包含启用中的选项值")
-        return value
-    return value
+
+    normalized = validate_custom_field_value(
+        field,
+        candidate,
+        allowed_option_values=active_options,
+        validate_empty=True,
+    )
+    if field_type == "boolean":
+        return "true" if normalized else "false"
+    if field_type == "multiselect":
+        return json.dumps(normalized, ensure_ascii=False, separators=(",", ":"))
+    return normalized
 
 
 def _default_references_option(field, option_value):
@@ -741,8 +836,13 @@ class CustomFieldSerializer(serializers.ModelSerializer):
         active_options = set()
         if self.instance:
             active_options = set(self.instance.options.filter(is_active=True).values_list("value", flat=True))
+        validation_field = CustomField(
+            name=attrs.get("name", self.instance.name if self.instance else "自定义字段"),
+            field_type=field_type,
+            validation_config=attrs["validation_config"],
+        )
         try:
-            attrs["default_value"] = _validate_default_value(field_type, default_value, active_options)
+            attrs["default_value"] = _validate_default_value(validation_field, default_value, active_options)
         except ValueError as exc:
             raise serializers.ValidationError({"default_value": str(exc)}) from exc
         return attrs
@@ -1312,19 +1412,33 @@ def _asset_custom_values(obj):
 class PersonSummarySerializer(serializers.ModelSerializer):
     display_name = serializers.CharField(source="name", read_only=True)
     department_name = serializers.CharField(source="department.name", read_only=True, allow_null=True)
-    account_username = serializers.CharField(source="account.username", read_only=True, allow_null=True)
-    account_email = serializers.CharField(source="account.email", read_only=True, allow_null=True)
 
     class Meta:
         model = Person
         fields = [
             "id", "name", "display_name", "employee_no", "department", "department_name",
-            "organization", "contact", "account", "account_username", "account_email", "is_active",
+            "organization", "contact", "is_active",
+        ]
+        read_only_fields = fields
+
+
+class PersonOptionSerializer(serializers.ModelSerializer):
+    """Small projection for people selectors and account-linking controls."""
+
+    display_name = serializers.CharField(source="name", read_only=True)
+    department_name = serializers.CharField(source="department.name", read_only=True, allow_null=True)
+
+    class Meta:
+        model = Person
+        fields = [
+            "id", "name", "display_name", "employee_no", "department", "department_name", "is_active",
         ]
         read_only_fields = fields
 
 
 class PersonSerializer(PersonSummarySerializer):
+    account_username = serializers.CharField(source="account.username", read_only=True, allow_null=True)
+    account_email = serializers.CharField(source="account.email", read_only=True, allow_null=True)
     asset_count = serializers.IntegerField(read_only=True, default=0)
     created_at = serializers.DateTimeField(read_only=True)
     updated_at = serializers.DateTimeField(read_only=True)
@@ -1363,6 +1477,7 @@ class PersonSerializer(PersonSummarySerializer):
 
     class Meta(PersonSummarySerializer.Meta):
         fields = PersonSummarySerializer.Meta.fields + [
+            "account", "account_username", "account_email",
             "asset_count", "created_at", "updated_at",
         ]
         read_only_fields = [
@@ -1439,7 +1554,10 @@ class AssetSerializer(serializers.ModelSerializer):
     manufacturer_name = serializers.CharField(source="manufacturer.name", read_only=True, allow_null=True)
     device_type_name = serializers.CharField(source="device_type.name", read_only=True, allow_null=True)
     asset_data_center_name = serializers.CharField(source="asset_data_center.name", read_only=True, allow_null=True)
-    model_name = serializers.CharField(source="model", read_only=True)
+    asset_model = AssetModelReferenceSerializer(read_only=True, allow_null=True)
+    asset_model_name = serializers.CharField(source="asset_model.name", read_only=True, allow_null=True)
+    asset_model_number = serializers.CharField(source="asset_model.model_number", read_only=True, allow_null=True)
+    model_name = serializers.SerializerMethodField()
     assigned_person = PersonSummarySerializer(read_only=True, allow_null=True)
     network_addresses = AssetNetworkAddressSerializer(many=True, read_only=True)
     rack_allocation = RackUnitAllocationSerializer(read_only=True)
@@ -1449,6 +1567,9 @@ class AssetSerializer(serializers.ModelSerializer):
 
     def get_tag_names(self, obj) -> list[str]:
         return [item.tag.name for item in obj.asset_tags.select_related("tag").all()]
+
+    def get_model_name(self, obj) -> str:
+        return obj.asset_model.name if obj.asset_model_id else (obj.model or "")
 
     class Meta:
         model = Asset
@@ -1476,7 +1597,9 @@ class AssetListSerializer(serializers.ModelSerializer):
     manufacturer_name = serializers.CharField(source="manufacturer.name", read_only=True, allow_null=True)
     device_type_name = serializers.CharField(source="device_type.name", read_only=True, allow_null=True)
     asset_data_center_name = serializers.CharField(source="asset_data_center.name", read_only=True, allow_null=True)
-    model_name = serializers.CharField(source="model", read_only=True)
+    asset_model_name = serializers.CharField(source="asset_model.name", read_only=True, allow_null=True)
+    asset_model_number = serializers.CharField(source="asset_model.model_number", read_only=True, allow_null=True)
+    model_name = serializers.SerializerMethodField()
     assigned_person = PersonSummarySerializer(read_only=True, allow_null=True)
     business_ip = serializers.SerializerMethodField()
     management_ip = serializers.SerializerMethodField()
@@ -1580,6 +1703,9 @@ class AssetListSerializer(serializers.ModelSerializer):
     def get_tag_names(self, obj) -> list[str]:
         return [item.tag.name for item in obj.asset_tags.select_related("tag").all()]
 
+    def get_model_name(self, obj) -> str:
+        return obj.asset_model.name if obj.asset_model_id else (obj.model or "")
+
     def get_custom_values(self, obj) -> dict[str, object]:
         values = {}
         for item in getattr(obj, "list_custom_values", ()):
@@ -1594,8 +1720,8 @@ class AssetListSerializer(serializers.ModelSerializer):
         fields = [
             "id", "created_at", "updated_at", "asset_no", "name",
             "manufacturer", "manufacturer_name", "device_type",
-            "device_type_name", "asset_data_center", "asset_data_center_name", "model", "model_name", "manufacturer_model",
-            "serial_number", "purpose", "status", "assigned_person", "notes",
+            "device_type_name", "asset_data_center", "asset_data_center_name", "asset_model_name", "asset_model_number", "model", "model_name", "manufacturer_model",
+            "serial_number", "purpose", "status", "assigned_person", "notes", "warranty_months",
             "business_ip", "management_ip", "oob_ip", "data_center", "server_room",
             "rack_code", "u_range", "purchase_date", "supplier", "purchase_order_no",
             "maintenance_provider", "maintenance_expiry_date", "depreciation",
@@ -1626,7 +1752,10 @@ class AssetDetailSerializer(serializers.ModelSerializer):
     manufacturer_name = serializers.CharField(source="manufacturer.name", read_only=True, allow_null=True)
     device_type_name = serializers.CharField(source="device_type.name", read_only=True, allow_null=True)
     asset_data_center_name = serializers.CharField(source="asset_data_center.name", read_only=True, allow_null=True)
-    model_name = serializers.CharField(source="model", read_only=True)
+    asset_model = AssetModelReferenceSerializer(read_only=True, allow_null=True)
+    asset_model_name = serializers.CharField(source="asset_model.name", read_only=True, allow_null=True)
+    asset_model_number = serializers.CharField(source="asset_model.model_number", read_only=True, allow_null=True)
+    model_name = serializers.SerializerMethodField()
     assigned_person = PersonSummarySerializer(read_only=True, allow_null=True)
     network_addresses = AssetNetworkAddressSerializer(many=True, read_only=True)
     rack_allocation = RackUnitAllocationDetailSerializer(read_only=True)
@@ -1681,11 +1810,14 @@ class AssetDetailSerializer(serializers.ModelSerializer):
     def get_allowed_statuses(self, obj) -> list[str]:
         return list(allowed_asset_status_values(obj))
 
+    def get_model_name(self, obj) -> str:
+        return obj.asset_model.name if obj.asset_model_id else (obj.model or "")
+
     class Meta:
         model = Asset
         fields = [
-            "id", "created_at", "updated_at", "asset_no", "name", "manufacturer", "manufacturer_name", "device_type", "device_type_name", "asset_data_center", "asset_data_center_name", "model", "model_name", "manufacturer_model",
-            "serial_number", "purpose", "status", "assigned_person", "notes", "depreciation_start_date", "depreciation_years", "residual_rate", "depreciation_method",
+            "id", "created_at", "updated_at", "asset_no", "name", "manufacturer", "manufacturer_name", "device_type", "device_type_name", "asset_data_center", "asset_data_center_name", "asset_model", "asset_model_name", "asset_model_number", "model", "model_name", "manufacturer_model",
+            "serial_number", "purpose", "status", "assigned_person", "notes", "warranty_months", "depreciation_start_date", "depreciation_years", "residual_rate", "depreciation_method",
             "network_addresses", "rack_allocation", "procurement_records", "maintenance_contracts", "inventory_records_count", "latest_inventory_record", "tags", "custom_fields", "custom_values", "allowed_statuses",
             "depreciation",
         ]
@@ -1719,6 +1851,11 @@ class AssetWriteSerializer(serializers.ModelSerializer):
     assignment = AssetAssignmentSerializer(write_only=True, required=False)
     tags = serializers.PrimaryKeyRelatedField(many=True, queryset=Tag.objects.all(), required=False, write_only=True)
     custom_values = serializers.JSONField(required=False, write_only=True)
+    asset_model = serializers.PrimaryKeyRelatedField(
+        queryset=AssetModel.objects.all(),
+        required=False,
+        allow_null=True,
+    )
     manufacturer = serializers.PrimaryKeyRelatedField(read_only=True)
     manufacturer_id = serializers.PrimaryKeyRelatedField(
         source="manufacturer",
@@ -1730,7 +1867,7 @@ class AssetWriteSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = Asset
-        fields = ["id", "created_at", "updated_at", "asset_no", "name", "manufacturer", "manufacturer_id", "device_type", "asset_data_center", "model", "manufacturer_model", "serial_number", "purpose", "status", "notes", "depreciation_start_date", "depreciation_years", "residual_rate", "depreciation_method", "configuration", "assignment", "tags", "custom_values"]
+        fields = ["id", "created_at", "updated_at", "asset_no", "name", "manufacturer", "manufacturer_id", "device_type", "asset_data_center", "asset_model", "model", "manufacturer_model", "warranty_months", "serial_number", "purpose", "status", "notes", "depreciation_start_date", "depreciation_years", "residual_rate", "depreciation_method", "configuration", "assignment", "tags", "custom_values"]
         read_only_fields = ["id", "created_at", "updated_at"]
 
     def _stored_procurement_amount(self):
@@ -1886,6 +2023,19 @@ class AssetWriteSerializer(serializers.ModelSerializer):
             raise serializers.ValidationError({"status_before_repair": "该字段由维修流程维护"})
         if "configuration" in attrs and not isinstance(attrs["configuration"], dict):
             raise serializers.ValidationError({"configuration": "配置必须是 JSON 对象"})
+        asset_model = attrs.get("asset_model", self.instance.asset_model if self.instance else None)
+        if asset_model is not None:
+            current_model_id = self.instance.asset_model_id if self.instance else None
+            if not asset_model.is_active and asset_model.pk != current_model_id:
+                raise serializers.ValidationError({"asset_model": "停用的资产型号不能用于资产"})
+            for field in ("manufacturer", "device_type"):
+                related = getattr(asset_model, f"{field}_id", None)
+                if related is None:
+                    continue
+                submitted = attrs.get(field)
+                if submitted is not None and submitted.pk != related:
+                    raise serializers.ValidationError({field: "所选资产型号与该字段不一致"})
+                attrs[field] = getattr(asset_model, field)
         manufacturer = attrs.get("manufacturer")
         if manufacturer and not manufacturer.is_active and (not self.instance or self.instance.manufacturer_id != manufacturer.pk):
             raise serializers.ValidationError({"manufacturer_id": "停用的厂商不能用于新资产或修改资产"})
@@ -1952,6 +2102,9 @@ class AssetWriteSerializer(serializers.ModelSerializer):
         assignment = validated_data.pop("assignment", None)
         tags = validated_data.pop("tags", None)
         custom_values = validated_data.pop("custom_values", {})
+        asset_model = validated_data.get("asset_model")
+        if validated_data.get("warranty_months") is None and asset_model is not None:
+            validated_data["warranty_months"] = asset_model.default_warranty_months
         if "status" not in validated_data:
             validated_data["status"] = get_system_settings().default_asset_status
         try:
@@ -2018,7 +2171,12 @@ class AssetWriteSerializer(serializers.ModelSerializer):
 class InventoryScopePreviewQuerySerializer(serializers.Serializer):
     """Validated query parameters for the read-only inventory scope preview."""
 
-    data_center = serializers.PrimaryKeyRelatedField(queryset=DataCenter.objects.all())
+    scope = serializers.ChoiceField(choices=tuple(InventoryTask.SCOPE), required=False)
+    data_center = serializers.PrimaryKeyRelatedField(
+        queryset=DataCenter.objects.all(),
+        required=False,
+        allow_null=True,
+    )
     server_room = serializers.PrimaryKeyRelatedField(
         queryset=ServerRoom.objects.select_related("data_center"),
         required=False,
@@ -2026,8 +2184,22 @@ class InventoryScopePreviewQuerySerializer(serializers.Serializer):
     )
 
     def validate(self, attrs):
-        data_center = attrs["data_center"]
+        scope = attrs.get("scope")
+        data_center = attrs.get("data_center")
         server_room = attrs.get("server_room")
+        if scope is None:
+            if data_center is None:
+                raise serializers.ValidationError({"scope": "请选择盘点范围"})
+            scope = "server_room" if server_room is not None else "data_center"
+            attrs["scope"] = scope
+
+        if scope == "all_assets":
+            if data_center is not None or server_room is not None:
+                raise serializers.ValidationError({"scope": "全部资产范围不能同时指定数据中心或机房"})
+            return attrs
+
+        if data_center is None:
+            raise serializers.ValidationError({"data_center": "指定位置范围必须选择数据中心"})
         if not data_center.is_active:
             raise serializers.ValidationError({"data_center": "停用的数据中心不能创建盘点任务"})
         if server_room is not None:
@@ -2035,6 +2207,10 @@ class InventoryScopePreviewQuerySerializer(serializers.Serializer):
                 raise serializers.ValidationError({"server_room": "机房不属于所选数据中心"})
             if not server_room.is_active:
                 raise serializers.ValidationError({"server_room": "停用的机房不能创建盘点任务"})
+        if scope == "data_center" and server_room is not None:
+            raise serializers.ValidationError({"server_room": "数据中心范围不能同时指定机房"})
+        if scope == "server_room" and server_room is None:
+            raise serializers.ValidationError({"server_room": "机房范围必须选择机房"})
         return attrs
 
 
@@ -2044,13 +2220,16 @@ class InventoryScopeLocationSerializer(serializers.Serializer):
 
 
 class InventoryScopePreviewSerializer(serializers.Serializer):
-    data_center = InventoryScopeLocationSerializer()
+    scope = serializers.ChoiceField(choices=tuple(InventoryTask.SCOPE))
+    data_center = InventoryScopeLocationSerializer(allow_null=True)
     server_room = InventoryScopeLocationSerializer(allow_null=True)
     scope_label = serializers.CharField()
     total = serializers.IntegerField()
     racked = serializers.IntegerField()
     unracked = serializers.IntegerField()
     retired = serializers.IntegerField()
+    unassigned = serializers.IntegerField()
+    inactive_location = serializers.IntegerField()
     includes_unracked = serializers.BooleanField()
     warnings = serializers.ListField(child=serializers.CharField())
 
@@ -2278,7 +2457,8 @@ class InventoryTaskSerializer(serializers.ModelSerializer):
     start_at = SystemDateTimeInputField()
     end_at = SystemDateTimeInputField()
     inspector = serializers.PrimaryKeyRelatedField(queryset=User.objects.filter(is_active=True), required=False)
-    data_center_name = serializers.CharField(source="data_center.name", read_only=True)
+    scope = serializers.ChoiceField(choices=tuple(InventoryTask.SCOPE), required=False)
+    data_center_name = serializers.CharField(source="data_center.name", read_only=True, allow_null=True)
     server_room_name = serializers.CharField(source="server_room.name", read_only=True, allow_null=True)
     inspector_name = serializers.SerializerMethodField()
     summary = serializers.SerializerMethodField()
@@ -2330,10 +2510,32 @@ class InventoryTaskSerializer(serializers.ModelSerializer):
             raise serializers.ValidationError({"detail": "已完成的盘点任务已锁定，请先重新打开任务"})
         data_center = attrs.get("data_center", self.instance.data_center if self.instance else None)
         server_room = attrs.get("server_room", self.instance.server_room if self.instance else None)
+        scope = attrs.get("scope")
         start_at = attrs.get("start_at", self.instance.start_at if self.instance else None)
         end_at = attrs.get("end_at", self.instance.end_at if self.instance else None)
-        if server_room and server_room.data_center_id != data_center.id:
-            raise serializers.ValidationError({"server_room": "机房不属于所选数据中心"})
+        if scope is None:
+            if self.instance and "data_center" not in attrs and "server_room" not in attrs:
+                scope = self.instance.scope
+            elif server_room is not None:
+                scope = "server_room"
+            elif data_center is not None:
+                scope = "data_center"
+            else:
+                raise serializers.ValidationError({"scope": "请选择盘点范围"})
+            attrs["scope"] = scope
+
+        if scope == "all_assets":
+            if data_center is not None or server_room is not None:
+                raise serializers.ValidationError({"scope": "全部资产范围不能同时指定数据中心或机房"})
+        else:
+            if data_center is None:
+                raise serializers.ValidationError({"data_center": "指定位置范围必须选择数据中心"})
+            if server_room and server_room.data_center_id != data_center.id:
+                raise serializers.ValidationError({"server_room": "机房不属于所选数据中心"})
+            if scope == "data_center" and server_room is not None:
+                raise serializers.ValidationError({"server_room": "数据中心范围不能同时指定机房"})
+            if scope == "server_room" and server_room is None:
+                raise serializers.ValidationError({"server_room": "机房范围必须选择机房"})
         if start_at and end_at and end_at < start_at:
             raise serializers.ValidationError({"end_at": "结束时间不能早于开始时间"})
         if data_center and not data_center.is_active:
@@ -2341,7 +2543,9 @@ class InventoryTaskSerializer(serializers.ModelSerializer):
         if server_room and not server_room.is_active:
             raise serializers.ValidationError({"server_room": "停用的机房不能创建盘点任务"})
         if self.instance:
-            if "data_center" in attrs and data_center.id != self.instance.data_center_id:
+            if scope != self.instance.scope:
+                raise serializers.ValidationError({"scope": "任务已经生成固定清单，不能修改盘点范围"})
+            if "data_center" in attrs and (data_center.id if data_center else None) != self.instance.data_center_id:
                 raise serializers.ValidationError({"data_center": "任务已经生成固定清单，不能修改数据中心范围"})
             if "server_room" in attrs and (server_room.id if server_room else None) != self.instance.server_room_id:
                 raise serializers.ValidationError({"server_room": "任务已经生成固定清单，不能修改机房范围"})
@@ -2350,7 +2554,7 @@ class InventoryTaskSerializer(serializers.ModelSerializer):
     class Meta:
         model = InventoryTask
         fields = [
-            "id", "name", "data_center", "data_center_name", "server_room", "server_room_name",
+            "id", "name", "scope", "data_center", "data_center_name", "server_room", "server_room_name",
             "inspector", "inspector_name", "start_at", "end_at", "status", "completed_at", "notes",
             "summary", "can_delete", "created_at", "updated_at",
         ]

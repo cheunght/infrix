@@ -13,6 +13,13 @@ import PagedTable from "./PagedTable.vue";
 import FieldHelp from "./FieldHelp.vue";
 import FormDialogShell from "./FormDialogShell.vue";
 import TableIconButton from "./TableIconButton.vue";
+import {
+  compareDecimalText,
+  decimalPrecisionLimit,
+  decimalStorageIssue,
+  isValidIsoDate,
+  CUSTOM_FIELD_NUMBER_MAX_DECIMAL_PLACES,
+} from "../custom-field-validation";
 import { systemDatePickerFormat } from "../system-settings";
 
 const props = defineProps<{ context: CustomFieldContext }>();
@@ -94,6 +101,10 @@ const customFieldPlaceholderHelp = computed(() => t("customField.placeholderHelp
 const listVisibleHelp = computed(() => t("customField.listVisibleHelp"));
 const filterableHelp = computed(() => t("customField.filterableHelp"));
 
+function activeCustomFieldOptionValues() {
+  return new Set((c.editingCustomField?.options || []).filter((option) => option.is_active).map((option) => option.value));
+}
+
 const customFieldFormRules = computed<FormRules>(() => ({
   key: [
     { required: true, message: t("customField.requiredKey"), trigger: "blur" },
@@ -120,20 +131,95 @@ const customFieldFormRules = computed<FormRules>(() => ({
         callback();
         return;
       }
-      if (c.customFieldForm.field_type === "number" && !Number.isFinite(Number(normalized))) {
-        callback(new Error(t("customField.numberDefault")));
-        return;
-      }
-      if (c.customFieldForm.field_type === "date") {
-        const date = new Date(normalized + "T00:00:00");
-        if (!/^\d{4}-\d{2}-\d{2}$/.test(normalized) || Number.isNaN(date.getTime())) {
-          callback(new Error(t("customField.dateDefault")));
+      const type = c.customFieldForm.field_type;
+      const config = validationConfig.value;
+      if (type === "text" || type === "textarea") {
+        if (config.min_length != null && normalized.length < config.min_length) {
+          callback(new Error(t("customField.defaultMinLength", { count: config.min_length })));
+          return;
+        }
+        if (config.max_length != null && normalized.length > config.max_length) {
+          callback(new Error(t("customField.defaultMaxLength", { count: config.max_length })));
           return;
         }
       }
-      if (c.customFieldForm.field_type === "boolean" && !["true", "false"].includes(normalized)) {
+      if (type === "number") {
+        const precision = decimalPrecisionLimit(config.precision);
+        const issue = decimalStorageIssue(normalized, precision);
+        if (issue === "invalid") {
+          callback(new Error(t("customField.numberDefault")));
+          return;
+        }
+        if (issue === "integer") {
+          callback(new Error(t("customField.numberDefaultInteger")));
+          return;
+        }
+        if (issue === "precision") {
+          callback(new Error(t("customField.numberDefaultPrecision", { count: precision })));
+          return;
+        }
+        const minComparison = config.min != null && config.min !== ""
+          ? compareDecimalText(normalized, config.min)
+          : null;
+        if (minComparison === -1) {
+          callback(new Error(t("customField.defaultMin", { value: config.min })));
+          return;
+        }
+        const maxComparison = config.max != null && config.max !== ""
+          ? compareDecimalText(normalized, config.max)
+          : null;
+        if (maxComparison === 1) {
+          callback(new Error(t("customField.defaultMax", { value: config.max })));
+          return;
+        }
+      }
+      if (type === "date") {
+        if (!isValidIsoDate(normalized)) {
+          callback(new Error(t("customField.dateDefault")));
+          return;
+        }
+        if (config.min_date && normalized < config.min_date) {
+          callback(new Error(t("customField.defaultDateMin", { date: config.min_date })));
+          return;
+        }
+        if (config.max_date && normalized > config.max_date) {
+          callback(new Error(t("customField.defaultDateMax", { date: config.max_date })));
+          return;
+        }
+      }
+      if (type === "boolean" && !["true", "false"].includes(normalized)) {
         callback(new Error(t("customField.booleanDefault")));
         return;
+      }
+      if (type === "select" && !activeCustomFieldOptionValues().has(normalized)) {
+        callback(new Error(t("customField.defaultOption")));
+        return;
+      }
+      if (type === "multiselect") {
+        let values: unknown;
+        try {
+          values = JSON.parse(normalized);
+        } catch {
+          callback(new Error(t("customField.multiselectDefault")));
+          return;
+        }
+        if (!Array.isArray(values) || values.some((value) => typeof value !== "string")) {
+          callback(new Error(t("customField.multiselectDefault")));
+          return;
+        }
+        if (config.min_items != null && values.length < config.min_items) {
+          callback(new Error(t("customField.defaultMinItems", { count: config.min_items })));
+          return;
+        }
+        if (config.max_items != null && values.length > config.max_items) {
+          callback(new Error(t("customField.defaultMaxItems", { count: config.max_items })));
+          return;
+        }
+        const options = activeCustomFieldOptionValues();
+        if (values.some((value) => !options.has(value))) {
+          callback(new Error(t("customField.defaultOption")));
+          return;
+        }
       }
       callback();
     },
@@ -169,12 +255,16 @@ const customFieldFormRules = computed<FormRules>(() => ({
       if (type === "number") {
         for (const key of ["min", "max"] as const) {
           const value = config[key];
-          if (value !== undefined && value !== null && value !== "" && !Number.isFinite(Number(value))) {
+          if (value !== undefined && value !== null && value !== "" && compareDecimalText(value, value) === null) {
             callback(new Error(t("customField.validNumber")));
             return;
           }
         }
-        if (config.min !== undefined && config.min !== null && config.min !== "" && config.max !== undefined && config.max !== null && config.max !== "" && Number(config.min) > Number(config.max)) {
+        const comparison = config.min !== undefined && config.min !== null && config.min !== ""
+          && config.max !== undefined && config.max !== null && config.max !== ""
+          ? compareDecimalText(config.min, config.max)
+          : null;
+        if (comparison === 1) {
           callback(new Error(t("customField.minGreaterThanMax")));
           return;
         }
@@ -405,7 +495,7 @@ async function submitCustomFieldOption() {
             <div v-else-if="c.customFieldForm.field_type === 'number'" class="custom-field-validation-grid">
               <el-input v-model="validationConfig.min" :placeholder="t('customField.minValue')" />
               <el-input v-model="validationConfig.max" :placeholder="t('customField.maxValue')" />
-              <el-input-number v-model="precisionValue" :min="0" :max="6" :step="1" :precision="0" :value-on-clear="null" :placeholder="t('customField.precision')" :aria-label="t('customField.precision')" />
+              <el-input-number v-model="precisionValue" :min="0" :max="CUSTOM_FIELD_NUMBER_MAX_DECIMAL_PLACES" :step="1" :precision="0" :value-on-clear="null" :placeholder="t('customField.precision')" :aria-label="t('customField.precision')" />
             </div>
             <div v-else-if="c.customFieldForm.field_type === 'date'" class="custom-field-validation-grid">
               <el-date-picker v-model="validationConfig.min_date" type="date" :format="systemDatePickerFormat()" value-format="YYYY-MM-DD" :placeholder="t('customField.earliestDate')" />

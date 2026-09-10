@@ -16,7 +16,6 @@ from .models import (
     AssetNetworkAddress,
     AssetAssignmentEvent,
     Person,
-    AssetRelation,
     AssetTag,
     AuthThrottleState,
     CustomField,
@@ -95,7 +94,6 @@ def _clear_mutable_data(preserved_user_ids):
     _delete_queryset(counts, "repair_records", RepairRecord.objects.all())
     _delete_queryset(counts, "fault_events", FaultEvent.objects.all())
     _delete_queryset(counts, "asset_assignment_events", AssetAssignmentEvent.objects.all())
-    _delete_queryset(counts, "asset_relations", AssetRelation.objects.all())
     _delete_queryset(counts, "rack_allocations", RackUnitAllocation.objects.all())
     _delete_queryset(counts, "asset_network_addresses", AssetNetworkAddress.objects.all())
     _delete_queryset(counts, "asset_custom_values", AssetCustomValue.objects.all())

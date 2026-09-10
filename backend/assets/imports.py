@@ -27,7 +27,7 @@ from .audit import asset_audit_snapshot, write_audit_log
 from .custom_fields import validate_custom_field_value
 from .enum_contracts import ASSET_STATUS_LABELS
 from .lifecycle import validate_asset_status_transition
-from .models import Asset, CustomField, DataCenter, Department, DeviceType, Manufacturer, Person, Rack, ServerRoom, Tag
+from .models import Asset, AssetModel, CustomField, DataCenter, Department, DeviceType, Manufacturer, Person, Rack, ServerRoom, Tag
 from .serializers import AssetWriteSerializer
 from .system_settings import get_system_settings
 
@@ -42,6 +42,7 @@ IMPORT_COLUMNS = (
     ("device_type", "设备类型", True, "填写启用中的设备类型名称。"),
     ("manufacturer", "厂商", False, "填写启用中的厂商名称或编码。"),
     ("model", "型号", False, "设备型号。"),
+    ("asset_model_number", "资产型号编号", False, "按已维护的资产型号编号或名称匹配；不会自动创建型号。"),
     ("manufacturer_model", "厂商/型号", False, "厂商和型号组合显示文本；通常填写型号即可。"),
     ("serial_number", "序列号", False, "留空表示没有序列号；序列号不能与其他资产重复。"),
     ("purpose", "用途", False, "资产用途。"),
@@ -50,6 +51,7 @@ IMPORT_COLUMNS = (
     ("assigned_person_name", "使用人姓名", False, "没有员工编号时必填，并结合使用人所属部门匹配；没有部门时姓名必须唯一。"),
     ("assigned_person_department", "使用人部门", False, "用于匹配人员资料，不代表资产归属部门；填写时必须与人员所属部门一致。"),
     ("assignment_reason", "使用人变更原因", False, "导入指定使用人的操作原因。"),
+    ("warranty_months", "实际保修月数", False, "非负整数；留空时使用所选资产型号的默认值。"),
     ("notes", "备注", False, "资产备注。"),
     ("asset_data_center", "未上架所属数据中心", False, "未上架资产的所属数据中心；填写启用中的数据中心名称。"),
     ("data_center", "机柜所属数据中心", False, "上架时与机房、机柜、起止 U 一起填写；使用真实层级名称。"),
@@ -364,6 +366,31 @@ def _positive_integer(value, field, label):
     return str(parsed)
 
 
+def _nonnegative_integer(value, field, label):
+    value = (value or "").strip()
+    if not re.fullmatch(r"\d+", value):
+        raise DjangoValidationError({field: f"{label}必须是非负整数"})
+    return int(value)
+
+
+def _named_asset_model(value):
+    value = (value or "").strip()
+    if not value:
+        return None
+    matches = list(
+        AssetModel.objects.filter(Q(name__iexact=value) | Q(model_number__iexact=value))
+        .select_related("manufacturer", "device_type")
+    )
+    if not matches:
+        raise DjangoValidationError({"asset_model_number": f"未找到启用的资产型号“{value}”"})
+    if len(matches) > 1:
+        raise DjangoValidationError({"asset_model_number": f"资产型号“{value}”匹配到多个结果，请使用唯一型号编号"})
+    model = matches[0]
+    if not model.is_active:
+        raise DjangoValidationError({"asset_model_number": "停用的资产型号不能用于新资产"})
+    return model
+
+
 def _location_text(row):
     values = [row.get(key, "").strip() for key in ("data_center", "server_room", "rack_code")]
     units = [row.get(key, "").strip() for key in ("rack_start_u", "rack_end_u")]
@@ -441,10 +468,17 @@ def _prepare_payload(row, headers):
 
     manufacturer_name = row.get("manufacturer", "").strip()
     manufacturer = _named_active(Manufacturer.objects, manufacturer_name, "manufacturer", "厂商", allow_code=True) if manufacturer_name else None
+    asset_model = _named_asset_model(row.get("asset_model_number"))
     device_type_name = row.get("device_type", "").strip()
     if not device_type_name:
         raise DjangoValidationError({"device_type": "设备类型不能为空"})
     device_type = _named_active(DeviceType.objects, device_type_name, "device_type", "设备类型")
+    if asset_model and asset_model.device_type_id and asset_model.device_type_id != device_type.pk:
+        raise DjangoValidationError({"device_type": "设备类型与资产型号不一致"})
+    if asset_model and asset_model.manufacturer_id and manufacturer and asset_model.manufacturer_id != manufacturer.pk:
+        raise DjangoValidationError({"manufacturer": "厂商与资产型号不一致"})
+    warranty_text = row.get("warranty_months", "").strip()
+    warranty_months = _nonnegative_integer(warranty_text, "warranty_months", "实际保修月数") if warranty_text else None
 
     asset_data_center_name = row.get("asset_data_center", "").strip()
     asset_data_center = _named_active(DataCenter.objects, asset_data_center_name, "asset_data_center", "数据中心") if asset_data_center_name else None
@@ -581,6 +615,7 @@ def _prepare_payload(row, headers):
         "name": asset_name,
         "manufacturer_id": manufacturer.pk if manufacturer else None,
         "device_type": device_type.pk,
+        "asset_model": asset_model.pk if asset_model else None,
         "asset_data_center": asset_data_center.pk if asset_data_center else None,
         "model": row.get("model", "").strip(),
         "manufacturer_model": row.get("manufacturer_model", "").strip(),
@@ -596,6 +631,7 @@ def _prepare_payload(row, headers):
         "tags": tag_values,
         "custom_values": custom_values,
         "assignment": _resolve_assigned_person(row),
+        "warranty_months": warranty_months,
     }
 
 

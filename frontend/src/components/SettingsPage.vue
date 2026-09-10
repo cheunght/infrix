@@ -216,7 +216,6 @@ const smtpTestRecipientError = computed(() => {
 });
 const systemSettingsCategories = computed<Array<{ value: SystemSettingsTab; label: string }>>(() => [
   { value: "general", label: t("settings.generalSection") },
-  { value: "localization", label: t("settings.localizationSection") },
   { value: "security", label: t("settings.securitySection") },
   { value: "smtp", label: t("settings.smtpSection") },
   { value: "notifications", label: t("settings.notificationsSection") },
@@ -225,7 +224,6 @@ const systemSettingsCategories = computed<Array<{ value: SystemSettingsTab; labe
 const systemSettingsCategoryDirty = computed<Record<SystemSettingsTab, boolean>>(() => {
   const result: Record<SystemSettingsTab, boolean> = {
     general: false,
-    localization: false,
     security: false,
     smtp: false,
     notifications: false,
@@ -243,7 +241,6 @@ const systemSettingsCategoryDirty = computed<Record<SystemSettingsTab, boolean>>
 const systemSettingsCategoryErrors = computed<Record<SystemSettingsTab, boolean>>(() => {
   const result: Record<SystemSettingsTab, boolean> = {
     general: false,
-    localization: false,
     security: false,
     smtp: false,
     notifications: false,
@@ -394,7 +391,6 @@ function systemSettingLabel(key: string) {
     default_page_size: "settings.defaultPageSize",
     default_asset_status: "settings.defaultAssetStatus",
     default_locale: "settings.defaultLocale",
-    timezone: "settings.timezone",
     date_format: "settings.dateFormat",
     currency: "settings.currency",
     password_min_length: "settings.passwordMinLength",
@@ -426,7 +422,6 @@ function systemSettingHelp(key: string) {
     default_page_size: "settings.defaultPageSizeHelp",
     default_asset_status: "settings.defaultAssetStatusHelp",
     default_locale: "settings.defaultLocaleHelp",
-    timezone: "settings.timezoneHelp",
     date_format: "settings.dateFormatHelp",
     currency: "settings.currencyHelp",
     password_min_length: "settings.passwordMinLengthHelp",
@@ -555,21 +550,11 @@ function userDirectoryTooltip(user: { auth_source: string; directory_provider: s
                     </el-select>
                     <div class="settings-system__help">{{ systemSettingHelp('default_asset_status') }}</div>
                   </el-form-item>
-                </div>
-                  </section>
-              <section v-else-if="systemSettingsTab === 'localization'" class="settings-system__section">
-                <div class="settings-system__form">
                   <el-form-item :label="systemSettingLabel('default_locale')" :error="systemSettingsFormErrors.default_locale">
                     <el-select v-model="systemSettingsForm.default_locale" :disabled="!can('settings.manage') || systemSettingsSaving" class="settings-system__control">
                       <el-option v-for="option in (systemSettingDefinition('default_locale')?.options || [])" :key="String(option.value)" :label="systemSettingOptionLabel('default_locale', option)" :value="option.value" />
                     </el-select>
                     <div class="settings-system__help">{{ systemSettingHelp('default_locale') }}</div>
-                  </el-form-item>
-                  <el-form-item :label="systemSettingLabel('timezone')" :error="systemSettingsFormErrors.timezone">
-                    <el-select v-model="systemSettingsForm.timezone" filterable allow-create default-first-option :disabled="!can('settings.manage') || systemSettingsSaving" class="settings-system__control">
-                      <el-option v-for="option in (systemSettingDefinition('timezone')?.options || [])" :key="String(option.value)" :label="String(option.label)" :value="option.value" />
-                    </el-select>
-                    <div class="settings-system__help">{{ systemSettingHelp('timezone') }}</div>
                   </el-form-item>
                   <el-form-item :label="systemSettingLabel('date_format')" :error="systemSettingsFormErrors.date_format">
                     <el-select v-model="systemSettingsForm.date_format" :disabled="!can('settings.manage') || systemSettingsSaving" class="settings-system__control">
@@ -584,7 +569,7 @@ function userDirectoryTooltip(user: { auth_source: string; directory_provider: s
                     <div class="settings-system__help">{{ systemSettingHelp('currency') }}</div>
                   </el-form-item>
                 </div>
-                  </section>
+              </section>
               <section v-else-if="systemSettingsTab === 'security'" class="settings-system__section">
                 <div class="settings-system__form">
                   <el-form-item :label="systemSettingLabel('password_min_length')" :error="systemSettingsFormErrors.password_min_length">

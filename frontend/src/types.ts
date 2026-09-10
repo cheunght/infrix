@@ -47,7 +47,6 @@ export type SystemSettingKey =
   | "default_page_size"
   | "default_asset_status"
   | "default_locale"
-  | "timezone"
   | "date_format"
   | "currency"
   | "password_min_length"
@@ -74,8 +73,8 @@ export type SystemSettingOption = { value: string | number | boolean; label: str
 export type SystemSettingDefinition = {
   key: SystemSettingKey;
   label: string;
-  type: "integer" | "enum" | "boolean" | "string" | "email" | "emails" | "timezone";
-  section: "general" | "localization" | "security" | "smtp" | "notifications";
+  type: "integer" | "enum" | "boolean" | "string" | "email" | "emails";
+  section: "general" | "security" | "smtp" | "notifications";
   default: string | number | boolean | string[];
   options: SystemSettingOption[];
   help_text: string;
@@ -87,7 +86,6 @@ export type SystemSettingsForm = {
   default_page_size: number;
   default_asset_status: AssetStatus;
   default_locale: SystemLocale;
-  timezone: string;
   date_format: DateFormat;
   currency: CurrencyCode;
   password_min_length: number;
@@ -113,6 +111,8 @@ export type SystemSettingsForm = {
   notify_low_spare_stock: boolean;
 };
 export type SystemSettings = Omit<SystemSettingsForm, "smtp_password"> & {
+  /** Runtime timezone inherited from the operating system; not editable. */
+  timezone: string;
   smtp_password_configured: boolean;
   definitions: SystemSettingDefinition[];
 };
@@ -142,6 +142,21 @@ export type Department = {
 };
 export type SparePartCategory = DictionaryItem & { code: string; spare_parts_count: number };
 export type Manufacturer = { id: number; name: string; code: string | null; is_active: boolean };
+export type AssetModel = {
+  id: number;
+  name: string;
+  manufacturer: number | null;
+  manufacturer_name: string | null;
+  device_type: number | null;
+  device_type_name: string | null;
+  model_number: string;
+  default_warranty_months: number | null;
+  expected_life_months: number | null;
+  is_active: boolean;
+  assets_count?: number;
+  created_at?: string;
+  updated_at?: string;
+};
 export type SparePartFormState = {
   code: string;
   name: string;
@@ -434,6 +449,10 @@ export type Person = {
   created_at?: string;
   updated_at?: string;
 };
+export type PersonOption = Pick<
+  Person,
+  "id" | "name" | "display_name" | "employee_no" | "department" | "department_name" | "is_active"
+>;
 export type PersonFormState = {
   name: string;
   employee_no: string;
@@ -476,6 +495,10 @@ export type Asset = {
   model?: string;
   model_name?: string;
   manufacturer_model?: string;
+  asset_model?: AssetModel | null;
+  asset_model_name?: string | null;
+  asset_model_number?: string | null;
+  warranty_months?: number | null;
   status: AssetStatus;
   allowed_statuses?: AssetStatus[];
   purpose: string;
@@ -538,6 +561,20 @@ export type AssetBatchDeleteResponse = {
   succeeded: number;
   failed: number;
   results: AssetBatchDeleteResult[];
+};
+export type AssetBatchAssignmentAction = "assign" | "transfer";
+export type AssetBatchAssignmentResult = {
+  id: number;
+  asset_no: string;
+  success: boolean;
+  code: string;
+  reason: string;
+};
+export type AssetBatchAssignmentResponse = {
+  requested: number;
+  succeeded: number;
+  failed: number;
+  results: AssetBatchAssignmentResult[];
 };
 export type UserBatchStatusResult = {
   id: number;
@@ -625,11 +662,13 @@ export type InventorySummary = {
   resolution_resolved: number;
   completion_rate: number;
 };
+export type InventoryTaskScope = "all_assets" | "data_center" | "server_room";
 export type InventoryTask = {
   id: number;
   name: string;
-  data_center: number;
-  data_center_name: string;
+  scope: InventoryTaskScope;
+  data_center: number | null;
+  data_center_name: string | null;
   server_room: number | null;
   server_room_name: string | null;
   inspector: number;
@@ -647,13 +686,16 @@ export type InventoryTask = {
 export type InventoryInspector = { id: number; username: string; display_name: string };
 export type InventoryScopeLocation = { id: number; name: string };
 export type InventoryScopePreview = {
-  data_center: InventoryScopeLocation;
+  scope: InventoryTaskScope;
+  data_center: InventoryScopeLocation | null;
   server_room: InventoryScopeLocation | null;
   scope_label: string;
   total: number;
   racked: number;
   unracked: number;
   retired: number;
+  unassigned: number;
+  inactive_location: number;
   includes_unracked: boolean;
   warnings: string[];
 };

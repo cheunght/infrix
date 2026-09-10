@@ -8,27 +8,12 @@ environment configuration and never cross the API boundary.
 from __future__ import annotations
 
 from datetime import date, datetime, time, timedelta
-from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
-
 from django.conf import settings
 from django.contrib.auth.password_validation import validate_password
 from django.core.exceptions import ValidationError as DjangoValidationError
-from django.db import OperationalError, ProgrammingError
 from django.utils import timezone as django_timezone
 
 from .models import DirectoryIdentity, SystemSetting, UserSecurityProfile
-
-
-TIMEZONE_OPTIONS = (
-    {"value": "Asia/Shanghai", "label": "Asia/Shanghai — China Standard Time"},
-    {"value": "UTC", "label": "UTC"},
-    {"value": "Asia/Tokyo", "label": "Asia/Tokyo — Japan Standard Time"},
-    {"value": "Asia/Singapore", "label": "Asia/Singapore — Singapore Standard Time"},
-    {"value": "Europe/London", "label": "Europe/London — United Kingdom"},
-    {"value": "America/New_York", "label": "America/New_York — Eastern Time"},
-    {"value": "America/Los_Angeles", "label": "America/Los_Angeles — Pacific Time"},
-    {"value": "Australia/Sydney", "label": "Australia/Sydney — Australian Eastern Time"},
-)
 
 
 SETTING_METADATA = {
@@ -50,26 +35,19 @@ SETTING_METADATA = {
     "default_locale": {
         "label": "默认界面语言",
         "type": "enum",
-        "section": "localization",
+        "section": "general",
         "help_text": "新用户和未设置个人语言偏好的会话使用此语言；用户个人设置优先。",
-    },
-    "timezone": {
-        "label": "系统时区",
-        "type": "timezone",
-        "section": "localization",
-        "help_text": "用于系统日期时间和提醒展示；请输入有效的 IANA 时区名称。",
-        "options": TIMEZONE_OPTIONS,
     },
     "date_format": {
         "label": "日期格式",
         "type": "enum",
-        "section": "localization",
+        "section": "general",
         "help_text": "影响日期和日期时间在界面中的展示格式。",
     },
     "currency": {
         "label": "默认币种",
         "type": "enum",
-        "section": "localization",
+        "section": "general",
         "help_text": "影响金额输入和资产折旧金额的货币符号展示，不会换算已保存金额。",
     },
     "password_min_length": {
@@ -205,20 +183,10 @@ RESET_SETTING_KEYS = (
 )
 
 
-def _valid_timezone(value: str) -> str:
-    candidate = str(value or "").strip()
-    try:
-        ZoneInfo(candidate)
-    except (ZoneInfoNotFoundError, ValueError):
-        return "Asia/Shanghai"
-    return candidate
-
-
 def _deployment_defaults() -> dict[str, object]:
     language_code = str(getattr(settings, "LANGUAGE_CODE", "zh-hans") or "zh-hans").lower()
     return {
         "default_locale": "en-US" if language_code.startswith("en") else "zh-CN",
-        "timezone": _valid_timezone(getattr(settings, "TIME_ZONE", "Asia/Shanghai")),
         "login_max_attempts": max(1, int(getattr(settings, "AUTH_LOGIN_MAX_ATTEMPTS", 5))),
         "login_window_seconds": max(1, int(getattr(settings, "AUTH_LOGIN_WINDOW_SECONDS", 900))),
         "login_lock_seconds": max(1, int(getattr(settings, "AUTH_LOGIN_LOCK_SECONDS", 900))),
@@ -235,43 +203,32 @@ def get_system_settings():
 
 
 def system_timezone(setting=None):
-    """Return the configured application timezone with a migration-safe fallback."""
+    """Return the deployment timezone inherited from the operating system."""
 
-    if setting is None:
-        try:
-            setting = get_system_settings()
-        except (OperationalError, ProgrammingError):
-            return django_timezone.get_current_timezone()
-    candidate = str(getattr(setting, "timezone", "") or "").strip()
-    try:
-        return ZoneInfo(candidate)
-    except (ZoneInfoNotFoundError, ValueError):
-        return django_timezone.get_current_timezone()
+    return django_timezone.get_default_timezone()
+
+
+def system_timezone_name() -> str:
+    """Return the deployment timezone name for read-only status payloads."""
+
+    value = system_timezone()
+    return str(getattr(value, "key", value))
 
 
 def system_now(setting=None):
-    """Return the current instant represented in the configured timezone."""
+    """Return the current instant represented in the deployment timezone."""
 
     return django_timezone.now().astimezone(system_timezone(setting))
 
 
 def system_localdate(setting=None):
-    """Return today's date according to the configured application timezone."""
+    """Return today's date according to the deployment timezone."""
 
-    configured_timezone = system_timezone(setting)
-    current_timezone = django_timezone.get_current_timezone()
-    # Keep Django's established localdate path when the application setting
-    # and deployment timezone agree. Besides avoiding needless conversion,
-    # this preserves existing callers' timezone.localdate observation and
-    # keeps their behavior unchanged. A web-configured timezone still takes
-    # precedence whenever it differs from the deployment timezone.
-    if configured_timezone == current_timezone:
-        return django_timezone.localdate()
     return system_now(setting).date()
 
 
 def system_localtime(value=None, setting=None):
-    """Represent an aware datetime in the configured application timezone."""
+    """Represent an aware datetime in the deployment timezone."""
 
     value = value or django_timezone.now()
     if django_timezone.is_naive(value):
@@ -282,9 +239,8 @@ def system_localtime(value=None, setting=None):
 def system_date_bounds(start: date | None = None, end: date | None = None, setting=None):
     """Return an inclusive system-date range as aware datetime boundaries.
 
-    Timestamp filters must use the configured system timezone instead of the
-    deployment ``TIME_ZONE`` used by Django's ``__date`` lookup. The upper
-    bound is exclusive so an ``end`` date includes its entire local day.
+    The upper bound is exclusive so an ``end`` date includes its entire local
+    day.
     """
 
     timezone = system_timezone(setting)

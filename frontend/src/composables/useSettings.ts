@@ -21,6 +21,7 @@ import type {
   LdapConfigurationForm,
   LdapStatus,
   ManagedUser,
+  PersonOption,
   Role,
   SparePartCategory,
   SystemSettingDefinition,
@@ -53,6 +54,7 @@ export interface SettingsDeps {
   settingsSection: Ref<SettingsSection>;
   actionMessage: Ref<string>;
   actionMessageType: Ref<ActionMessageType | null>;
+  customFieldSchemaVersion: Ref<number>;
 }
 
 export const SYSTEM_RESET_CONFIRMATION = "RESET INFRIX";
@@ -73,7 +75,6 @@ const DEFAULT_SYSTEM_SETTINGS_FORM: SystemSettingsForm = {
   default_page_size: 50,
   default_asset_status: "in_stock",
   default_locale: "zh-CN",
-  timezone: "Asia/Shanghai",
   date_format: "YYYY-MM-DD",
   currency: "CNY",
   password_min_length: 8,
@@ -104,7 +105,6 @@ const SYSTEM_SETTINGS_VALUE_KEYS: Array<keyof Omit<SystemSettingsForm, "smtp_pas
   "default_page_size",
   "default_asset_status",
   "default_locale",
-  "timezone",
   "date_format",
   "currency",
   "password_min_length",
@@ -256,7 +256,7 @@ export function useSettings(deps: SettingsDeps) {
   const userSaving = ref(false);
   const userPendingId = ref<number | null>(null);
   const userFormErrors = ref<FormErrors>({});
-  const unlinkedPeople = ref<Person[]>([]);
+  const unlinkedPeople = ref<PersonOption[]>([]);
   const unlinkedPeopleLoading = ref(false);
   const unlinkedPeopleError = ref("");
   const unlinkedPeopleRequestId = ref(0);
@@ -462,6 +462,10 @@ export function useSettings(deps: SettingsDeps) {
     deps.actionMessage.value = message;
   }
 
+  function markCustomFieldSchemaChanged() {
+    deps.customFieldSchemaVersion.value += 1;
+  }
+
   function errorMessage(error: unknown, fallback: string) {
     const normalized = normalizeApiError(error);
     return normalized.kind === "unknown" ? fallback : normalized.message;
@@ -632,7 +636,6 @@ export function useSettings(deps: SettingsDeps) {
       default_page_size: value.default_page_size,
       default_asset_status: value.default_asset_status,
       default_locale: value.default_locale,
-      timezone: value.timezone,
       date_format: value.date_format,
       currency: value.currency,
       password_min_length: value.password_min_length,
@@ -1568,8 +1571,8 @@ export function useSettings(deps: SettingsDeps) {
     unlinkedPeopleLoading.value = true;
     unlinkedPeopleError.value = "";
     try {
-      const result = await deps.request<PageResult<Person> | Person[]>(
-        "/people/?page=1&page_size=100&is_active=true&account=unlinked",
+      const result = await deps.request<PageResult<PersonOption> | PersonOption[]>(
+        "/people/?page=1&page_size=100&is_active=true&account=unlinked&compact=1",
       );
       if (requestId !== unlinkedPeopleRequestId.value || result == null) return false;
       unlinkedPeople.value = pageItems(result);
@@ -1881,6 +1884,7 @@ export function useSettings(deps: SettingsDeps) {
         }),
       });
       saved = true;
+      markCustomFieldSchemaChanged();
     } catch (error) {
       customFieldFormErrors.value = extractFieldErrors(error, [
         "device_type",
@@ -1918,6 +1922,7 @@ export function useSettings(deps: SettingsDeps) {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ is_active: !field.is_active }),
       });
+      markCustomFieldSchemaChanged();
       setActionMessage(field.is_active ? tr("customField.disabled") : tr("customField.enabled"));
       const refreshed = await loadCustomFields();
       if (!refreshed && customFieldListError.value) setActionMessage(tr("customField.statusRefreshFailed"), "error");
@@ -1938,6 +1943,7 @@ export function useSettings(deps: SettingsDeps) {
     try {
       if (!(await deps.confirmAction(tr("customField.deleteConfirm", { name: field.name })))) return;
       await deps.request(`/custom-fields/${field.id}/`, { method: "DELETE" });
+      markCustomFieldSchemaChanged();
       setActionMessage(tr("customField.deleted"));
       const refreshed = await loadCustomFields();
       if (!refreshed && customFieldListError.value) setActionMessage(tr("customField.deletedRefreshFailed"), "error");
@@ -1984,6 +1990,7 @@ export function useSettings(deps: SettingsDeps) {
         body: JSON.stringify({ ...customFieldOptionForm.value, field: editingCustomField.value.id }),
       });
       saved = true;
+      markCustomFieldSchemaChanged();
     } catch (error) {
       customFieldOptionFormErrors.value = extractFieldErrors(error, [
         "field",
@@ -2008,6 +2015,7 @@ export function useSettings(deps: SettingsDeps) {
     try {
       if (!(await deps.confirmAction(tr("customField.optionDeleteConfirm", { name: option.label })))) return;
       await deps.request(`/custom-field-options/${option.id}/`, { method: "DELETE" });
+      markCustomFieldSchemaChanged();
       setActionMessage(tr("customField.optionDeleted"));
       const refreshed = await loadCustomFieldOptions(editingCustomField.value);
       if (!refreshed && customFieldOptionError.value) setActionMessage(tr("customField.optionDeletedRefreshFailed"), "error");

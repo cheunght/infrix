@@ -10,6 +10,7 @@ import PageToolbar from "./page/PageToolbar.vue";
 import StatusTag from "./StatusTag.vue";
 import ResourceState from "./ResourceState.vue";
 import TableIconButton from "./TableIconButton.vue";
+import ToolbarIconButton from "./page/ToolbarIconButton.vue";
 import { statusTone } from "../status";
 import type { FaultEvent } from "../types";
 import type { RepairContext } from "../page-context";
@@ -100,9 +101,14 @@ function repairActionIcon(fault: FaultEvent) {
             </div>
           </template>
           <template #actions>
-            <el-button v-if="can('faults.export')" class="toolbar-secondary-action toolbar-export-action" :icon="Download" :loading="exportingRepairs" :disabled="exportingRepairs" @click="exportRepairs">
-              {{ t('asset.exportData') }}
-            </el-button>
+            <ToolbarIconButton
+              v-if="can('faults.export')"
+              :icon="Download"
+              :label="t('asset.exportData')"
+              :loading="exportingRepairs"
+              :disabled="exportingRepairs"
+              @click="exportRepairs"
+            />
           </template>
           <template #primary>
           <el-button v-if="can('faults.manage')" class="page-primary-action" type="primary" @click="openFaultModal()">{{ t('repair.addFault') }}</el-button>

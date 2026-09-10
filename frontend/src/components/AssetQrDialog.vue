@@ -5,7 +5,7 @@ import { Download, Grid, Printer } from "@element-plus/icons-vue";
 import { ElMessage } from "element-plus/es/components/message/index.mjs";
 import QRCode from "qrcode";
 import type { Asset } from "../types";
-import { assetLocationLabel, buildAssetQrValue } from "../asset-qr";
+import { buildAssetQrValue } from "../asset-qr";
 import { normalizeApiError } from "../error-handling";
 
 type QrEntry = {
@@ -27,7 +27,16 @@ const { t } = useI18n();
 const entries = ref<QrEntry[]>([]);
 const loading = ref(false);
 const error = ref("");
+const labelSize = ref<"small" | "medium">("medium");
 let generation = 0;
+
+function modelLabel(asset: Asset): string {
+  return asset.asset_model_name || asset.model_name || asset.model || asset.manufacturer_model || t("asset.noModel");
+}
+
+function serialLabel(asset: Asset): string {
+  return asset.serial_number || t("asset.noSerial");
+}
 
 async function generateCodes() {
   const currentGeneration = ++generation;
@@ -95,13 +104,17 @@ async function printEntries() {
     ElMessage.warning(t("asset.qrCodePrintBlocked"));
     return;
   }
+  const isSmall = labelSize.value === "small";
+  const labelWidth = isSmall ? "50mm" : "70mm";
+  const labelHeight = isSmall ? "30mm" : "40mm";
+  const qrSize = isSmall ? "18mm" : "24mm";
   const labels = entries.value.map((entry) => `
     <article class="asset-qr-print-label">
       <img src="${entry.image}" alt="${escapeHtml(t("asset.qrCodeAlt", { asset: entry.asset.asset_no }))}">
       <div class="asset-qr-print-copy">
         <strong>${escapeHtml(entry.asset.asset_no || `#${entry.asset.id}`)}</strong>
-        <span>${escapeHtml(entry.asset.name || t("asset.unlisted"))}</span>
-        <small>${escapeHtml(assetLocationLabel(entry.asset))}</small>
+        <span>${escapeHtml(modelLabel(entry.asset))}</span>
+        <small>${escapeHtml(serialLabel(entry.asset))}</small>
       </div>
     </article>`).join("");
   printWindow.document.write(`<!doctype html>
@@ -111,15 +124,17 @@ async function printEntries() {
         <title>${escapeHtml(t("asset.qrCodeTitle"))}</title>
         <style>
           * { box-sizing: border-box; }
-          body { margin: 0; padding: 24px; color: #1f2937; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
-          .asset-qr-print-sheet { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px; }
-          .asset-qr-print-label { display: flex; align-items: center; gap: 16px; min-height: 160px; padding: 16px; border: 1px solid #dcdfe6; border-radius: 4px; break-inside: avoid; }
-          .asset-qr-print-label img { width: 132px; height: 132px; image-rendering: pixelated; }
-          .asset-qr-print-copy { display: flex; min-width: 0; flex-direction: column; gap: 8px; }
-          .asset-qr-print-copy strong { font-size: 18px; }
-          .asset-qr-print-copy span { font-size: 14px; }
-          .asset-qr-print-copy small { color: #606266; line-height: 1.5; overflow-wrap: anywhere; }
-          @media print { body { padding: 0; } .asset-qr-print-sheet { gap: 10mm; } }
+          @page { margin: 8mm; }
+          body { margin: 0; padding: 8mm; color: #1f2937; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
+          .asset-qr-print-sheet { display: grid; grid-template-columns: repeat(2, ${labelWidth}); gap: 5mm; align-items: start; }
+          .asset-qr-print-label { display: flex; align-items: center; gap: 3mm; width: ${labelWidth}; height: ${labelHeight}; padding: 3mm; border: 0.3mm solid #dcdfe6; border-radius: 1mm; break-inside: avoid; page-break-inside: avoid; overflow: hidden; }
+          .asset-qr-print-label img { flex: 0 0 ${qrSize}; width: ${qrSize}; height: ${qrSize}; image-rendering: pixelated; }
+          .asset-qr-print-copy { display: flex; min-width: 0; flex: 1; flex-direction: column; gap: 1mm; overflow: hidden; }
+          .asset-qr-print-copy strong, .asset-qr-print-copy span, .asset-qr-print-copy small { overflow-wrap: anywhere; word-break: break-word; line-height: 1.2; }
+          .asset-qr-print-copy strong { font-size: ${isSmall ? "9pt" : "11pt"}; }
+          .asset-qr-print-copy span { font-size: ${isSmall ? "7pt" : "9pt"}; }
+          .asset-qr-print-copy small { color: #606266; font-size: ${isSmall ? "6pt" : "7pt"}; }
+          @media print { body { padding: 0; } .asset-qr-print-sheet { gap: 4mm; } }
         </style>
       </head>
       <body><main class="asset-qr-print-sheet">${labels}</main></body>
@@ -152,26 +167,33 @@ async function printEntries() {
 
     <div v-loading="loading" class="asset-qr-dialog__body">
       <el-alert v-if="error" :title="t('asset.qrCodeGenerateFailed')" :description="error" type="error" show-icon :closable="false" />
-      <div v-else-if="entries.length" class="asset-qr-sheet" :class="{ 'asset-qr-sheet--single': entries.length === 1 }">
+      <div v-if="entries.length" class="asset-qr-dialog__options">
+        <span>{{ t('asset.labelSize') }}</span>
+        <el-select v-model="labelSize" size="small" :aria-label="t('asset.labelSize')" style="width: 150px">
+          <el-option :label="t('asset.smallLabel')" value="small" />
+          <el-option :label="t('asset.mediumLabel')" value="medium" />
+        </el-select>
+      </div>
+      <div v-if="entries.length" class="asset-qr-sheet" :class="[`asset-qr-sheet--${labelSize}`, { 'asset-qr-sheet--single': entries.length === 1 }]">
         <article v-for="entry in entries" :key="entry.asset.id" class="asset-qr-label">
           <img class="asset-qr-label__image" :src="entry.image" :alt="t('asset.qrCodeAlt', { asset: entry.asset.asset_no })" />
           <div class="asset-qr-label__copy">
             <strong>{{ entry.asset.asset_no || `#${entry.asset.id}` }}</strong>
-            <span :title="entry.asset.name || t('asset.unlisted')">{{ entry.asset.name || t('asset.unlisted') }}</span>
-            <small :title="assetLocationLabel(entry.asset)">{{ assetLocationLabel(entry.asset) }}</small>
+            <span :title="modelLabel(entry.asset)">{{ modelLabel(entry.asset) }}</span>
+            <small :title="serialLabel(entry.asset)">{{ serialLabel(entry.asset) }}</small>
           </div>
           <el-button v-if="entries.length === 1" text type="primary" :icon="Download" :aria-label="t('asset.downloadQr')" @click="downloadEntry(entry)">
             {{ t('asset.downloadQr') }}
           </el-button>
         </article>
       </div>
-      <el-empty v-else :description="t('asset.noQrAssets')" :image-size="64" />
+      <el-empty v-else-if="!error" :description="t('asset.noQrAssets')" :image-size="64" />
     </div>
 
     <template #footer>
       <el-button @click="close">{{ t('common.close') }}</el-button>
       <el-button type="primary" :icon="Printer" :disabled="!entries.length || loading" @click="printEntries">
-        {{ t('asset.printQr') }}
+        {{ t('asset.printLabels') }}
       </el-button>
     </template>
   </el-dialog>
@@ -209,6 +231,16 @@ async function printEntries() {
 
 .asset-qr-dialog__body {
   min-height: 220px;
+}
+
+.asset-qr-dialog__options {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-bottom: 12px;
+  color: var(--el-text-color-secondary);
+  font-size: 13px;
 }
 
 .asset-qr-sheet {
@@ -279,6 +311,22 @@ async function printEntries() {
   font-size: 12px;
 }
 
+.asset-qr-sheet--small .asset-qr-label {
+  grid-template-columns: 80px minmax(0, 1fr) auto;
+  gap: 10px;
+  padding: 10px;
+}
+
+.asset-qr-sheet--small .asset-qr-label__image {
+  width: 80px;
+  height: 80px;
+}
+
+.asset-qr-sheet--medium .asset-qr-label__image {
+  width: 112px;
+  height: 112px;
+}
+
 @media (max-width: 680px) {
   .asset-qr-sheet,
   .asset-qr-sheet--single {
@@ -290,10 +338,19 @@ async function printEntries() {
     grid-template-columns: 96px minmax(0, 1fr);
   }
 
+  .asset-qr-sheet--small .asset-qr-label {
+    grid-template-columns: 72px minmax(0, 1fr);
+  }
+
   .asset-qr-label__image,
   .asset-qr-sheet--single .asset-qr-label__image {
     width: 96px;
     height: 96px;
+  }
+
+  .asset-qr-sheet--small .asset-qr-label__image {
+    width: 72px;
+    height: 72px;
   }
 
   .asset-qr-label .el-button {
