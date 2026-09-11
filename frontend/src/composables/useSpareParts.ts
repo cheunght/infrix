@@ -247,20 +247,8 @@ export function useSpareParts(deps: SparePartsDeps) {
     spareListError.value = "";
 
     try {
-      const [partResult, roomResult, categoryResult] = await Promise.all([
-        deps.request<PageResult<SparePart> | SparePart[]>(`/spare-parts/?${listParams().toString()}`, { signal: controller.signal }),
-        loadAllPages<ServerRoom>(
-          "/server-rooms/?page_size=50&is_active=true",
-          controller.signal,
-          () => requestId === spareListRequestId.value && deps.isCurrentLoad(version),
-        ),
-        loadAllPages<SparePartCategory>(
-          `/spare-part-categories/?page_size=50&is_active=${deps.can("spares.manage") ? "all" : "true"}`,
-          controller.signal,
-          () => requestId === spareListRequestId.value && deps.isCurrentLoad(version),
-        ),
-      ]);
-      if (partResult == null || roomResult == null || categoryResult == null) return false;
+      const partResult = await deps.request<PageResult<SparePart> | SparePart[]>(`/spare-parts/?${listParams().toString()}`, { signal: controller.signal });
+      if (partResult == null) return false;
       if (requestId !== spareListRequestId.value || !deps.isCurrentLoad(version)) return false;
 
       const nextCount = pageTotal(partResult);
@@ -274,8 +262,6 @@ export function useSpareParts(deps: SparePartsDeps) {
 
       spareParts.value = pageItems(partResult);
       sparePartCount.value = nextCount;
-      spareRooms.value = roomResult.rows;
-      deps.spareCategories.value = categoryResult.rows;
       return true;
     } catch (error) {
       if (requestId === spareListRequestId.value && deps.isCurrentLoad(version) && !isAbortError(error)) {
@@ -555,8 +541,14 @@ export function useSpareParts(deps: SparePartsDeps) {
     if (!location) {
       try { remembered = JSON.parse(localStorage.getItem("infrix.spare.last_location") || "null") as Partial<SpareOperationLocation> | null; } catch { remembered = null; }
     }
-    const rememberedCenter = remembered?.data_center ? deps.dataCenters.value.find((center) => center.is_active && center.id === Number(remembered?.data_center)) : null;
-    const rememberedRoom = rememberedCenter && remembered?.server_room ? spareRooms.value.find((room) => room.is_active && room.id === Number(remembered?.server_room) && room.data_center === rememberedCenter.id) : null;
+    const rememberedCenterId = remembered?.data_center ? Number(remembered.data_center) : 0;
+    const rememberedRoomId = remembered?.server_room ? Number(remembered.server_room) : 0;
+    const rememberedCenter = Number.isInteger(rememberedCenterId) && rememberedCenterId > 0
+      ? { id: rememberedCenterId }
+      : null;
+    const rememberedRoom = rememberedCenter && Number.isInteger(rememberedRoomId) && rememberedRoomId > 0
+      ? { id: rememberedRoomId, data_center: rememberedCenter.id }
+      : null;
     const preset = location || (rememberedCenter && (!remembered?.server_room || rememberedRoom) ? { data_center: rememberedCenter.id, server_room: rememberedRoom?.id || null, quantity: 0, label: tr("spare.recentLocation") } : undefined);
     spareOperationForm.value = {
       part: String(part.id), quantity: "1", adjustment_quantity: "",

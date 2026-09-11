@@ -16,6 +16,7 @@ import FormDialogShell from "./FormDialogShell.vue";
 import StatusTag from "./StatusTag.vue";
 import TableIconButton from "./TableIconButton.vue";
 import ToolbarIconButton from "./page/ToolbarIconButton.vue";
+import SearchableSelect, { type SearchableSelectOption } from "./SearchableSelect.vue";
 import type { DataCenter, DictionaryItem, ServerRoom, SparePart, SparePartCategory, SpareStock, SpareTransaction } from "../types";
 import type { SpareContext } from "../page-context";
 import type { StockOperationType } from "../types";
@@ -49,6 +50,31 @@ const {
   changeTransactionPage: changeTransactionPageInContext, changeTransactionPageSize: changeTransactionPageSizeInContext,
 } = context;
 
+function mapDictionary(item: Record<string, unknown>): SearchableSelectOption {
+  const value = item as unknown as DictionaryItem;
+  return { value: value.id, label: value.name, secondary: value.code || "", disabled: value.is_active === false, data: value };
+}
+
+function mapCategory(item: Record<string, unknown>): SearchableSelectOption {
+  const value = item as unknown as SparePartCategory;
+  return { value: value.id, label: value.name, secondary: value.code || "", disabled: value.is_active === false, data: value };
+}
+
+function mapDataCenter(item: Record<string, unknown>): SearchableSelectOption {
+  const value = item as unknown as DataCenter;
+  return { value: value.id, label: value.name, secondary: value.address || "", disabled: value.is_active === false, data: value };
+}
+
+function mapRoom(item: Record<string, unknown>): SearchableSelectOption {
+  const value = item as unknown as ServerRoom;
+  return { value: value.id, label: value.name, secondary: value.data_center_name || "", disabled: value.is_active === false, data: value };
+}
+
+function optionFrom<T extends { id: number }>(rows: T[], id: string, mapper: (item: Record<string, unknown>) => SearchableSelectOption) {
+  const row = rows.find((item) => String(item.id) === id);
+  return row ? mapper(row as unknown as Record<string, unknown>) : null;
+}
+
 const manufacturerOptions = computed(() => {
   const currentId = String(sparePartForm.value.manufacturer || "");
   return (manufacturers.value as DictionaryItem[]).filter((item) => item.is_active || String(item.id) === currentId);
@@ -58,6 +84,14 @@ const activeSpareCategories = computed(() => {
   return (spareCategories.value as SparePartCategory[]).filter((item) => item.is_active || String(item.id) === currentId);
 });
 const activeDataCenters = computed(() => (dataCenters.value as DataCenter[]).filter((item) => item.is_active));
+const selectedCategoryOption = computed(() => optionFrom(spareCategories.value as SparePartCategory[], sparePartForm.value.category, mapCategory));
+const selectedManufacturerOption = computed(() => optionFrom(manufacturers.value as DictionaryItem[], sparePartForm.value.manufacturer, mapDictionary));
+const selectedInitialDataCenterOption = computed(() => optionFrom(dataCenters.value as DataCenter[], sparePartForm.value.initial_data_center, mapDataCenter));
+const selectedInitialRoomOption = computed(() => optionFrom(spareRooms.value as ServerRoom[], sparePartForm.value.initial_server_room, mapRoom));
+const selectedSourceDataCenterOption = computed(() => optionFrom(dataCenters.value as DataCenter[], spareOperationForm.value.source_data_center, mapDataCenter));
+const selectedSourceRoomOption = computed(() => optionFrom(spareRooms.value as ServerRoom[], spareOperationForm.value.source_server_room, mapRoom));
+const selectedTargetDataCenterOption = computed(() => optionFrom(dataCenters.value as DataCenter[], spareOperationForm.value.target_data_center, mapDataCenter));
+const selectedTargetRoomOption = computed(() => optionFrom(spareRooms.value as ServerRoom[], spareOperationForm.value.target_server_room, mapRoom));
 const hasSpareFilters = computed(() => Boolean(
   spareSearch.value.trim() || spareCategory.value || spareManufacturer.value || spareListDataCenter.value || spareListRoom.value,
 ));
@@ -363,8 +397,8 @@ watch(showSpareOperationModal, (open, wasOpen) => { if (!open && wasOpen) refres
           <div class="horizontal-form__rows">
             <el-form-item :label="t('spare.spareCode')" prop="code" :error="sparePartFormErrors.code"><el-input v-model="sparePartForm.code" :disabled="Boolean(editingSparePart)" :placeholder="t('validation.required', { field: t('spare.spareCode') })" /></el-form-item>
             <el-form-item :label="t('spare.spareName')" prop="name" :error="sparePartFormErrors.name"><el-input v-model="sparePartForm.name" /></el-form-item>
-            <el-form-item :label="t('spare.spareType')" prop="category" :error="sparePartFormErrors.category"><el-select v-model="sparePartForm.category" filterable :placeholder="t('validation.selectRequired', { field: t('spare.spareType') })"><el-option v-for="item in activeSpareCategories" :key="item.id" :label="`${item.name}${item.is_active ? '' : ` (${t('status.inactive')})`}`" :value="String(item.id)" /></el-select></el-form-item>
-            <el-form-item :label="t('spare.manufacturer')" prop="manufacturer" :error="sparePartFormErrors.manufacturer"><el-select v-model="sparePartForm.manufacturer" filterable clearable :placeholder="t('spare.unlinkedManufacturer')"><el-option v-for="manufacturer in manufacturerOptions" :key="manufacturer.id" :label="`${manufacturer.name}${manufacturer.is_active ? '' : ` (${t('status.inactive')})`}`" :value="String(manufacturer.id)" /></el-select></el-form-item>
+            <el-form-item :label="t('spare.spareType')" prop="category" :error="sparePartFormErrors.category"><SearchableSelect v-model="sparePartForm.category" :request="context.request" endpoint="/spare-part-categories/" :map-option="mapCategory" :selected-option="selectedCategoryOption" :base-query="{ is_active: true }" :placeholder="t('validation.selectRequired', { field: t('spare.spareType') })" /></el-form-item>
+            <el-form-item :label="t('spare.manufacturer')" prop="manufacturer" :error="sparePartFormErrors.manufacturer"><SearchableSelect v-model="sparePartForm.manufacturer" :request="context.request" endpoint="/manufacturers/" :map-option="mapDictionary" :selected-option="selectedManufacturerOption" :base-query="{ is_active: true }" clearable :placeholder="t('spare.unlinkedManufacturer')" /></el-form-item>
             <el-form-item :label="t('asset.model')" prop="model" :error="sparePartFormErrors.model"><el-input v-model="sparePartForm.model" /></el-form-item>
             <el-form-item :label="t('spare.specification')" prop="specification" :error="sparePartFormErrors.specification"><el-input v-model="sparePartForm.specification" /></el-form-item>
             <el-form-item :label="t('spare.unit')" prop="unit" :error="sparePartFormErrors.unit">
@@ -380,8 +414,8 @@ watch(showSpareOperationModal, (open, wasOpen) => { if (!open && wasOpen) refres
           <div class="horizontal-form__rows">
             <el-form-item v-if="!editingSparePart" :label="t('spare.initialStock')" prop="initial_quantity" :error="sparePartFormErrors.initial_quantity"><el-input-number v-model="sparePartForm.initial_quantity" :min="0" :step="1" :value-on-clear="null" :aria-label="t('spare.initialStock')"><template #suffix>{{ spareUnitLabel(sparePartForm.unit) }}</template></el-input-number><FieldHelp :text="t('spare.initialStockHint')" /></el-form-item>
             <el-form-item v-else :label="t('spare.currentStock')"><el-input :model-value="`${sparePartForm.current_quantity} ${spareUnitLabel(sparePartForm.unit)}`" disabled /></el-form-item>
-            <el-form-item v-if="!editingSparePart && Number(sparePartForm.initial_quantity || 0) > 0" :label="t('spare.initialDataCenter')" prop="initial_data_center" required :error="sparePartFormErrors.initial_data_center"><el-select v-model="sparePartForm.initial_data_center" :placeholder="t('validation.selectRequired', { field: t('spare.initialDataCenter') })" @change="onInitialDataCenterChange"><el-option v-for="center in activeDataCenters" :key="center.id" :label="center.name" :value="String(center.id)" /></el-select></el-form-item>
-            <el-form-item v-if="!editingSparePart && Number(sparePartForm.initial_quantity || 0) > 0" :label="t('spare.initialRoom')" prop="initial_server_room" :error="sparePartFormErrors.initial_server_room"><el-select v-model="sparePartForm.initial_server_room" :placeholder="t('spare.centerStock')" clearable><el-option v-for="room in roomsFor(sparePartForm.initial_data_center)" :key="room.id" :label="room.name" :value="String(room.id)" /></el-select></el-form-item>
+            <el-form-item v-if="!editingSparePart && Number(sparePartForm.initial_quantity || 0) > 0" :label="t('spare.initialDataCenter')" prop="initial_data_center" required :error="sparePartFormErrors.initial_data_center"><SearchableSelect v-model="sparePartForm.initial_data_center" :request="context.request" endpoint="/data-centers/" :map-option="mapDataCenter" :selected-option="selectedInitialDataCenterOption" :base-query="{ is_active: true }" :placeholder="t('validation.selectRequired', { field: t('spare.initialDataCenter') })" @update:model-value="onInitialDataCenterChange" /></el-form-item>
+            <el-form-item v-if="!editingSparePart && Number(sparePartForm.initial_quantity || 0) > 0" :label="t('spare.initialRoom')" prop="initial_server_room" :error="sparePartFormErrors.initial_server_room"><SearchableSelect v-model="sparePartForm.initial_server_room" :request="context.request" endpoint="/server-rooms/" :map-option="mapRoom" :selected-option="selectedInitialRoomOption" :base-query="{ data_center: sparePartForm.initial_data_center, is_active: true }" :placeholder="t('spare.centerStock')" clearable /></el-form-item>
             <el-form-item :label="t('spare.safetyStock')" prop="safety_stock" :error="sparePartFormErrors.safety_stock"><el-input-number v-model="sparePartForm.safety_stock" :min="0" :step="1" :value-on-clear="null" :aria-label="t('spare.safetyStock')"><template #suffix>{{ spareUnitLabel(sparePartForm.unit) }}</template></el-input-number><FieldHelp :text="t('spare.safetyStockHint')" /></el-form-item>
             <el-form-item :label="t('spare.storageLocation')" prop="storage_location" :error="sparePartFormErrors.storage_location"><el-input v-model="sparePartForm.storage_location" :placeholder="t('spare.storageLocationPlaceholder')" /></el-form-item>
           </div>
@@ -437,8 +471,8 @@ watch(showSpareOperationModal, (open, wasOpen) => { if (!open && wasOpen) refres
           </el-input-number>
           <FieldHelp v-if="operationQuantityHelp" :text="operationQuantityHelp" />
         </el-form-item>
-        <div v-if="showSourceLocation" class="form-grid"><el-form-item :label="t('spare.sourceDataCenter')" prop="source_data_center" required :error="spareOperationFormErrors.source_data_center"><el-select v-model="spareOperationForm.source_data_center" :disabled="sourceLocationLocked" :placeholder="t('common.select')" @change="onOperationSourceCenterChange"><el-option v-for="center in activeDataCenters" :key="center.id" :label="center.name" :value="String(center.id)" /></el-select></el-form-item><el-form-item :label="t('spare.sourceRoom')" prop="source_server_room" :error="spareOperationFormErrors.source_server_room"><el-select v-model="spareOperationForm.source_server_room" :disabled="sourceLocationLocked" :placeholder="t('spare.centerStock')" clearable><el-option v-for="room in roomsFor(spareOperationForm.source_data_center)" :key="room.id" :label="room.name" :value="String(room.id)" /></el-select></el-form-item></div>
-        <div v-if="showTargetLocation" class="form-grid"><el-form-item :label="selectedOperation === 'adjustment' ? t('spare.inventoryDataCenter') : t('spare.targetDataCenter')" prop="target_data_center" required :error="spareOperationFormErrors.target_data_center"><el-select v-model="spareOperationForm.target_data_center" :disabled="targetLocationLocked" :placeholder="t('common.select')" @change="onOperationTargetCenterChange"><el-option v-for="center in activeDataCenters" :key="center.id" :label="center.name" :value="String(center.id)" /></el-select></el-form-item><el-form-item :label="selectedOperation === 'adjustment' ? t('spare.inventoryRoom') : t('spare.targetRoom')" prop="target_server_room" :error="spareOperationFormErrors.target_server_room"><el-select v-model="spareOperationForm.target_server_room" :disabled="targetLocationLocked" :placeholder="t('spare.centerStock')" clearable><el-option v-for="room in roomsFor(spareOperationForm.target_data_center)" :key="room.id" :label="room.name" :value="String(room.id)" /></el-select></el-form-item></div>
+        <div v-if="showSourceLocation" class="form-grid"><el-form-item :label="t('spare.sourceDataCenter')" prop="source_data_center" required :error="spareOperationFormErrors.source_data_center"><SearchableSelect v-model="spareOperationForm.source_data_center" :request="context.request" endpoint="/data-centers/" :map-option="mapDataCenter" :selected-option="selectedSourceDataCenterOption" :base-query="{ is_active: true }" :disabled="sourceLocationLocked" :placeholder="t('common.select')" @update:model-value="onOperationSourceCenterChange" /></el-form-item><el-form-item :label="t('spare.sourceRoom')" prop="source_server_room" :error="spareOperationFormErrors.source_server_room"><SearchableSelect v-model="spareOperationForm.source_server_room" :request="context.request" endpoint="/server-rooms/" :map-option="mapRoom" :selected-option="selectedSourceRoomOption" :base-query="{ data_center: spareOperationForm.source_data_center, is_active: true }" :disabled="sourceLocationLocked" :placeholder="t('spare.centerStock')" clearable /></el-form-item></div>
+        <div v-if="showTargetLocation" class="form-grid"><el-form-item :label="selectedOperation === 'adjustment' ? t('spare.inventoryDataCenter') : t('spare.targetDataCenter')" prop="target_data_center" required :error="spareOperationFormErrors.target_data_center"><SearchableSelect v-model="spareOperationForm.target_data_center" :request="context.request" endpoint="/data-centers/" :map-option="mapDataCenter" :selected-option="selectedTargetDataCenterOption" :base-query="{ is_active: true }" :disabled="targetLocationLocked" :placeholder="t('common.select')" @update:model-value="onOperationTargetCenterChange" /></el-form-item><el-form-item :label="selectedOperation === 'adjustment' ? t('spare.inventoryRoom') : t('spare.targetRoom')" prop="target_server_room" :error="spareOperationFormErrors.target_server_room"><SearchableSelect v-model="spareOperationForm.target_server_room" :request="context.request" endpoint="/server-rooms/" :map-option="mapRoom" :selected-option="selectedTargetRoomOption" :base-query="{ data_center: spareOperationForm.target_data_center, is_active: true }" :disabled="targetLocationLocked" :placeholder="t('spare.centerStock')" clearable /></el-form-item></div>
         <el-alert v-if="operationCannotOperate" class="spare-operation-context" type="warning" :closable="false" :title="operationWarningTitle" /><div class="form-grid"><el-form-item :label="t('spare.referencePurpose')" prop="reference" :error="spareOperationFormErrors.reference"><el-input v-model="spareOperationForm.reference" /></el-form-item><el-form-item :label="t('common.notes')" prop="notes" :error="spareOperationFormErrors.notes"><el-input v-model="spareOperationForm.notes" /></el-form-item></div>
       </el-form>
       <template #footer><el-button :disabled="spareOperationSaving" @click="showSpareOperationModal = false">{{ t('common.cancel') }}</el-button><el-button type="primary" :disabled="operationCannotOperate || spareOperationSaving" :loading="spareOperationSaving" @click="saveSpareOperation">{{ t('spare.saveTransaction') }}</el-button></template>

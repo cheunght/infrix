@@ -82,7 +82,6 @@ export type StaticAssetColumnKey =
 export const ASSET_SORT_FIELD_MAP: Record<AssetSortField, string> = {
   asset_no: "asset_no",
   name: "name",
-  manufacturer_model: "manufacturer_model",
   serial_number: "serial_number",
 };
 
@@ -99,6 +98,7 @@ export const CUSTOM_FIELD_FILTER_OPERATORS: Record<CustomField["field_type"], Cu
   select: ["eq"],
   multiselect: ["contains"],
 };
+const CUSTOM_FIELD_FILTER_QUERY_OPERATORS: CustomFieldFilterOperator[] = ["contains", "eq", "gte", "lte"];
 
 export function defaultCustomFieldFilterOperator(fieldType: CustomField["field_type"]): CustomFieldFilterOperator {
   return fieldType === "text" || fieldType === "textarea" || fieldType === "multiselect" ? "contains" : "eq";
@@ -168,8 +168,7 @@ const IMPORT_FIELD_LABEL_KEYS: Record<string, string> = {
   device_type_id: "asset.deviceType",
   manufacturer: "asset.manufacturer",
   manufacturer_id: "asset.manufacturer",
-  model: "asset.model",
-  manufacturer_model: "asset.manufacturerModel",
+  model_text: "asset.model",
   serial_number: "asset.serialNumber",
   purpose: "asset.purpose",
   status: "asset.status",
@@ -328,8 +327,8 @@ export interface AssetsDeps {
 }
 
 const defaultColumns: AssetColumnOption[] = [
-  { key: "name", label: "资产名称", defaultVisible: true, required: true },
-  { key: "asset_no", label: "资产编号", defaultVisible: true, required: true },
+  { key: "name", label: "资产", defaultVisible: true, required: true },
+  { key: "asset_no", label: "资产编号" },
   { key: "device_type", label: "设备类型", defaultVisible: true },
   { key: "manufacturer", label: "厂商", defaultVisible: true },
   { key: "status", label: "状态", defaultVisible: true, required: true },
@@ -364,7 +363,7 @@ const requiredColumnKeys = defaultColumns
   .map((column) => column.key);
 const ASSET_COLUMNS_STORAGE_KEY = "infrix.asset.columns";
 const ASSET_COLUMNS_MIGRATION_KEY = "infrix.asset.columns.migration";
-const ASSET_COLUMNS_MIGRATION_VERSION = "location-split-v3";
+const ASSET_COLUMNS_MIGRATION_VERSION = "asset-identity-v4";
 const ASSET_COLUMNS_MIGRATION_REMOVALS: StaticAssetColumnKey[] = ["data_center", "server_room"];
 const ASSET_COLUMNS_AUTO_ADDED_VERSIONS = new Set(["location-split-v1", "location-split-v2"]);
 
@@ -385,10 +384,9 @@ function emptyAssetForm(defaultStatus = systemSettingsState.defaultAssetStatus):
     name: "",
     manufacturer_id: "",
     asset_model_id: "",
-    model: "",
+    model_text: "",
     warranty_months: "",
     device_type: "",
-    manufacturer_model: "",
     serial_number: "",
     purpose: "",
     assigned_person: "",
@@ -457,10 +455,9 @@ const assetFormFieldNames = new Set([
   "manufacturer_id",
   "asset_model_id",
   "manufacturer",
-  "model",
+  "model_text",
   "warranty_months",
   "device_type",
-  "manufacturer_model",
   "serial_number",
   "purpose",
   "assigned_person",
@@ -554,6 +551,7 @@ export function useAssets(deps: AssetsDeps) {
   });
   const draftCustomFilters = ref<AssetCustomFilter[]>([]);
   const appliedCustomFilters = ref<AssetCustomFilter[]>([]);
+  const assetCustomFilterQueryKeys = new Set<string>();
   const assetFilterCustomFieldSchema = ref<CustomFieldSchema[]>([]);
   const assetFilterCustomSchemaLoading = ref(false);
   const assetFilterCustomSchemaError = ref("");
@@ -657,9 +655,8 @@ export function useAssets(deps: AssetsDeps) {
     "asset_no",
     "name",
     "manufacturer_id",
-    "model",
+    "model_text",
     "device_type",
-    "manufacturer_model",
     "serial_number",
     "purpose",
     "assigned_person",
@@ -759,7 +756,7 @@ export function useAssets(deps: AssetsDeps) {
       label: field.name,
       dynamic: true,
       field,
-      scopeLabel: field.device_type_name || tr("common.global"),
+      scopeLabel: "",
       width: field.field_type === "textarea" ? 160 : 130,
     })),
   );
@@ -888,6 +885,8 @@ export function useAssets(deps: AssetsDeps) {
 
         assetFilterCustomFieldSchema.value = result.filter((field) => field.is_active !== false && field.filterable === true);
         assetFilterCustomSchemaLoaded.value = true;
+        const hasValidFilters = reconcileAssetFilterQuery();
+        if (hasValidFilters) void loadAssets();
         return true;
       } catch (error) {
         if (requestId === assetFilterCustomSchemaRequestId.value && !isAbortError(error)) {
@@ -912,12 +911,35 @@ export function useAssets(deps: AssetsDeps) {
   }
 
   function ensureAssetFilterCustomSchema() {
-    if (assetFilterCustomSchemaLoaded.value || assetFilterCustomSchemaLoading.value) return;
+    if (assetFilterCustomSchemaLoaded.value) {
+      reconcileAssetFilterQuery();
+      return;
+    }
+    if (assetFilterCustomSchemaLoading.value) return;
     void loadAssetFilterCustomSchema();
   }
 
   async function retryAssetFilterCustomSchema() {
     await loadAssetFilterCustomSchema(true);
+  }
+
+  function reconcileAssetFilterQuery(): boolean {
+    if (!assetFilterCustomSchemaLoaded.value) return false;
+    const available = new Map(assetFilterCustomFieldSchema.value.map((field) => [field.key, field]));
+    const validFilters = appliedCustomFilters.value.filter((filter) => {
+      const field = available.get(filter.fieldKey);
+      return Boolean(field && filter.value.trim() && CUSTOM_FIELD_FILTER_OPERATORS[field.field_type]?.includes(filter.operator));
+    });
+    const validKeys = new Set(validFilters.map((filter) => `custom__${filter.fieldKey}__${filter.operator}`));
+    const invalidKeys = Array.from(assetCustomFilterQueryKeys).filter((key) => !validKeys.has(key));
+    if (validFilters.length !== appliedCustomFilters.value.length || invalidKeys.length) {
+      invalidKeys.forEach((key) => assetCustomFilterQueryKeys.delete(key));
+      appliedCustomFilters.value = validFilters;
+      draftCustomFilters.value = validFilters.map((filter) => ({ ...filter }));
+      setActionMessage(tr("asset.invalidFilterQuery"), "error");
+      if (invalidKeys.length) deps.clearRouteQuery?.(invalidKeys);
+    }
+    return validFilters.length > 0;
   }
 
   function invalidCustomFilterError(error: unknown): string {
@@ -933,7 +955,7 @@ export function useAssets(deps: AssetsDeps) {
   }
 
   function assetRouteQueryUpdates(): Record<string, string | undefined> {
-    return {
+    const updates: Record<string, string | undefined> = {
       search: assetSearch.value.trim() || undefined,
       status: assetFilters.status || undefined,
       device_type: assetFilters.deviceType || undefined,
@@ -944,6 +966,19 @@ export function useAssets(deps: AssetsDeps) {
       warranty: assetFilters.warranty || undefined,
       ordering: assetOrderingValue(),
     };
+    const currentKeys = new Set<string>();
+    for (const filter of assetFilterCustomSchemaLoaded.value ? appliedCustomFilters.value : []) {
+      if (!filter.fieldKey || !filter.value.trim()) continue;
+      const key = `custom__${filter.fieldKey}__${filter.operator}`;
+      currentKeys.add(key);
+      updates[key] = filter.value.trim();
+    }
+    for (const key of assetCustomFilterQueryKeys) {
+      if (!currentKeys.has(key)) updates[key] = undefined;
+    }
+    assetCustomFilterQueryKeys.clear();
+    currentKeys.forEach((key) => assetCustomFilterQueryKeys.add(key));
+    return updates;
   }
 
   function assetSortFromOrdering(value: string): { field: AssetSortField | null; order: AssetSortOrder } {
@@ -975,9 +1010,11 @@ export function useAssets(deps: AssetsDeps) {
     if (assetFilters.warranty) params.set("warranty", assetFilters.warranty);
     const ordering = assetOrderingValue();
     if (ordering) params.set("ordering", ordering);
-    for (const filter of appliedCustomFilters.value) {
-      if (filter.fieldKey && filter.value.trim()) {
-        params.append(`custom__${filter.fieldKey}__${filter.operator}`, filter.value.trim());
+    if (assetFilterCustomSchemaLoaded.value) {
+      for (const filter of appliedCustomFilters.value) {
+        if (filter.fieldKey && filter.value.trim()) {
+          params.append(`custom__${filter.fieldKey}__${filter.operator}`, filter.value.trim());
+        }
       }
     }
     if (includePagination) {
@@ -1056,7 +1093,6 @@ export function useAssets(deps: AssetsDeps) {
 
   async function loadAssets(version = deps.beginLoad(), preserveSelection = false): Promise<boolean> {
     if (!deps.authenticated.value || !deps.can("assets.view")) return false;
-    void loadDepartments();
     ensureAssetListCustomSchema();
     ensureAssetFilterCustomSchema();
     if (deps.isCurrentLoad(version)) {
@@ -1171,18 +1207,6 @@ export function useAssets(deps: AssetsDeps) {
       : "";
   }
 
-  function resetCustomValuesForDeviceType(deviceTypeId: string) {
-    if (!deviceTypeId) return;
-    const values = assetForm.value.custom_values || {};
-    for (const field of assetCustomFieldSchema.value) {
-      if (field.device_type != null && String(field.device_type) === deviceTypeId) {
-        delete values[field.key];
-        assetCustomFieldUserEditedKeys.delete(field.key);
-      }
-    }
-    assetForm.value.custom_values = { ...values };
-  }
-
   function updateAssetCustomFieldValue(key: string, value: unknown) {
     assetForm.value.custom_values[key] = value;
     assetCustomFieldUserEditedKeys.add(key);
@@ -1212,20 +1236,21 @@ export function useAssets(deps: AssetsDeps) {
   }
 
   async function loadAssetCustomSchema(
-    deviceTypeId: string | number,
+    scopeId: string | number,
     existingFields: AssetCustomFieldValue[] = [],
+    scope: "asset" | "asset_model" | "device_type" = "device_type",
   ): Promise<boolean> {
-    const normalizedDeviceType = deviceTypeId ? String(deviceTypeId) : "";
+    const normalizedScopeId = scopeId ? String(scopeId) : "";
     assetCustomSchemaController?.abort();
     const controller = new AbortController();
     assetCustomSchemaController = controller;
     const requestId = ++assetCustomSchemaRequestId.value;
     const requestedSchemaVersion = deps.customFieldSchemaVersion.value;
-    assetCustomFieldDeviceType.value = normalizedDeviceType;
+    assetCustomFieldDeviceType.value = `${scope}:${normalizedScopeId}`;
     assetCustomSchemaLoading.value = true;
     assetCustomSchemaError.value = "";
     assetCustomFieldSchema.value = [];
-    const query = normalizedDeviceType ? `?device_type=${encodeURIComponent(normalizedDeviceType)}` : "";
+    const query = normalizedScopeId ? `?${scope}=${encodeURIComponent(normalizedScopeId)}` : "";
     try {
       const result = await deps.request<CustomFieldSchema[]>(`/custom-fields/schema/${query}`, { signal: controller.signal });
       if (!result || requestId !== assetCustomSchemaRequestId.value) return false;
@@ -1259,7 +1284,12 @@ export function useAssets(deps: AssetsDeps) {
           showAssetModal.value &&
           requestedSchemaVersion !== deps.customFieldSchemaVersion.value
         ) {
-          void loadAssetCustomSchema(assetForm.value.device_type, assetFormExistingCustomFields.value);
+          const selectedModelId = assetForm.value.asset_model_id;
+          void loadAssetCustomSchema(
+            selectedModelId || assetForm.value.device_type,
+            assetFormExistingCustomFields.value,
+            selectedModelId ? "asset_model" : "device_type",
+          );
         }
       }
     }
@@ -1398,6 +1428,15 @@ export function useAssets(deps: AssetsDeps) {
 
   async function loadResponsibilitySubjects(search = ""): Promise<boolean> {
     if (!deps.can("assets.view")) return false;
+    const normalizedSearch = search.trim();
+    if (normalizedSearch.length < 2) {
+      responsibilitySubjectsController?.abort();
+      responsibilitySubjectsRequestId.value += 1;
+      responsibilitySubjectsLoading.value = false;
+      responsibilitySubjectsError.value = "";
+      responsibilitySubjects.value = [];
+      return true;
+    }
     responsibilitySubjectsController?.abort();
     const controller = new AbortController();
     responsibilitySubjectsController = controller;
@@ -1405,7 +1444,7 @@ export function useAssets(deps: AssetsDeps) {
     responsibilitySubjectsLoading.value = true;
     responsibilitySubjectsError.value = "";
     const params = new URLSearchParams({ page: "1", page_size: "50", compact: "1" });
-    if (search.trim()) params.set("search", search.trim());
+    params.set("search", normalizedSearch);
     params.set("is_active", "true");
     try {
       const payload = await deps.request<PageResult<PersonOption>>(
@@ -1672,11 +1711,13 @@ export function useAssets(deps: AssetsDeps) {
     resetAssetCustomSchemaState();
     showAssetModal.value = true;
     try {
-      await Promise.all([deps.loadRackManagement(), loadResponsibilitySubjects(), loadAssetModels()]);
       const detail = await deps.request<AssetDetail>(`/assets/${assetId}/`);
       if (!detail || requestId !== assetFormRequestId.value) return;
       if (detail.asset_model && !assetModels.value.some((item) => item.id === detail.asset_model?.id)) {
         assetModels.value = [...assetModels.value, detail.asset_model];
+      }
+      if (detail.assigned_person && !responsibilitySubjects.value.some((item) => item.id === detail.assigned_person?.id)) {
+        responsibilitySubjects.value = [...responsibilitySubjects.value, detail.assigned_person];
       }
       const network = (role: string) =>
         detail.network_addresses.find((item) => item.role === role)?.address || "";
@@ -1689,10 +1730,9 @@ export function useAssets(deps: AssetsDeps) {
         name: detail.name,
         manufacturer_id: detail.manufacturer ? String(detail.manufacturer) : "",
         asset_model_id: detail.asset_model ? String(detail.asset_model.id) : "",
-        model: detail.model_name || detail.manufacturer_model || "",
+        model_text: detail.model_text || "",
         warranty_months: detail.warranty_months == null ? "" : String(detail.warranty_months),
         device_type: detail.device_type ? String(detail.device_type) : "",
-        manufacturer_model: detail.manufacturer_model || "",
         serial_number: detail.serial_number || "",
         purpose: detail.purpose || "",
         assigned_person: detail.assigned_person ? String(detail.assigned_person.id) : "",
@@ -1737,8 +1777,9 @@ export function useAssets(deps: AssetsDeps) {
       assetFormExistingCustomFields.value = detail.custom_fields || [];
       depreciationStartTouched.value = Boolean(detail.depreciation_start_date);
       await loadAssetCustomSchema(
-        detail.device_type ? String(detail.device_type) : "",
+        detail.id,
         assetFormExistingCustomFields.value,
+        "asset",
       );
       if (requestId !== assetFormRequestId.value) return;
       editingAsset.value = clone ? null : detail;
@@ -1788,7 +1829,6 @@ export function useAssets(deps: AssetsDeps) {
     showAssetModal.value = true;
     assetFormLoading.value = true;
     try {
-      await Promise.all([deps.loadRackManagement(), loadResponsibilitySubjects(), loadAssetModels()]);
       await loadAssetCustomSchema("");
     } catch (error) {
       if (requestId === assetFormRequestId.value && !isAbortError(error)) {
@@ -1830,7 +1870,12 @@ export function useAssets(deps: AssetsDeps) {
 
   async function retryAssetCustomSchema() {
     if (!showAssetModal.value || assetFormLoading.value) return;
-    await loadAssetCustomSchema(assetForm.value.device_type, assetFormExistingCustomFields.value);
+    const selectedModelId = assetForm.value.asset_model_id;
+    await loadAssetCustomSchema(
+      selectedModelId || assetForm.value.device_type,
+      assetFormExistingCustomFields.value,
+      selectedModelId ? "asset_model" : "device_type",
+    );
   }
 
   function invalidateCustomFieldSchemas() {
@@ -1869,7 +1914,12 @@ export function useAssets(deps: AssetsDeps) {
       appliedCustomFilters.value = appliedCustomFilters.value.filter((filter) => filterableKeys.has(filter.fieldKey));
     }
     if (showAssetModal.value && !assetFormLoading.value) {
-      await loadAssetCustomSchema(assetForm.value.device_type, assetFormExistingCustomFields.value);
+      const selectedModelId = assetForm.value.asset_model_id;
+      await loadAssetCustomSchema(
+        selectedModelId || assetForm.value.device_type,
+        assetFormExistingCustomFields.value,
+        selectedModelId ? "asset_model" : "device_type",
+      );
     }
     if (deps.page.value === "ledger" && deps.authenticated.value && deps.can("assets.view")) {
       await loadAssets(undefined, true);
@@ -1886,7 +1936,7 @@ export function useAssets(deps: AssetsDeps) {
     },
   );
 
-  async function saveAsset() {
+  async function saveAsset(discardIncompatibleCustomValues = false) {
     if (!deps.can("assets.manage")) return;
     if (assetFormSaving.value || assetCustomSchemaLoading.value || assetCustomSchemaError.value) return;
     const editingAssetId = editingAsset.value?.id || null;
@@ -1926,7 +1976,8 @@ export function useAssets(deps: AssetsDeps) {
         depreciation_years,
         residual_rate,
         asset_model_id,
-        model,
+        manufacturer_id,
+        model_text,
         warranty_months,
         maintenance_provider,
         maintenance_contract_no,
@@ -1992,13 +2043,13 @@ export function useAssets(deps: AssetsDeps) {
           asset_data_center: asset_data_center || null,
           asset_model: hasSelectedAssetModel ? selectedAssetModelId : null,
           warranty_months: warranty_months.trim() === "" ? null : Number(warranty_months),
-          manufacturer_model: hasSelectedAssetModel ? "" : model || "",
-          manufacturer_id: asset.manufacturer_id ? Number(asset.manufacturer_id) : null,
-          model: hasSelectedAssetModel ? "" : model || "",
-          device_type: asset.device_type || null,
+          manufacturer: hasSelectedAssetModel ? null : (manufacturer_id ? Number(manufacturer_id) : null),
+          model_text: hasSelectedAssetModel ? "" : model_text || "",
+          device_type: hasSelectedAssetModel ? null : (asset.device_type || null),
           ...(assignment ? { assignment } : {}),
           tags: (tags || []).map((value) => Number(value)).filter((value) => Number.isFinite(value)),
           custom_values: submittedCustomValues,
+          discard_incompatible_custom_values: discardIncompatibleCustomValues,
           configuration: {
             data_center: rack_mounted ? data_center : "",
             server_room_id: rack_mounted ? server_room_id : "",
@@ -2047,6 +2098,22 @@ export function useAssets(deps: AssetsDeps) {
         refreshFailed ? "error" : "success",
       );
     } catch (error) {
+      const conflictDetails = error instanceof ApiError && error.status === 409 && error.details && typeof error.details === "object"
+        ? error.details as { code?: string; fields?: Array<{ name?: string }> }
+        : null;
+      if (!discardIncompatibleCustomValues && conflictDetails?.code === "custom_field_conflict") {
+        const fields = (conflictDetails.fields || []).map((field) => field.name).filter(Boolean).join("、");
+        const confirmed = await deps.confirmAction(
+          fields
+            ? tr("asset.customFieldConflictConfirm", { fields })
+            : tr("asset.customFieldConflictConfirmWithoutNames"),
+        );
+        if (confirmed) {
+          assetFormSaving.value = false;
+          await saveAsset(true);
+          return;
+        }
+      }
       const parsed = extractAssetFormErrors(error);
       assetFormFieldErrors.value = parsed.fields;
       setActionMessage(parsed.message, "error");
@@ -2279,7 +2346,7 @@ export function useAssets(deps: AssetsDeps) {
       name: asset.name,
       device_type: asset.device_type_name || "—",
       manufacturer: asset.manufacturer_name || "—",
-      manufacturer_model: asset.asset_model_name || asset.model_name || asset.model || asset.manufacturer_model || "—",
+      manufacturer_model: asset.model_name || asset.model_text || "—",
       purpose: asset.purpose || "—",
       status: deps.statusLabel(asset.status),
       serial_number: asset.serial_number || "—",
@@ -2449,20 +2516,11 @@ export function useAssets(deps: AssetsDeps) {
   }
   async function syncAssetDeviceType() {
     const nextType = assetForm.value.device_type;
-    const previousType = assetCustomFieldDeviceType.value;
-    const previousValues = assetForm.value.custom_values || {};
-    const hasPreviousScopedValues = previousType !== "" && assetCustomFieldSchema.value.some(
-      (field) => field.device_type != null && String(field.device_type) === previousType && hasCustomValue(previousValues, field.key),
-    );
-    if (editingAsset.value && previousType !== nextType && hasPreviousScopedValues) {
-      const confirmed = await deps.confirmAction(tr("asset.deviceTypeSwitchConfirm"));
-      if (!confirmed) {
-        assetForm.value.device_type = previousType;
-        return;
-      }
-    }
-    if (previousType !== nextType) resetCustomValuesForDeviceType(previousType);
-    await loadAssetCustomSchema(nextType);
+    const nextModel = assetForm.value.asset_model_id;
+    const scope = nextModel ? "asset_model" : "device_type";
+    const scopeId = nextModel || nextType;
+    const previousScope = assetCustomFieldDeviceType.value;
+    await loadAssetCustomSchema(scopeId, [], scope);
   }
   function changeAssetDataCenter() {
     assetForm.value.server_room_id = "";
@@ -2502,7 +2560,7 @@ export function useAssets(deps: AssetsDeps) {
     assetSortOrder.value = order;
     clearAssetSelection();
     assetPage.value = 1;
-    if (!appliedCustomFilters.value.length && deps.updateRouteQuery?.(assetRouteQueryUpdates())) return;
+    if (deps.updateRouteQuery?.(assetRouteQueryUpdates())) return;
     await loadAssets();
   }
 
@@ -2513,16 +2571,20 @@ export function useAssets(deps: AssetsDeps) {
       deps.goToLedger();
       return;
     }
-    // Keep the standard ledger view shareable and refresh-safe. Dynamic
-    // filters are intentionally excluded because they are currently held in
-    // local state and cannot be reconstructed from the route query yet.
-    if (!appliedCustomFilters.value.length && deps.updateRouteQuery?.(assetRouteQueryUpdates())) return;
+    if (deps.updateRouteQuery?.(assetRouteQueryUpdates())) return;
     await loadAssets();
   }
   async function applyAssetCustomFilters(filters: AssetCustomFilter[]): Promise<void> {
     clearAssetSelection();
-    appliedCustomFilters.value = filters.map((filter) => ({ ...filter }));
+    const deduped = new Map<string, AssetCustomFilter>();
+    for (const filter of filters) {
+      if (!filter.fieldKey || !filter.value.trim()) continue;
+      deduped.set(`${filter.fieldKey}__${filter.operator}`, { ...filter, value: filter.value.trim() });
+    }
+    appliedCustomFilters.value = Array.from(deduped.values()).slice(0, MAX_DYNAMIC_ASSET_FILTERS);
+    draftCustomFilters.value = appliedCustomFilters.value.map((filter) => ({ ...filter }));
     assetPage.value = 1;
+    if (deps.updateRouteQuery?.(assetRouteQueryUpdates())) return;
     await loadAssets();
   }
 
@@ -2543,6 +2605,7 @@ export function useAssets(deps: AssetsDeps) {
 
   function syncFiltersFromQuery(query: LocationQuery) {
     clearAssetSelection();
+    assetCustomFilterQueryKeys.clear();
     assetSearch.value = queryValue(query, "search");
     const status = queryValue(query, "status");
     const deviceType = queryValue(query, "device_type");
@@ -2563,9 +2626,22 @@ export function useAssets(deps: AssetsDeps) {
     const parsedOrdering = assetSortFromOrdering(queryValue(query, "ordering"));
     assetSortField.value = parsedOrdering.field;
     assetSortOrder.value = parsedOrdering.order;
-    draftCustomFilters.value = [];
-    appliedCustomFilters.value = [];
+    const parsedCustomFilters: AssetCustomFilter[] = [];
+    for (const [queryKey, rawValue] of Object.entries(query)) {
+      if (!queryKey.startsWith("custom__")) continue;
+      assetCustomFilterQueryKeys.add(queryKey);
+      const match = queryKey.match(/^custom__(.+)__([a-z]+)$/);
+      if (!match) continue;
+      const value = Array.isArray(rawValue) ? String(rawValue[0] ?? "") : String(rawValue ?? "");
+      if (!value.trim()) continue;
+      const operator = match[2] as CustomFieldFilterOperator;
+      if (!CUSTOM_FIELD_FILTER_QUERY_OPERATORS.includes(operator)) continue;
+      parsedCustomFilters.push({ fieldKey: match[1], operator, value: value.trim() });
+    }
+    draftCustomFilters.value = parsedCustomFilters.slice(0, MAX_DYNAMIC_ASSET_FILTERS).map((filter) => ({ ...filter }));
+    appliedCustomFilters.value = parsedCustomFilters.slice(0, MAX_DYNAMIC_ASSET_FILTERS);
     assetPage.value = 1;
+    if (parsedCustomFilters.length) ensureAssetFilterCustomSchema();
   }
 
   async function resetAssetFilters(): Promise<void> {
@@ -2581,6 +2657,8 @@ export function useAssets(deps: AssetsDeps) {
     draftCustomFilters.value = [];
     appliedCustomFilters.value = [];
     assetPage.value = 1;
+    const customKeys = Array.from(assetCustomFilterQueryKeys);
+    assetCustomFilterQueryKeys.clear();
     if (deps.clearRouteQuery?.([
       "search",
       "status",
@@ -2590,6 +2668,7 @@ export function useAssets(deps: AssetsDeps) {
       "data_center",
       "warranty",
       "tags",
+      ...customKeys,
     ])) return;
     await loadAssets();
   }
@@ -2647,6 +2726,7 @@ export function useAssets(deps: AssetsDeps) {
 
   return {
     can: deps.can,
+    request: deps.request,
     assets,
     selectedAssetIds,
     assetBatchDeleteSaving,

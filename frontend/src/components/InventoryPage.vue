@@ -30,9 +30,10 @@ import FormDialogShell from "./FormDialogShell.vue";
 import TableIconButton from "./TableIconButton.vue";
 import ToolbarIconButton from "./page/ToolbarIconButton.vue";
 import AssetQrScanner from "./AssetQrScanner.vue";
+import SearchableSelect, { type SearchableSelectOption } from "./SearchableSelect.vue";
 import { ElMessageBox } from "element-plus/es/components/message-box/index.mjs";
 import type { FormInstance, FormRules } from "element-plus";
-import type { InventoryItem } from "../types";
+import type { DataCenter, InventoryInspector, InventoryItem, Rack, ServerRoom } from "../types";
 import type { InventoryContext } from "../page-context";
 import { systemDatePickerFormat } from "../system-settings";
 import { useInventory } from "../composables/useInventory";
@@ -67,6 +68,35 @@ const itemRules = computed<FormRules>(() => ({
 }));
 const taskRoomHelp = computed(() => t("inventory.wholeDataCenterHelp"));
 
+function mapDataCenter(item: Record<string, unknown>): SearchableSelectOption {
+  const center = item as unknown as DataCenter;
+  return { value: center.id, label: center.name, secondary: center.address || "", data: center };
+}
+
+function mapRoom(item: Record<string, unknown>): SearchableSelectOption {
+  const room = item as unknown as ServerRoom;
+  return { value: room.id, label: room.name, secondary: room.data_center_name || "", data: room };
+}
+
+function mapRack(item: Record<string, unknown>): SearchableSelectOption {
+  const rack = item as unknown as Rack;
+  return { value: rack.id, label: rack.code, secondary: [rack.server_room_name, rack.data_center_name].filter(Boolean).join(" · "), data: rack };
+}
+
+function mapInspector(item: Record<string, unknown>): SearchableSelectOption {
+  const inspector = item as unknown as InventoryInspector;
+  return { value: inspector.id, label: inspector.display_name || inspector.username, secondary: inspector.username, data: inspector };
+}
+
+function selectedOption<T extends Record<string, unknown>>(
+  rows: T[],
+  value: string,
+  mapper: (item: Record<string, unknown>) => SearchableSelectOption,
+): SearchableSelectOption | null {
+  const row = rows.find((item) => String(item.id) === value);
+  return row ? mapper(row) : null;
+}
+
 const {
   taskListLoading, taskListError, itemListLoading, itemListError, taskDetailLoading, taskDetailError,
   auxLoading, taskAuxError, itemAuxError, taskCreating, taskDeletingId, taskCompleting, taskReopening, itemSaving, resolutionSaving,
@@ -99,6 +129,35 @@ const {
   retryTaskAuxData, retryRackAuxData, openResolution, closeResolutionDialog, saveResolution,
   openBulkResolution, closeBulkResolutionDialog, saveBulkResolution, openBulkNormal, closeBulkNormalDialog, saveBulkNormal,
 } = useInventory(context);
+
+const selectedTaskDataCenterOption = computed(() => selectedOption(
+  activeDataCenters.value as unknown as Record<string, unknown>[],
+  taskForm.value.data_center,
+  mapDataCenter,
+));
+const selectedTaskRoomOption = computed(() => selectedOption(
+  activeRooms.value as unknown as Record<string, unknown>[],
+  taskForm.value.server_room,
+  mapRoom,
+));
+const selectedInspectorOption = computed(() => selectedOption(
+  inspectors.value as unknown as Record<string, unknown>[],
+  taskForm.value.inspector,
+  mapInspector,
+ ) || (
+  activeTask.value && String(activeTask.value.inspector) === taskForm.value.inspector
+    ? mapInspector({
+      id: activeTask.value.inspector,
+      username: activeTask.value.inspector_name,
+      display_name: activeTask.value.inspector_name,
+    })
+    : null
+ ));
+const selectedActualRackOption = computed(() => selectedOption(
+  activeRacks.value as unknown as Record<string, unknown>[],
+  itemForm.value.actual_rack,
+  mapRack,
+));
 
 const scannedAssetLabel = computed(() => {
   const item = items.value.find((candidate) => candidate.id === scannedItemId.value);
@@ -798,9 +857,9 @@ onMounted(async () => {
       <el-form ref="taskFormRef" class="horizontal-form inventory-task-form" :model="taskForm" :rules="taskRules" :validate-on-rule-change="false" label-position="right" @submit.prevent="submitTask">
         <div class="horizontal-form__rows">
           <el-form-item :label="t('inventory.taskName')" prop="name" :error="taskFormErrors.name"><el-input v-model="taskForm.name" :placeholder="t('inventory.taskNamePlaceholder')" /></el-form-item>
-          <el-form-item :label="t('inventory.scope')" prop="data_center" :error="taskFormErrors.data_center"><el-select v-model="taskForm.data_center" :loading="auxLoading" @change="changeTaskDataCenter"><el-option :label="t('inventory.allAssets')" value="all_assets" /><el-option v-for="center in activeDataCenters" :key="center.id" :label="center.name" :value="String(center.id)" /></el-select></el-form-item>
+          <el-form-item :label="t('inventory.scope')" prop="data_center" :error="taskFormErrors.data_center"><SearchableSelect v-model="taskForm.data_center" :request="context.request" endpoint="/data-centers/" :map-option="mapDataCenter" :static-options="[{ value: 'all_assets', label: t('inventory.allAssets') }]" :selected-option="selectedTaskDataCenterOption" :base-query="{ is_active: true }" :placeholder="t('inventory.selectDataCenterHint')" :aria-label="t('inventory.scope')" @update:model-value="changeTaskDataCenter" /></el-form-item>
           <el-form-item :label="t('common.room')" :error="taskFormErrors.server_room">
-            <el-select v-model="taskForm.server_room" clearable :disabled="taskForm.data_center === 'all_assets' || Boolean(taskAuxError)" :placeholder="t('inventory.wholeDataCenter')" @change="changeTaskServerRoom"><el-option v-for="room in activeRooms" :key="room.id" :label="room.name" :value="String(room.id)" /></el-select>
+            <SearchableSelect v-model="taskForm.server_room" :request="context.request" endpoint="/server-rooms/" :map-option="mapRoom" :selected-option="selectedTaskRoomOption" :base-query="{ data_center: taskForm.data_center === 'all_assets' ? undefined : taskForm.data_center, is_active: true }" clearable :disabled="taskForm.data_center === 'all_assets' || Boolean(taskAuxError)" :placeholder="t('inventory.wholeDataCenter')" :aria-label="t('common.room')" @update:model-value="changeTaskServerRoom" />
             <FieldHelp :text="taskRoomHelp" />
           </el-form-item>
         </div>
@@ -837,7 +896,7 @@ onMounted(async () => {
           <div v-else class="inventory-scope-preview__state">{{ t('inventory.selectDataCenterHint') }}</div>
         </section>
         <div class="horizontal-form__rows">
-          <el-form-item :label="t('inventory.inspector')" :error="taskFormErrors.inspector"><el-select v-model="taskForm.inspector" clearable :loading="auxLoading" :disabled="Boolean(taskAuxError)" :placeholder="t('inventory.defaultCurrentUser')"><el-option v-for="person in inspectors" :key="person.id" :label="person.display_name" :value="String(person.id)" /></el-select></el-form-item>
+          <el-form-item :label="t('inventory.inspector')" :error="taskFormErrors.inspector"><SearchableSelect v-model="taskForm.inspector" :request="context.request" endpoint="/inventory-inspectors/" :map-option="mapInspector" :selected-option="selectedInspectorOption" clearable :placeholder="t('inventory.defaultCurrentUser')" :aria-label="t('inventory.inspector')" /></el-form-item>
           <el-form-item :label="t('inventory.startTime')" prop="start_at" :error="taskFormErrors.start_at"><el-date-picker v-model="taskForm.start_at" type="datetime" :format="systemDatePickerFormat(true, true)" value-format="YYYY-MM-DDTHH:mm:ss" /></el-form-item>
           <el-form-item :label="t('inventory.endTime')" prop="end_at" :error="taskFormErrors.end_at"><el-date-picker v-model="taskForm.end_at" type="datetime" :format="systemDatePickerFormat(true, true)" value-format="YYYY-MM-DDTHH:mm:ss" /></el-form-item>
           <el-form-item :label="t('common.notes')" :error="taskFormErrors.notes"><el-input v-model="taskForm.notes" type="textarea" :rows="3" /></el-form-item>
@@ -865,7 +924,7 @@ onMounted(async () => {
           <el-form-item :label="t('inventory.result')" prop="status" :error="itemFormErrors.status"><el-select v-model="itemForm.status" :placeholder="t('inventory.selectInventoryResult')" @change="changeItemStatus"><el-option v-for="item in itemResultOptions" :key="item.value" :label="item.label" :value="item.value" /></el-select></el-form-item>
           <el-alert v-if="itemForm.status === 'normal'" :title="t('inventory.resultNormalHint')" type="success" :closable="false" show-icon />
           <div v-if="itemForm.status && itemForm.status !== 'not_found'" class="form-grid">
-          <el-form-item :label="t('inventory.actualRack')" :error="itemFormErrors.actual_rack"><el-select v-model="itemForm.actual_rack" clearable :disabled="Boolean(itemAuxError) || itemForm.status === 'normal'" :placeholder="t('inventory.notMountedPlaceholder')"><el-option v-for="rack in activeRacks" :key="rack.id" :label="`${rack.data_center_name} / ${rack.server_room_name} / ${rack.code}`" :value="String(rack.id)" /></el-select></el-form-item>
+          <el-form-item :label="t('inventory.actualRack')" :error="itemFormErrors.actual_rack"><SearchableSelect v-model="itemForm.actual_rack" :request="context.request" endpoint="/racks/" :map-option="mapRack" :selected-option="selectedActualRackOption" :base-query="{ is_active: true, status: 'in_use' }" clearable :disabled="Boolean(itemAuxError) || itemForm.status === 'normal'" :placeholder="t('inventory.notMountedPlaceholder')" :aria-label="t('inventory.actualRack')" /></el-form-item>
           <el-form-item :label="t('inventory.actualStartU')" :error="itemFormErrors.actual_start_u"><el-input-number v-model="actualStartUValue" :min="1" :step="1" :precision="0" :value-on-clear="null" :aria-label="t('inventory.actualStartU')" :disabled="itemForm.status === 'normal'"><template #suffix>U</template></el-input-number></el-form-item>
           <el-form-item :label="t('inventory.actualEndU')" :error="itemFormErrors.actual_end_u"><el-input-number v-model="actualEndUValue" :min="1" :step="1" :precision="0" :value-on-clear="null" :aria-label="t('inventory.actualEndU')" :disabled="itemForm.status === 'normal'"><template #suffix>U</template></el-input-number></el-form-item>
           </div>

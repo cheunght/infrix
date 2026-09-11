@@ -68,10 +68,9 @@ export interface AssetFormState {
   name: string;
   manufacturer_id: string;
   asset_model_id: string;
-  model: string;
+  model_text: string;
   warranty_months: string;
   device_type: string;
-  manufacturer_model: string;
   serial_number: string;
   purpose: string;
   assigned_person: string;
@@ -114,6 +113,8 @@ export interface DashboardContext {
   dashboardUpdatedAt: Ref<string | null>;
   refreshDashboard: () => void | Promise<boolean>;
   handleMenuSelect: (index: string) => void;
+  openAssetConfiguration: (section: import("./router").AssetConfigSection) => void;
+  openDictionarySection: (section: "manufacturers" | "device-types" | "spare-categories") => void;
   openAssetDetail: (assetId: number) => void | Promise<void>;
   goToAssets: (query?: Record<string, string>) => void;
   goToRepairs: (query?: Record<string, string>) => void;
@@ -148,6 +149,7 @@ export interface AssetLedgerColumnOption {
 }
 
 export interface AssetLedgerContext {
+  request: RequestFn;
   loading: Ref<boolean>;
   assetListLoading: Ref<boolean>;
   assetListError: Ref<string>;
@@ -232,6 +234,8 @@ export interface AssetLedgerContext {
 }
 
 export interface AssetFormContext {
+  can: CapabilityFn;
+  request: RequestFn;
   showAssetModal: Ref<boolean>;
   assetModalMode: Ref<string>;
   editingAsset: Ref<Asset | null>;
@@ -293,6 +297,7 @@ export interface AssetResponsibilityHistoryContext {
 
 export interface AssetResponsibilityContext extends AssetResponsibilityHistoryContext {
   can: CapabilityFn;
+  request: RequestFn;
   responsibilitySubjects: Ref<PersonOption[]>;
   responsibilitySubjectsLoading: Ref<boolean>;
   responsibilitySubjectsError: Ref<string>;
@@ -308,6 +313,7 @@ export interface AssetResponsibilityContext extends AssetResponsibilityHistoryCo
 }
 
 export interface RackManagementContext {
+  request: RequestFn;
   serverRooms: Ref<ServerRoom[]>;
   showRackModal: Ref<boolean>;
   editingRack: Ref<Rack | null>;
@@ -428,6 +434,7 @@ export interface RackInspectorContext extends AssetInventoryHistoryContext, Asse
 }
 
 export interface LicenseContext {
+  request: RequestFn;
   loading: Ref<boolean>;
   licenseListLoading: Ref<boolean>;
   licenseListError: Ref<string>;
@@ -771,12 +778,13 @@ export interface SettingsContext extends CustomFieldContext, TagContext {
 
 export interface CustomFieldContext {
   loading: Ref<boolean>;
-  customFieldDeviceType: Ref<string>;
   customFieldActive: Ref<string>;
   customFieldTableItems: ComputedRef<CustomField[]>;
   customFieldPage: Ref<number>;
   customFieldPageSize: Ref<number>;
   customFieldCount: ComputedRef<number>;
+  customFieldSearch: Ref<string>;
+  customFieldType: Ref<string>;
   loadCustomFields: () => void | Promise<boolean>;
   refreshCustomFieldList: () => void | Promise<void>;
   changeCustomFieldPage: (page: number) => void;

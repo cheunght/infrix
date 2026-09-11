@@ -308,6 +308,7 @@ export function useLicenses(deps: LicensesDeps) {
   }
 
   return {
+    request: deps.request,
     licenses, licenseCount, licensePage, licensePageSize, licenseKeyword, licenseStatus, licenseManufacturer,
     licenseManufacturerOptions, licenseManufacturerFilterOptions,
     licenseListLoading, licenseListError, exportingLicenses, licenseSaving, deletingLicenseId,

@@ -3,7 +3,7 @@ import hashlib
 from datetime import timedelta
 from django.db import transaction
 from django.utils import timezone
-from .models import NotificationDelivery
+from .models import NotificationDelivery, Person
 from .reporting.alerts import build_alerts_payload
 from .smtp import send_smtp_message, SmtpConfigurationError
 from .system_settings import get_system_settings, system_now
@@ -41,20 +41,45 @@ def digest_content(setting, payload):
     return subject, "\n".join(lines)
 
 
+def digest_recipients(setting):
+    """Resolve selected people at send time, then append explicit extra addresses."""
+
+    people_ids = [int(value) for value in (setting.email_digest_people or []) if str(value).isdigit()]
+    people = {
+        person.pk: person
+        for person in Person.objects.select_related("account").filter(
+            pk__in=people_ids,
+            is_active=True,
+        )
+    }
+    addresses = []
+    for person_id in people_ids:
+        address = people[person_id].notification_email() if person_id in people else ""
+        if address:
+            addresses.append(address)
+    addresses.extend(
+        str(address).strip().lower()
+        for address in (setting.email_digest_recipients or [])
+        if str(address).strip()
+    )
+    return list(dict.fromkeys(addresses))
+
+
 def send_digest():
     setting = get_system_settings()
     if not setting.email_digest_enabled:
         return {"status": "disabled", "sent": 0, "failed": 0}
-    if not setting.email_digest_recipients or not setting.application_url:
+    recipients = digest_recipients(setting)
+    if not recipients or not setting.application_url:
         return {"status": "unconfigured", "sent": 0, "failed": 1}
     payload = build_alerts_payload(setting=setting)
     if not payload["alerts"]:
         return {"status": "empty", "sent": 0, "failed": 0}
     subject, body = digest_content(setting, payload)
     day = system_now(setting).date()
-    recipient_count = len(setting.email_digest_recipients)
+    recipient_count = len(recipients)
     sent = failed = 0
-    for recipient in setting.email_digest_recipients:
+    for recipient in recipients:
         key = hashlib.sha256(recipient.lower().encode()).hexdigest()
         row, _ = NotificationDelivery.objects.get_or_create(window_date=day, recipient_key=key)
         # Persist the claim before contacting SMTP. A process crash leaves an

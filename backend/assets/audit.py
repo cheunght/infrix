@@ -117,8 +117,11 @@ def asset_audit_snapshot(asset_id):
     asset = Asset.objects.select_related(
         "assigned_person__department",
         "assigned_person__account",
-        "manufacturer",
-        "device_type",
+        "standalone_manufacturer",
+        "standalone_device_type__default_fieldset",
+        "asset_model__manufacturer",
+        "asset_model__device_type__default_fieldset",
+        "asset_model__fieldset",
         "asset_data_center",
         "rack_allocation__rack__room__data_center",
     ).prefetch_related(

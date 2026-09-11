@@ -287,6 +287,95 @@ body {
   }
 }
 
+/* SearchableSelect options keep the existing Element Plus chrome while
+ * allowing long identifiers and secondary context to wrap in the popup. */
+.searchable-select-popper .el-select-dropdown__item {
+  height: auto;
+  min-height: 34px;
+  max-width: 100%;
+  box-sizing: border-box;
+  line-height: 1.35;
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+
+.searchable-select-popper .el-select-dropdown__wrap,
+.searchable-select-popper .el-scrollbar__wrap {
+  max-height: min(40vh, 320px);
+  overflow-x: hidden;
+  overflow-y: auto;
+}
+
+.searchable-select-popper .el-select-dropdown__list,
+.searchable-select-popper .el-scrollbar__view {
+  min-width: 0;
+  max-width: 100%;
+}
+
+.searchable-select-popper .searchable-select__option {
+  min-width: 0;
+  max-width: 100%;
+  padding: 4px 0;
+}
+
+@media (max-width: 767px) {
+  .searchable-select-popper .el-select-dropdown__wrap,
+  .searchable-select-popper .el-scrollbar__wrap {
+    max-height: min(50vh, 280px);
+  }
+}
+
+/* Keep every Element Plus select menu in the vertical reading flow. The
+ * default select fallback includes left/right placement, which becomes
+ * surprising in short viewports or when the browser is zoomed: a long option
+ * list can suddenly open beside the field. A viewport-aware height leaves
+ * Popper enough room to choose below or above while preserving scrolling. */
+.el-select__popper .el-select-dropdown__wrap,
+.el-select__popper .el-scrollbar__wrap {
+  max-height: min(40vh, 320px);
+  overflow-x: hidden;
+  overflow-y: auto;
+}
+
+.el-select__popper .el-select-dropdown__list,
+.el-select__popper .el-scrollbar__view {
+  min-width: 0;
+  max-width: 100%;
+}
+
+.el-select__popper .el-select-dropdown__item {
+  box-sizing: border-box;
+  max-width: 100%;
+  overflow-wrap: anywhere;
+}
+
+/* Dropdowns already use bottom/top fallbacks in Element Plus. These bounds
+ * keep their content readable near a narrow viewport without changing their
+ * existing trigger or command behaviour. */
+.el-dropdown__popper .el-scrollbar__wrap {
+  max-height: min(50vh, 360px);
+  overflow-x: hidden;
+  overflow-y: auto;
+}
+
+.el-dropdown__popper .el-dropdown__list,
+.el-dropdown__popper .el-dropdown-menu__item {
+  max-width: 100%;
+  box-sizing: border-box;
+  overflow-wrap: anywhere;
+}
+
+@media (max-width: 767px) {
+  .el-select__popper .el-select-dropdown__wrap,
+  .el-select__popper .el-scrollbar__wrap {
+    max-height: min(50vh, 280px);
+  }
+
+  .el-dropdown__popper .el-scrollbar__wrap {
+    max-height: min(50vh, 280px);
+  }
+}
+
 @media (prefers-reduced-motion: reduce) {
   .app-header .user-menu__trigger,
   .user-menu__chevron {
@@ -2088,6 +2177,117 @@ body,
   margin-left: 0;
 }
 
+.asset-selection-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  margin-bottom: 14px;
+  padding: 12px 14px;
+  border: 1px solid var(--el-color-primary-light-7);
+  border-radius: 8px;
+  background: var(--el-color-primary-light-9);
+}
+
+.asset-selection-bar__summary {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+  color: var(--el-text-color-primary);
+}
+
+.asset-selection-bar__summary span {
+  color: var(--el-text-color-secondary);
+  font-size: 12px;
+}
+
+.asset-selection-bar__actions,
+.asset-filter-drawer__footer {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+.asset-active-filters {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 14px;
+  min-width: 0;
+}
+
+.asset-active-filters__label {
+  color: var(--el-text-color-secondary);
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.asset-filter-drawer {
+  min-width: 0;
+}
+
+.asset-filter-drawer__control {
+  width: 100%;
+}
+
+.asset-filter-drawer__custom {
+  margin-top: 24px;
+  padding-top: 20px;
+  border-top: 1px solid var(--el-border-color-lighter);
+}
+
+.asset-filter-drawer__section-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 12px;
+}
+
+.asset-filter-drawer__section-heading h3 {
+  margin: 0;
+  color: var(--el-text-color-primary);
+  font-size: 15px;
+}
+
+.asset-filter-drawer__custom-list {
+  display: grid;
+  gap: 10px;
+}
+
+.asset-filter-drawer__custom-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1.2fr) minmax(110px, .8fr) minmax(0, 1fr) 32px;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+.asset-filter-drawer__custom-row > * {
+  min-width: 0;
+}
+
+.asset-identity-cell {
+  display: grid;
+  justify-items: start;
+  gap: 2px;
+  min-width: 0;
+  overflow: hidden;
+  text-align: left;
+  white-space: normal;
+}
+
+.asset-identity-cell__name {
+  display: block;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .asset-ledger-toolbar .page-toolbar__actions {
   gap: 8px;
 }
@@ -2155,6 +2355,29 @@ body,
 
   .asset-ledger-action-divider {
     margin-inline: 4px;
+  }
+
+  .asset-selection-bar {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .asset-selection-bar__actions {
+    justify-content: flex-start;
+  }
+
+  .asset-filter-drawer__custom-row {
+    grid-template-columns: minmax(0, 1fr) 32px;
+  }
+
+  .asset-filter-drawer__custom-row > :nth-child(2),
+  .asset-filter-drawer__custom-row > :nth-child(3) {
+    grid-column: 1;
+  }
+
+  .asset-filter-drawer__custom-row > :last-child {
+    grid-column: 2;
+    grid-row: 1 / span 3;
   }
 }
 
@@ -2280,30 +2503,6 @@ body,
   visibility: visible;
 }
 
-.asset-identity-cell {
-  display: block;
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.asset-identity-cell {
-  display: flex;
-  justify-content: flex-start;
-  width: 100%;
-  padding-right: 0;
-  padding-left: 0;
-}
-
-.asset-identity-cell__name {
-  display: block;
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
 .asset-number-cell {
   font-variant-numeric: tabular-nums;
 }
@@ -2336,6 +2535,36 @@ body,
 
 .asset-form-related-state--error {
   color: var(--el-color-danger);
+}
+
+.asset-form-quick-model {
+  display: block;
+  width: fit-content;
+  margin: 6px 0 0;
+}
+
+.asset-model-metadata {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 14px;
+  min-width: 0;
+  margin-top: 8px;
+  color: var(--el-text-color-secondary);
+  font-size: 12px;
+  line-height: 18px;
+}
+
+.asset-model-metadata__item {
+  display: inline-flex;
+  min-width: 0;
+  gap: 4px;
+  overflow-wrap: anywhere;
+}
+
+.asset-model-metadata__item strong {
+  flex: 0 0 auto;
+  color: var(--el-text-color-regular);
+  font-weight: 600;
 }
 
 .asset-form-load-error {

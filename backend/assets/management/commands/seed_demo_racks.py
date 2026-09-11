@@ -136,21 +136,22 @@ class Command(BaseCommand):
                         asset_no=asset_no,
                         defaults={
                             "name": f"{device_name} {center_code}-R{rack_index:02d}-{asset_index:02d}",
-                            "manufacturer_model": model,
+                            "model_text": model,
                             "serial_number": f"DEMO-SN-{center_code}-{rack_index:02d}-{asset_index:02d}",
                             "purpose": "Rack U 位可视化演示资产",
-                            "manufacturer": manufacturers["演示设备制造商"],
-                            "device_type": device_type,
+                            "standalone_manufacturer": manufacturers["演示设备制造商"],
+                            "standalone_device_type": device_type,
                         },
                     )
                     if created:
                         transition_asset_status(asset, "in_use")
                     asset.name = f"{device_name} {center_code}-R{rack_index:02d}-{asset_index:02d}"
-                    asset.manufacturer_model = model
-                    asset.manufacturer = manufacturers[
+                    asset.asset_model = None
+                    asset.model_text = model
+                    asset.standalone_manufacturer = manufacturers[
                         "演示网络设备厂商" if device_name in {"交换机", "网络设备"} else "演示设备制造商"
                     ]
-                    asset.device_type = device_type
+                    asset.standalone_device_type = device_type
                     asset.purpose = "Rack U 位可视化演示资产"
                     asset.save()
                     asset_count += 1

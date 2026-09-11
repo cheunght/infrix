@@ -1,8 +1,85 @@
+import type { CustomFieldFormat } from "./types";
+
 export const CUSTOM_FIELD_NUMBER_MAX_DIGITS = 20;
 export const CUSTOM_FIELD_NUMBER_STORAGE_DECIMAL_PLACES = 6;
 export const CUSTOM_FIELD_NUMBER_MAX_DECIMAL_PLACES = 2;
 export const CUSTOM_FIELD_NUMBER_MAX_INTEGER_DIGITS =
   CUSTOM_FIELD_NUMBER_MAX_DIGITS - CUSTOM_FIELD_NUMBER_STORAGE_DECIMAL_PLACES;
+
+export const CUSTOM_FIELD_FORMATS: readonly CustomFieldFormat[] = [
+  "any",
+  "alpha",
+  "alpha_dash",
+  "numeric",
+  "alpha_numeric",
+  "email",
+  "date",
+  "url",
+  "ip",
+  "ipv4",
+  "ipv6",
+  "mac",
+  "regex",
+];
+
+const CUSTOM_FIELD_MAC_PATTERN = /^(?:[0-9A-Fa-f]{2}[:-]){5}[0-9A-Fa-f]{2}$|^(?:[0-9A-Fa-f]{4}\.){2}[0-9A-Fa-f]{4}$/;
+
+export function isCustomFieldFormat(value: unknown): value is CustomFieldFormat {
+  return typeof value === "string" && CUSTOM_FIELD_FORMATS.includes(value as CustomFieldFormat);
+}
+
+/** Return an error message when a custom regex cannot be compiled. */
+export function customFieldFormatPatternError(pattern: unknown): string | null {
+  if (typeof pattern !== "string" || !pattern.trim()) return "required";
+  if (pattern.length > 500) return "too_long";
+  try {
+    new RegExp(`^(?:${pattern})$`);
+    return null;
+  } catch {
+    return "invalid";
+  }
+}
+
+function customFieldIpMatches(value: string, format: CustomFieldFormat): boolean {
+  if (format === "ipv4") return /^(?:\d{1,3}\.){3}\d{1,3}$/.test(value) && value.split(".").every((part) => Number(part) <= 255);
+  if (format === "ipv6") return value.includes(":") && /^[0-9A-Fa-f:]+$/.test(value);
+  return /^(?:\d{1,3}\.){3}\d{1,3}$/.test(value) || (value.includes(":") && /^[0-9A-Fa-f:]+$/.test(value));
+}
+
+/** Match the browser-side input formats; the backend remains authoritative. */
+export function customFieldFormatMatches(
+  value: unknown,
+  format: CustomFieldFormat = "any",
+  pattern?: unknown,
+): boolean {
+  if (typeof value !== "string") return false;
+  if (format === "any") return true;
+  if (format === "alpha") return /^[A-Za-z]+$/.test(value);
+  if (format === "alpha_dash") return /^[A-Za-z0-9_-]+$/.test(value);
+  if (format === "numeric") return parseDecimalText(value) !== null;
+  if (format === "alpha_numeric") return /^[A-Za-z0-9]+$/.test(value);
+  if (format === "email") return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(value);
+  if (format === "date") return isValidIsoDate(value);
+  if (format === "url") {
+    try {
+      const parsed = new URL(value);
+      return parsed.protocol === "http:" || parsed.protocol === "https:";
+    } catch {
+      return false;
+    }
+  }
+  if (format === "ip" || format === "ipv4" || format === "ipv6") return customFieldIpMatches(value, format);
+  if (format === "mac") return CUSTOM_FIELD_MAC_PATTERN.test(value);
+  if (format === "regex") {
+    if (customFieldFormatPatternError(pattern)) return false;
+    try {
+      return new RegExp(`^(?:${String(pattern)})$`).test(value);
+    } catch {
+      return false;
+    }
+  }
+  return false;
+}
 
 export type DecimalTextInfo = {
   sign: 1 | -1;

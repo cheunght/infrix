@@ -4,6 +4,7 @@ import { useI18n } from "vue-i18n";
 import type { AssetResponsibilityContext } from "../page-context";
 import type { AssetDetail, PersonOption } from "../types";
 import { normalizeApiError } from "../error-handling";
+import SearchableSelect, { type SearchableSelectOption } from "./SearchableSelect.vue";
 
 type ResponsibilityAction = "assign" | "transfer" | "return";
 
@@ -30,10 +31,6 @@ const canManage = computed(() => props.context.can("assets.manage"));
 const dialogOpen = computed(() => action.value !== null);
 const showTargetPerson = computed(
   () => action.value === "assign" || action.value === "transfer",
-);
-const targetPeople = computed(() => props.context.responsibilitySubjects.value);
-const peopleListError = computed(
-  () => props.context.responsibilitySubjectsError.value,
 );
 const saving = computed(() => props.context.responsibilityActionSaving.value);
 const actionError = computed(() =>
@@ -114,9 +111,6 @@ function openAction(nextAction: ResponsibilityAction) {
   if (!canManage.value || saving.value || !assetId.value) return;
   resetDialogState();
   action.value = nextAction;
-  if (nextAction === "assign" || nextAction === "transfer") {
-    void props.context.loadResponsibilitySubjects("");
-  }
 }
 
 function closeAction() {
@@ -135,12 +129,15 @@ function beforeClose(done: () => void) {
   done();
 }
 
-function searchPeople(query: string) {
-  void props.context.loadResponsibilitySubjects(query);
-}
-
-function retryPeople() {
-  searchPeople("");
+function mapPerson(item: Record<string, unknown>): SearchableSelectOption {
+  const person = item as unknown as PersonOption;
+  return {
+    value: person.id,
+    label: personLabel(person),
+    secondary: personMeta(person),
+    disabled: isCurrentTarget(person),
+    data: person,
+  };
 }
 
 async function submitAction() {
@@ -267,15 +264,6 @@ watch(
           show-icon
           class="form-dialog__alert"
         />
-        <el-alert
-          v-if="showTargetPerson && peopleListError"
-          :title="t('asset.peopleLoadFailed')"
-          :description="peopleListError"
-          type="error"
-          :closable="false"
-          show-icon
-          class="form-dialog__alert"
-        />
         <dl v-if="asset" class="responsibility-dialog__context">
           <div>
             <dt>{{ t("asset.name") }}</dt>
@@ -298,36 +286,16 @@ watch(
               required
               :error="targetPersonFieldError"
             >
-              <el-select
-                v-model="targetPersonId"
-                filterable
-                remote
-                reserve-keyword
-                clearable
-                :remote-method="searchPeople"
-                :loading="props.context.responsibilitySubjectsLoading.value"
+              <SearchableSelect
+                :model-value="targetPersonId"
+                :request="props.context.request"
+                endpoint="/people/"
+                :map-option="mapPerson"
+                :base-query="{ is_active: true }"
                 :placeholder="t('asset.selectPerson')"
-                :no-data-text="t('common.noData')"
-                :no-match-text="t('common.noData')"
                 :aria-label="targetPersonLabel"
-                @change="handleTargetPersonChange"
-              >
-                <el-option
-                  v-for="person in targetPeople"
-                  :key="person.id"
-                  :label="personLabel(person)"
-                  :value="String(person.id)"
-                  :disabled="isCurrentTarget(person)"
-                >
-                  <span>{{ personLabel(person) }}</span>
-                  <small v-if="personMeta(person)"> · {{ personMeta(person) }}</small>
-                </el-option>
-              </el-select>
-              <div v-if="peopleListError" class="responsibility-dialog__retry">
-                <el-button link type="primary" @click="retryPeople">{{
-                  t("common.retry")
-                }}</el-button>
-              </div>
+                @update:model-value="(value) => { targetPersonId = Array.isArray(value) ? String(value[0] || '') : String(value || ''); handleTargetPersonChange(); }"
+              />
             </el-form-item>
             <el-form-item
               :label="t('common.reason')"

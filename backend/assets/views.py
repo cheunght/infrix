@@ -31,7 +31,7 @@ from openpyxl import Workbook
 from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
 from openpyxl.utils import get_column_letter
 from urllib.parse import quote
-from .models import AuthThrottleState, AuditLog, Asset, AssetAssignmentEvent, AssetCustomValue, AssetModel, AssetNetworkAddress, AssetTag, CustomField, CustomFieldOption, DataCenter, Department, DeviceType, DirectoryIdentity, FaultEvent, InventoryItem, InventoryTask, MaintenanceContract, Manufacturer, NotificationDelivery, Person, ProcurementRecord, Rack, RackUnitAllocation, RepairPartUsage, RepairRecord, ServerRoom, SoftwareLicense, SparePart, SparePartCategory, SpareStock, SpareStockTransaction, SystemSetting, Tag, UserSecurityProfile
+from .models import AuthThrottleState, AuditLog, Asset, AssetAssignmentEvent, AssetCustomValue, AssetModel, AssetNetworkAddress, AssetTag, CustomField, CustomFieldOption, CustomFieldSet, CustomFieldSetItem, DataCenter, Department, DeviceType, DirectoryIdentity, FaultEvent, InventoryItem, InventoryTask, MaintenanceContract, Manufacturer, NotificationDelivery, Person, ProcurementRecord, Rack, RackUnitAllocation, RepairPartUsage, RepairRecord, ServerRoom, SoftwareLicense, SparePart, SparePartCategory, SpareStock, SpareStockTransaction, SystemSetting, Tag, UserSecurityProfile
 from .enum_contracts import (
     ASSET_STATUS_LABELS,
     ASSET_STATUS_VALUES,
@@ -45,7 +45,8 @@ from .enum_contracts import (
     STOCK_OPERATION_TYPE_LABELS,
     STOCK_OPERATION_TYPE_VALUES,
 )
-from .serializers import AdminPasswordResetSerializer, AssetAssignmentEventSerializer, AssetAssignmentReturnSerializer, AssetAssignmentTargetSerializer, AssetBatchAssignmentResponseSerializer, AssetBatchAssignmentSerializer, AssetBatchDeleteResponseSerializer, AssetBatchDeleteSerializer, AssetDetailSerializer, AssetListSerializer, AssetModelOptionSerializer, AssetModelSerializer, AssetSerializer, AssetWriteSerializer, AuditLogSerializer, CurrentUserProfileSerializer, CustomFieldOptionSerializer, CustomFieldRuntimeSchemaSerializer, CustomFieldSerializer, DataCenterSerializer, DepartmentSerializer, DeviceTypeSerializer, FaultEventSerializer, GroupSerializer, InventoryBulkNormalResponseSerializer, InventoryBulkNormalSerializer, InventoryBulkResolutionResponseSerializer, InventoryBulkResolutionSerializer, InventoryInspectorSerializer, InventoryItemPageSerializer, InventoryItemSerializer, InventoryResolutionSerializer, InventoryScopePreviewQuerySerializer, InventoryScopePreviewSerializer, InventoryTaskSerializer, LdapConfigurationUpdateSerializer, ManufacturerSerializer, NotificationDeliverySerializer, PersonOptionSerializer, PersonSerializer, RackSerializer, RepairPartUsageCreateSerializer, RepairPartUsageSerializer, RepairRecordSerializer, ServerRoomSerializer, SoftwareLicenseSerializer, SparePartCategorySerializer, SparePartDetailSerializer, SparePartSerializer, SpareStockSerializer, SpareStockTransactionSerializer, SmtpTestEmailSerializer, SystemResetSerializer, SystemSettingsSerializer, TagSerializer, UserBatchStatusResponseSerializer, UserBatchStatusSerializer, UserSerializer, _default_references_option
+from .serializers import AdminPasswordResetSerializer, AssetAssignmentEventSerializer, AssetAssignmentReturnSerializer, AssetAssignmentTargetSerializer, AssetBatchAssignmentResponseSerializer, AssetBatchAssignmentSerializer, AssetBatchDeleteResponseSerializer, AssetBatchDeleteSerializer, AssetDetailSerializer, AssetListSerializer, AssetModelOptionSerializer, AssetModelSerializer, AssetSerializer, AssetWriteSerializer, AuditLogSerializer, CurrentUserProfileSerializer, CustomFieldOptionSerializer, CustomFieldRuntimeSchemaSerializer, CustomFieldSerializer, CustomFieldSetItemsWriteSerializer, CustomFieldSetOptionSerializer, CustomFieldSetSerializer, DataCenterOptionSerializer, DataCenterSerializer, DepartmentOptionSerializer, DepartmentSerializer, DeviceTypeOptionSerializer, DeviceTypeSerializer, DictionaryOptionSerializer, FaultEventSerializer, GroupSerializer, InventoryBulkNormalResponseSerializer, InventoryBulkNormalSerializer, InventoryBulkResolutionResponseSerializer, InventoryBulkResolutionSerializer, InventoryInspectorSerializer, InventoryItemPageSerializer, InventoryItemSerializer, InventoryResolutionSerializer, InventoryScopePreviewQuerySerializer, InventoryScopePreviewSerializer, InventoryTaskSerializer, LdapConfigurationUpdateSerializer, ManufacturerSerializer, NotificationDeliverySerializer, PersonOptionSerializer, PersonSerializer, RackOptionSerializer, RackSerializer, RepairPartUsageCreateSerializer, RepairPartUsageSerializer, RepairRecordSerializer, ServerRoomOptionSerializer, ServerRoomSerializer, SoftwareLicenseSerializer, SparePartCategorySerializer, SparePartDetailSerializer, SparePartOptionSerializer, SparePartSerializer, SpareStockOptionSerializer, SpareStockSerializer, SpareStockTransactionSerializer, SmtpTestEmailSerializer, SystemResetSerializer, SystemSettingsSerializer, TagOptionSerializer, TagSerializer, UserBatchStatusResponseSerializer, UserBatchStatusSerializer, UserSerializer, _default_references_option
+from .fieldsets import fieldset_items_queryset, replace_fieldset_items, resolve_fieldset
 from .services import (
     apply_spare_stock_transaction,
     confirm_inventory_item_normal,
@@ -67,6 +68,7 @@ from .depreciation import calculate_asset_depreciation
 from .license_status import LICENSE_STATUS_KEYS, LICENSE_STATUS_LABELS, filter_licenses_by_status, license_status_counts, license_status_value
 from .audit import asset_audit_snapshot, asset_custom_value_changes, model_snapshot, software_license_audit_snapshot, spare_part_audit_snapshot, spare_stock_transaction_audit_snapshot, write_audit_log
 from .imports import AssetImportService, ImportFileError, ImportValidationError, build_import_template
+from .asset_model_imports import build_asset_model_import_template, commit_asset_model_import, preview_asset_model_import
 from .ldap_auth import (
     AUTH_SOURCE_LDAP,
     AUTH_SOURCE_LOCAL,
@@ -119,6 +121,10 @@ from .system_settings import (
 EXPORT_MAX_ROWS = 10_000
 XLSX_CONTENT_TYPE = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
 logger = logging.getLogger(__name__)
+
+
+def _compact_requested(request) -> bool:
+    return request.query_params.get("compact", "").strip().lower() in {"1", "true", "yes"}
 
 
 def _export_timestamp():
@@ -395,7 +401,7 @@ class PersonViewSet(AuditedModelViewSetMixin, viewsets.ModelViewSet):
     permission_resource = "settings"
     audit_resource = "person"
     filter_backends = [SearchFilter, OrderingFilter]
-    search_fields = ["name", "employee_no", "organization", "contact", "department__name", "account__username", "account__first_name", "account__last_name", "account__email"]
+    search_fields = ["name", "employee_no", "email", "organization", "contact", "department__name", "account__username", "account__first_name", "account__last_name", "account__email"]
     ordering_fields = ["name", "employee_no", "organization", "created_at", "updated_at"]
     ordering = ["name", "employee_no", "id"]
 
@@ -444,6 +450,8 @@ class PersonViewSet(AuditedModelViewSetMixin, viewsets.ModelViewSet):
             queryset = queryset.filter(account__isnull=True)
         elif account == "linked":
             queryset = queryset.filter(account__isnull=False)
+        if self.request.query_params.get("email_configured", "").strip().lower() in {"true", "1", "yes"}:
+            queryset = queryset.filter(Q(email__gt="") | Q(account__email__gt=""))
         if self.request.query_params.get("search", "").strip():
             queryset = queryset.distinct()
         return queryset
@@ -466,18 +474,28 @@ class PersonViewSet(AuditedModelViewSetMixin, viewsets.ModelViewSet):
 
 class AssetViewSet(AuditedModelViewSetMixin, viewsets.ModelViewSet):
     max_custom_columns = 12
-    queryset = Asset.objects.select_related("assigned_person__department", "assigned_person__account", "manufacturer", "device_type", "asset_model", "asset_model__manufacturer", "asset_model__device_type", "asset_data_center", "rack_allocation__rack__room__data_center").prefetch_related("network_addresses", "procurement_records", "maintenance_contracts", "asset_tags__tag", "custom_values__field__options").order_by("asset_no", "id")
+    queryset = Asset.objects.select_related(
+        "assigned_person__department", "assigned_person__account", "standalone_manufacturer",
+        "standalone_device_type__default_fieldset", "asset_model__manufacturer",
+        "asset_model__device_type__default_fieldset", "asset_model__fieldset", "asset_data_center",
+        "rack_allocation__rack__room__data_center",
+    ).prefetch_related(
+        "network_addresses", "procurement_records", "maintenance_contracts", "asset_tags__tag",
+        "custom_values__field__options", "asset_model__fieldset__items",
+        "asset_model__device_type__default_fieldset__items", "standalone_device_type__default_fieldset__items",
+    ).order_by("asset_no", "id")
     serializer_class = AssetSerializer
     permission_classes = [BusinessRolePermission]
     permission_resource = "assets"
     audit_resource = "asset"
     filter_backends = [DjangoFilterBackend, SearchFilter, OrderingFilter]
-    filterset_fields = ["status", "manufacturer", "device_type", "asset_model", "model"]
-    ordering_fields = ["asset_no", "name", "manufacturer_model", "serial_number", "asset_model__name"]
+    filterset_fields = ["status", "asset_model"]
+    ordering_fields = ["asset_no", "name", "serial_number", "asset_model__name", "model_text"]
     ordering = ["asset_no", "id"]
     search_fields = [
-        "asset_no", "name", "manufacturer_model", "serial_number", "purpose", "notes", "status",
-        "manufacturer__name", "device_type__name", "device_type__color", "asset_model__name", "asset_model__model_number", "model",
+        "asset_no", "name", "model_text", "serial_number", "purpose", "notes", "status",
+        "standalone_manufacturer__name", "standalone_device_type__name", "asset_model__manufacturer__name",
+        "asset_model__device_type__name", "asset_model__name", "asset_model__model_number",
         "assigned_person__name", "assigned_person__employee_no", "assigned_person__organization", "assigned_person__contact", "assigned_person__department__name",
         "assigned_person__account__username", "assigned_person__account__first_name", "assigned_person__account__last_name", "assigned_person__account__email",
         "network_addresses__address", "network_addresses__role", "network_addresses__status", "network_addresses__notes",
@@ -534,7 +552,7 @@ class AssetViewSet(AuditedModelViewSetMixin, viewsets.ModelViewSet):
                 required=False,
                 enum=[
                     "asset_no", "-asset_no", "name", "-name",
-                    "manufacturer_model", "-manufacturer_model",
+                    "model_text", "-model_text", "asset_model__name", "-asset_model__name",
                     "serial_number", "-serial_number",
                 ],
                 description="资产列表排序字段；支持资产编号、名称、厂商/型号和序列号，前缀 - 表示降序。",
@@ -546,12 +564,33 @@ class AssetViewSet(AuditedModelViewSetMixin, viewsets.ModelViewSet):
 
     def get_queryset(self):
         queryset = super().get_queryset()
+        manufacturer = self.request.query_params.get("manufacturer", "").strip()
+        if manufacturer.isdigit():
+            queryset = queryset.filter(
+                Q(asset_model__manufacturer_id=int(manufacturer))
+                | Q(asset_model__isnull=True, standalone_manufacturer_id=int(manufacturer))
+            )
+        device_type = self.request.query_params.get("device_type", "").strip()
+        if device_type.isdigit():
+            queryset = queryset.filter(
+                Q(asset_model__device_type_id=int(device_type))
+                | Q(asset_model__isnull=True, standalone_device_type_id=int(device_type))
+            )
+        model = self.request.query_params.get("model", "").strip()
+        if model:
+            queryset = queryset.filter(
+                Q(asset_model__name__icontains=model)
+                | Q(asset_model__model_number__icontains=model)
+                | Q(asset_model__isnull=True, model_text__icontains=model)
+            )
         if self.request.query_params.get("search", "").strip():
             queryset = queryset.distinct()
         if self.action == "list" and self.request.query_params.get("compact", "").lower() in {"1", "true", "yes"}:
             requested_custom_columns = self._requested_custom_columns()
             queryset = queryset.select_related(
-                "assigned_person__department", "assigned_person__account", "manufacturer", "device_type", "asset_model", "asset_model__manufacturer", "asset_model__device_type", "asset_data_center", "rack_allocation__rack__room__data_center"
+                "assigned_person__department", "assigned_person__account", "standalone_manufacturer",
+                "standalone_device_type__default_fieldset", "asset_model__manufacturer", "asset_model__fieldset",
+                "asset_model__device_type__default_fieldset", "asset_data_center", "rack_allocation__rack__room__data_center"
             ).prefetch_related(None).prefetch_related(
                 Prefetch(
                     "network_addresses",
@@ -566,6 +605,8 @@ class AssetViewSet(AuditedModelViewSetMixin, viewsets.ModelViewSet):
                     queryset=MaintenanceContract.objects.only("id", "asset_id", "provider", "expiry_date").order_by("-updated_at", "-id"),
                 ),
                 Prefetch("asset_tags", queryset=AssetTag.objects.select_related("tag")),
+                "asset_model__fieldset__items", "asset_model__device_type__default_fieldset__items",
+                "standalone_device_type__default_fieldset__items",
             )
             if requested_custom_columns:
                 queryset = queryset.prefetch_related(
@@ -607,9 +648,6 @@ class AssetViewSet(AuditedModelViewSetMixin, viewsets.ModelViewSet):
                 asset_id=OuterRef("pk"),
                 field_id=field.id,
                 field__is_active=True,
-            ).filter(
-                Q(field__device_type_id__isnull=True)
-                | Q(field__device_type_id=OuterRef("device_type_id")),
             )
             if field.field_type in {"text", "textarea"}:
                 lookup = "text_value__icontains" if operator == "contains" else "text_value"
@@ -683,7 +721,7 @@ class AssetViewSet(AuditedModelViewSetMixin, viewsets.ModelViewSet):
                 field_keys.add(field_key)
         fields = {
             field.key: field
-            for field in CustomField.objects.filter(key__in=field_keys).select_related("device_type").prefetch_related("options")
+            for field in CustomField.objects.filter(key__in=field_keys).prefetch_related("options")
         }
         errors = []
         validated = []
@@ -1032,7 +1070,17 @@ class AssetViewSet(AuditedModelViewSetMixin, viewsets.ModelViewSet):
 
 class RackViewSet(AuditedModelViewSetMixin, viewsets.ModelViewSet):
     queryset = Rack.objects.select_related("room", "room__data_center").prefetch_related(
-        Prefetch("allocations", queryset=RackUnitAllocation.objects.select_related("asset", "asset__manufacturer", "asset__device_type", "rack__room__data_center"))
+        Prefetch(
+            "allocations",
+            queryset=RackUnitAllocation.objects.select_related(
+                "asset",
+                "asset__asset_model__manufacturer",
+                "asset__asset_model__device_type",
+                "asset__standalone_manufacturer",
+                "asset__standalone_device_type",
+                "rack__room__data_center",
+            ),
+        )
     )
     serializer_class = RackSerializer
     permission_classes = [BusinessRolePermission]
@@ -1041,6 +1089,11 @@ class RackViewSet(AuditedModelViewSetMixin, viewsets.ModelViewSet):
     filter_backends = [DjangoFilterBackend, SearchFilter]
     filterset_fields = ["room", "room__data_center", "code", "status"]
     search_fields = ["code", "name", "rack_type", "owner_name", "room__name", "room__data_center__name"]
+
+    def get_serializer_class(self):
+        if self.action == "list" and _compact_requested(self.request):
+            return RackOptionSerializer
+        return super().get_serializer_class()
 
     @extend_schema(
         parameters=[
@@ -1065,7 +1118,13 @@ class RackViewSet(AuditedModelViewSetMixin, viewsets.ModelViewSet):
                 return queryset.none()
             if device_type_id <= 0:
                 return queryset.none()
-            queryset = queryset.filter(allocations__asset__device_type_id=device_type_id).distinct()
+            queryset = queryset.filter(
+                Q(allocations__asset__asset_model__device_type_id=device_type_id)
+                | Q(
+                    allocations__asset__asset_model__isnull=True,
+                    allocations__asset__standalone_device_type_id=device_type_id,
+                )
+            ).distinct()
         active = self.request.query_params.get("is_active", "true").strip().lower()
         if self.action in {"retrieve", "update", "partial_update", "destroy"}:
             return queryset.order_by("room__data_center__name", "room__name", "code")
@@ -1136,6 +1195,11 @@ class ServerRoomViewSet(AuditedModelViewSetMixin, viewsets.ModelViewSet):
     filterset_fields = ["data_center", "is_active"]
     search_fields = ["name", "data_center__name"]
     ordering_fields = ["name", "created_at", "updated_at"]
+
+    def get_serializer_class(self):
+        if self.action == "list" and _compact_requested(self.request):
+            return ServerRoomOptionSerializer
+        return super().get_serializer_class()
 
     def get_queryset(self):
         queryset = super().get_queryset()
@@ -1252,6 +1316,11 @@ class DataCenterViewSet(AuditedModelViewSetMixin, viewsets.ModelViewSet):
     permission_resource = "racks"
     audit_resource = "data_center"
 
+    def get_serializer_class(self):
+        if self.action == "list" and _compact_requested(self.request):
+            return DataCenterOptionSerializer
+        return super().get_serializer_class()
+
     def get_queryset(self):
         queryset = super().get_queryset()
         # Keep inactive data centers addressable for administrator actions.
@@ -1319,11 +1388,18 @@ class DictionaryViewSet(AuditedModelViewSetMixin, viewsets.ModelViewSet):
     permission_classes = [BusinessRolePermission]
     permission_resource = "settings"
 
+    def get_serializer_class(self):
+        if self.action == "list" and _compact_requested(self.request):
+            return DictionaryOptionSerializer
+        return super().get_serializer_class()
+
     def can_view_inactive(self):
         return "settings.manage" in user_capabilities(self.request.user)
 
     def get_queryset(self):
         queryset = self.queryset.annotate(assets_count=Count("assets"))
+        if self.action in {"retrieve", "update", "partial_update", "destroy"}:
+            return queryset
         active = self.request.query_params.get("is_active", "true").strip().lower()
         if not self.can_view_inactive():
             active = "true"
@@ -1337,7 +1413,7 @@ class DictionaryViewSet(AuditedModelViewSetMixin, viewsets.ModelViewSet):
         instance.assets_count = 0
 
     def perform_update(self, serializer):
-        super().perform_update(serializer)
+        AuditedModelViewSetMixin.perform_update(self, serializer)
         instance = serializer.instance
         instance.assets_count = instance.assets.count()
 
@@ -1345,7 +1421,7 @@ class DictionaryViewSet(AuditedModelViewSetMixin, viewsets.ModelViewSet):
         if instance.assets.exists():
             from rest_framework.exceptions import ValidationError as DRFValidationError
             raise DRFValidationError("字典项正在被资产使用，不能删除，请先停用")
-        super().perform_destroy(instance)
+        AuditedModelViewSetMixin.perform_destroy(self, instance)
 
 
 class DepartmentViewSet(AuditedModelViewSetMixin, viewsets.ModelViewSet):
@@ -1361,6 +1437,11 @@ class DepartmentViewSet(AuditedModelViewSetMixin, viewsets.ModelViewSet):
     search_fields = ["name", "code", "parent__name"]
     ordering_fields = ["name", "code", "created_at", "updated_at"]
     ordering = ["name", "id"]
+
+    def get_serializer_class(self):
+        if self.action == "list" and _compact_requested(self.request):
+            return DepartmentOptionSerializer
+        return super().get_serializer_class()
 
     def get_permissions(self):
         if self.action in {"list", "retrieve"}:
@@ -1402,11 +1483,17 @@ class ManufacturerViewSet(DictionaryViewSet):
         )
 
     def get_queryset(self):
-        return super().get_queryset().annotate(
-            assets_count=Count("assets", distinct=True),
+        queryset = self.queryset.annotate(
+            assets_count=Count("standalone_assets", distinct=True) + Count("asset_models__assets", distinct=True),
             licenses_count=Count("software_licenses", distinct=True),
             spare_parts_count=Count("spare_parts", distinct=True),
         )
+        if self.action in {"retrieve", "update", "partial_update", "destroy"}:
+            return queryset
+        active = self.request.query_params.get("is_active", "true").strip().lower()
+        if not self.can_view_inactive():
+            active = "true"
+        return queryset.filter(is_active=active == "true") if active in {"true", "false"} else queryset
 
     def perform_create(self, serializer):
         super().perform_create(serializer)
@@ -1416,49 +1503,59 @@ class ManufacturerViewSet(DictionaryViewSet):
         instance.spare_parts_count = 0
 
     def perform_update(self, serializer):
-        super().perform_update(serializer)
+        AuditedModelViewSetMixin.perform_update(self, serializer)
         instance = serializer.instance
-        instance.assets_count = instance.assets.count()
+        instance.assets_count = instance.standalone_assets.count() + Asset.objects.filter(asset_model__manufacturer=instance).count()
         instance.licenses_count = instance.software_licenses.count()
         instance.spare_parts_count = instance.spare_parts.count()
 
     def perform_destroy(self, instance):
-        if instance.assets.exists() or instance.software_licenses.exists() or instance.spare_parts.exists():
+        if instance.standalone_assets.exists() or instance.asset_models.filter(assets__isnull=False).exists() or instance.software_licenses.exists() or instance.spare_parts.exists():
             raise DRFValidationError("厂商正在被资产、软件许可或备件使用，不能删除，请先停用")
-        super().perform_destroy(instance)
+        AuditedModelViewSetMixin.perform_destroy(self, instance)
 
 
 class DeviceTypeViewSet(DictionaryViewSet):
-    queryset = DeviceType.objects.all()
+    queryset = DeviceType.objects.select_related("default_fieldset").all()
     serializer_class = DeviceTypeSerializer
     audit_resource = "device_type"
 
+    def get_serializer_class(self):
+        if self.action == "list" and _compact_requested(self.request):
+            return DeviceTypeOptionSerializer
+        return super().get_serializer_class()
+
     def get_queryset(self):
-        return super().get_queryset().annotate(
-            custom_fields_count=Count("custom_fields", distinct=True),
+        queryset = self.queryset.annotate(
+            assets_count=Count("standalone_assets", distinct=True) + Count("asset_models__assets", distinct=True),
+            custom_fields_count=Count("default_fieldset__items__field", distinct=True),
         )
+        if self.action in {"retrieve", "update", "partial_update", "destroy"}:
+            return queryset
+        active = self.request.query_params.get("is_active", "true").strip().lower()
+        if not self.can_view_inactive():
+            active = "true"
+        return queryset.filter(is_active=active == "true") if active in {"true", "false"} else queryset
 
     def perform_create(self, serializer):
         super().perform_create(serializer)
         serializer.instance.custom_fields_count = 0
 
     def perform_update(self, serializer):
-        super().perform_update(serializer)
-        serializer.instance.custom_fields_count = serializer.instance.custom_fields.count()
+        AuditedModelViewSetMixin.perform_update(self, serializer)
+        serializer.instance.custom_fields_count = serializer.instance.default_fieldset.items.count() if serializer.instance.default_fieldset_id else 0
 
     def perform_destroy(self, instance):
-        if instance.assets.exists():
+        if instance.standalone_assets.exists() or instance.asset_models.filter(assets__isnull=False).exists():
             raise DRFValidationError("设备类型正在被资产使用，不能删除，请先停用")
-        if instance.custom_fields.exists():
-            raise DRFValidationError("设备类型仍被自定义字段使用，不能删除，请先停用或解除字段绑定")
         try:
-            super().perform_destroy(instance)
+            AuditedModelViewSetMixin.perform_destroy(self, instance)
         except ProtectedError as exc:
             raise DRFValidationError("设备类型仍被业务数据使用，不能删除，请先停用") from exc
 
 
 class AssetModelViewSet(DictionaryViewSet):
-    queryset = AssetModel.objects.select_related("manufacturer", "device_type").all()
+    queryset = AssetModel.objects.select_related("manufacturer", "device_type__default_fieldset", "fieldset").all()
     serializer_class = AssetModelSerializer
     audit_resource = "asset_model"
     filterset_fields = ["manufacturer", "device_type", "is_active"]
@@ -1476,7 +1573,17 @@ class AssetModelViewSet(DictionaryViewSet):
         return super().get_serializer_class()
 
     def get_queryset(self):
-        return super().get_queryset().select_related("manufacturer", "device_type")
+        queryset = super().get_queryset().select_related("manufacturer", "device_type__default_fieldset", "fieldset")
+        fieldset = self.request.query_params.get("fieldset", "").strip()
+        if fieldset:
+            if not fieldset.isdigit() or int(fieldset) <= 0:
+                return queryset.none()
+            fieldset_id = int(fieldset)
+            queryset = queryset.filter(
+                Q(fieldset_id=fieldset_id)
+                | Q(fieldset__isnull=True, device_type__default_fieldset_id=fieldset_id)
+            )
+        return queryset
 
 
 class SparePartCategoryViewSet(AuditedModelViewSetMixin, viewsets.ModelViewSet):
@@ -1489,6 +1596,11 @@ class SparePartCategoryViewSet(AuditedModelViewSetMixin, viewsets.ModelViewSet):
     filterset_fields = ["is_active"]
     search_fields = ["name", "code"]
     ordering_fields = ["name", "code", "created_at", "updated_at"]
+
+    def get_serializer_class(self):
+        if self.action == "list" and _compact_requested(self.request):
+            return DictionaryOptionSerializer
+        return super().get_serializer_class()
 
     def get_permissions(self):
         if self.request.method in {"GET", "HEAD", "OPTIONS"} or self.action in {"list", "retrieve"}:
@@ -1512,18 +1624,90 @@ class SparePartCategoryViewSet(AuditedModelViewSetMixin, viewsets.ModelViewSet):
         super().perform_destroy(instance)
 
 
+class CustomFieldSetViewSet(AuditedModelViewSetMixin, viewsets.ModelViewSet):
+    queryset = CustomFieldSet.objects.prefetch_related(
+        Prefetch("items", queryset=fieldset_items_queryset(include_inactive_options=True))
+    ).annotate(
+        models_count=Count("asset_models", distinct=True),
+        device_types_count=Count("default_for_device_types", distinct=True),
+    ).order_by("name", "id")
+    serializer_class = CustomFieldSetSerializer
+    permission_classes = [BusinessRolePermission]
+    permission_resource = "custom_fields"
+    audit_resource = "custom_fieldset"
+    filter_backends = [DjangoFilterBackend, SearchFilter, OrderingFilter]
+    filterset_fields = ["is_active"]
+    search_fields = ["name", "description"]
+    ordering_fields = ["name", "created_at", "updated_at"]
+
+    def get_serializer_class(self):
+        if self.action == "list" and _compact_requested(self.request):
+            return CustomFieldSetOptionSerializer
+        return super().get_serializer_class()
+
+    def get_queryset(self):
+        queryset = super().get_queryset()
+        if self.action in {"retrieve", "update", "partial_update", "destroy", "replace_items"}:
+            return queryset
+        active = self.request.query_params.get("is_active", "true").strip().lower()
+        if "custom_fields.manage" not in user_capabilities(self.request.user):
+            active = "true"
+        if active in {"true", "false"}:
+            queryset = queryset.filter(is_active=active == "true")
+        return queryset
+
+    def audit_snapshot(self, instance):
+        snapshot = model_snapshot(instance)
+        snapshot["items"] = [
+            {
+                "field_id": item.field_id,
+                "field_key": item.field.key,
+                "field_name": item.field.name,
+                "required": item.required,
+                "group": item.group,
+                "sort_order": item.sort_order,
+            }
+            for item in CustomFieldSetItem.objects.select_related("field")
+            .filter(fieldset=instance)
+            .order_by("sort_order", "id")
+        ]
+        return snapshot
+
+    @action(detail=True, methods=["put"], url_path="items")
+    @transaction.atomic
+    def replace_items(self, request, pk=None):
+        fieldset = self.get_object()
+        serializer = CustomFieldSetItemsWriteSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        incoming = serializer.validated_data["items"]
+        before = self.audit_snapshot(fieldset)
+        replace_fieldset_items(fieldset, incoming)
+        fieldset = CustomFieldSet.objects.prefetch_related(
+            Prefetch("items", queryset=fieldset_items_queryset(include_inactive_options=True))
+        ).get(pk=fieldset.pk)
+        after = self.audit_snapshot(fieldset)
+        write_audit_log(request, action="update", resource_type=self.audit_resource, resource_id=fieldset.pk, before=before, after=after)
+        return Response(CustomFieldSetSerializer(fieldset).data)
+
+    def perform_destroy(self, instance):
+        if instance.asset_models.exists() or instance.default_for_device_types.exists():
+            raise DRFValidationError("字段集正在被资产型号或设备类型引用，不能删除，请先停用")
+        super().perform_destroy(instance)
+
+
 class CustomFieldViewSet(AuditedModelViewSetMixin, viewsets.ModelViewSet):
-    queryset = CustomField.objects.select_related("device_type").prefetch_related("options").annotate(
-        assets_count=Count("asset_values__asset", distinct=True)
-    ).order_by("device_type__name", "sort_order", "id")
+    queryset = CustomField.objects.prefetch_related("options").annotate(
+        assets_count=Count("asset_values__asset", distinct=True),
+        fieldsets_count=Count("fieldset_items__fieldset", distinct=True),
+    ).order_by("name", "id")
     serializer_class = CustomFieldSerializer
     permission_classes = [BusinessRolePermission]
     permission_resource = "custom_fields"
     audit_resource = "custom_field"
     filter_backends = [DjangoFilterBackend, SearchFilter, OrderingFilter]
-    filterset_fields = ["device_type", "field_type", "is_active"]
-    search_fields = ["key", "name", "device_type__name"]
-    ordering_fields = ["name", "sort_order", "created_at", "updated_at"]
+    filterset_fields = ["field_type", "is_active"]
+    search_fields = ["key", "name"]
+    ordering_fields = ["name", "created_at", "updated_at"]
 
     def get_permissions(self):
         if self.action == "schema_fields":
@@ -1542,12 +1726,9 @@ class CustomFieldViewSet(AuditedModelViewSetMixin, viewsets.ModelViewSet):
 
     @extend_schema(
         parameters=[
-            OpenApiParameter(
-                name="device_type",
-                type=OpenApiTypes.INT,
-                required=False,
-                description="仅返回全局字段与指定设备类型字段。",
-            ),
+            OpenApiParameter(name="asset", type=OpenApiTypes.INT, required=False),
+            OpenApiParameter(name="asset_model", type=OpenApiTypes.INT, required=False),
+            OpenApiParameter(name="device_type", type=OpenApiTypes.INT, required=False),
             OpenApiParameter(
                 name="list_visible",
                 type=OpenApiTypes.BOOL,
@@ -1567,41 +1748,68 @@ class CustomFieldViewSet(AuditedModelViewSetMixin, viewsets.ModelViewSet):
     def schema_fields(self, request):
         list_visible = request.query_params.get("list_visible", "").strip().lower() in {"1", "true", "yes"}
         filterable = request.query_params.get("filterable", "").strip().lower() in {"1", "true", "yes"}
+        scope_values = {
+            key: request.query_params.get(key, "").strip()
+            for key in ("asset", "asset_model", "device_type")
+            if request.query_params.get(key, "").strip()
+        }
+        if len(scope_values) > 1:
+            raise DRFValidationError("asset、asset_model 和 device_type 只能提交一个")
         if list_visible or filterable:
-            filters = {"is_active": True}
+            filters = {"field__is_active": True}
             if list_visible:
-                filters["list_visible"] = True
+                filters["field__list_visible"] = True
             if filterable:
-                filters["filterable"] = True
-            options = CustomFieldOption.objects.all().order_by("sort_order", "id")
-            if filterable:
-                options = options.filter(is_active=True)
-            queryset = CustomField.objects.filter(**filters).select_related("device_type").prefetch_related(
-                Prefetch("options", queryset=options)
-            ).order_by("device_type__name", "sort_order", "id")
-            return Response(CustomFieldRuntimeSchemaSerializer(queryset, many=True).data)
+                filters["field__filterable"] = True
+            items = fieldset_items_queryset().filter(**filters)
+            seen = set()
+            unique_items = []
+            for item in items:
+                if item.field_id not in seen:
+                    seen.add(item.field_id)
+                    unique_items.append(item)
+            return Response(CustomFieldRuntimeSchemaSerializer(unique_items, many=True).data)
 
-        device_type = request.query_params.get("device_type", "").strip()
-        if device_type:
-            scope = Q(device_type__isnull=True) | Q(device_type_id=device_type)
+        if not scope_values:
+            return Response([])
+        scope, raw_id = next(iter(scope_values.items()))
+        if not raw_id.isdigit():
+            raise DRFValidationError({scope: "必须是有效的正整数 ID"})
+        if scope == "asset":
+            asset = get_object_or_404(Asset.objects.select_related(
+                "asset_model__fieldset", "asset_model__device_type__default_fieldset",
+                "standalone_device_type__default_fieldset",
+            ), pk=int(raw_id))
+            fieldset = resolve_fieldset(asset=asset)
+            include_inactive = True
+        elif scope == "asset_model":
+            asset_model = get_object_or_404(AssetModel.objects.select_related("fieldset", "device_type__default_fieldset"), pk=int(raw_id))
+            fieldset = resolve_fieldset(asset_model=asset_model)
+            include_inactive = False
         else:
-            scope = Q(device_type__isnull=True)
-        queryset = CustomField.objects.filter(is_active=True).filter(scope).select_related("device_type").prefetch_related(
-            Prefetch("options", queryset=CustomFieldOption.objects.filter(is_active=True))
-        ).order_by("sort_order", "id")
-        return Response(CustomFieldRuntimeSchemaSerializer(queryset, many=True).data)
+            device_type = get_object_or_404(DeviceType.objects.select_related("default_fieldset"), pk=int(raw_id))
+            fieldset = resolve_fieldset(device_type=device_type)
+            include_inactive = False
+        if fieldset is None:
+            return Response([])
+        items = fieldset_items_queryset(include_inactive_options=include_inactive).filter(fieldset=fieldset)
+        if not include_inactive:
+            items = items.filter(field__is_active=True)
+        return Response(CustomFieldRuntimeSchemaSerializer(items, many=True).data)
 
     def perform_destroy(self, instance):
         from rest_framework.exceptions import ValidationError as DRFValidationError
         if instance.asset_values.exists():
             raise DRFValidationError("字段已有资产值，不能删除，请先停用")
+        if instance.fieldset_items.exists():
+            raise DRFValidationError("字段正在被字段集引用，不能删除，请先停用")
         if instance.options.exists():
             raise DRFValidationError("字段仍有选项，不能删除，请先删除选项")
         super().perform_destroy(instance)
 
 
 class CustomFieldOptionViewSet(AuditedModelViewSetMixin, viewsets.ModelViewSet):
-    queryset = CustomFieldOption.objects.select_related("field", "field__device_type").order_by("field_id", "sort_order", "id")
+    queryset = CustomFieldOption.objects.select_related("field").order_by("field_id", "sort_order", "id")
     serializer_class = CustomFieldOptionSerializer
     permission_classes = [BusinessRolePermission]
     permission_resource = "custom_fields"
@@ -1639,6 +1847,11 @@ class TagViewSet(AuditedModelViewSetMixin, viewsets.ModelViewSet):
     filterset_fields = ["is_active"]
     search_fields = ["name"]
     ordering_fields = ["name", "created_at", "updated_at"]
+
+    def get_serializer_class(self):
+        if self.action == "list" and _compact_requested(self.request):
+            return TagOptionSerializer
+        return super().get_serializer_class()
 
     def get_permissions(self):
         if self.action in {"list", "retrieve"} or self.request.method in {"GET", "HEAD", "OPTIONS"}:
@@ -1680,13 +1893,15 @@ class SparePartViewSet(AuditedModelViewSetMixin, viewsets.ModelViewSet):
     ]
     ordering_fields = ["code", "name", "category", "category__name", "safety_stock", "created_at", "updated_at"]
 
-    def audit_snapshot(self, instance):
-        return spare_part_audit_snapshot(instance)
-
     def get_serializer_class(self):
         if self.action == "retrieve":
             return SparePartDetailSerializer
+        if self.action == "list" and _compact_requested(self.request):
+            return SparePartOptionSerializer
         return super().get_serializer_class()
+
+    def audit_snapshot(self, instance):
+        return spare_part_audit_snapshot(instance)
 
     def get_queryset(self):
         queryset = super().get_queryset()
@@ -1771,9 +1986,18 @@ class SpareStockViewSet(viewsets.ReadOnlyModelViewSet):
     serializer_class = SpareStockSerializer
     permission_classes = [BusinessRolePermission]
     permission_resource = "spares"
-    filter_backends = [DjangoFilterBackend, OrderingFilter]
+    filter_backends = [DjangoFilterBackend, SearchFilter, OrderingFilter]
     filterset_fields = ["part", "data_center", "server_room"]
+    search_fields = [
+        "part__code", "part__name", "part__model", "part__manufacturer__name",
+        "data_center__name", "server_room__name",
+    ]
     ordering_fields = ["quantity", "updated_at"]
+
+    def get_serializer_class(self):
+        if _compact_requested(self.request):
+            return SpareStockOptionSerializer
+        return super().get_serializer_class()
 
 
 class SpareStockTransactionViewSet(viewsets.ModelViewSet):
@@ -2799,7 +3023,8 @@ def asset_inventory_records(request, pk):
         raise NotFound("资产不存在")
     records = InventoryItem.objects.filter(asset_id=pk).select_related(
         "asset",
-        "asset__device_type",
+        "asset__asset_model__device_type",
+        "asset__standalone_device_type",
         "task",
         "task__data_center",
         "task__server_room",
@@ -2817,10 +3042,23 @@ def asset_inventory_records(request, pk):
 @permission_classes([CanManageInventory])
 def inventory_inspectors(request):
     users = User.objects.filter(is_active=True).order_by("username")
-    return Response([
+    search = request.query_params.get("search", "").strip()
+    if search:
+        users = users.filter(
+            Q(username__icontains=search)
+            | Q(first_name__icontains=search)
+            | Q(last_name__icontains=search)
+            | Q(email__icontains=search)
+        )
+    rows = [
         {"id": user.id, "username": user.username, "display_name": user.get_full_name() or user.username}
         for user in users
-    ])
+    ]
+    if _compact_requested(request):
+        paginator = StandardPagination()
+        page = paginator.paginate_queryset(rows, request)
+        return paginator.get_paginated_response(InventoryInspectorSerializer(page, many=True).data)
+    return Response(InventoryInspectorSerializer(rows, many=True).data)
 
 
 class AuditLogViewSet(viewsets.ReadOnlyModelViewSet):
@@ -3623,6 +3861,94 @@ def asset_import(request):
         return Response({"detail": message, "preview": exc.preview}, status=status)
 
 
+@extend_schema(responses=OpenApiTypes.BINARY, description="下载资产型号新增导入模板。")
+@api_view(["GET"])
+@permission_classes([CanManageSystemSettings])
+def asset_model_import_template(request):
+    return _xlsx_response(build_asset_model_import_template(), "infrix-asset-model-import.xlsx")
+
+
+@extend_schema(request=OpenApiTypes.OBJECT, responses=OpenApiTypes.OBJECT, description="预览并校验资产型号导入文件。")
+@api_view(["POST"])
+@permission_classes([CanManageSystemSettings])
+@parser_classes([MultiPartParser, FormParser])
+def asset_model_import_preview(request):
+    return Response(preview_asset_model_import(request.FILES.get("file")))
+
+
+@extend_schema(request=OpenApiTypes.OBJECT, responses=OpenApiTypes.OBJECT, description="确认导入校验通过的资产型号文件。")
+@api_view(["POST"])
+@permission_classes([CanManageSystemSettings])
+@parser_classes([MultiPartParser, FormParser])
+def asset_model_import(request):
+    created = commit_asset_model_import(request.FILES.get("file"))
+    for model in created:
+        write_audit_log(
+            request,
+            action="create",
+            resource_type="asset_model",
+            resource_id=model.pk,
+            after=model_snapshot(model),
+            extra={"source": "asset_model_import"},
+        )
+    return Response({"created": len(created), "total": len(created), "errors": []})
+
+
+@extend_schema(
+    parameters=[
+        OpenApiParameter(name="search", type=OpenApiTypes.STR, required=False),
+        OpenApiParameter(name="manufacturer", type=OpenApiTypes.INT, required=False),
+        OpenApiParameter(name="device_type", type=OpenApiTypes.INT, required=False),
+        OpenApiParameter(name="fieldset", type=OpenApiTypes.INT, required=False),
+        OpenApiParameter(name="is_active", type=OpenApiTypes.BOOL, required=False),
+    ],
+    responses=OpenApiTypes.BINARY,
+    description="导出当前筛选条件下的资产型号。",
+)
+@api_view(["GET"])
+@permission_classes([CanManageSystemSettings])
+def asset_model_export(request):
+    queryset = AssetModel.objects.select_related("manufacturer", "device_type", "fieldset").order_by("manufacturer__name", "name", "id")
+    for field in ("manufacturer", "device_type"):
+        value = request.query_params.get(field, "").strip()
+        if value.isdigit():
+            queryset = queryset.filter(**{f"{field}_id": int(value)})
+    fieldset = request.query_params.get("fieldset", "").strip()
+    if fieldset:
+        if not fieldset.isdigit() or int(fieldset) <= 0:
+            queryset = queryset.none()
+        else:
+            fieldset_id = int(fieldset)
+            queryset = queryset.filter(
+                Q(fieldset_id=fieldset_id)
+                | Q(fieldset__isnull=True, device_type__default_fieldset_id=fieldset_id)
+            )
+    active = request.query_params.get("is_active", "").strip().lower()
+    if active in {"true", "false"}:
+        queryset = queryset.filter(is_active=active == "true")
+    search = request.query_params.get("search", "").strip()
+    if search:
+        queryset = queryset.filter(
+            Q(name__icontains=search) | Q(model_number__icontains=search)
+            | Q(manufacturer__name__icontains=search) | Q(device_type__name__icontains=search)
+        )
+    limit_response = _export_limit_response(queryset, "资产型号导出结果")
+    if limit_response:
+        return limit_response
+    book = Workbook()
+    sheet = book.active
+    sheet.title = "资产型号"
+    _append_excel_row(sheet, ["型号名称", "型号编号", "厂商", "设备类型", "字段集", "默认保修月数", "预计寿命月数", "备注", "状态"])
+    for model in queryset:
+        _append_excel_row(sheet, [
+            model.name, model.model_number, model.manufacturer.name, model.device_type.name,
+            model.fieldset.name if model.fieldset_id else "", model.default_warranty_months,
+            model.expected_life_months, model.notes, "启用" if model.is_active else "停用",
+        ])
+    _style_export_sheet(sheet)
+    return _xlsx_response(book, f"资产型号_{_export_timestamp()}.xlsx")
+
+
 @extend_schema(
     parameters=[
         OpenApiParameter(name="search", type=OpenApiTypes.STR, required=False),
@@ -3651,15 +3977,21 @@ def asset_export(request):
     if limit_response:
         return limit_response
     assets = list(queryset)
-    custom_fields = list(
-        CustomField.objects.filter(
-            is_active=True,
-        ).filter(
-            Q(device_type__isnull=True) | Q(device_type__assets__in=assets)
-        ).distinct().prefetch_related("options").order_by("device_type__name", "sort_order", "id")
-    ) if assets else []
+    custom_field_ids = []
+    for asset in assets:
+        fieldset = asset.resolved_fieldset
+        if fieldset is None:
+            continue
+        for field_id in fieldset.items.order_by("sort_order", "id").values_list("field_id", flat=True):
+            if field_id not in custom_field_ids:
+                custom_field_ids.append(field_id)
+    fields_by_id = {
+        field.pk: field
+        for field in CustomField.objects.filter(pk__in=custom_field_ids, is_active=True).prefetch_related("options")
+    }
+    custom_fields = [fields_by_id[field_id] for field_id in custom_field_ids if field_id in fields_by_id]
     headers = [
-        "资产编号", "资产名称", "设备类型", "厂商", "型号", "资产型号", "型号编号", "厂商/型号", "实际保修月数", "预计使用寿命（月）", "序列号", "用途", "状态", "使用人", "使用人员工编号", "使用人部门", "使用人单位", "使用人联系方式",
+        "资产编号", "资产名称", "型号来源", "标准型号名称", "型号编号", "历史型号文本", "厂商", "设备类型", "实际保修月数", "预计使用寿命（月）", "序列号", "用途", "状态", "使用人", "使用人员工编号", "使用人部门", "使用人单位", "使用人联系方式",
         "数据中心", "机房", "机柜", "起始 U", "结束 U", "业务 IP", "管理 IP", "带外 IP", "采购日期",
         "供应商", "采购单号", "采购金额", "折旧方法", "折旧起算日", "折旧年限", "残值率", "资产原值", "预计残值", "月折旧额", "累计折旧", "当前净值", "折旧状态",
         "维保厂商", "维保合同号", "维保开始日", "维保到期日", "维保备注", "备注", "标签",
@@ -3697,10 +4029,10 @@ def asset_export(request):
             custom_by_key[field.key] = value
         tag_text = ", ".join(item.tag.name for item in asset.asset_tags.all())
         row_values = [
-            asset.asset_no, asset.name, asset.device_type.name if asset.device_type_id else "",
-            asset.manufacturer.name if asset.manufacturer_id else "", asset.model or "",
+            asset.asset_no, asset.name, "标准型号" if asset.asset_model_id else "历史录入",
             asset.asset_model.name if asset.asset_model_id else "", asset.asset_model.model_number if asset.asset_model_id else "",
-            asset.manufacturer_model, asset.warranty_months if asset.warranty_months is not None else "",
+            asset.model_text, asset.manufacturer.name if asset.manufacturer_id else "",
+            asset.device_type.name if asset.device_type_id else "", asset.warranty_months if asset.warranty_months is not None else "",
             asset.asset_model.expected_life_months if asset.asset_model_id and asset.asset_model.expected_life_months is not None else "",
             asset.serial_number or "", asset.purpose, status_labels.get(asset.status, asset.status),
             asset.assigned_person.name if asset.assigned_person_id else "",
@@ -4129,7 +4461,10 @@ RACK_LAYOUT_DEFAULT_DEVICE_FILL = "D9EAF7"
 @api_view(["GET"])
 @permission_classes([CanExportRacks])
 def rack_layout_export(request):
-    rack_queryset = Rack.objects.select_related("room__data_center").prefetch_related("allocations__asset__device_type").order_by("room__data_center__name", "code")
+    rack_queryset = Rack.objects.select_related("room__data_center").prefetch_related(
+        "allocations__asset__asset_model__device_type",
+        "allocations__asset__standalone_device_type",
+    ).order_by("room__data_center__name", "code")
     spatial_params = QueryDict("", mutable=True)
     for parameter_name in ("room__data_center", "room"):
         values = request.query_params.getlist(parameter_name)
@@ -4226,7 +4561,7 @@ def rack_layout_export(request):
                     bottom_row = rack_top + 3 + (rack.total_u - allocation.start_u)
                     asset = allocation.asset
                     asset_name = (asset.name or "").strip()
-                    asset_model = (asset.model or asset.manufacturer_model or "").strip()
+                    asset_model = (asset.resolved_model_name or "").strip()
                     text = "\n".join(filter(None, [asset_name, asset_model]))
                     device_type_color = str(getattr(asset.device_type, "color", "") or "").strip().lstrip("#").upper()
                     if not re.fullmatch(r"[0-9A-F]{6}", device_type_color):

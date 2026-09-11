@@ -81,7 +81,10 @@ function alertMeta(alert: OperationalAlert) {
     return t("notifications.dueInDays", { count: days });
   }
   if (alert.kind === "inventory") {
-    return t("notifications.dueDaysOverdue", { count: alert.days_overdue || 0 });
+    const days = alert.days_overdue ?? 0;
+    return days > 0
+      ? t("notifications.dueDaysOverdue", { count: days })
+      : t("notifications.inventoryOverdueToday");
   }
   if (alert.kind === "spare") {
     return t("notifications.stockUsage", {
@@ -107,6 +110,22 @@ function levelLabel(level: OperationalAlert["level"]) {
   return t(`notifications.${level}`);
 }
 
+function alertActionLabel(alert: OperationalAlert) {
+  return alert.kind === "license" || alert.kind === "spare"
+    ? t("notifications.openRelatedList")
+    : t("notifications.openDetails");
+}
+
+function alertAccessibleLabel(alert: OperationalAlert) {
+  return [
+    levelLabel(alert.level),
+    alertTitle(alert),
+    alertSubject(alert),
+    alertContext(alert),
+    alertMeta(alert),
+  ].filter(Boolean).join(" · ");
+}
+
 function handleSelect(alert: OperationalAlert) {
   markRead(alert.id);
   visible.value = false;
@@ -120,6 +139,8 @@ function handleMarkAllRead() {
 function handleOpen() {
   void loadNotifications();
 }
+
+const showingLimitedAlerts = computed(() => summary.value.total > alerts.value.length);
 
 onMounted(() => {
   void loadNotifications();
@@ -139,6 +160,8 @@ onMounted(() => {
       <el-button
         class="notification-center__trigger"
         text
+        aria-haspopup="dialog"
+        :aria-expanded="visible ? 'true' : 'false'"
         :aria-label="t('notifications.title')"
         :title="t('notifications.title')"
       >
@@ -148,7 +171,7 @@ onMounted(() => {
       </el-button>
     </template>
 
-    <section class="notification-center" :aria-label="t('notifications.title')">
+    <section class="notification-center" role="dialog" :aria-label="t('notifications.title')">
       <header class="notification-center__header">
         <div class="notification-center__heading">
           <strong>{{ t('notifications.title') }}</strong>
@@ -174,12 +197,16 @@ onMounted(() => {
         </span>
       </div>
 
+      <div v-if="showingLimitedAlerts" class="notification-center__range" aria-live="polite">
+        {{ t('notifications.showingFirst', { shown: alerts.length, total: summary.total }) }}
+      </div>
+
       <div v-if="loading" class="notification-center__state">
         {{ t('common.loadingData') }}
       </div>
       <div v-else-if="error" class="notification-center__state is-error">
         <span>{{ error }}</span>
-        <el-button text @click="loadNotifications">{{ t('common.retry') }}</el-button>
+        <el-button text @click="loadNotifications(true)">{{ t('common.retry') }}</el-button>
       </div>
       <div v-else-if="alerts.length" class="notification-center__list">
         <el-button
@@ -188,8 +215,8 @@ onMounted(() => {
           class="notification-center__item"
           :class="[`is-${alert.level}`, { 'is-read': isRead(alert.id) }]"
           text
-          :aria-label="`${alertTitle(alert)}: ${alertSubject(alert)}`"
-          :title="t('notifications.clickToView')"
+          :aria-label="alertAccessibleLabel(alert)"
+          :title="alertActionLabel(alert)"
           @click="handleSelect(alert)"
         >
           <span class="notification-center__item-content">
@@ -209,7 +236,7 @@ onMounted(() => {
 
       <footer class="notification-center__footer">
         <span v-if="generatedAt">{{ t('notifications.updatedAt', { time: formatDate(generatedAt) }) }}</span>
-        <el-button text :icon="Refresh" :loading="loading" @click="loadNotifications">
+        <el-button text :icon="Refresh" :loading="loading" @click="loadNotifications(true)">
           {{ t('notifications.refresh') }}
         </el-button>
       </footer>
@@ -292,6 +319,12 @@ onMounted(() => {
   padding: var(--space-2) 0;
   border-top: 1px solid var(--el-border-color-lighter);
   border-bottom: 1px solid var(--el-border-color-lighter);
+}
+
+.notification-center__range {
+  color: var(--el-text-color-secondary);
+  font-size: var(--el-font-size-extra-small);
+  line-height: 18px;
 }
 
 .notification-center__summary-item {

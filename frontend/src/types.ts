@@ -42,6 +42,7 @@ export type DateFormat = "YYYY-MM-DD" | "DD/MM/YYYY" | "MM/DD/YYYY";
 export type SmtpSecurityMode = "none" | "starttls" | "ssl";
 export type SystemSettingKey =
   | "email_digest_enabled"
+  | "email_digest_people"
   | "email_digest_recipients"
   | "application_url"
   | "default_page_size"
@@ -73,14 +74,15 @@ export type SystemSettingOption = { value: string | number | boolean; label: str
 export type SystemSettingDefinition = {
   key: SystemSettingKey;
   label: string;
-  type: "integer" | "enum" | "boolean" | "string" | "email" | "emails";
+  type: "integer" | "enum" | "boolean" | "string" | "email" | "emails" | "people";
   section: "general" | "security" | "smtp" | "notifications";
-  default: string | number | boolean | string[];
+  default: string | number | boolean | Array<string | number>;
   options: SystemSettingOption[];
   help_text: string;
 };
 export type SystemSettingsForm = {
   email_digest_enabled: boolean;
+  email_digest_people: number[];
   email_digest_recipients: string[];
   application_url: string;
   default_page_size: number;
@@ -125,6 +127,8 @@ export type DictionaryItem = {
   is_active: boolean;
   assets_count?: number;
   custom_fields_count?: number;
+  default_fieldset?: number | null;
+  default_fieldset_name?: string | null;
   licenses_count?: number;
   spare_parts_count?: number;
   created_at?: string;
@@ -145,13 +149,17 @@ export type Manufacturer = { id: number; name: string; code: string | null; is_a
 export type AssetModel = {
   id: number;
   name: string;
-  manufacturer: number | null;
+  manufacturer: number;
   manufacturer_name: string | null;
-  device_type: number | null;
+  device_type: number;
   device_type_name: string | null;
   model_number: string;
+  fieldset: number | null;
+  fieldset_name: string | null;
+  effective_fieldset: { id: number; name: string; inherited: boolean } | null;
   default_warranty_months: number | null;
   expected_life_months: number | null;
+  notes: string;
   is_active: boolean;
   assets_count?: number;
   created_at?: string;
@@ -174,30 +182,36 @@ export type SparePartFormState = {
   notes: string;
 };
 export type CustomFieldOption = { id: number; field?: number; value: string; label: string; sort_order: number; is_active: boolean };
+export type CustomFieldFormat =
+  | "any"
+  | "alpha"
+  | "alpha_dash"
+  | "numeric"
+  | "alpha_numeric"
+  | "email"
+  | "date"
+  | "url"
+  | "ip"
+  | "ipv4"
+  | "ipv6"
+  | "mac"
+  | "regex";
 export type CustomFieldValidationConfig = {
+  format?: CustomFieldFormat;
+  pattern?: string;
   min_length?: number;
   max_length?: number;
-  min?: number | string;
-  max?: number | string;
-  precision?: number;
-  min_date?: string;
-  max_date?: string;
   min_items?: number;
   max_items?: number;
 };
 export type CustomField = {
   id: number;
-  device_type: number | null;
-  device_type_name?: string | null;
   key: string;
   name: string;
   field_type: "text" | "textarea" | "number" | "date" | "select" | "multiselect" | "boolean";
   field_type_label?: string;
-  required: boolean;
   default_value: string;
-  sort_order: number;
   is_active: boolean;
-  group: string;
   help_text: string;
   placeholder: string;
   form_visible: boolean;
@@ -205,28 +219,48 @@ export type CustomField = {
   list_visible: boolean;
   filterable: boolean;
   validation_config: CustomFieldValidationConfig;
+  fieldsets_count?: number;
   assets_count?: number;
   options?: CustomFieldOption[];
 };
-export type CustomFieldSchema = CustomField;
+export type CustomFieldSchema = CustomField & { required: boolean; sort_order: number; group: string };
+export type CustomFieldSetItem = {
+  id?: number;
+  field: number;
+  field_key?: string;
+  field_name?: string;
+  field_type?: CustomField["field_type"];
+  field_is_active?: boolean;
+  required: boolean;
+  group: string;
+  sort_order: number;
+};
+export type CustomFieldSet = {
+  id: number;
+  name: string;
+  description: string;
+  is_active: boolean;
+  items: CustomFieldSetItem[];
+  models_count: number;
+  device_types_count: number;
+  assets_count: number;
+  created_at?: string;
+  updated_at?: string;
+};
 export type CustomFieldFilterOperator = "contains" | "eq" | "gte" | "lte";
 export type AssetCustomFilter = {
   fieldKey: string;
   operator: CustomFieldFilterOperator;
   value: string;
 };
-export type AssetSortField = "asset_no" | "name" | "manufacturer_model" | "serial_number";
+export type AssetSortField = "asset_no" | "name" | "serial_number";
 export type AssetSortOrder = "ascending" | "descending" | null;
 export type CustomFieldForm = {
-  device_type: string;
   key: string;
   name: string;
   field_type: CustomField["field_type"];
-  required: boolean;
   default_value: string;
-  sort_order: number;
   is_active: boolean;
-  group: string;
   help_text: string;
   placeholder: string;
   form_visible: boolean;
@@ -236,7 +270,7 @@ export type CustomFieldForm = {
   validation_config: CustomFieldValidationConfig;
 };
 export type Tag = { id: number; name: string; is_active: boolean; assets_count?: number; created_at?: string; updated_at?: string };
-export type AssetCustomFieldValue = CustomField & { value: string | number | boolean | string[] | null };
+export type AssetCustomFieldValue = CustomFieldSchema & { value: string | number | boolean | string[] | null };
 export type DataCenter = {
   id: number;
   name: string;
@@ -440,10 +474,12 @@ export type Person = {
   employee_no: string | null;
   department: number | null;
   department_name: string | null;
+  email: string;
   organization: string;
   contact: string;
   account_username?: string | null;
   account_email?: string | null;
+  notification_email?: string | null;
   is_active: boolean;
   asset_count?: number;
   created_at?: string;
@@ -451,12 +487,13 @@ export type Person = {
 };
 export type PersonOption = Pick<
   Person,
-  "id" | "name" | "display_name" | "employee_no" | "department" | "department_name" | "is_active"
+  "id" | "name" | "display_name" | "employee_no" | "department" | "department_name" | "email" | "account_email" | "notification_email" | "is_active"
 >;
 export type PersonFormState = {
   name: string;
   employee_no: string;
   department: string;
+  email: string;
   organization: string;
   contact: string;
   is_active: boolean;
@@ -492,12 +529,10 @@ export type Asset = {
   manufacturer_name?: string;
   device_type?: number | null;
   device_type_name?: string;
-  model?: string;
   model_name?: string;
-  manufacturer_model?: string;
+  model_number?: string;
+  model_text?: string;
   asset_model?: AssetModel | null;
-  asset_model_name?: string | null;
-  asset_model_number?: string | null;
   warranty_months?: number | null;
   status: AssetStatus;
   allowed_statuses?: AssetStatus[];
@@ -728,7 +763,7 @@ export type Rack = {
   assets_count?: number;
   used_u?: number;
   free_u?: number;
-  allocations: Array<{ asset: number; start_u: number; end_u: number; units: number; asset_no: string; asset_name: string; device_type_name?: string | null; device_type_color?: string | null; manufacturer_name?: string | null; model_name?: string | null; manufacturer_model?: string; serial_number?: string | null; status: string }>;
+  allocations: Array<{ asset: number; start_u: number; end_u: number; units: number; asset_no: string; asset_name: string; device_type_name?: string | null; device_type_color?: string | null; manufacturer_name?: string | null; model_name?: string | null; serial_number?: string | null; status: string }>;
 };
 export type ServerRoom = { id: number; data_center: number; data_center_name: string; name: string; is_active: boolean; owner_name?: string; contact_phone?: string; notes?: string; racks_count: number; assets_count: number; created_at?: string; updated_at?: string };
 export type FacilitySummary = {

@@ -14,7 +14,7 @@ export type SettingsSection =
   | "custom-fields"
   | "tags"
   | "maintenance";
-export type AssetConfigSection = "custom-fields" | "tags" | "models";
+export type AssetConfigSection = "models" | "device-types" | "fieldsets" | "custom-fields" | "tags";
 export type OrganizationTab = "users" | "roles" | "ldap" | "departments" | "people";
 export type SystemSettingsTab = "general" | "security" | "smtp" | "notifications" | "branding";
 
@@ -50,7 +50,11 @@ const pageComponents: Partial<Record<Page, () => Promise<Component>>> = {
     "ElCard",
     "ElCheckbox",
     "ElDialog",
+    "ElDrawer",
     "ElEmpty",
+    "ElForm",
+    "ElFormItem",
+    "ElAlert",
     "ElOption",
     "ElPagination",
     "ElPopover",
@@ -62,16 +66,20 @@ const pageComponents: Partial<Record<Page, () => Promise<Component>>> = {
     "ElTooltip",
   ]),
   "asset-config": lazyPage(() => import("./components/AssetConfigurationPage.vue"), [
+    "ElAlert",
     "ElCard",
     "ElCheckbox",
     "ElDatePicker",
     "ElDialog",
+    "ElForm",
+    "ElFormItem",
     "ElEmpty",
     "ElInputNumber",
     "ElOption",
     "ElPagination",
     "ElSelect",
     "ElSkeleton",
+    "ElSwitch",
     "ElTable",
     "ElTableColumn",
     "ElTag",
@@ -237,8 +245,8 @@ export const routes: RouteRecordRaw[] = [
     "/assets/configuration",
     "asset-configuration",
     "asset-config",
-    "nav.customFields",
-    { assetConfigSection: "custom-fields" },
+    "nav.assetModels",
+    { assetConfigSection: "models" },
   ),
   {
     path: "/settings",
@@ -306,7 +314,7 @@ export function routeForPage(
   if (page === "asset-config") {
     return {
       name: "asset-configuration",
-      query: { tab: options.assetConfigSection || "custom-fields" },
+      query: { tab: options.assetConfigSection || "models" },
     };
   }
   if (page === "racks") {

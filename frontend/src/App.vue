@@ -105,7 +105,11 @@ const pageTitle = computed(() => {
       ? t("nav.tags")
       : assetConfigSection.value === "models"
         ? t("nav.assetModels")
-        : t("nav.customFields");
+        : assetConfigSection.value === "device-types"
+          ? t("nav.deviceTypes")
+        : assetConfigSection.value === "fieldsets"
+          ? t("nav.customFieldSets")
+          : t("nav.customFields");
   }
   const titleKey = route.meta.titleKey;
   if (titleKey) return t(titleKey);
@@ -206,7 +210,7 @@ const settingsSection = ref<SettingsSection>("system");
 const organizationTab = ref<OrganizationTab>("users");
 const systemSettingsTab = ref<SystemSettingsTab>("general");
 const inventoryTaskId = ref<number | null>(null);
-const assetConfigSection = ref<AssetConfigSection>("custom-fields");
+const assetConfigSection = ref<AssetConfigSection>("models");
 const rackSection = ref<RackSection>("locations");
 const facilities = useFacilities({
   request,
@@ -361,8 +365,9 @@ const {
   customFieldCount,
   customFieldPage,
   customFieldPageSize,
-  customFieldDeviceType,
   customFieldActive,
+  customFieldSearch,
+  customFieldType,
   customFieldListLoading,
   customFieldListError,
   customFieldOptionLoading,
@@ -1046,8 +1051,23 @@ function positiveRouteQueryId(value: string): number | null {
   return Number.isSafeInteger(parsed) && parsed > 0 ? parsed : null;
 }
 
+function resolveAssetConfigSection(requested: string): AssetConfigSection {
+  if (requested === "models" && can("settings.view")) return "models";
+  if (requested === "device-types" && can("settings.view")) return "device-types";
+  if (requested === "fieldsets" && can("custom_fields.view")) return "fieldsets";
+  if (requested === "custom-fields" && can("custom_fields.view")) return "custom-fields";
+  if (requested === "tags" && can("tags.view")) return "tags";
+  if (can("settings.view")) return "models";
+  if (can("custom_fields.view")) return "fieldsets";
+  return "tags";
+}
+
 function syncRouteState(): boolean {
   const routePage = route.meta.page || "dashboard";
+  if (routePage === "settings" && route.meta.settingsSection === "dictionaries" && routeQueryValue("tab") === "device-types") {
+    void router.replace(routeForPage("asset-config", { assetConfigSection: "device-types" }));
+    return true;
+  }
   const rackFilterQueryKeys = ["room", "rack", "rack_code", "device_type"];
   const locationQueryKeys = ["data_center", "search", "type", "status"];
   const rackSectionQueryKeys = [...locationQueryKeys, ...rackFilterQueryKeys];
@@ -1082,14 +1102,8 @@ function syncRouteState(): boolean {
   }
   if (routePage === "asset-config") {
     const assetConfigQuery = routeQueryValue("tab");
-    assetConfigSection.value = assetConfigQuery === "models" && can("settings.view")
-      ? "models"
-      : assetConfigQuery === "tags"
-      ? "tags"
-      : assetConfigQuery === "custom-fields" || can("custom_fields.view")
-        ? "custom-fields"
-        : "tags";
-    if (hasQueryKey("tab") && assetConfigQuery !== "models" && assetConfigQuery !== "tags" && assetConfigQuery !== "custom-fields") {
+    assetConfigSection.value = resolveAssetConfigSection(assetConfigQuery);
+    if (hasQueryKey("tab") && assetConfigSection.value !== assetConfigQuery) {
       queryKeysToClear.push("tab");
     }
   }
@@ -1190,15 +1204,8 @@ function routeIsAllowed() {
     return false;
   }
   if (routePage === "asset-config") {
-    const requestedSection = routeQueryValue("tab");
-    const section = requestedSection === "models" && can("settings.view")
-      ? "models"
-      : requestedSection === "tags"
-      ? "tags"
-      : requestedSection === "custom-fields" || can("custom_fields.view")
-        ? "custom-fields"
-        : "tags";
-    return can(section === "tags" ? "tags.view" : section === "models" ? "settings.view" : "custom_fields.view");
+    const section = resolveAssetConfigSection(routeQueryValue("tab"));
+    return can(section === "tags" || section === "models" || section === "device-types" ? (section === "tags" ? "tags.view" : "settings.view") : "custom_fields.view");
   }
   if (routePage !== "settings") return true;
   const section = route.meta.settingsSection || "system";
@@ -1215,7 +1222,8 @@ function routeIsAllowed() {
 function firstAllowedRoute(): RouteLocationRaw | null {
   if (can("dashboard.view")) return routeForPage("dashboard");
   if (can("assets.view")) return routeForPage("ledger");
-  if (can("custom_fields.view")) return routeForPage("asset-config", { assetConfigSection: "custom-fields" });
+  if (can("settings.view")) return routeForPage("asset-config", { assetConfigSection: "models" });
+  if (can("custom_fields.view")) return routeForPage("asset-config", { assetConfigSection: "fieldsets" });
   if (can("tags.view")) return routeForPage("asset-config", { assetConfigSection: "tags" });
   if (can("spares.view")) return routeForPage("spares");
   if (can("racks.view")) return routeForPage("racks", { rackSection: "locations" });
@@ -1462,10 +1470,10 @@ function openRackSection(section: RackSection | string, query: Record<string, st
 async function bootstrapApplication() {
   await loadSystemSettings();
   applySystemSettingsDefaults();
-  await loadDataCenters();
-  await loadDictionaries();
-  await loadCustomFields();
-  await loadTags();
+  // Large reference collections are loaded by their owning page or by the
+  // searchable selectors on demand.  Keeping them out of the authenticated
+  // bootstrap prevents every login from fetching all facilities, dictionary
+  // entries, custom fields and tags before the user has opened a form.
   await load();
 }
 function beginBootstrapAttempt() {
@@ -1691,13 +1699,18 @@ function changeSystemSettingsTab(value: string) {
   }));
 }
 function openAssetConfiguration(section: AssetConfigSection) {
-  if (section === "custom-fields" && !can("custom_fields.view")) return;
+  if ((section === "custom-fields" || section === "fieldsets") && !can("custom_fields.view")) return;
   if (section === "tags" && !can("tags.view")) return;
-  if (section === "models" && !can("settings.view")) return;
+  if ((section === "models" || section === "device-types") && !can("settings.view")) return;
   closeTransientUi();
   assetConfigSection.value = section;
   nextTick(() => openActiveSidebarSubmenu());
   navigateToRoute(routeForPage("asset-config", { assetConfigSection: section }), true);
+}
+function openDictionarySection(section: "manufacturers" | "device-types" | "spare-categories") {
+  if (!can("settings.view")) return;
+  dictionarySection.value = section;
+  openSettingsSection("dictionaries");
 }
 function openProfileSettings() {
   showProfileModal.value = true;
@@ -1716,11 +1729,11 @@ const activeMenu = computed(() =>
 );
 function handleMenuSelect(index: string) {
   if (index === "asset-config-menu") {
-    openAssetConfiguration("custom-fields");
+    openAssetConfiguration(can("settings.view") ? "models" : can("custom_fields.view") ? "fieldsets" : "tags");
     return;
   }
   if (index.startsWith("asset-config-")) {
-    openAssetConfiguration(index.endsWith("-tags") ? "tags" : index.endsWith("-models") ? "models" : "custom-fields");
+    openAssetConfiguration(index.endsWith("-tags") ? "tags" : index.endsWith("-models") ? "models" : index.endsWith("-device-types") ? "device-types" : index.endsWith("-fieldsets") ? "fieldsets" : "custom-fields");
     return;
   }
   if (index.startsWith("asset-")) {
@@ -1860,6 +1873,7 @@ const pageContext = {
   dashboardDate, dashboardDateTime, handleMenuSelect,
   goToAssets, goToRepairs, goToLicenses,
   dashboardLoading, dashboardError, dashboardUpdatedAt, refreshDashboard,
+  openAssetConfiguration, openDictionarySection,
   openAssetDetail, refreshOpenAssetDetail, openRackSection,
   assetSearch, searchLedger, assetSortField, assetSortOrder, changeAssetSort, assetColumnOptions, assetDynamicColumnOptions, visibleAssetColumns,
   assetFilters, assetListLoading, assetListError, exportingAssets, resetAssetFilters,
@@ -1979,7 +1993,7 @@ const pageContext = {
   auditFilters, auditListLoading, auditListError,
   loadAuditLogs, retryAuditLogs, searchAuditLogs, auditLogs, auditPage, auditPageSize, auditCount,
   changeAuditPage, changeAuditPageSize,
-  customFieldDeviceType, customFieldActive, customFieldTableItems, customFieldPage, customFieldPageSize, customFieldCount, customFieldListLoading, customFieldListError,
+  customFieldActive, customFieldSearch, customFieldType, customFieldTableItems, customFieldPage, customFieldPageSize, customFieldCount, customFieldListLoading, customFieldListError,
   customFieldOptionLoading, customFieldOptionError, customFieldOptionPage, customFieldOptionPageSize, customFieldOptionTotal,
   customFieldSaving, customFieldOptionSaving, changeCustomFieldOptionPage, changeCustomFieldOptionPageSize,
   customFieldActionId, customFieldOptionActionId, loadCustomFields, retryCustomFieldList, refreshCustomFieldList, changeCustomFieldPage, changeCustomFieldPageSize, loadCustomFieldOptions, retryCustomFieldOptions, customFields,
@@ -2166,14 +2180,20 @@ watch(hasOpenGlobalOverlay, (isOpen) => {
             index="asset-config-menu"
           >
             <template #title>{{ t('nav.assetConfiguration') }}</template>
+            <el-menu-item v-if="can('settings.view')" index="asset-config-models"
+              >{{ t('nav.assetModels') }}</el-menu-item
+            >
+            <el-menu-item v-if="can('settings.view')" index="asset-config-device-types"
+              >{{ t('nav.deviceTypes') }}</el-menu-item
+            >
+            <el-menu-item v-if="can('custom_fields.view')" index="asset-config-fieldsets"
+              >{{ t('nav.customFieldSets') }}</el-menu-item
+            >
             <el-menu-item v-if="can('custom_fields.view')" index="asset-config-custom-fields"
               >{{ t('nav.customFields') }}</el-menu-item
             >
             <el-menu-item v-if="can('tags.view')" index="asset-config-tags"
               >{{ t('nav.tags') }}</el-menu-item
-            >
-            <el-menu-item v-if="can('settings.view')" index="asset-config-models"
-              >{{ t('nav.assetModels') }}</el-menu-item
             >
           </el-sub-menu>
         </el-sub-menu>

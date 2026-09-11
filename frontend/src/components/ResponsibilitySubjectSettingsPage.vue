@@ -6,8 +6,9 @@ import PageContent from "./page/PageContent.vue";
 import PagedTable from "./PagedTable.vue";
 import StatusTag from "./StatusTag.vue";
 import TableIconButton from "./TableIconButton.vue";
+import SearchableSelect, { type SearchableSelectOption } from "./SearchableSelect.vue";
 import type { SettingsContext } from "../page-context";
-import type { Person } from "../types";
+import type { Department, Person } from "../types";
 
 const props = defineProps<{ context: SettingsContext }>();
 const { t } = useI18n();
@@ -44,12 +45,31 @@ const modalTitle = computed(() =>
   editingSubject.value ? t("settings.editPerson") : t("settings.addPerson"),
 );
 
+function mapDepartment(item: Record<string, unknown>): SearchableSelectOption {
+  const department = item as unknown as Department;
+  return {
+    value: department.id,
+    label: department.name,
+    secondary: department.code || department.parent_name || "",
+    data: department,
+  };
+}
+
+const selectedDepartmentOption = computed<SearchableSelectOption | null>(() => {
+  const department = departmentOptions.value.find((item) => String(item.id) === form.value.department);
+  return department ? mapDepartment(department as unknown as Record<string, unknown>) : null;
+});
+
 function displayName(person: Person): string {
   return person.display_name || person.name || "—";
 }
 
 function accountLabel(person: Person): string {
   return person.account_username || person.account_email || t("settings.noLinkedAccount");
+}
+
+function emailLabel(person: Person): string {
+  return person.email || person.account_email || "—";
 }
 
 function deleteLabel(person: Person): string {
@@ -107,6 +127,9 @@ function clearFilters() {
         <el-table-column prop="contact" :label="t('settings.personContact')" min-width="150" show-overflow-tooltip>
           <template #default="{ row }">{{ row.contact || "—" }}</template>
         </el-table-column>
+        <el-table-column :label="t('settings.personEmail')" min-width="210" show-overflow-tooltip>
+          <template #default="{ row }">{{ emailLabel(row) }}</template>
+        </el-table-column>
         <el-table-column :label="t('settings.personAccount')" min-width="150" show-overflow-tooltip>
           <template #default="{ row }">{{ accountLabel(row) }}</template>
         </el-table-column>
@@ -152,9 +175,18 @@ function clearFilters() {
           <el-input v-model="form.employee_no" maxlength="80" :disabled="saving" autocomplete="off" />
         </el-form-item>
         <el-form-item :label="t('settings.personDepartment')" :error="formErrors.department">
-          <el-select v-model="form.department" clearable filterable :disabled="saving" class="settings-system__control">
-            <el-option v-for="department in departmentOptions" :key="department.id" :label="`${department.name} · ${department.code}`" :value="String(department.id)" />
-          </el-select>
+          <SearchableSelect
+            v-model="form.department"
+            :request="props.context.request"
+            endpoint="/departments/"
+            :map-option="mapDepartment"
+            :selected-option="selectedDepartmentOption"
+            :disabled="saving"
+            :placeholder="t('settings.personDepartment')"
+          />
+        </el-form-item>
+        <el-form-item :label="t('settings.personEmail')" :error="formErrors.email">
+          <el-input v-model="form.email" type="email" maxlength="254" :disabled="saving" autocomplete="email" :placeholder="t('settings.personEmailPlaceholder')" />
         </el-form-item>
         <el-form-item :label="t('settings.personOrganization')" :error="formErrors.organization">
           <el-input v-model="form.organization" maxlength="160" :disabled="saving" autocomplete="organization" />

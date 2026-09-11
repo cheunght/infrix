@@ -50,6 +50,12 @@ from .custom_fields import (
     custom_field_value_is_empty,
     validate_custom_field_value,
 )
+
+
+class CustomFieldConflictError(Exception):
+    def __init__(self, conflicts):
+        super().__init__("custom field values are incompatible with the effective fieldset")
+        self.conflicts = conflicts
 from .lifecycle import (
     ASSET_REPAIR_RESTORE_STATUS_VALUES,
     transition_asset_status,
@@ -950,28 +956,38 @@ def _existing_inactive_option_values(field, value):
     }
 
 
-def apply_asset_custom_values(asset: Asset, values, *, submitted=True):
-    """Validate and persist values for the asset's current device type."""
+def apply_asset_custom_values(asset: Asset, values, *, submitted=True, discard_incompatible=False):
+    """Validate and persist values against the asset's effective fieldset."""
     if values is None:
         values = {}
     if not isinstance(values, dict):
         raise ValidationError({"custom_values": "自定义字段值必须是对象"})
 
-    scope = Q(device_type__isnull=True)
-    if asset.device_type_id:
-        scope |= Q(device_type_id=asset.device_type_id)
-    fields = list(CustomField.objects.filter(scope).prefetch_related("options"))
+    fieldset = asset.resolved_fieldset
+    items = list(
+        fieldset.items.select_related("field").prefetch_related("field__options").order_by("sort_order", "id")
+    ) if fieldset is not None else []
+    fields = [item.field for item in items]
+    item_by_field_id = {item.field_id: item for item in items}
     by_key = {field.key: field for field in fields}
     if values:
         unknown = [key for key in values if key not in by_key]
         if unknown:
-            raise ValidationError({"custom_values": f"不存在或不属于当前设备类型的字段：{'、'.join(str(key) for key in unknown)}"})
+            raise ValidationError({"custom_values": f"不存在或不属于当前字段集的字段：{'、'.join(str(key) for key in unknown)}"})
 
-    # A device type change starts a new current-field set. Values scoped to
-    # another device type are not part of that set and are removed.
-    AssetCustomValue.objects.filter(asset=asset).exclude(
-        Q(field__device_type__isnull=True) | Q(field__device_type_id=asset.device_type_id)
-    ).delete()
+    allowed_field_ids = set(item_by_field_id)
+    incompatible = list(
+        AssetCustomValue.objects.filter(asset=asset)
+        .exclude(field_id__in=allowed_field_ids)
+        .select_related("field")
+    )
+    if incompatible and not discard_incompatible:
+        raise CustomFieldConflictError([
+            {"id": value.field_id, "key": value.field.key, "name": value.field.name}
+            for value in incompatible
+        ])
+    if incompatible:
+        AssetCustomValue.objects.filter(pk__in=[value.pk for value in incompatible]).delete()
 
     existing_values = {
         item.field_id: _stored_custom_value(item)
@@ -983,7 +999,8 @@ def apply_asset_custom_values(asset: Asset, values, *, submitted=True):
 
     missing = []
     for field in fields:
-        if not field.is_active or not field.required:
+        item = item_by_field_id[field.pk]
+        if not field.is_active or not item.required:
             continue
         if submitted and field.key in values:
             candidate = values[field.key]

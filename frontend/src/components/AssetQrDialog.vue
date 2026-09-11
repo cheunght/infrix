@@ -31,7 +31,7 @@ const labelSize = ref<"small" | "medium">("medium");
 let generation = 0;
 
 function modelLabel(asset: Asset): string {
-  return asset.asset_model_name || asset.model_name || asset.model || asset.manufacturer_model || t("asset.noModel");
+  return asset.model_name || asset.model_text || t("asset.noModel");
 }
 
 function serialLabel(asset: Asset): string {

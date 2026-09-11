@@ -211,12 +211,12 @@ const basicFields = computed<DetailField[]>(() => {
         makeField(
           "model",
           t("asset.model"),
-          current.asset_model_name || current.model_name || current.model,
+          current.model_name || current.model_text,
         ),
         makeField(
           "model-number",
           t("asset.modelNumber"),
-          current.asset_model_number || current.asset_model?.model_number,
+          current.model_number || current.asset_model?.model_number,
         ),
         makeField(
           "warranty-months",
@@ -245,12 +245,7 @@ const basicFields = computed<DetailField[]>(() => {
         makeField(
           "model",
           t("asset.model"),
-          current.asset_model_name || current.model_name || current.model,
-        ),
-        makeField(
-          "manufacturer-model",
-          t("asset.manufacturerModel"),
-          current.manufacturer_model,
+          current.model_name || current.model_text,
         ),
         makeField(
           "serial-number",
@@ -260,7 +255,6 @@ const basicFields = computed<DetailField[]>(() => {
         makeField("purpose", t("asset.purpose"), current.purpose),
         makeField("assigned-person", t("asset.assignedPerson"), current.assigned_person?.display_name),
       ];
-  const currentModel = current.asset_model_name || current.model_name || current.model;
   if (isDrawer.value && current.asset_model?.default_warranty_months != null) {
     fields.splice(
       fields.findIndex((field) => field.key === "warranty-months") + 1,
@@ -282,29 +276,6 @@ const basicFields = computed<DetailField[]>(() => {
         t("asset.expectedLife"),
         current.asset_model.expected_life_months,
         (value) => `${value} ${t("common.months")}`,
-      ),
-    );
-  }
-  const historicalModel = hasContent(current.manufacturer_model)
-    ? String(current.manufacturer_model).trim()
-    : "";
-  const currentModelVariants = [
-    currentModel,
-    current.manufacturer_name,
-    [current.manufacturer_name, currentModel].filter(hasContent).join(" / "),
-  ]
-    .filter(hasContent)
-    .map((value) => String(value).trim());
-  if (
-    isDrawer.value &&
-    historicalModel &&
-    !currentModelVariants.includes(historicalModel)
-  ) {
-    fields.push(
-      makeField(
-        "manufacturer-model",
-        t("asset.manufacturerModel"),
-        current.manufacturer_model,
       ),
     );
   }
@@ -623,15 +594,6 @@ const depreciationFields = computed<DetailField[]>(() => {
 type AssetCustomField = NonNullable<AssetDetail["custom_fields"]>[number];
 type DynamicFieldGroup = { name: string; fields: AssetCustomField[] };
 
-function isCurrentScope(field: AssetCustomField): boolean {
-  const currentDeviceType = asset.value?.device_type;
-  return (
-    field.device_type == null ||
-    (currentDeviceType != null &&
-      String(field.device_type) === String(currentDeviceType))
-  );
-}
-
 function groupCurrentFields(fields: AssetCustomField[]): DynamicFieldGroup[] {
   const groups = new Map<string, AssetCustomField[]>();
   for (const field of fields) {
@@ -647,7 +609,7 @@ function groupCurrentFields(fields: AssetCustomField[]): DynamicFieldGroup[] {
 }
 
 const currentFieldGroups = computed<DynamicFieldGroup[]>(() => {
-  const fields = (asset.value?.custom_fields || []).filter(isCurrentScope);
+  const fields = asset.value?.custom_fields || [];
   return groupCurrentFields(fields);
 });
 const customFieldCount = computed(() =>

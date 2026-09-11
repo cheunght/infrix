@@ -329,10 +329,15 @@ export function useFacilities(deps: FacilitiesDeps) {
       clearRackSelection();
     }
     try {
-      await loadServerRooms(version);
-      if (!deps.isCurrentLoad(version) || requestId !== rackViewRequestId.value) return;
-      const selectedRoomExists = serverRooms.value.some((room) => String(room.id) === selectedRoom.value && room.is_active);
-      if (selectedRoom.value && !selectedRoomExists) selectedRoom.value = "";
+      if (selectedRoom.value) {
+        try {
+          const selectedRoomDetail = await deps.request<ServerRoom>(`/server-rooms/${selectedRoom.value}/`);
+          if (!selectedRoomDetail.is_active) selectedRoom.value = "";
+        } catch (error) {
+          if (!isAbortError(error)) selectedRoom.value = "";
+        }
+        if (!deps.isCurrentLoad(version) || requestId !== rackViewRequestId.value) return;
+      }
       const result = await requestRackPage(rackPage.value);
       if (!deps.isCurrentLoad(version) || requestId !== rackViewRequestId.value) return;
       racks.value = result.rows;
@@ -970,6 +975,7 @@ export function useFacilities(deps: FacilitiesDeps) {
   }
 
   return {
+    request: deps.request,
     dataCenters,
     serverRooms,
     racks,

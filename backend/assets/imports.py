@@ -27,7 +27,7 @@ from .audit import asset_audit_snapshot, write_audit_log
 from .custom_fields import validate_custom_field_value
 from .enum_contracts import ASSET_STATUS_LABELS
 from .lifecycle import validate_asset_status_transition
-from .models import Asset, AssetModel, CustomField, DataCenter, Department, DeviceType, Manufacturer, Person, Rack, ServerRoom, Tag
+from .models import Asset, AssetModel, CustomField, CustomFieldSetItem, DataCenter, Department, DeviceType, Manufacturer, Person, Rack, ServerRoom, Tag
 from .serializers import AssetWriteSerializer
 from .system_settings import get_system_settings
 
@@ -39,11 +39,10 @@ IMPORT_TEMPLATE_FORMAT = "infrix-asset-import"
 IMPORT_COLUMNS = (
     ("asset_no", "资产编号", True, "资产唯一编号；文件内不能重复，系统中已存在的编号不能再次导入。"),
     ("name", "资产名称", True, "资产显示名称。"),
-    ("device_type", "设备类型", True, "填写启用中的设备类型名称。"),
-    ("manufacturer", "厂商", False, "填写启用中的厂商名称或编码。"),
-    ("model", "型号", False, "设备型号。"),
-    ("asset_model_number", "资产型号编号", False, "按已维护的资产型号编号或名称匹配；不会自动创建型号。"),
-    ("manufacturer_model", "厂商/型号", False, "厂商和型号组合显示文本；通常填写型号即可。"),
+    ("asset_model", "标准型号名称或编号", False, "按已维护且启用的资产型号名称或编号匹配；不会自动创建型号。"),
+    ("device_type", "设备类型", False, "未填写标准型号时必填；填写启用中的设备类型名称。"),
+    ("manufacturer", "厂商", False, "未填写标准型号时可选；填写启用中的厂商名称或编码。"),
+    ("model_text", "历史型号文本", False, "未填写标准型号时可选；用于无法匹配型号目录的历史资产。"),
     ("serial_number", "序列号", False, "留空表示没有序列号；序列号不能与其他资产重复。"),
     ("purpose", "用途", False, "资产用途。"),
     ("status", "状态", False, "可填 in_stock、in_use、idle、retired，或对应显示值在库、在用、闲置、已报废；维修中由故障流程维护。"),
@@ -382,12 +381,12 @@ def _named_asset_model(value):
         .select_related("manufacturer", "device_type")
     )
     if not matches:
-        raise DjangoValidationError({"asset_model_number": f"未找到启用的资产型号“{value}”"})
+        raise DjangoValidationError({"asset_model": f"未找到启用的资产型号“{value}”"})
     if len(matches) > 1:
-        raise DjangoValidationError({"asset_model_number": f"资产型号“{value}”匹配到多个结果，请使用唯一型号编号"})
+        raise DjangoValidationError({"asset_model": f"资产型号“{value}”匹配到多个结果，请使用唯一型号编号"})
     model = matches[0]
     if not model.is_active:
-        raise DjangoValidationError({"asset_model_number": "停用的资产型号不能用于新资产"})
+        raise DjangoValidationError({"asset_model": "停用的资产型号不能用于新资产"})
     return model
 
 
@@ -466,17 +465,23 @@ def _prepare_payload(row, headers):
     if not asset_name:
         raise DjangoValidationError({"name": "资产名称不能为空"})
 
+    asset_model = _named_asset_model(row.get("asset_model"))
     manufacturer_name = row.get("manufacturer", "").strip()
     manufacturer = _named_active(Manufacturer.objects, manufacturer_name, "manufacturer", "厂商", allow_code=True) if manufacturer_name else None
-    asset_model = _named_asset_model(row.get("asset_model_number"))
     device_type_name = row.get("device_type", "").strip()
-    if not device_type_name:
-        raise DjangoValidationError({"device_type": "设备类型不能为空"})
-    device_type = _named_active(DeviceType.objects, device_type_name, "device_type", "设备类型")
-    if asset_model and asset_model.device_type_id and asset_model.device_type_id != device_type.pk:
-        raise DjangoValidationError({"device_type": "设备类型与资产型号不一致"})
-    if asset_model and asset_model.manufacturer_id and manufacturer and asset_model.manufacturer_id != manufacturer.pk:
-        raise DjangoValidationError({"manufacturer": "厂商与资产型号不一致"})
+    device_type = _named_active(DeviceType.objects, device_type_name, "device_type", "设备类型") if device_type_name else None
+    if asset_model:
+        if device_type and asset_model.device_type_id != device_type.pk:
+            raise DjangoValidationError({"device_type": "设备类型与标准型号不一致"})
+        if manufacturer and asset_model.manufacturer_id != manufacturer.pk:
+            raise DjangoValidationError({"manufacturer": "厂商与标准型号不一致"})
+        effective_device_type = asset_model.device_type
+        effective_fieldset = asset_model.fieldset or asset_model.device_type.default_fieldset
+    else:
+        if not device_type:
+            raise DjangoValidationError({"device_type": "未填写标准型号时设备类型不能为空"})
+        effective_device_type = device_type
+        effective_fieldset = device_type.default_fieldset
     warranty_text = row.get("warranty_months", "").strip()
     warranty_months = _nonnegative_integer(warranty_text, "warranty_months", "实际保修月数") if warranty_text else None
 
@@ -563,8 +568,9 @@ def _prepare_payload(row, headers):
     custom_headers = [header for header in headers if header.startswith("custom__")]
     fields_by_key = {
         field.key: field
-        for field in CustomField.objects.filter(key__in=[header[8:] for header in custom_headers]).select_related("device_type").prefetch_related("options")
+        for field in CustomField.objects.filter(key__in=[header[8:] for header in custom_headers]).prefetch_related("options")
     }
+    allowed_field_ids = set(effective_fieldset.items.values_list("field_id", flat=True)) if effective_fieldset else set()
     for header in custom_headers:
         field_key = header[8:]
         field = fields_by_key.get(field_key)
@@ -572,8 +578,8 @@ def _prepare_payload(row, headers):
             raise DjangoValidationError({header: f"未知自定义字段编码“{field_key}”"})
         if not field.is_active:
             raise DjangoValidationError({header: "该自定义字段已停用，不能导入"})
-        if field.device_type_id and field.device_type_id != device_type.pk:
-            raise DjangoValidationError({header: f"该字段不适用于设备类型“{device_type.name}”"})
+        if field.pk not in allowed_field_ids:
+            raise DjangoValidationError({header: f"该字段不属于资产最终解析出的字段集（设备类型：{effective_device_type.name}）"})
         raw = row.get(header, "").strip()
         if not raw:
             continue
@@ -613,12 +619,11 @@ def _prepare_payload(row, headers):
     return {
         "asset_no": asset_no,
         "name": asset_name,
-        "manufacturer_id": manufacturer.pk if manufacturer else None,
-        "device_type": device_type.pk,
+        "manufacturer": manufacturer.pk if manufacturer and not asset_model else None,
+        "device_type": device_type.pk if device_type and not asset_model else None,
         "asset_model": asset_model.pk if asset_model else None,
         "asset_data_center": asset_data_center.pk if asset_data_center else None,
-        "model": row.get("model", "").strip(),
-        "manufacturer_model": row.get("manufacturer_model", "").strip(),
+        "model_text": row.get("model_text", "").strip() if not asset_model else "",
         "serial_number": row.get("serial_number", "").strip() or None,
         "purpose": row.get("purpose", "").strip(),
         "status": status,
@@ -736,7 +741,17 @@ def build_import_template():
     workbook = Workbook()
     sheet = workbook.active
     sheet.title = "资产导入"
-    active_fields = list(CustomField.objects.filter(is_active=True).select_related("device_type").order_by("device_type__name", "sort_order", "id"))
+    ordered_field_ids = list(
+        CustomFieldSetItem.objects.filter(field__is_active=True)
+        .order_by("fieldset__name", "sort_order", "id")
+        .values_list("field_id", flat=True)
+    )
+    ordered_field_ids = list(dict.fromkeys(ordered_field_ids))
+    fields_by_id = {
+        field.pk: field
+        for field in CustomField.objects.filter(pk__in=ordered_field_ids, is_active=True)
+    }
+    active_fields = [fields_by_id[field_id] for field_id in ordered_field_ids if field_id in fields_by_id]
     headers = [key for key, _label, _required, _description in IMPORT_COLUMNS]
     headers.extend(f"custom__{field.key}" for field in active_fields)
     sheet.append(headers)
@@ -757,11 +772,36 @@ def build_import_template():
     for key, label, required, description in IMPORT_COLUMNS:
         guide.append([key, label, "是" if required else "否", description])
     for field in active_fields:
-        scope = field.device_type.name if field.device_type_id else "全部设备类型"
-        custom_description = f"{scope} · 类型：{field.field_type}。{field.help_text or '按当前自定义字段选项填写。'}"
+        memberships = list(field.fieldset_items.select_related("fieldset").order_by("fieldset__name", "sort_order"))
+        scope = "、".join(item.fieldset.name for item in memberships) or "尚未加入字段集"
+        required_scope = "、".join(item.fieldset.name for item in memberships if item.required)
+        fieldset_ids = [item.fieldset_id for item in memberships]
+        model_scope = list(
+            AssetModel.objects.filter(is_active=True).filter(
+                Q(fieldset_id__in=fieldset_ids)
+                | Q(fieldset__isnull=True, device_type__default_fieldset_id__in=fieldset_ids)
+            ).select_related("manufacturer").order_by("manufacturer__name", "name")[:21]
+        ) if fieldset_ids else []
+        model_scope_text = "、".join(
+            f"{item.manufacturer.name} / {item.name}" for item in model_scope[:20]
+        ) or "无启用标准型号"
+        if len(model_scope) > 20:
+            model_scope_text += " 等"
+        standalone_scope = list(
+            DeviceType.objects.filter(is_active=True, default_fieldset_id__in=fieldset_ids)
+            .order_by("name").values_list("name", flat=True)
+        ) if fieldset_ids else []
+        standalone_scope_text = "、".join(standalone_scope) or "无"
+        custom_description = (
+            f"字段集：{scope} · 启用标准型号范围：{model_scope_text} · "
+            f"无标准型号时的设备类型范围：{standalone_scope_text} · 类型：{field.field_type}。"
+            f"{field.help_text or '按当前自定义字段选项填写。'}"
+        )
         if field.field_type in {"select", "multiselect"}:
             custom_description += " 单选/多选可填写启用选项的 value 或唯一显示名称；多选用英文分号、中文分号或逗号分隔，重复或停用选项不接受。"
-        guide.append([f"custom__{field.key}", field.name, "是" if field.required else "否", custom_description])
+        if required_scope:
+            custom_description += f" 在以下字段集中必填：{required_scope}。"
+        guide.append([f"custom__{field.key}", field.name, "按字段集", custom_description])
     guide.append([])
     guide.append(["状态合法值", "可填 in_stock、in_use、idle、retired，或对应显示值：在库、在用、闲置、已报废；维修中仍只能由故障流程设置。"])
     guide.append(["日期格式", "Excel 日期单元格或 YYYY-MM-DD；不接受模糊日期。"])

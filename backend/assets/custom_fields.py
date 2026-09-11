@@ -2,17 +2,49 @@
 
 from datetime import date, datetime
 from decimal import Decimal, InvalidOperation
+import re
+from ipaddress import IPv4Address, IPv6Address, ip_address
 
+from django.core.exceptions import ValidationError as DjangoValidationError
+from django.core.validators import URLValidator, validate_email
+
+
+CUSTOM_FIELD_FORMATS = {
+    "any",
+    "alpha",
+    "alpha_dash",
+    "numeric",
+    "alpha_numeric",
+    "email",
+    "date",
+    "url",
+    "ip",
+    "ipv4",
+    "ipv6",
+    "mac",
+    "regex",
+}
 
 VALIDATION_CONFIG_KEYS = {
-    "text": {"min_length", "max_length"},
-    "textarea": {"min_length", "max_length"},
-    "number": {"min", "max", "precision"},
-    "date": {"min_date", "max_date"},
+    "text": {"format", "pattern", "min_length", "max_length"},
+    "textarea": {"format", "pattern", "min_length", "max_length"},
+    "number": set(),
+    "date": set(),
     "multiselect": {"min_items", "max_items"},
     "select": set(),
     "boolean": set(),
 }
+
+# These keys were used by the previous range-based UI. Ignore them while
+# normalizing old JSON values so existing fields remain readable; any later
+# save strips them from the stored configuration.
+LEGACY_VALIDATION_CONFIG_KEYS = {"min", "max", "min_date", "max_date", "precision"}
+CUSTOM_FIELD_REGEX_MAX_LENGTH = 500
+MAC_PATTERN = re.compile(
+    r"(?:[0-9A-Fa-f]{2}[:-]){5}[0-9A-Fa-f]{2}|"
+    r"(?:[0-9A-Fa-f]{4}\.){2}[0-9A-Fa-f]{4}"
+)
+URL_VALIDATOR = URLValidator()
 
 # AssetCustomValue.number_value remains stored in DecimalField(max_digits=20,
 # decimal_places=6) for compatibility with existing data. New logical values
@@ -33,61 +65,55 @@ def _validation_integer(value, label, *, maximum=None):
     return value
 
 
-def _validation_decimal(value, label):
-    if isinstance(value, bool):
-        raise ValueError(f"{label}必须是数字")
-    try:
-        parsed = Decimal(str(value))
-    except (InvalidOperation, TypeError, ValueError) as exc:
-        raise ValueError(f"{label}必须是数字") from exc
-    if not parsed.is_finite():
-        raise ValueError(f"{label}必须是有限数字")
-    return str(parsed)
-
-
-def normalize_validation_date(value, label):
-    if not isinstance(value, str) or len(value) != 10:
-        raise ValueError(f"{label}必须是 YYYY-MM-DD 日期")
-    try:
-        parsed = date.fromisoformat(value)
-    except ValueError as exc:
-        raise ValueError(f"{label}必须是 YYYY-MM-DD 日期") from exc
-    if parsed.isoformat() != value:
-        raise ValueError(f"{label}必须是 YYYY-MM-DD 日期")
-    return value
-
-
 def normalize_validation_config(field_type, value):
     """Validate and normalize the configured rules for one field type."""
     if not isinstance(value, dict):
         raise ValueError("校验配置必须是 JSON 对象")
     allowed = VALIDATION_CONFIG_KEYS.get(field_type, set())
-    unknown = sorted(set(value) - allowed)
+    current = {
+        key: raw
+        for key, raw in value.items()
+        if key not in LEGACY_VALIDATION_CONFIG_KEYS
+    }
+    unknown = sorted(set(current) - allowed)
     if unknown:
         raise ValueError(f"不支持的校验配置项：{'、'.join(unknown)}")
 
     normalized = {}
-    for key, raw in value.items():
+    format_name = "any"
+    if "format" in current:
+        format_name = current["format"] or "any"
+        if not isinstance(format_name, str) or format_name not in CUSTOM_FIELD_FORMATS:
+            raise ValueError("不支持的输入格式")
+        if format_name != "any":
+            normalized["format"] = format_name
+
+    if "pattern" in current:
+        pattern = current["pattern"]
+        if format_name != "regex":
+            raise ValueError("只有自定义正则格式可以配置正则表达式")
+        if not isinstance(pattern, str) or not pattern.strip():
+            raise ValueError("自定义正则不能为空")
+        if len(pattern) > CUSTOM_FIELD_REGEX_MAX_LENGTH:
+            raise ValueError(f"自定义正则不能超过 {CUSTOM_FIELD_REGEX_MAX_LENGTH} 个字符")
+        try:
+            re.compile(pattern)
+        except re.error as exc:
+            raise ValueError("自定义正则格式不正确") from exc
+        normalized["pattern"] = pattern
+    elif format_name == "regex":
+        raise ValueError("选择自定义正则后必须填写正则表达式")
+
+    for key, raw in current.items():
+        if key in {"format", "pattern"}:
+            continue
         if key in {"min_length", "max_length", "min_items", "max_items"}:
             normalized[key] = _validation_integer(raw, key)
-        elif key == "precision":
-            normalized[key] = _validation_integer(raw, key, maximum=CUSTOM_VALUE_NUMBER_DECIMAL_PLACES)
-        elif key in {"min", "max"}:
-            normalized[key] = _validation_decimal(raw, key)
-        elif key in {"min_date", "max_date"}:
-            normalized[key] = normalize_validation_date(raw, key)
 
     if {"min_length", "max_length"}.issubset(normalized) and normalized["min_length"] > normalized["max_length"]:
         raise ValueError("min_length 不能大于 max_length")
     if {"min_items", "max_items"}.issubset(normalized) and normalized["min_items"] > normalized["max_items"]:
         raise ValueError("min_items 不能大于 max_items")
-    if {"min", "max"}.issubset(normalized) and Decimal(normalized["min"]) > Decimal(normalized["max"]):
-        raise ValueError("min 不能大于 max")
-    if {"min_date", "max_date"}.issubset(normalized):
-        min_date = date.fromisoformat(normalized["min_date"])
-        max_date = date.fromisoformat(normalized["max_date"])
-        if min_date > max_date:
-            raise ValueError("min_date 不能晚于 max_date")
     return normalized
 
 
@@ -158,6 +184,59 @@ def _normalized_decimal(value):
     return text or "0"
 
 
+def _validate_text_format(value, format_name, pattern, label):
+    if format_name in {None, "", "any"}:
+        return
+    matches = True
+    if format_name == "alpha":
+        matches = re.fullmatch(r"[A-Za-z]+", value) is not None
+    elif format_name == "alpha_dash":
+        matches = re.fullmatch(r"[A-Za-z0-9_-]+", value) is not None
+    elif format_name == "numeric":
+        try:
+            _parse_decimal(value, label)
+        except ValueError:
+            matches = False
+    elif format_name == "alpha_numeric":
+        matches = re.fullmatch(r"[A-Za-z0-9]+", value) is not None
+    elif format_name == "email":
+        try:
+            validate_email(value)
+        except DjangoValidationError:
+            matches = False
+    elif format_name == "date":
+        try:
+            _parse_date(value, label)
+        except ValueError:
+            matches = False
+    elif format_name == "url":
+        try:
+            URL_VALIDATOR(value)
+        except DjangoValidationError:
+            matches = False
+    elif format_name in {"ip", "ipv4", "ipv6"}:
+        try:
+            address = ip_address(value)
+            matches = (
+                format_name == "ip"
+                or format_name == "ipv4" and isinstance(address, IPv4Address)
+                or format_name == "ipv6" and isinstance(address, IPv6Address)
+            )
+        except ValueError:
+            matches = False
+    elif format_name == "mac":
+        matches = MAC_PATTERN.fullmatch(value) is not None
+    elif format_name == "regex":
+        try:
+            matches = re.fullmatch(pattern or "", value) is not None
+        except re.error:
+            matches = False
+    else:
+        raise ValueError(f"不支持的输入格式：{format_name}")
+    if not matches:
+        raise ValueError(f"{label}格式不符合要求")
+
+
 def validate_custom_field_value(
     field,
     value,
@@ -183,6 +262,7 @@ def validate_custom_field_value(
     if field_type in {"text", "textarea"}:
         if not isinstance(value, str):
             raise ValueError(f"{label}必须是文本")
+        _validate_text_format(value, config.get("format"), config.get("pattern"), label)
         length = len(value)
         if "min_length" in config and length < config["min_length"]:
             raise ValueError(f"{label}长度不能少于 {config['min_length']} 个字符")
@@ -196,21 +276,13 @@ def validate_custom_field_value(
             raise ValueError(
                 f"{label}整数部分不能超过 {CUSTOM_VALUE_NUMBER_MAX_INTEGER_DIGITS} 位"
             )
-        if "min" in config and number < Decimal(config["min"]):
-            raise ValueError(f"{label}不能小于 {config['min']}")
-        if "max" in config and number > Decimal(config["max"]):
-            raise ValueError(f"{label}不能大于 {config['max']}")
-        precision = config.get("precision", CUSTOM_VALUE_NUMBER_DECIMAL_PLACES)
+        precision = CUSTOM_VALUE_NUMBER_DECIMAL_PLACES
         if _decimal_places(number) > precision:
             raise ValueError(f"{label}最多支持 {precision} 位小数")
         return _normalized_decimal(number)
 
     if field_type == "date":
         parsed_date = _parse_date(value, label)
-        if "min_date" in config and parsed_date < date.fromisoformat(config["min_date"]):
-            raise ValueError(f"{label}不能早于 {config['min_date']}")
-        if "max_date" in config and parsed_date > date.fromisoformat(config["max_date"]):
-            raise ValueError(f"{label}不能晚于 {config['max_date']}")
         return parsed_date.isoformat()
 
     if field_type == "boolean":

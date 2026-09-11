@@ -7,6 +7,7 @@ import { i18n } from "../i18n";
 
 const READ_ALERTS_PREFIX = "infrix.alerts.read";
 const MAX_SAVED_READ_IDS = 200;
+const NOTIFICATION_REFRESH_INTERVAL_MS = 60_000;
 
 export interface NotificationsDeps {
   request: RequestFn;
@@ -37,6 +38,7 @@ export function useNotifications(deps: NotificationsDeps) {
   const readAlertIds = ref<Set<string>>(new Set());
   let requestId = 0;
   let notificationsController: AbortController | null = null;
+  let lastLoadedAt = 0;
 
   function storageKey() {
     return `${READ_ALERTS_PREFIX}.${deps.username.value || "anonymous"}`;
@@ -58,8 +60,12 @@ export function useNotifications(deps: NotificationsDeps) {
     }
   }
 
-  async function loadNotifications() {
+  async function loadNotifications(force = false) {
     if (!deps.can("dashboard.view")) return false;
+    if (loading.value) return false;
+    if (!force && lastLoadedAt > 0 && Date.now() - lastLoadedAt < NOTIFICATION_REFRESH_INTERVAL_MS) {
+      return true;
+    }
     const currentRequestId = ++requestId;
     notificationsController?.abort();
     const controller = new AbortController();
@@ -83,6 +89,7 @@ export function useNotifications(deps: NotificationsDeps) {
       };
       generatedAt.value = response.generated_at || null;
       loadReadAlertIds();
+      lastLoadedAt = Date.now();
       return true;
     } catch (reason) {
       if (currentRequestId === requestId && !isAbortError(reason)) {
@@ -121,7 +128,18 @@ export function useNotifications(deps: NotificationsDeps) {
     return readAlertIds.value.has(alertId);
   }
 
-  watch(deps.username, loadReadAlertIds, { immediate: true });
+  watch(deps.username, () => {
+    requestId += 1;
+    notificationsController?.abort();
+    notificationsController = null;
+    loading.value = false;
+    alerts.value = [];
+    summary.value = { total: 0, critical: 0, warning: 0, notice: 0 };
+    generatedAt.value = null;
+    error.value = "";
+    lastLoadedAt = 0;
+    loadReadAlertIds();
+  }, { immediate: true });
   onBeforeUnmount(() => notificationsController?.abort());
 
   return {

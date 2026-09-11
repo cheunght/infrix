@@ -4,23 +4,24 @@ import { useI18n } from "vue-i18n";
 import { CircleCheck, CircleClose, Delete, Edit } from "@element-plus/icons-vue";
 import type { FormInstance, FormRules } from "element-plus";
 import type { CustomFieldContext } from "../page-context";
-import type { CustomField, CustomFieldValidationConfig } from "../types";
+import type { CustomField, CustomFieldFormat, CustomFieldValidationConfig } from "../types";
 import PageContainer from "./page/PageContainer.vue";
 import PageContent from "./page/PageContent.vue";
 import PageToolbar from "./page/PageToolbar.vue";
+import SearchField from "./SearchField.vue";
 import StatusTag from "./StatusTag.vue";
 import PagedTable from "./PagedTable.vue";
 import FieldHelp from "./FieldHelp.vue";
 import FormDialogShell from "./FormDialogShell.vue";
 import TableIconButton from "./TableIconButton.vue";
 import {
-  compareDecimalText,
-  decimalPrecisionLimit,
   decimalStorageIssue,
+  customFieldFormatMatches,
+  customFieldFormatPatternError,
+  isCustomFieldFormat,
   isValidIsoDate,
   CUSTOM_FIELD_NUMBER_MAX_DECIMAL_PLACES,
 } from "../custom-field-validation";
-import { systemDatePickerFormat } from "../system-settings";
 
 const props = defineProps<{ context: CustomFieldContext }>();
 const { t } = useI18n();
@@ -28,39 +29,6 @@ const c = proxyRefs(props.context);
 const customFieldFormRef = ref<FormInstance>();
 const customFieldOptionFormRef = ref<FormInstance>();
 const validationConfig = computed(() => c.customFieldForm.validation_config as CustomFieldValidationConfig);
-
-type NumericValidationKey = "min_length" | "max_length" | "precision" | "min_items" | "max_items";
-
-function validationNumberValue(key: NumericValidationKey) {
-  return computed<number | null>({
-    get: () => {
-      const value = validationConfig.value[key];
-      if (value === null || value === undefined) return null;
-      const parsed = Number(value);
-      return Number.isFinite(parsed) ? parsed : null;
-    },
-    set: (value) => {
-      const config = validationConfig.value as unknown as Record<string, unknown>;
-      config[key] = value == null ? undefined : value;
-    },
-  });
-}
-
-const minLengthValue = validationNumberValue("min_length");
-const maxLengthValue = validationNumberValue("max_length");
-const precisionValue = validationNumberValue("precision");
-const minItemsValue = validationNumberValue("min_items");
-const maxItemsValue = validationNumberValue("max_items");
-
-const customFieldSortOrderValue = computed<number | null>({
-  get: () => {
-    const value = Number(c.customFieldForm.sort_order);
-    return Number.isFinite(value) ? value : null;
-  },
-  set: (value) => {
-    if (value != null) c.customFieldForm.sort_order = value;
-  },
-});
 
 const customFieldOptionSortOrderValue = computed<number | null>({
   get: () => {
@@ -72,28 +40,24 @@ const customFieldOptionSortOrderValue = computed<number | null>({
   },
 });
 const customFieldValidationKeysByType: Record<string, string[]> = {
-  text: ["min_length", "max_length"],
-  textarea: ["min_length", "max_length"],
-  number: ["min", "max", "precision"],
-  date: ["min_date", "max_date"],
+  text: ["format", "pattern", "min_length", "max_length"],
+  textarea: ["format", "pattern", "min_length", "max_length"],
+  number: [],
+  date: [],
   multiselect: ["min_items", "max_items"],
   select: [],
   boolean: [],
 };
-const hasCustomFieldValidationRules = computed(() => (customFieldValidationKeysByType[c.customFieldForm.field_type] || []).length > 0);
+const customFieldFormat = computed<CustomFieldFormat>({
+  get: () => isCustomFieldFormat(validationConfig.value.format) ? validationConfig.value.format : "any",
+  set: (value) => {
+    const config = validationConfig.value as unknown as Record<string, unknown>;
+    config.format = value;
+    if (value !== "regex") delete config.pattern;
+  },
+});
 const isCustomFieldOptionType = computed(() => ["select", "multiselect"].includes(c.customFieldForm.field_type));
 const customFieldDefaultValueDisabled = computed(() => isCustomFieldOptionType.value && (!c.editingCustomField || !(c.editingCustomField.options || []).length));
-const customFieldScopeName = computed(() => {
-  if (!c.customFieldForm.device_type) return "";
-  return c.deviceTypes.find((item) => String(item.id) === String(c.customFieldForm.device_type))?.name || t("customField.fieldType");
-});
-const customFieldScopeHint = computed(() => customFieldScopeName.value
-  ? t("customField.scopeSpecificHelp", { name: customFieldScopeName.value })
-  : t("customField.scopeAllHelp"));
-const customFieldScopeHelp = computed(() => [
-  customFieldScopeHint.value,
-  c.editingCustomField ? t("customField.scopeLockedHelp") : "",
-].filter(Boolean).join(" "));
 const customFieldTypeHelp = computed(() => isCustomFieldOptionType.value ? t("customField.typeHelp") : "");
 const customFieldKeyHelp = computed(() => t("customField.keyHelp"));
 const customFieldDefaultHelp = computed(() => customFieldDefaultValueDisabled.value ? t("customField.defaultDisabledHelp") : t("customField.defaultHelp"));
@@ -103,6 +67,12 @@ const filterableHelp = computed(() => t("customField.filterableHelp"));
 
 function activeCustomFieldOptionValues() {
   return new Set((c.editingCustomField?.options || []).filter((option) => option.is_active).map((option) => option.value));
+}
+
+function optionSummary(field: CustomField): string {
+  const options = field.options || [];
+  const preview = options.slice(0, 2).map((option) => option.label).join("、");
+  return t("customField.optionSummary", { count: options.length, preview: preview ? ` · ${preview}` : "" });
 }
 
 const customFieldFormRules = computed<FormRules>(() => ({
@@ -116,14 +86,6 @@ const customFieldFormRules = computed<FormRules>(() => ({
     { max: 120, message: t("customField.nameMax"), trigger: "blur" },
   ],
   field_type: [{ required: true, message: t("customField.typeRequired"), trigger: "change" }],
-  sort_order: [{
-    validator: (_rule, value, callback) => {
-      const numeric = Number(value);
-      if (!Number.isInteger(numeric) || numeric < 0) callback(new Error(t("customField.orderInteger")));
-      else callback();
-    },
-    trigger: ["blur", "change"],
-  }],
   default_value: [{
     validator: (_rule, value, callback) => {
       const normalized = String(value ?? "").trim();
@@ -134,6 +96,10 @@ const customFieldFormRules = computed<FormRules>(() => ({
       const type = c.customFieldForm.field_type;
       const config = validationConfig.value;
       if (type === "text" || type === "textarea") {
+        if (!customFieldFormatMatches(normalized, customFieldFormat.value, config.pattern)) {
+          callback(new Error(t("customField.defaultFormat")));
+          return;
+        }
         if (config.min_length != null && normalized.length < config.min_length) {
           callback(new Error(t("customField.defaultMinLength", { count: config.min_length })));
           return;
@@ -144,8 +110,7 @@ const customFieldFormRules = computed<FormRules>(() => ({
         }
       }
       if (type === "number") {
-        const precision = decimalPrecisionLimit(config.precision);
-        const issue = decimalStorageIssue(normalized, precision);
+        const issue = decimalStorageIssue(normalized);
         if (issue === "invalid") {
           callback(new Error(t("customField.numberDefault")));
           return;
@@ -155,35 +120,13 @@ const customFieldFormRules = computed<FormRules>(() => ({
           return;
         }
         if (issue === "precision") {
-          callback(new Error(t("customField.numberDefaultPrecision", { count: precision })));
-          return;
-        }
-        const minComparison = config.min != null && config.min !== ""
-          ? compareDecimalText(normalized, config.min)
-          : null;
-        if (minComparison === -1) {
-          callback(new Error(t("customField.defaultMin", { value: config.min })));
-          return;
-        }
-        const maxComparison = config.max != null && config.max !== ""
-          ? compareDecimalText(normalized, config.max)
-          : null;
-        if (maxComparison === 1) {
-          callback(new Error(t("customField.defaultMax", { value: config.max })));
+          callback(new Error(t("customField.numberDefaultPrecision", { count: CUSTOM_FIELD_NUMBER_MAX_DECIMAL_PLACES })));
           return;
         }
       }
       if (type === "date") {
         if (!isValidIsoDate(normalized)) {
           callback(new Error(t("customField.dateDefault")));
-          return;
-        }
-        if (config.min_date && normalized < config.min_date) {
-          callback(new Error(t("customField.defaultDateMin", { date: config.min_date })));
-          return;
-        }
-        if (config.max_date && normalized > config.max_date) {
-          callback(new Error(t("customField.defaultDateMax", { date: config.max_date })));
           return;
         }
       }
@@ -229,9 +172,7 @@ const customFieldFormRules = computed<FormRules>(() => ({
     validator: (_rule, _value, callback) => {
       const config = validationConfig.value;
       const type = c.customFieldForm.field_type;
-      const integerKeys = type === "number"
-        ? ["precision"]
-        : type === "text" || type === "textarea"
+      const integerKeys = type === "text" || type === "textarea"
           ? ["min_length", "max_length"]
           : type === "multiselect"
             ? ["min_items", "max_items"]
@@ -239,8 +180,28 @@ const customFieldFormRules = computed<FormRules>(() => ({
       for (const key of integerKeys) {
         const value = config[key as keyof CustomFieldValidationConfig];
         if (value === undefined || value === null || value === "") continue;
-        if (!Number.isInteger(Number(value)) || Number(value) < 0 || (key === "precision" && Number(value) > 6)) {
-          callback(new Error(key === "precision" ? t("customField.precisionInteger") : t("customField.nonNegativeInteger")));
+        if (!Number.isInteger(Number(value)) || Number(value) < 0) {
+          callback(new Error(t("customField.nonNegativeInteger")));
+          return;
+        }
+      }
+      if (type === "text" || type === "textarea") {
+        if (!isCustomFieldFormat(config.format || "any")) {
+          callback(new Error(t("customField.invalidFormat")));
+          return;
+        }
+        if (config.format === "regex") {
+          const patternError = customFieldFormatPatternError(config.pattern);
+          if (patternError === "required") {
+            callback(new Error(t("customField.regexRequired")));
+            return;
+          }
+          if (patternError === "too_long" || patternError === "invalid") {
+            callback(new Error(t("customField.regexInvalid")));
+            return;
+          }
+        } else if (config.pattern) {
+          callback(new Error(t("customField.regexFormatOnly")));
           return;
         }
       }
@@ -252,40 +213,14 @@ const customFieldFormRules = computed<FormRules>(() => ({
         callback(new Error(t("customField.minGreaterThanMax")));
         return;
       }
-      if (type === "number") {
-        for (const key of ["min", "max"] as const) {
-          const value = config[key];
-          if (value !== undefined && value !== null && value !== "" && compareDecimalText(value, value) === null) {
-            callback(new Error(t("customField.validNumber")));
-            return;
-          }
-        }
-        const comparison = config.min !== undefined && config.min !== null && config.min !== ""
-          && config.max !== undefined && config.max !== null && config.max !== ""
-          ? compareDecimalText(config.min, config.max)
-          : null;
-        if (comparison === 1) {
-          callback(new Error(t("customField.minGreaterThanMax")));
-          return;
-        }
-      }
-      if (type === "date" && config.min_date && config.max_date && config.min_date > config.max_date) {
-        callback(new Error(t("customField.earliestAfterLatest")));
-        return;
-      }
       callback();
     },
     trigger: ["blur", "change"],
   }],
 }));
 
-function ensureFormVisible(value: boolean) {
-  if (value) c.customFieldForm.form_visible = true;
-}
-
 function openCreateCustomField() {
   c.openCustomFieldModal();
-  c.customFieldForm.device_type = "";
 }
 
 function openEditCustomField(field: CustomField) {
@@ -337,10 +272,13 @@ async function submitCustomFieldOption() {
   <PageContainer>
     <template #toolbar>
       <PageToolbar>
+        <template #search>
+          <SearchField v-model="c.customFieldSearch" :loading="c.customFieldListLoading" :placeholder="t('customField.searchPlaceholder')" @search="c.refreshCustomFieldList" />
+        </template>
         <template #filters>
           <div class="page-toolbar__filter-group">
-            <el-select v-model="c.customFieldDeviceType" :placeholder="t('customField.allDeviceTypes')" clearable :disabled="c.customFieldListLoading" @change="c.refreshCustomFieldList()">
-              <el-option v-for="item in c.deviceTypes" :key="item.id" :label="item.name" :value="String(item.id)" />
+            <el-select v-model="c.customFieldType" clearable :placeholder="t('common.type')" :disabled="c.customFieldListLoading" @change="c.refreshCustomFieldList">
+              <el-option :label="t('customField.singleLineText')" value="text" /><el-option :label="t('customField.multiLineText')" value="textarea" /><el-option :label="t('customField.number')" value="number" /><el-option :label="t('customField.date')" value="date" /><el-option :label="t('customField.select')" value="select" /><el-option :label="t('customField.multiSelect')" value="multiselect" /><el-option :label="t('customField.boolean')" value="boolean" />
             </el-select>
             <el-select v-model="c.customFieldActive" :placeholder="t('customField.allStatuses')" clearable :disabled="c.customFieldListLoading" @change="c.refreshCustomFieldList()">
               <el-option :label="t('status.active')" value="true" /><el-option :label="t('status.inactive')" value="false" />
@@ -369,18 +307,16 @@ async function submitCustomFieldOption() {
       >
         <el-table class="settings-custom-field-table" v-loading="c.customFieldListLoading" :data="c.customFieldTableItems" table-layout="fixed">
         <template #empty>
-          <el-empty :image-size="56" :description="c.customFieldDeviceType || c.customFieldActive ? t('customField.noMatching') : t('customField.noFields')">
-            <el-button v-if="c.customFieldDeviceType || c.customFieldActive" link type="primary" @click="c.customFieldDeviceType = ''; c.customFieldActive = ''; c.refreshCustomFieldList()">{{ t('common.clearFilters') }}</el-button>
+          <el-empty :image-size="56" :description="c.customFieldActive || c.customFieldSearch || c.customFieldType ? t('customField.noMatching') : t('customField.noFields')">
+            <el-button v-if="c.customFieldActive || c.customFieldSearch || c.customFieldType" link type="primary" @click="c.customFieldActive = ''; c.customFieldSearch = ''; c.customFieldType = ''; c.refreshCustomFieldList()">{{ t('common.clearFilters') }}</el-button>
           </el-empty>
         </template>
         <el-table-column prop="name" :label="t('customField.fieldName')" min-width="180" show-overflow-tooltip />
         <el-table-column prop="key" :label="t('customField.code')" width="92" show-overflow-tooltip />
-        <el-table-column :label="t('customField.scope')" width="92" show-overflow-tooltip><template #default="{ row }">{{ row.device_type_name || t('customField.allAssets') }}</template></el-table-column>
-        <el-table-column :label="t('customField.group')" width="72" show-overflow-tooltip><template #default="{ row }">{{ row.group || t('common.none') }}</template></el-table-column>
         <el-table-column prop="field_type_label" :label="t('common.type')" width="70" show-overflow-tooltip />
-        <el-table-column :label="t('customField.required')" width="84"><template #default="{ row }"><el-tag size="small" :type="row.required ? 'warning' : 'info'">{{ row.required ? t('common.yes') : t('common.no') }}</el-tag></template></el-table-column>
-        <el-table-column :label="t('customField.options')" min-width="145"><template #default="{ row }"><template v-if="['select','multiselect'].includes(row.field_type)"><el-tag v-for="option in (row.options || [])" :key="option.id" size="small" class="field-option-tag">{{ option.label }}</el-tag><el-button v-if="c.can('custom_fields.manage')" link type="primary" :disabled="c.customFieldOptionLoading" @click="c.openCustomFieldOptionModal(row)">{{ t('customField.manageOptions') }}</el-button></template><span v-else>—</span></template></el-table-column>
-        <el-table-column prop="assets_count" :label="t('customField.referencedAssets')" width="142" />
+        <el-table-column :label="t('customField.options')" min-width="145"><template #default="{ row }"><template v-if="['select','multiselect'].includes(row.field_type)"><span class="custom-field-option-summary">{{ optionSummary(row) }}</span><el-button v-if="c.can('custom_fields.manage')" link type="primary" :disabled="c.customFieldOptionLoading" @click="c.openCustomFieldOptionModal(row)">{{ t('customField.manageOptions') }}</el-button></template><span v-else>—</span></template></el-table-column>
+        <el-table-column prop="fieldsets_count" :label="t('customField.referencedFieldsets')" width="132" />
+        <el-table-column prop="assets_count" :label="t('customField.referencedAssets')" width="120" />
         <el-table-column :label="t('common.status')" width="84"><template #default="{ row }"><StatusTag size="small" :tone="row.is_active ? 'success' : 'info'" :label="row.is_active ? t('status.active') : t('status.inactive')" /></template></el-table-column>
         <el-table-column v-if="c.can('custom_fields.manage')" :label="t('common.operation')" width="132" fixed="right">
           <template #default="{ row }">
@@ -402,7 +338,7 @@ async function submitCustomFieldOption() {
                 :icon="Delete"
                 :label="t('common.delete')"
                 type="danger"
-                :disabled="c.customFieldActionId === row.id || (row.assets_count || 0) > 0"
+                :disabled="c.customFieldActionId === row.id || (row.assets_count || 0) > 0 || (row.fieldsets_count || 0) > 0"
                 @click="c.deleteCustomField(row)"
               />
             </div>
@@ -430,27 +366,9 @@ async function submitCustomFieldOption() {
         </div>
       </section>
 
-      <section class="form-dialog__section custom-field-form-section">
-        <h3 class="form-dialog__section-title">{{ t('customField.scopeSection') }}</h3>
-        <div class="horizontal-form__rows">
-          <el-form-item :label="t('common.deviceType')" prop="device_type" required :error="c.customFieldFormErrors.device_type">
-            <el-select v-model="c.customFieldForm.device_type" :disabled="!!c.editingCustomField" clearable :placeholder="t('customField.allAssets')">
-              <el-option :label="t('customField.allAssets')" value="" />
-              <el-option v-for="item in c.deviceTypes" :key="item.id" :label="item.name" :value="String(item.id)" />
-            </el-select>
-            <FieldHelp :text="customFieldScopeHelp" />
-          </el-form-item>
-          <el-form-item :label="t('customField.fieldRequirement')">
-            <el-checkbox v-model="c.customFieldForm.required" @change="ensureFormVisible">{{ t('customField.required') }}</el-checkbox>
-          </el-form-item>
-        </div>
-      </section>
-
         <section class="form-dialog__section custom-field-form-section">
           <h3 class="form-dialog__section-title">{{ t('customField.inputConfig') }}</h3>
           <div class="horizontal-form__rows">
-            <el-form-item :label="t('customField.group')" prop="group" :error="c.customFieldFormErrors.group"><el-input v-model="c.customFieldForm.group" maxlength="80" :placeholder="t('customField.groupPlaceholder')" /></el-form-item>
-            <el-form-item :label="t('customField.sortOrder')" prop="sort_order" :error="c.customFieldFormErrors.sort_order"><el-input-number v-model="customFieldSortOrderValue" :min="0" :step="1" :precision="0" :value-on-clear="null" :aria-label="t('customField.sortOrder')" /></el-form-item>
             <el-form-item :label="t('customField.defaultValue')" prop="default_value" :error="c.customFieldFormErrors.default_value">
               <el-input v-model="c.customFieldForm.default_value" maxlength="255" :disabled="customFieldDefaultValueDisabled" />
               <FieldHelp :text="customFieldDefaultHelp" />
@@ -467,7 +385,7 @@ async function submitCustomFieldOption() {
           <h3 class="form-dialog__section-title">{{ t('customField.displayConfig') }}</h3>
           <div class="custom-field-visibility-row">
             <el-checkbox v-model="c.customFieldForm.is_active">{{ t('customField.enabled') }}</el-checkbox>
-            <el-checkbox v-model="c.customFieldForm.form_visible" :disabled="c.customFieldForm.required">{{ t('customField.formVisible') }}</el-checkbox>
+            <el-checkbox v-model="c.customFieldForm.form_visible">{{ t('customField.formVisible') }}</el-checkbox>
             <el-checkbox v-model="c.customFieldForm.detail_visible">{{ t('customField.detailVisible') }}</el-checkbox>
             <div class="custom-field-visibility-option">
               <div class="custom-field-visibility-control">
@@ -484,30 +402,6 @@ async function submitCustomFieldOption() {
           </div>
         </section>
 
-        <section v-if="hasCustomFieldValidationRules" class="form-dialog__section custom-field-form-section">
-          <h3 class="form-dialog__section-title">{{ t('customField.validationRules') }}</h3>
-          <div class="horizontal-form__rows">
-          <el-form-item :label="t('customField.validationParams')" prop="validation_config" :error="c.customFieldFormErrors.validation_config" class="custom-field-validation">
-            <div v-if="['text', 'textarea'].includes(c.customFieldForm.field_type)" class="custom-field-validation-grid">
-              <el-input-number v-model="minLengthValue" :min="0" :step="1" :precision="0" :value-on-clear="null" :placeholder="t('customField.minLength')" :aria-label="t('customField.minLength')" />
-              <el-input-number v-model="maxLengthValue" :min="0" :step="1" :precision="0" :value-on-clear="null" :placeholder="t('customField.maxLength')" :aria-label="t('customField.maxLength')" />
-            </div>
-            <div v-else-if="c.customFieldForm.field_type === 'number'" class="custom-field-validation-grid">
-              <el-input v-model="validationConfig.min" :placeholder="t('customField.minValue')" />
-              <el-input v-model="validationConfig.max" :placeholder="t('customField.maxValue')" />
-              <el-input-number v-model="precisionValue" :min="0" :max="CUSTOM_FIELD_NUMBER_MAX_DECIMAL_PLACES" :step="1" :precision="0" :value-on-clear="null" :placeholder="t('customField.precision')" :aria-label="t('customField.precision')" />
-            </div>
-            <div v-else-if="c.customFieldForm.field_type === 'date'" class="custom-field-validation-grid">
-              <el-date-picker v-model="validationConfig.min_date" type="date" :format="systemDatePickerFormat()" value-format="YYYY-MM-DD" :placeholder="t('customField.earliestDate')" />
-              <el-date-picker v-model="validationConfig.max_date" type="date" :format="systemDatePickerFormat()" value-format="YYYY-MM-DD" :placeholder="t('customField.latestDate')" />
-            </div>
-            <div v-else class="custom-field-validation-grid">
-              <el-input-number v-model="minItemsValue" :min="0" :step="1" :precision="0" :value-on-clear="null" :placeholder="t('customField.minItems')" :aria-label="t('customField.minItems')" />
-              <el-input-number v-model="maxItemsValue" :min="0" :step="1" :precision="0" :value-on-clear="null" :placeholder="t('customField.maxItems')" :aria-label="t('customField.maxItems')" />
-            </div>
-          </el-form-item>
-          </div>
-        </section>
     </el-form>
     <template #footer><el-button :disabled="c.customFieldSaving" @click="c.showCustomFieldModal = false">{{ t('common.cancel') }}</el-button><el-button type="primary" :loading="c.customFieldSaving" :disabled="c.customFieldSaving" @click="submitCustomField">{{ t('customField.saveField') }}</el-button></template>
   </FormDialogShell>

@@ -548,17 +548,23 @@ export function useInventory(context: InventoryContext) {
     }
   }
 
-  async function loadRacks() {
+  async function loadRacks(search = "") {
     if (!context.can("racks.view")) return;
     const { id, controller } = beginAuxRequest("racks");
     try {
-      const result = await loadAllPages<Rack>(
-        "/racks/?page_size=50&is_active=true",
-        controller,
-        () => id === auxRequestIds.racks,
-      );
+      const query = new URLSearchParams({
+        search: search.trim(),
+        page: "1",
+        page_size: "20",
+        compact: "1",
+        is_active: "true",
+      });
+      const result = await context.request<PageResult<Rack> | Rack[]>(`/racks/?${query}`, { signal: controller.signal });
       if (id !== auxRequestIds.racks || controller.signal.aborted || !result) return;
-      racks.value = result;
+      const rows = pageItems(result);
+      const merged = new Map<number, Rack>(racks.value.map((rack) => [rack.id, rack]));
+      rows.forEach((rack) => merged.set(rack.id, rack));
+      racks.value = Array.from(merged.values());
     } catch (error) {
       if (id === auxRequestIds.racks && !controller.signal.aborted) {
         auxErrors.value.racks = errorMessage(error, i18n.global.t("inventory.racksLoadFailed"));
@@ -911,13 +917,6 @@ export function useInventory(context: InventoryContext) {
     clearScopePreview();
     resetTaskForm();
     showTaskDialog.value = true;
-    await Promise.allSettled([loadRooms(), loadInspectors()]);
-    if (!taskForm.value.inspector) {
-      const currentInspector = inspectors.value.find(
-        (person) => person.username === context.currentUsername.value,
-      );
-      if (currentInspector) taskForm.value.inspector = String(currentInspector.id);
-    }
     if (showTaskDialog.value && taskForm.value.data_center) void loadScopePreview();
   }
 
@@ -1178,7 +1177,9 @@ export function useInventory(context: InventoryContext) {
 
   async function initializeItem(item: InventoryItem) {
     if (!canRecordInventory(item)) return false;
-    if (!racks.value.length) await loadRacks();
+    if (item.system_rack_code && !racks.value.some((rack) => rack.code === item.system_rack_code)) {
+      await loadRacks(item.system_rack_code);
+    }
     if (itemAuxError.value) return false;
     editingItem.value = item;
     const initialLocation =
@@ -1734,13 +1735,14 @@ export function useInventory(context: InventoryContext) {
     void Promise.allSettled([loadRooms(), loadInspectors()]);
   }
   function retryRackAuxData() {
-    void loadRacks();
+    const systemRackCode = editingItem.value?.system_rack_code?.trim();
+    if (systemRackCode) void loadRacks(systemRackCode);
   }
   function retryActiveTask() {
     void refreshActiveTask();
   }
   async function loadInitialData() {
-    await Promise.allSettled([loadTasks(), loadRooms(), loadInspectors()]);
+    await loadTasks();
     initialDataLoaded = true;
     if (context.inventoryTaskId.value) await openTaskById(context.inventoryTaskId.value);
   }

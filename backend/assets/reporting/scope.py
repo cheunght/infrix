@@ -103,7 +103,8 @@ def resolve_dashboard_scope(request):
     asset_queryset = asset_queryset.distinct()
     asset_rows = list(
         asset_queryset.select_related(
-            "device_type",
+            "asset_model__device_type",
+            "standalone_device_type",
             "asset_data_center",
             "rack_allocation__rack__room__data_center",
         ).prefetch_related("network_addresses")

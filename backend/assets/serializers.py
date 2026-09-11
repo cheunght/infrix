@@ -5,15 +5,17 @@ from django.db.models import Count, Q, Sum
 from django.utils import timezone as django_timezone
 from django.utils.dateparse import parse_datetime
 from rest_framework import serializers
-from rest_framework.exceptions import ValidationError as DRFValidationError
+from rest_framework.exceptions import APIException, ValidationError as DRFValidationError
 from django.contrib.auth.models import Group, User
+from drf_spectacular.types import OpenApiTypes
 from drf_spectacular.utils import extend_schema_field
 from datetime import date, datetime
 from decimal import Decimal
 from typing import Any
 import json
 import re
-from .models import AssetModel, AuditLog, Asset, AssetAssignmentEvent, AssetCustomValue, AssetNetworkAddress, AssetTag, CustomField, CustomFieldOption, DataCenter, Department, DeviceType, DirectoryIdentity, FaultEvent, InventoryItem, InventoryTask, MaintenanceContract, Manufacturer, NotificationDelivery, Person, ProcurementRecord, Rack, RackUnitAllocation, RepairPartUsage, RepairRecord, ServerRoom, SoftwareLicense, SparePart, SparePartCategory, SpareStock, SpareStockTransaction, SystemSetting, Tag, UserSecurityProfile
+from .models import AssetModel, AuditLog, Asset, AssetAssignmentEvent, AssetCustomValue, AssetNetworkAddress, AssetTag, CustomField, CustomFieldOption, CustomFieldSet, CustomFieldSetItem, DataCenter, Department, DeviceType, DirectoryIdentity, FaultEvent, InventoryItem, InventoryTask, MaintenanceContract, Manufacturer, NotificationDelivery, Person, ProcurementRecord, Rack, RackUnitAllocation, RepairPartUsage, RepairRecord, ServerRoom, SoftwareLicense, SparePart, SparePartCategory, SpareStock, SpareStockTransaction, SystemSetting, Tag, UserSecurityProfile
+from .fieldsets import fieldset_items_queryset, raise_if_fieldset_conflicts, replace_fieldset_items, resolve_fieldset, validate_fieldset_items
 from .depreciation import DepreciationValidationError, calculate_asset_depreciation, validate_depreciation_configuration
 from .enum_contracts import (
     INVENTORY_ITEM_STATUS_LABELS,
@@ -31,7 +33,7 @@ from .enum_contracts import (
 )
 from .license_status import LICENSE_STATUS_LABELS, license_status_value
 from .reporting.capacity import rack_effective_used_u
-from .services import apply_asset_custom_values, apply_asset_tags, apply_spare_stock_transaction, assign_asset, configure_asset, inventory_snapshot_location, inventory_task_can_delete, return_asset, synchronize_asset_location_hierarchy, transfer_asset, validate_inventory_resolution_request
+from .services import CustomFieldConflictError, apply_asset_custom_values, apply_asset_tags, apply_spare_stock_transaction, assign_asset, configure_asset, inventory_snapshot_location, inventory_task_can_delete, return_asset, synchronize_asset_location_hierarchy, transfer_asset, validate_inventory_resolution_request
 from .custom_fields import validate_custom_field_value
 from .custom_fields import normalize_validation_config as _normalize_validation_config
 from .lifecycle import allowed_asset_status_values, transition_asset_status, validate_asset_status_transition
@@ -60,6 +62,18 @@ class SystemDateTimeInputField(serializers.DateTimeField):
         if isinstance(parsed, datetime) and django_timezone.is_naive(parsed):
             parsed = django_timezone.make_aware(parsed, system_timezone())
         return super().to_internal_value(parsed)
+
+
+class CustomFieldConflictAPIException(APIException):
+    status_code = 409
+    default_code = "custom_field_conflict"
+
+    def __init__(self, conflicts):
+        super().__init__({
+            "code": "custom_field_conflict",
+            "detail": "当前自定义字段值与新的字段集不兼容",
+            "fields": conflicts,
+        })
 
 
 class GroupSerializer(serializers.ModelSerializer):
@@ -261,7 +275,33 @@ class SystemSettingsSerializer(serializers.ModelSerializer):
 
     timezone = serializers.SerializerMethodField()
     definitions = serializers.SerializerMethodField()
+    email_digest_people = serializers.ListField(
+        child=serializers.IntegerField(min_value=1),
+        max_length=20,
+        required=False,
+        allow_empty=True,
+    )
     email_digest_recipients = serializers.ListField(child=serializers.EmailField(max_length=254), max_length=20, required=False, allow_empty=True)
+
+    def validate_email_digest_people(self, value):
+        ids = list(dict.fromkeys(value))
+        people = {
+            person.pk: person
+            for person in Person.objects.select_related("account").filter(pk__in=ids)
+        }
+        missing = [str(person_id) for person_id in ids if person_id not in people]
+        if missing:
+            raise serializers.ValidationError(f"选择的人员不存在：{', '.join(missing)}")
+        unavailable = [
+            people[person_id].name
+            for person_id in ids
+            if not people[person_id].is_active or not people[person_id].notification_email()
+        ]
+        if unavailable:
+            raise serializers.ValidationError(
+                f"以下人员未启用或未配置邮箱：{', '.join(unavailable)}"
+            )
+        return ids
 
     def validate_email_digest_recipients(self, value):
         return list(dict.fromkeys(address.strip().lower() for address in value))
@@ -337,10 +377,14 @@ class SystemSettingsSerializer(serializers.ModelSerializer):
             if current is not None
         }
         values.update({key: value for key, value in attrs.items() if key in SETTING_METADATA})
+        people = values.get("email_digest_people") or []
+        recipients = values.get("email_digest_recipients") or []
+        if len(people) + len(recipients) > 20:
+            raise serializers.ValidationError({"email_digest_people": "摘要人员和其他收件邮箱合计不能超过 20 个"})
         password_value = attrs.get("smtp_password", "")
         if values.get("email_digest_enabled"):
             errors = {}
-            if not values.get("email_digest_recipients"):
+            if not people and not recipients:
                 errors["email_digest_recipients"] = "启用邮件摘要前必须配置收件人"
             if not values.get("application_url"):
                 errors["application_url"] = "启用邮件摘要前必须配置应用访问地址"
@@ -617,29 +661,71 @@ class ManufacturerReferenceSerializer(serializers.ModelSerializer):
 
 class DeviceTypeSerializer(BaseDictionarySerializer):
     custom_fields_count = serializers.IntegerField(read_only=True, default=0)
+    default_fieldset_name = serializers.CharField(source="default_fieldset.name", read_only=True, allow_null=True)
 
     def validate_color(self, value):
         if not re.fullmatch(r"#[0-9A-Fa-f]{6}", value or ""):
             raise serializers.ValidationError("颜色必须是六位十六进制值，例如 #1677EF")
         return value.upper()
 
+    def validate(self, attrs):
+        attrs = super().validate(attrs)
+        fieldset = attrs.get("default_fieldset", self.instance.default_fieldset if self.instance else None)
+        if fieldset is not None and not fieldset.is_active:
+            current_id = self.instance.default_fieldset_id if self.instance else None
+            if fieldset.pk != current_id:
+                raise serializers.ValidationError({"default_fieldset": "停用的字段集不能设为默认字段集"})
+        if self.instance and "default_fieldset" in attrs and attrs["default_fieldset"] != self.instance.default_fieldset:
+            affected_assets = Asset.objects.filter(
+                Q(asset_model__device_type=self.instance, asset_model__fieldset__isnull=True)
+                | Q(asset_model__isnull=True, standalone_device_type=self.instance)
+            ).distinct()
+            prospective_items = list(fieldset.items.all().values("field_id", "required")) if fieldset else []
+            prospective_items = [
+                {"field": CustomField.objects.get(pk=item["field_id"]), "required": item["required"]}
+                for item in prospective_items
+            ]
+            raise_if_fieldset_conflicts(
+                affected_assets,
+                prospective_items,
+                detail="修改默认字段集会使现有资产值失去归属或缺少必填字段",
+            )
+        return attrs
+
     class Meta(BaseDictionarySerializer.Meta):
         model = DeviceType
         fields = [
-            "id", "name", "color", "is_active", "assets_count", "custom_fields_count",
+            "id", "name", "color", "is_active", "default_fieldset", "default_fieldset_name",
+            "assets_count", "custom_fields_count",
             "created_at", "updated_at",
         ]
+
+
+class EffectiveFieldSetSerializer(serializers.Serializer):
+    id = serializers.IntegerField()
+    name = serializers.CharField()
+    inherited = serializers.BooleanField()
 
 
 class AssetModelReferenceSerializer(serializers.ModelSerializer):
     manufacturer_name = serializers.CharField(source="manufacturer.name", read_only=True, allow_null=True)
     device_type_name = serializers.CharField(source="device_type.name", read_only=True, allow_null=True)
+    fieldset_name = serializers.CharField(source="fieldset.name", read_only=True, allow_null=True)
+    effective_fieldset = serializers.SerializerMethodField()
+
+    @extend_schema_field(EffectiveFieldSetSerializer(allow_null=True))
+    def get_effective_fieldset(self, obj):
+        fieldset = obj.fieldset or obj.device_type.default_fieldset
+        if fieldset is None:
+            return None
+        return {"id": fieldset.pk, "name": fieldset.name, "inherited": obj.fieldset_id is None}
 
     class Meta:
         model = AssetModel
         fields = [
             "id", "name", "manufacturer", "manufacturer_name", "device_type", "device_type_name",
-            "model_number", "default_warranty_months", "expected_life_months", "is_active",
+            "fieldset", "fieldset_name", "effective_fieldset", "model_number", "default_warranty_months",
+            "expected_life_months", "notes", "is_active",
         ]
         read_only_fields = fields
 
@@ -648,50 +734,99 @@ class AssetModelOptionSerializer(AssetModelReferenceSerializer):
     class Meta(AssetModelReferenceSerializer.Meta):
         fields = [
             "id", "name", "manufacturer", "manufacturer_name", "device_type", "device_type_name",
-            "model_number", "default_warranty_months", "expected_life_months", "is_active",
+            "fieldset", "fieldset_name", "effective_fieldset", "model_number", "default_warranty_months",
+            "expected_life_months", "notes", "is_active",
         ]
 
 
 class AssetModelSerializer(serializers.ModelSerializer):
     manufacturer_name = serializers.CharField(source="manufacturer.name", read_only=True, allow_null=True)
     device_type_name = serializers.CharField(source="device_type.name", read_only=True, allow_null=True)
+    fieldset_name = serializers.CharField(source="fieldset.name", read_only=True, allow_null=True)
+    effective_fieldset = serializers.SerializerMethodField()
     assets_count = serializers.IntegerField(read_only=True, default=0)
 
     def validate_name(self, value):
         value = (value or "").strip()
         if not value:
             raise serializers.ValidationError("型号名称不能为空")
-        queryset = AssetModel.objects.filter(name__iexact=value)
-        if self.instance:
-            queryset = queryset.exclude(pk=self.instance.pk)
-        if queryset.exists():
-            raise serializers.ValidationError("型号名称已存在")
         return value
 
     def validate_model_number(self, value):
         return (value or "").strip()
 
     def validate(self, attrs):
+        manufacturer = attrs.get("manufacturer", self.instance.manufacturer if self.instance else None)
+        device_type = attrs.get("device_type", self.instance.device_type if self.instance else None)
+        if manufacturer is None:
+            raise serializers.ValidationError({"manufacturer": "厂商不能为空"})
+        if device_type is None:
+            raise serializers.ValidationError({"device_type": "设备类型不能为空"})
         for field in ("manufacturer", "device_type"):
-            value = attrs.get(field)
+            value = attrs.get(field, getattr(self.instance, field, None) if self.instance else None)
             if value is not None and not value.is_active:
                 current_id = getattr(self.instance, f"{field}_id", None) if self.instance else None
                 if current_id != value.pk:
                     raise serializers.ValidationError({field: "停用的选项不能用于资产型号"})
+        fieldset = attrs.get("fieldset", self.instance.fieldset if self.instance else None)
+        if fieldset is not None and not fieldset.is_active:
+            current_id = self.instance.fieldset_id if self.instance else None
+            if fieldset.pk != current_id:
+                raise serializers.ValidationError({"fieldset": "停用的字段集不能用于资产型号"})
+        name = attrs.get("name", self.instance.name if self.instance else "")
+        duplicate_name = AssetModel.objects.filter(manufacturer=manufacturer, name__iexact=name)
+        if self.instance:
+            duplicate_name = duplicate_name.exclude(pk=self.instance.pk)
+        if duplicate_name.exists():
+            raise serializers.ValidationError({"name": "同一厂商下型号名称不能重复"})
+        model_number = attrs.get("model_number", self.instance.model_number if self.instance else "")
+        if model_number:
+            duplicate_number = AssetModel.objects.filter(manufacturer=manufacturer, model_number__iexact=model_number)
+            if self.instance:
+                duplicate_number = duplicate_number.exclude(pk=self.instance.pk)
+            if duplicate_number.exists():
+                raise serializers.ValidationError({"model_number": "同一厂商下型号编号不能重复"})
         for field in ("default_warranty_months", "expected_life_months"):
             value = attrs.get(field)
             if value is not None and value < 0:
                 raise serializers.ValidationError({field: "月数不能为负数"})
+        if self.instance:
+            prospective_fieldset = fieldset or device_type.default_fieldset
+            effective_changed = (
+                prospective_fieldset.pk if prospective_fieldset else None
+            ) != (
+                (self.instance.fieldset or self.instance.device_type.default_fieldset).pk
+                if (self.instance.fieldset or self.instance.device_type.default_fieldset) else None
+            )
+            if effective_changed:
+                prospective_items = list(prospective_fieldset.items.all().values("field_id", "required")) if prospective_fieldset else []
+                prospective_items = [
+                    {"field": CustomField.objects.get(pk=item["field_id"]), "required": item["required"]}
+                    for item in prospective_items
+                ]
+                raise_if_fieldset_conflicts(
+                    Asset.objects.filter(asset_model=self.instance),
+                    prospective_items,
+                    detail="修改型号字段集会使现有资产值失去归属或缺少必填字段",
+                )
         return attrs
+
+    @extend_schema_field(EffectiveFieldSetSerializer(allow_null=True))
+    def get_effective_fieldset(self, obj):
+        fieldset = obj.fieldset or obj.device_type.default_fieldset
+        if fieldset is None:
+            return None
+        return {"id": fieldset.pk, "name": fieldset.name, "inherited": obj.fieldset_id is None}
 
     class Meta:
         model = AssetModel
         fields = [
             "id", "name", "manufacturer", "manufacturer_name", "device_type", "device_type_name",
-            "model_number", "default_warranty_months", "expected_life_months", "is_active",
+            "fieldset", "fieldset_name", "effective_fieldset", "model_number", "default_warranty_months",
+            "expected_life_months", "notes", "is_active",
             "assets_count", "created_at", "updated_at",
         ]
-        read_only_fields = ["id", "manufacturer_name", "device_type_name", "assets_count", "created_at", "updated_at"]
+        read_only_fields = ["id", "manufacturer_name", "device_type_name", "fieldset_name", "effective_fieldset", "assets_count", "created_at", "updated_at"]
 
 
 def _validate_default_value(field, value, active_options):
@@ -781,11 +916,22 @@ class CustomFieldOptionSerializer(serializers.ModelSerializer):
 class CustomFieldSerializer(serializers.ModelSerializer):
     options = CustomFieldOptionSerializer(many=True, read_only=True)
     assets_count = serializers.IntegerField(read_only=True)
-    device_type_name = serializers.CharField(source="device_type.name", read_only=True, allow_null=True)
+    fieldsets_count = serializers.IntegerField(read_only=True, default=0)
     field_type_label = serializers.SerializerMethodField()
 
     def get_field_type_label(self, obj) -> str:
         return dict(CustomField.FIELD_TYPES).get(obj.field_type, obj.field_type)
+
+    def to_representation(self, instance):
+        data = super().to_representation(instance)
+        try:
+            data["validation_config"] = _normalize_validation_config(
+                instance.field_type,
+                instance.validation_config or {},
+            )
+        except ValueError:
+            data["validation_config"] = {}
+        return data
 
     def validate_key(self, value):
         value = (value or "").strip().lower()
@@ -807,23 +953,6 @@ class CustomFieldSerializer(serializers.ModelSerializer):
                 raise serializers.ValidationError({"field_type": "字段已有资产值或选项，不能修改字段类型"})
             if "validation_config" not in attrs:
                 attrs["validation_config"] = {}
-        if self.instance and "device_type" in attrs:
-            device_type_id = attrs["device_type"].pk if attrs["device_type"] is not None else None
-            if device_type_id != self.instance.device_type_id:
-                raise serializers.ValidationError({"device_type": "字段创建后不能修改绑定设备类型"})
-        device_type = attrs.get("device_type", self.instance.device_type if self.instance else None)
-        binding_is_new = not self.instance or (
-            "device_type" in attrs
-            and attrs["device_type"] is not None
-            and attrs["device_type"].pk != self.instance.device_type_id
-        )
-        if device_type is not None and not device_type.is_active and binding_is_new:
-            raise serializers.ValidationError({"device_type": "停用的设备类型不能绑定自定义字段"})
-        required = attrs.get("required", self.instance.required if self.instance else False)
-        form_visible = attrs.get("form_visible", self.instance.form_visible if self.instance else True)
-        if required and not form_visible:
-            raise serializers.ValidationError({"form_visible": "必填字段必须在资产表单中显示"})
-
         config = attrs.get("validation_config", self.instance.validation_config if self.instance else {})
         try:
             attrs["validation_config"] = _normalize_validation_config(field_type, config)
@@ -850,12 +979,129 @@ class CustomFieldSerializer(serializers.ModelSerializer):
     class Meta:
         model = CustomField
         fields = [
-            "id", "device_type", "device_type_name", "key", "name", "field_type", "field_type_label",
-            "required", "default_value", "sort_order", "is_active", "group", "help_text", "placeholder",
+            "id", "key", "name", "field_type", "field_type_label",
+            "default_value", "is_active", "help_text", "placeholder",
             "form_visible", "detail_visible", "list_visible", "filterable", "validation_config",
-            "assets_count", "options", "created_at", "updated_at",
+            "fieldsets_count", "assets_count", "options", "created_at", "updated_at",
         ]
-        read_only_fields = ["id", "device_type_name", "field_type_label", "assets_count", "options", "created_at", "updated_at"]
+        read_only_fields = ["id", "field_type_label", "fieldsets_count", "assets_count", "options", "created_at", "updated_at"]
+
+
+class CustomFieldSetItemSerializer(serializers.ModelSerializer):
+    field_key = serializers.CharField(source="field.key", read_only=True)
+    field_name = serializers.CharField(source="field.name", read_only=True)
+    field_type = serializers.CharField(source="field.field_type", read_only=True)
+    field_is_active = serializers.BooleanField(source="field.is_active", read_only=True)
+
+    class Meta:
+        model = CustomFieldSetItem
+        fields = [
+            "id", "field", "field_key", "field_name", "field_type", "field_is_active",
+            "required", "group", "sort_order",
+        ]
+        read_only_fields = ["id", "field_key", "field_name", "field_type", "field_is_active"]
+
+
+class CustomFieldSetSerializer(serializers.ModelSerializer):
+    items = CustomFieldSetItemSerializer(many=True, required=False)
+    models_count = serializers.IntegerField(read_only=True, default=0)
+    device_types_count = serializers.IntegerField(read_only=True, default=0)
+    assets_count = serializers.SerializerMethodField()
+
+    @extend_schema_field(serializers.IntegerField(allow_null=True))
+    def get_assets_count(self, obj):
+        return Asset.objects.filter(
+            Q(asset_model__fieldset=obj)
+            | Q(asset_model__fieldset__isnull=True, asset_model__device_type__default_fieldset=obj)
+            | Q(asset_model__isnull=True, standalone_device_type__default_fieldset=obj)
+        ).distinct().count()
+
+    def validate_name(self, value):
+        value = (value or "").strip()
+        if not value:
+            raise serializers.ValidationError("字段集名称不能为空")
+        queryset = CustomFieldSet.objects.filter(name__iexact=value)
+        if self.instance:
+            queryset = queryset.exclude(pk=self.instance.pk)
+        if queryset.exists():
+            raise serializers.ValidationError("字段集名称已存在")
+        return value
+
+    def validate(self, attrs):
+        items = attrs.get("items")
+        if items is not None:
+            validate_fieldset_items(items)
+        return attrs
+
+    @transaction.atomic
+    def create(self, validated_data):
+        items = validated_data.pop("items", None)
+        instance = super().create(validated_data)
+        if items is not None:
+            replace_fieldset_items(instance, items)
+        return instance
+
+    @transaction.atomic
+    def update(self, instance, validated_data):
+        items = validated_data.pop("items", None)
+        instance = super().update(instance, validated_data)
+        if items is not None:
+            replace_fieldset_items(instance, items)
+        return instance
+
+    class Meta:
+        model = CustomFieldSet
+        fields = [
+            "id", "name", "description", "is_active", "items", "models_count",
+            "device_types_count", "assets_count", "created_at", "updated_at",
+        ]
+        read_only_fields = [
+            "id", "models_count", "device_types_count", "assets_count",
+            "created_at", "updated_at",
+        ]
+
+
+class CustomFieldSetOptionSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = CustomFieldSet
+        fields = ["id", "name", "description", "is_active"]
+        read_only_fields = fields
+
+
+class DepartmentOptionSerializer(serializers.ModelSerializer):
+    """Small department projection used by searchable selectors."""
+
+    parent_name = serializers.CharField(source="parent.name", read_only=True, allow_null=True)
+
+    class Meta:
+        model = Department
+        fields = ["id", "name", "code", "parent", "parent_name"]
+        read_only_fields = fields
+
+
+class DictionaryOptionSerializer(serializers.Serializer):
+    """Common compact projection for manufacturers and device types."""
+
+    id = serializers.IntegerField(read_only=True)
+    name = serializers.CharField(read_only=True)
+    is_active = serializers.BooleanField(read_only=True)
+
+
+class DeviceTypeOptionSerializer(serializers.ModelSerializer):
+    default_fieldset_name = serializers.CharField(source="default_fieldset.name", read_only=True, allow_null=True)
+
+    class Meta:
+        model = DeviceType
+        fields = ["id", "name", "color", "is_active", "default_fieldset", "default_fieldset_name"]
+        read_only_fields = fields
+
+
+class CustomFieldSetItemsWriteSerializer(serializers.Serializer):
+    items = CustomFieldSetItemSerializer(many=True)
+
+    def validate_items(self, items):
+        validate_fieldset_items(items)
+        return items
 
 
 class CustomFieldRuntimeOptionSerializer(serializers.ModelSerializer):
@@ -865,16 +1111,39 @@ class CustomFieldRuntimeOptionSerializer(serializers.ModelSerializer):
 
 
 class CustomFieldRuntimeSchemaSerializer(serializers.ModelSerializer):
-    options = CustomFieldRuntimeOptionSerializer(many=True, read_only=True)
-    device_type_name = serializers.CharField(source="device_type.name", read_only=True, allow_null=True)
+    id = serializers.IntegerField(source="field.id", read_only=True)
+    key = serializers.CharField(source="field.key", read_only=True)
+    name = serializers.CharField(source="field.name", read_only=True)
+    field_type = serializers.CharField(source="field.field_type", read_only=True)
+    default_value = serializers.CharField(source="field.default_value", read_only=True)
+    help_text = serializers.CharField(source="field.help_text", read_only=True)
+    placeholder = serializers.CharField(source="field.placeholder", read_only=True)
+    form_visible = serializers.BooleanField(source="field.form_visible", read_only=True)
+    detail_visible = serializers.BooleanField(source="field.detail_visible", read_only=True)
+    list_visible = serializers.BooleanField(source="field.list_visible", read_only=True)
+    filterable = serializers.BooleanField(source="field.filterable", read_only=True)
+    is_active = serializers.BooleanField(source="field.is_active", read_only=True)
+    validation_config = serializers.JSONField(source="field.validation_config", read_only=True)
+    options = CustomFieldRuntimeOptionSerializer(source="field.options", many=True, read_only=True)
 
     class Meta:
-        model = CustomField
+        model = CustomFieldSetItem
         fields = [
-            "id", "key", "name", "device_type", "device_type_name", "field_type", "required", "sort_order",
+            "id", "key", "name", "field_type", "required", "sort_order",
             "group", "default_value", "help_text", "placeholder", "form_visible", "detail_visible",
             "list_visible", "filterable", "is_active", "validation_config", "options",
         ]
+
+    def to_representation(self, instance):
+        data = super().to_representation(instance)
+        try:
+            data["validation_config"] = _normalize_validation_config(
+                instance.field.field_type,
+                instance.field.validation_config or {},
+            )
+        except ValueError:
+            data["validation_config"] = {}
+        return data
 
 
 class TagSerializer(serializers.ModelSerializer):
@@ -895,6 +1164,15 @@ class TagSerializer(serializers.ModelSerializer):
         model = Tag
         fields = ["id", "name", "is_active", "assets_count", "created_at", "updated_at"]
         read_only_fields = ["id", "assets_count", "created_at", "updated_at"]
+
+
+class TagOptionSerializer(serializers.ModelSerializer):
+    """Small projection used by asset tag selectors."""
+
+    class Meta:
+        model = Tag
+        fields = ["id", "name", "is_active"]
+        read_only_fields = fields
 
 
 class SparePartCategorySerializer(serializers.ModelSerializer):
@@ -1060,6 +1338,21 @@ class SparePartSerializer(serializers.ModelSerializer):
         ]
 
 
+class SparePartOptionSerializer(serializers.ModelSerializer):
+    """Small projection used by repair and stock location selectors."""
+
+    manufacturer_name = serializers.CharField(source="manufacturer.name", read_only=True, allow_null=True)
+    category_name = serializers.CharField(source="category.name", read_only=True, allow_null=True)
+
+    class Meta:
+        model = SparePart
+        fields = [
+            "id", "code", "name", "model", "manufacturer", "manufacturer_name",
+            "category", "category_name", "storage_location", "unit",
+        ]
+        read_only_fields = fields
+
+
 class SpareStockSerializer(serializers.ModelSerializer):
     part_code = serializers.CharField(source="part.code", read_only=True)
     part_name = serializers.CharField(source="part.name", read_only=True)
@@ -1072,6 +1365,22 @@ class SpareStockSerializer(serializers.ModelSerializer):
         fields = [
             "id", "part", "part_code", "part_name", "category_name", "data_center", "data_center_name",
             "server_room", "server_room_name", "quantity", "updated_at",
+        ]
+        read_only_fields = fields
+
+
+class SpareStockOptionSerializer(serializers.ModelSerializer):
+    part_code = serializers.CharField(source="part.code", read_only=True)
+    part_name = serializers.CharField(source="part.name", read_only=True)
+    part_model = serializers.CharField(source="part.model", read_only=True, allow_blank=True)
+    data_center_name = serializers.CharField(source="data_center.name", read_only=True)
+    server_room_name = serializers.CharField(source="server_room.name", read_only=True, allow_null=True)
+
+    class Meta:
+        model = SpareStock
+        fields = [
+            "id", "part", "part_code", "part_name", "part_model", "data_center", "data_center_name",
+            "server_room", "server_room_name", "quantity",
         ]
         read_only_fields = fields
 
@@ -1254,6 +1563,13 @@ class DataCenterSerializer(serializers.ModelSerializer):
         return value
 
 
+class DataCenterOptionSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = DataCenter
+        fields = ["id", "name", "address", "is_active"]
+        read_only_fields = fields
+
+
 class ServerRoomSerializer(serializers.ModelSerializer):
     data_center_name = serializers.CharField(source="data_center.name", read_only=True)
     racks_count = serializers.IntegerField(read_only=True)
@@ -1307,13 +1623,21 @@ class ServerRoomSerializer(serializers.ModelSerializer):
         return instance
 
 
+class ServerRoomOptionSerializer(serializers.ModelSerializer):
+    data_center_name = serializers.CharField(source="data_center.name", read_only=True)
+
+    class Meta:
+        model = ServerRoom
+        fields = ["id", "data_center", "data_center_name", "name", "is_active"]
+        read_only_fields = fields
+
+
 class RackUnitAllocationSerializer(serializers.ModelSerializer):
     units = serializers.IntegerField(read_only=True)
     asset_no = serializers.CharField(source="asset.asset_no", read_only=True)
     asset_name = serializers.CharField(source="asset.name", read_only=True)
-    manufacturer_model = serializers.CharField(source="asset.manufacturer_model", read_only=True)
     manufacturer_name = serializers.CharField(source="asset.manufacturer.name", read_only=True, allow_null=True)
-    model_name = serializers.CharField(source="asset.model", read_only=True)
+    model_name = serializers.CharField(source="asset.resolved_model_name", read_only=True)
     serial_number = serializers.CharField(source="asset.serial_number", read_only=True)
     status = serializers.CharField(source="asset.status", read_only=True)
     device_type_name = serializers.CharField(source="asset.device_type.name", read_only=True, allow_null=True)
@@ -1325,7 +1649,7 @@ class RackUnitAllocationSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = RackUnitAllocation
-        fields = ["id", "asset", "rack", "rack_code", "data_center", "data_center_id", "server_room", "start_u", "end_u", "units", "asset_no", "asset_name", "device_type_name", "device_type_color", "manufacturer_name", "model_name", "manufacturer_model", "serial_number", "status"]
+        fields = ["id", "asset", "rack", "rack_code", "data_center", "data_center_id", "server_room", "start_u", "end_u", "units", "asset_no", "asset_name", "device_type_name", "device_type_color", "manufacturer_name", "model_name", "serial_number", "status"]
 
 
 class RackUnitAllocationDetailSerializer(serializers.ModelSerializer):
@@ -1372,29 +1696,36 @@ def _asset_custom_fields(obj):
         item.field_id: _raw_custom_value(item)
         for item in obj.custom_values.select_related("field").prefetch_related("field__options").all()
     }
-    scope = Q(device_type__isnull=True)
-    if obj.device_type_id:
-        scope |= Q(device_type_id=obj.device_type_id)
-    fields = CustomField.objects.filter(scope).select_related("device_type").prefetch_related("options").order_by("sort_order", "id")
+    fieldset = obj.resolved_fieldset
+    if fieldset is None:
+        return []
+    items = fieldset_items_queryset(include_inactive_options=True).filter(fieldset=fieldset)
     result = []
-    for field in fields:
+    for item in items:
+        field = item.field
+        try:
+            validation_config = _normalize_validation_config(
+                field.field_type,
+                field.validation_config or {},
+            )
+        except ValueError:
+            validation_config = {}
         result.append({
             "id": field.id,
             "key": field.key,
             "name": field.name,
-            "device_type": field.device_type_id,
-            "device_type_name": field.device_type.name if field.device_type_id else None,
             "field_type": field.field_type,
             "field_type_label": dict(CustomField.FIELD_TYPES).get(field.field_type, field.field_type),
-            "required": field.required,
+            "required": item.required,
             "default_value": field.default_value,
-            "group": field.group,
+            "sort_order": item.sort_order,
+            "group": item.group,
             "help_text": field.help_text,
             "placeholder": field.placeholder,
             "form_visible": field.form_visible,
             "detail_visible": field.detail_visible,
             "list_visible": field.list_visible,
-            "validation_config": field.validation_config,
+            "validation_config": validation_config,
             "is_active": field.is_active,
             "value": values_by_field.get(field.id),
             "options": [
@@ -1417,7 +1748,7 @@ class PersonSummarySerializer(serializers.ModelSerializer):
         model = Person
         fields = [
             "id", "name", "display_name", "employee_no", "department", "department_name",
-            "organization", "contact", "is_active",
+            "email", "organization", "contact", "is_active",
         ]
         read_only_fields = fields
 
@@ -1427,11 +1758,17 @@ class PersonOptionSerializer(serializers.ModelSerializer):
 
     display_name = serializers.CharField(source="name", read_only=True)
     department_name = serializers.CharField(source="department.name", read_only=True, allow_null=True)
+    account_email = serializers.CharField(source="account.email", read_only=True, allow_null=True)
+    notification_email = serializers.SerializerMethodField()
+
+    def get_notification_email(self, obj):
+        return obj.notification_email() or None
 
     class Meta:
         model = Person
         fields = [
-            "id", "name", "display_name", "employee_no", "department", "department_name", "is_active",
+            "id", "name", "display_name", "employee_no", "department", "department_name",
+            "email", "account_email", "notification_email", "is_active",
         ]
         read_only_fields = fields
 
@@ -1448,6 +1785,9 @@ class PersonSerializer(PersonSummarySerializer):
         if not value:
             raise serializers.ValidationError("姓名不能为空")
         return value
+
+    def validate_email(self, value):
+        return (value or "").strip().lower()
 
     def validate_employee_no(self, value):
         value = (value or "").strip()
@@ -1550,14 +1890,36 @@ class AssetAssignmentEventSerializer(serializers.ModelSerializer):
         read_only_fields = fields
 
 
-class AssetSerializer(serializers.ModelSerializer):
-    manufacturer_name = serializers.CharField(source="manufacturer.name", read_only=True, allow_null=True)
-    device_type_name = serializers.CharField(source="device_type.name", read_only=True, allow_null=True)
+class ResolvedAssetMetadataMixin(serializers.Serializer):
+    manufacturer = serializers.SerializerMethodField()
+    manufacturer_name = serializers.SerializerMethodField()
+    device_type = serializers.SerializerMethodField()
+    device_type_name = serializers.SerializerMethodField()
+    model_name = serializers.CharField(source="resolved_model_name", read_only=True)
+    model_number = serializers.CharField(source="resolved_model_number", read_only=True)
+
+    @extend_schema_field(OpenApiTypes.INT)
+    def get_manufacturer(self, obj):
+        return obj.manufacturer_id
+
+    @extend_schema_field(serializers.CharField(allow_null=True))
+    def get_manufacturer_name(self, obj):
+        manufacturer = obj.resolved_manufacturer
+        return manufacturer.name if manufacturer is not None else None
+
+    @extend_schema_field(serializers.IntegerField(allow_null=True))
+    def get_device_type(self, obj):
+        return obj.device_type_id
+
+    @extend_schema_field(serializers.CharField(allow_null=True))
+    def get_device_type_name(self, obj):
+        device_type = obj.resolved_device_type
+        return device_type.name if device_type is not None else None
+
+
+class AssetSerializer(ResolvedAssetMetadataMixin, serializers.ModelSerializer):
     asset_data_center_name = serializers.CharField(source="asset_data_center.name", read_only=True, allow_null=True)
     asset_model = AssetModelReferenceSerializer(read_only=True, allow_null=True)
-    asset_model_name = serializers.CharField(source="asset_model.name", read_only=True, allow_null=True)
-    asset_model_number = serializers.CharField(source="asset_model.model_number", read_only=True, allow_null=True)
-    model_name = serializers.SerializerMethodField()
     assigned_person = PersonSummarySerializer(read_only=True, allow_null=True)
     network_addresses = AssetNetworkAddressSerializer(many=True, read_only=True)
     rack_allocation = RackUnitAllocationSerializer(read_only=True)
@@ -1568,12 +1930,16 @@ class AssetSerializer(serializers.ModelSerializer):
     def get_tag_names(self, obj) -> list[str]:
         return [item.tag.name for item in obj.asset_tags.select_related("tag").all()]
 
-    def get_model_name(self, obj) -> str:
-        return obj.asset_model.name if obj.asset_model_id else (obj.model or "")
-
     class Meta:
         model = Asset
-        fields = "__all__"
+        fields = [
+            "id", "created_at", "updated_at", "asset_no", "name", "manufacturer", "manufacturer_name",
+            "device_type", "device_type_name", "asset_data_center", "asset_data_center_name", "asset_model",
+            "model_name", "model_number", "model_text", "warranty_months", "serial_number", "purpose", "status",
+            "assigned_person", "notes", "depreciation_start_date", "depreciation_years", "residual_rate",
+            "depreciation_method", "network_addresses", "rack_allocation", "procurement_records",
+            "maintenance_contracts", "tag_names",
+        ]
 
 
 class DepreciationListResponseSerializer(serializers.Serializer):
@@ -1585,7 +1951,7 @@ class DepreciationListResponseSerializer(serializers.Serializer):
     accumulated_depreciation = serializers.CharField(allow_null=True, read_only=True)
 
 
-class AssetListSerializer(serializers.ModelSerializer):
+class AssetListSerializer(ResolvedAssetMetadataMixin, serializers.ModelSerializer):
     """Small, flat representation used by the paged asset ledger.
 
     The detail endpoint intentionally keeps the full nested payload.  The
@@ -1594,12 +1960,7 @@ class AssetListSerializer(serializers.ModelSerializer):
     column into a large nested JSON document.
     """
 
-    manufacturer_name = serializers.CharField(source="manufacturer.name", read_only=True, allow_null=True)
-    device_type_name = serializers.CharField(source="device_type.name", read_only=True, allow_null=True)
     asset_data_center_name = serializers.CharField(source="asset_data_center.name", read_only=True, allow_null=True)
-    asset_model_name = serializers.CharField(source="asset_model.name", read_only=True, allow_null=True)
-    asset_model_number = serializers.CharField(source="asset_model.model_number", read_only=True, allow_null=True)
-    model_name = serializers.SerializerMethodField()
     assigned_person = PersonSummarySerializer(read_only=True, allow_null=True)
     business_ip = serializers.SerializerMethodField()
     management_ip = serializers.SerializerMethodField()
@@ -1703,14 +2064,13 @@ class AssetListSerializer(serializers.ModelSerializer):
     def get_tag_names(self, obj) -> list[str]:
         return [item.tag.name for item in obj.asset_tags.select_related("tag").all()]
 
-    def get_model_name(self, obj) -> str:
-        return obj.asset_model.name if obj.asset_model_id else (obj.model or "")
-
     def get_custom_values(self, obj) -> dict[str, object]:
+        fieldset = obj.resolved_fieldset
+        allowed_field_ids = set(fieldset.items.values_list("field_id", flat=True)) if fieldset else set()
         values = {}
         for item in getattr(obj, "list_custom_values", ()):
             field = item.field
-            if field.device_type_id not in {None, obj.device_type_id}:
+            if field.pk not in allowed_field_ids:
                 continue
             values[field.key] = _raw_custom_value(item)
         return values
@@ -1720,7 +2080,7 @@ class AssetListSerializer(serializers.ModelSerializer):
         fields = [
             "id", "created_at", "updated_at", "asset_no", "name",
             "manufacturer", "manufacturer_name", "device_type",
-            "device_type_name", "asset_data_center", "asset_data_center_name", "asset_model_name", "asset_model_number", "model", "model_name", "manufacturer_model",
+            "device_type_name", "asset_data_center", "asset_data_center_name", "asset_model", "model_name", "model_number", "model_text",
             "serial_number", "purpose", "status", "assigned_person", "notes", "warranty_months",
             "business_ip", "management_ip", "oob_ip", "data_center", "server_room",
             "rack_code", "u_range", "purchase_date", "supplier", "purchase_order_no",
@@ -1748,14 +2108,9 @@ class DepreciationResponseSerializer(serializers.Serializer):
     )
 
 
-class AssetDetailSerializer(serializers.ModelSerializer):
-    manufacturer_name = serializers.CharField(source="manufacturer.name", read_only=True, allow_null=True)
-    device_type_name = serializers.CharField(source="device_type.name", read_only=True, allow_null=True)
+class AssetDetailSerializer(ResolvedAssetMetadataMixin, serializers.ModelSerializer):
     asset_data_center_name = serializers.CharField(source="asset_data_center.name", read_only=True, allow_null=True)
     asset_model = AssetModelReferenceSerializer(read_only=True, allow_null=True)
-    asset_model_name = serializers.CharField(source="asset_model.name", read_only=True, allow_null=True)
-    asset_model_number = serializers.CharField(source="asset_model.model_number", read_only=True, allow_null=True)
-    model_name = serializers.SerializerMethodField()
     assigned_person = PersonSummarySerializer(read_only=True, allow_null=True)
     network_addresses = AssetNetworkAddressSerializer(many=True, read_only=True)
     rack_allocation = RackUnitAllocationDetailSerializer(read_only=True)
@@ -1781,7 +2136,8 @@ class AssetDetailSerializer(serializers.ModelSerializer):
             obj.inventory_items.filter(checked_at__isnull=False)
             .select_related(
                 "asset",
-                "asset__device_type",
+                "asset__asset_model__device_type",
+                "asset__standalone_device_type",
                 "task",
                 "task__data_center",
                 "task__server_room",
@@ -1810,13 +2166,10 @@ class AssetDetailSerializer(serializers.ModelSerializer):
     def get_allowed_statuses(self, obj) -> list[str]:
         return list(allowed_asset_status_values(obj))
 
-    def get_model_name(self, obj) -> str:
-        return obj.asset_model.name if obj.asset_model_id else (obj.model or "")
-
     class Meta:
         model = Asset
         fields = [
-            "id", "created_at", "updated_at", "asset_no", "name", "manufacturer", "manufacturer_name", "device_type", "device_type_name", "asset_data_center", "asset_data_center_name", "asset_model", "asset_model_name", "asset_model_number", "model", "model_name", "manufacturer_model",
+            "id", "created_at", "updated_at", "asset_no", "name", "manufacturer", "manufacturer_name", "device_type", "device_type_name", "asset_data_center", "asset_data_center_name", "asset_model", "model_name", "model_number", "model_text",
             "serial_number", "purpose", "status", "assigned_person", "notes", "warranty_months", "depreciation_start_date", "depreciation_years", "residual_rate", "depreciation_method",
             "network_addresses", "rack_allocation", "procurement_records", "maintenance_contracts", "inventory_records_count", "latest_inventory_record", "tags", "custom_fields", "custom_values", "allowed_statuses",
             "depreciation",
@@ -1851,23 +2204,28 @@ class AssetWriteSerializer(serializers.ModelSerializer):
     assignment = AssetAssignmentSerializer(write_only=True, required=False)
     tags = serializers.PrimaryKeyRelatedField(many=True, queryset=Tag.objects.all(), required=False, write_only=True)
     custom_values = serializers.JSONField(required=False, write_only=True)
+    discard_incompatible_custom_values = serializers.BooleanField(required=False, default=False, write_only=True)
     asset_model = serializers.PrimaryKeyRelatedField(
         queryset=AssetModel.objects.all(),
         required=False,
         allow_null=True,
     )
-    manufacturer = serializers.PrimaryKeyRelatedField(read_only=True)
-    manufacturer_id = serializers.PrimaryKeyRelatedField(
-        source="manufacturer",
+    manufacturer = serializers.PrimaryKeyRelatedField(
+        source="standalone_manufacturer",
         queryset=Manufacturer.objects.all(),
         required=False,
         allow_null=True,
-        write_only=True,
+    )
+    device_type = serializers.PrimaryKeyRelatedField(
+        source="standalone_device_type",
+        queryset=DeviceType.objects.all(),
+        required=False,
+        allow_null=True,
     )
 
     class Meta:
         model = Asset
-        fields = ["id", "created_at", "updated_at", "asset_no", "name", "manufacturer", "manufacturer_id", "device_type", "asset_data_center", "asset_model", "model", "manufacturer_model", "warranty_months", "serial_number", "purpose", "status", "notes", "depreciation_start_date", "depreciation_years", "residual_rate", "depreciation_method", "configuration", "assignment", "tags", "custom_values"]
+        fields = ["id", "created_at", "updated_at", "asset_no", "name", "manufacturer", "device_type", "asset_data_center", "asset_model", "model_text", "warranty_months", "serial_number", "purpose", "status", "notes", "depreciation_start_date", "depreciation_years", "residual_rate", "depreciation_method", "configuration", "assignment", "tags", "custom_values", "discard_incompatible_custom_values"]
         read_only_fields = ["id", "created_at", "updated_at"]
 
     def _stored_procurement_amount(self):
@@ -2010,11 +2368,16 @@ class AssetWriteSerializer(serializers.ModelSerializer):
             "responsibility_subject", "responsibility_subject_id", "assigned_to", "assignee", "target_user",
             "target_subject", "target_person", "assigned_person", "assigned_person_id",
             "department", "department_id", "owner_name",
+            "model", "manufacturer_model", "manufacturer_id", "asset_model_name", "asset_model_number",
         }
         submitted_removed_fields = removed_fields.intersection(self.initial_data)
         if submitted_removed_fields:
             field = sorted(submitted_removed_fields)[0]
-            raise serializers.ValidationError({field: "该字段已移除，请使用 assignment 或使用人操作"})
+            if field in {"model", "manufacturer_model", "manufacturer_id", "asset_model_name", "asset_model_number"}:
+                message = "该资产型号字段已移除，请使用 asset_model，或使用 manufacturer、device_type 和 model_text"
+            else:
+                message = "该字段已移除，请使用 assignment 或使用人操作"
+            raise serializers.ValidationError({field: message})
         derived_fields = self.DERIVED_DEPRECIATION_FIELDS & set(self.initial_data)
         if derived_fields:
             field = sorted(derived_fields)[0]
@@ -2028,23 +2391,33 @@ class AssetWriteSerializer(serializers.ModelSerializer):
             current_model_id = self.instance.asset_model_id if self.instance else None
             if not asset_model.is_active and asset_model.pk != current_model_id:
                 raise serializers.ValidationError({"asset_model": "停用的资产型号不能用于资产"})
-            for field in ("manufacturer", "device_type"):
-                related = getattr(asset_model, f"{field}_id", None)
-                if related is None:
-                    continue
-                submitted = attrs.get(field)
-                if submitted is not None and submitted.pk != related:
-                    raise serializers.ValidationError({field: "所选资产型号与该字段不一致"})
-                attrs[field] = getattr(asset_model, field)
-        manufacturer = attrs.get("manufacturer")
-        if manufacturer and not manufacturer.is_active and (not self.instance or self.instance.manufacturer_id != manufacturer.pk):
-            raise serializers.ValidationError({"manufacturer_id": "停用的厂商不能用于新资产或修改资产"})
-        device_type = attrs.get("device_type", self.instance.device_type if self.instance else None)
-        if not device_type:
-            raise serializers.ValidationError({"device_type": "设备类型不能为空"})
-        if not device_type.is_active and (not self.instance or self.instance.device_type_id != device_type.pk):
-            raise serializers.ValidationError({"device_type": "停用的设备类型不能用于新资产或修改资产"})
-        attrs["device_type"] = device_type
+            standalone_submitted = {
+                "manufacturer": self.initial_data.get("manufacturer"),
+                "device_type": self.initial_data.get("device_type"),
+                "model_text": self.initial_data.get("model_text"),
+            }
+            if any(value not in (None, "") for value in standalone_submitted.values()):
+                raise serializers.ValidationError({"asset_model": "选择标准型号后不能同时提交独立厂商、设备类型或历史型号文本"})
+            attrs["standalone_manufacturer"] = None
+            attrs["standalone_device_type"] = None
+            attrs["model_text"] = ""
+        else:
+            manufacturer = attrs.get(
+                "standalone_manufacturer",
+                self.instance.standalone_manufacturer if self.instance and not self.instance.asset_model_id else None,
+            )
+            device_type = attrs.get(
+                "standalone_device_type",
+                self.instance.standalone_device_type if self.instance and not self.instance.asset_model_id else None,
+            )
+            if not device_type:
+                raise serializers.ValidationError({"device_type": "未选择标准型号时设备类型不能为空"})
+            if not device_type.is_active and (not self.instance or self.instance.device_type_id != device_type.pk):
+                raise serializers.ValidationError({"device_type": "停用的设备类型不能用于新资产或修改资产"})
+            if manufacturer and not manufacturer.is_active and (not self.instance or self.instance.manufacturer_id != manufacturer.pk):
+                raise serializers.ValidationError({"manufacturer": "停用的厂商不能用于新资产或修改资产"})
+            attrs["standalone_device_type"] = device_type
+            attrs["standalone_manufacturer"] = manufacturer
         asset_data_center = attrs.get("asset_data_center")
         if asset_data_center and not asset_data_center.is_active:
             if not self.instance or self.instance.asset_data_center_id != asset_data_center.pk:
@@ -2102,6 +2475,7 @@ class AssetWriteSerializer(serializers.ModelSerializer):
         assignment = validated_data.pop("assignment", None)
         tags = validated_data.pop("tags", None)
         custom_values = validated_data.pop("custom_values", {})
+        validated_data.pop("discard_incompatible_custom_values", None)
         asset_model = validated_data.get("asset_model")
         if validated_data.get("warranty_months") is None and asset_model is not None:
             validated_data["warranty_months"] = asset_model.default_warranty_months
@@ -2120,6 +2494,8 @@ class AssetWriteSerializer(serializers.ModelSerializer):
                 apply_asset_custom_values(asset, custom_values)
                 apply_asset_tags(asset, tags or [])
                 asset = self._apply_assignment(asset, assignment)
+        except CustomFieldConflictError as exc:
+            raise CustomFieldConflictAPIException(exc.conflicts) from exc
         except DjangoValidationError as exc:
             raise serializers.ValidationError(getattr(exc, "message_dict", {"configuration": exc.messages})) from exc
         except IntegrityError as exc:
@@ -2131,6 +2507,7 @@ class AssetWriteSerializer(serializers.ModelSerializer):
         assignment = validated_data.pop("assignment", None)
         tags = validated_data.pop("tags", None)
         custom_values = validated_data.pop("custom_values", None)
+        discard_incompatible = validated_data.pop("discard_incompatible_custom_values", False)
         missing = object()
         requested_asset_data_center = validated_data.get("asset_data_center", missing)
         requested_status = validated_data.pop("status", missing)
@@ -2157,10 +2534,13 @@ class AssetWriteSerializer(serializers.ModelSerializer):
                     instance,
                     custom_values or {},
                     submitted=custom_values is not None,
+                    discard_incompatible=discard_incompatible,
                 )
                 if tags is not None:
                     apply_asset_tags(instance, tags)
                 instance = self._apply_assignment(instance, assignment)
+        except CustomFieldConflictError as exc:
+            raise CustomFieldConflictAPIException(exc.conflicts) from exc
         except DjangoValidationError as exc:
             raise serializers.ValidationError(getattr(exc, "message_dict", {"configuration": exc.messages})) from exc
         except IntegrityError as exc:
@@ -2639,6 +3019,23 @@ class RackSerializer(serializers.ModelSerializer):
                     data_center_id=room.data_center_id,
                 )
         return instance
+
+
+class RackOptionSerializer(serializers.ModelSerializer):
+    data_center_name = serializers.CharField(source="room.data_center.name", read_only=True)
+    server_room_name = serializers.CharField(source="room.name", read_only=True)
+    status_label = serializers.SerializerMethodField()
+
+    def get_status_label(self, obj) -> str:
+        return RACK_STATUS_LABELS.get(obj.status, obj.status)
+
+    class Meta:
+        model = Rack
+        fields = [
+            "id", "room", "code", "name", "total_u", "is_active", "status", "status_label",
+            "data_center_name", "server_room_name",
+        ]
+        read_only_fields = fields
 
 
 class AuditLogSerializer(serializers.ModelSerializer):

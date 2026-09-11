@@ -14,6 +14,7 @@ import { businessOptionLabel, LICENSE_STATUS_OPTIONS } from "../business-enums";
 import ResourceState from "./ResourceState.vue";
 import TableIconButton from "./TableIconButton.vue";
 import ToolbarIconButton from "./page/ToolbarIconButton.vue";
+import SearchableSelect, { type SearchableSelectOption } from "./SearchableSelect.vue";
 import { formatSystemDate } from "../system-settings";
 
 const props = defineProps<{ context: LicenseContext }>();
@@ -46,6 +47,23 @@ const licenseHasFilters = computed(
   () => Boolean(licenseKeyword.value.trim() || licenseStatus.value || licenseManufacturer.value),
 );
 
+function mapManufacturer(item: Record<string, unknown>): SearchableSelectOption {
+  return {
+    value: String(item.id ?? ""),
+    label: String(item.name ?? ""),
+    secondary: item.is_active === false ? t("status.inactive") : String(item.code ?? ""),
+    disabled: item.is_active === false,
+    data: item,
+  };
+}
+
+const selectedManufacturerOption = computed<SearchableSelectOption | null>(() => {
+  const manufacturer = context.licenseManufacturerFilterOptions.value.find(
+    (item) => String(item.id) === licenseManufacturer.value,
+  );
+  return manufacturer ? mapManufacturer(manufacturer as unknown as Record<string, unknown>) : null;
+});
+
 function formatLicenseExpiry(value: string | null | undefined): string {
   if (!value) return t("license.longTermValid");
   return formatSystemDate(value) || t("common.notAvailable");
@@ -75,6 +93,18 @@ function formatLicenseExpiry(value: string | null | undefined): string {
             >
               <el-option v-for="option in LICENSE_STATUS_OPTIONS" :key="option.value" :label="businessOptionLabel(LICENSE_STATUS_OPTIONS, option.value)" :value="option.value" />
             </el-select>
+            <SearchableSelect
+              v-model="licenseManufacturer"
+              :request="context.request"
+              endpoint="/manufacturers/"
+              :map-option="mapManufacturer"
+              :selected-option="selectedManufacturerOption"
+              :base-query="{ is_active: 'all' }"
+              :placeholder="t('license.vendor')"
+              :aria-label="t('license.vendor')"
+              clearable
+              @update:model-value="searchLicenses"
+            />
           </div>
         </template>
         <template #actions>

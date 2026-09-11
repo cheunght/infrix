@@ -11,6 +11,7 @@ import type {
   AuditLog,
   Person,
   CustomField,
+  CustomFieldSet,
   CustomFieldForm,
   CustomFieldOption,
   Department,
@@ -70,6 +71,7 @@ type FormErrors = Record<string, string>;
 
 const DEFAULT_SYSTEM_SETTINGS_FORM: SystemSettingsForm = {
   email_digest_enabled: false,
+  email_digest_people: [],
   email_digest_recipients: [],
   application_url: "",
   default_page_size: 50,
@@ -101,7 +103,7 @@ const DEFAULT_SYSTEM_SETTINGS_FORM: SystemSettingsForm = {
 };
 
 const SYSTEM_SETTINGS_VALUE_KEYS: Array<keyof Omit<SystemSettingsForm, "smtp_password">> = [
-  "email_digest_enabled", "email_digest_recipients", "application_url",
+  "email_digest_enabled", "email_digest_people", "email_digest_recipients", "application_url",
   "default_page_size",
   "default_asset_status",
   "default_locale",
@@ -145,6 +147,7 @@ export function useSettings(deps: SettingsDeps) {
   const manufacturers = ref<DictionaryItem[]>([]);
   const deviceTypes = ref<DictionaryItem[]>([]);
   const spareCategories = ref<SparePartCategory[]>([]);
+  const dictionaryFieldsets = ref<CustomFieldSet[]>([]);
   const dictionaryRows = ref<Array<DictionaryItem | SparePartCategory>>([]);
   const dictionaryTotal = ref(0);
   const dictionaryReferencesLoaded = ref(false);
@@ -152,18 +155,15 @@ export function useSettings(deps: SettingsDeps) {
   const customFieldTotal = ref(0);
   const customFieldPage = ref(1);
   const customFieldPageSize = ref(50);
-  const customFieldDeviceType = ref("");
   const customFieldActive = ref("");
+  const customFieldSearch = ref("");
+  const customFieldType = ref("");
   const customFieldForm = ref<CustomFieldForm>({
-    device_type: "",
     key: "",
     name: "",
     field_type: "text",
-    required: false,
     default_value: "",
-    sort_order: 0,
     is_active: true,
-    group: "",
     help_text: "",
     placeholder: "",
     form_visible: true,
@@ -328,7 +328,7 @@ export function useSettings(deps: SettingsDeps) {
   const dictionarySearch = ref("");
   const showDictionaryModal = ref(false);
   const editingDictionary = ref<DictionaryItem | null>(null);
-  const dictionaryForm = ref({ name: "", code: "", color: "#1677EF", is_active: true });
+  const dictionaryForm = ref({ name: "", code: "", color: "#1677EF", default_fieldset: "", is_active: true });
   const dictionaryLoading = ref(false);
   const dictionaryError = ref("");
   const dictionaryRequestId = ref(0);
@@ -370,6 +370,7 @@ export function useSettings(deps: SettingsDeps) {
     name: "",
     employee_no: "",
     department: "",
+    email: "",
     organization: "",
     contact: "",
     is_active: true,
@@ -493,7 +494,7 @@ export function useSettings(deps: SettingsDeps) {
   }
 
   watchFormFieldErrors(customFieldForm, customFieldFormErrors, [
-    "device_type", "key", "name", "field_type", "default_value", "sort_order", "group",
+    "key", "name", "field_type", "default_value",
     "help_text", "placeholder", "form_visible", "detail_visible", "list_visible", "filterable",
     "validation_config",
   ]);
@@ -505,7 +506,7 @@ export function useSettings(deps: SettingsDeps) {
   watchFormFieldErrors(userResetForm, userResetFormErrors, ["new_password", "confirm_password"]);
   watchFormFieldErrors(dictionaryForm, dictionaryFormErrors, ["name", "code", "color"]);
   watchFormFieldErrors(departmentForm, departmentFormErrors, ["name", "code", "parent"]);
-  watchFormFieldErrors(responsibilityDirectoryForm, responsibilityDirectoryFormErrors, ["name", "employee_no", "department", "organization", "contact", "is_active"]);
+  watchFormFieldErrors(responsibilityDirectoryForm, responsibilityDirectoryFormErrors, ["name", "employee_no", "department", "email", "organization", "contact", "is_active"]);
   watchFormFieldErrors(systemSettingsForm, systemSettingsFormErrors, [
     ...SYSTEM_SETTINGS_VALUE_KEYS,
     "smtp_password",
@@ -590,7 +591,7 @@ export function useSettings(deps: SettingsDeps) {
   ): Promise<boolean> {
     if (dictionaryReferencesLoaded.value) return true;
     const isCurrentRequest = () => requestId === dictionaryRequestId.value;
-    const [manufacturerResult, deviceTypeResult, spareCategoryResult] = await Promise.all([
+    const [manufacturerResult, deviceTypeResult, spareCategoryResult, fieldsetResult] = await Promise.all([
       canViewDictionarySection("manufacturers")
         ? loadAllPages<DictionaryItem>(
             `/manufacturers/?page_size=${referencePageSize}&is_active=all`,
@@ -615,11 +616,20 @@ export function useSettings(deps: SettingsDeps) {
             signal,
           )
         : Promise.resolve<SparePartCategory[]>([]),
+      deps.can("custom_fields.view") || deps.can("custom_fields.manage")
+        ? loadAllPages<CustomFieldSet>(
+            `/custom-fieldsets/?page_size=${referencePageSize}&is_active=all`,
+            version,
+            isCurrentRequest,
+            signal,
+          )
+        : Promise.resolve<CustomFieldSet[]>([]),
     ]);
     if (
       manufacturerResult == null ||
       deviceTypeResult == null ||
       spareCategoryResult == null ||
+      fieldsetResult == null ||
       !deps.isCurrentLoad(version) ||
       !isCurrentRequest() ||
       signal.aborted
@@ -627,6 +637,7 @@ export function useSettings(deps: SettingsDeps) {
     manufacturers.value = manufacturerResult;
     deviceTypes.value = deviceTypeResult;
     spareCategories.value = spareCategoryResult;
+    dictionaryFieldsets.value = fieldsetResult;
     dictionaryReferencesLoaded.value = true;
     return true;
   }
@@ -660,6 +671,7 @@ export function useSettings(deps: SettingsDeps) {
       notify_overdue_inventory: value.notify_overdue_inventory,
       notify_low_spare_stock: value.notify_low_spare_stock,
       email_digest_enabled: value.email_digest_enabled,
+      email_digest_people: [...(value.email_digest_people || [])],
       email_digest_recipients: [...value.email_digest_recipients],
       application_url: value.application_url,
     };
@@ -935,16 +947,12 @@ export function useSettings(deps: SettingsDeps) {
     dictionaryLoading.value = true;
     dictionaryError.value = "";
     try {
-      const [result, referencesLoaded] = await Promise.all([
-        deps.request<PageResult<DictionaryItem | SparePartCategory> | Array<DictionaryItem | SparePartCategory>>(
-          `/${base}/?${params.toString()}`,
-          { signal: controller.signal },
-        ),
-        loadDictionaryReferences(version, requestId, controller.signal),
-      ]);
+      const result = await deps.request<PageResult<DictionaryItem | SparePartCategory> | Array<DictionaryItem | SparePartCategory>>(
+        `/${base}/?${params.toString()}`,
+        { signal: controller.signal },
+      );
       if (
         result == null ||
-        !referencesLoaded ||
         requestId !== dictionaryRequestId.value ||
         !deps.isCurrentLoad(version) ||
         controller.signal.aborted
@@ -1127,11 +1135,12 @@ export function useSettings(deps: SettingsDeps) {
           name: subject.name || subject.display_name || "",
           employee_no: subject.employee_no || "",
           department: subject.department ? String(subject.department) : "",
+          email: subject.email || "",
           organization: subject.organization || "",
           contact: subject.contact || "",
           is_active: subject.is_active,
         }
-      : { name: "", employee_no: "", department: "", organization: "", contact: "", is_active: true };
+      : { name: "", employee_no: "", department: "", email: "", organization: "", contact: "", is_active: true };
     showResponsibilitySubjectModal.value = true;
   }
 
@@ -1153,6 +1162,7 @@ export function useSettings(deps: SettingsDeps) {
           name,
           employee_no: responsibilityDirectoryForm.value.employee_no.trim() || null,
           department: responsibilityDirectoryForm.value.department ? Number(responsibilityDirectoryForm.value.department) : null,
+          email: responsibilityDirectoryForm.value.email.trim(),
           organization: responsibilityDirectoryForm.value.organization.trim(),
           contact: responsibilityDirectoryForm.value.contact.trim(),
           is_active: responsibilityDirectoryForm.value.is_active,
@@ -1163,7 +1173,7 @@ export function useSettings(deps: SettingsDeps) {
       setActionMessage(tr("settings.personSaved"));
       await loadResponsibilityDirectory();
     } catch (error) {
-      responsibilityDirectoryFormErrors.value = extractFieldErrors(error, ["name", "employee_no", "department", "organization", "contact", "is_active"]);
+      responsibilityDirectoryFormErrors.value = extractFieldErrors(error, ["name", "employee_no", "department", "email", "organization", "contact", "is_active"]);
       setActionError(error, tr("settings.personSaveFailed"));
     } finally {
       responsibilityDirectorySaving.value = false;
@@ -1276,7 +1286,8 @@ export function useSettings(deps: SettingsDeps) {
       page_size: String(customFieldPageSize.value),
       is_active: customFieldActive.value || "all",
     });
-    if (customFieldDeviceType.value) params.set("device_type", customFieldDeviceType.value);
+    if (customFieldSearch.value.trim()) params.set("search", customFieldSearch.value.trim());
+    if (customFieldType.value) params.set("field_type", customFieldType.value);
     customFieldListLoading.value = true;
     customFieldListError.value = "";
     try {
@@ -1366,11 +1377,8 @@ export function useSettings(deps: SettingsDeps) {
     tagListLoading.value = true;
     tagListError.value = "";
     try {
-      const [result, referencesLoaded] = await Promise.all([
-        deps.request<PageResult<Tag> | Tag[]>(`/tags/?${params.toString()}`, { signal: controller.signal }),
-        loadTagReferences(version, requestId, controller.signal),
-      ]);
-      if (result == null || !referencesLoaded || requestId !== tagRequestId.value || !deps.isCurrentLoad(version) || controller.signal.aborted) return false;
+      const result = await deps.request<PageResult<Tag> | Tag[]>(`/tags/?${params.toString()}`, { signal: controller.signal });
+      if (result == null || requestId !== tagRequestId.value || !deps.isCurrentLoad(version) || controller.signal.aborted) return false;
       const nextTotal = pageTotal(result);
       const maxPage = totalPages(nextTotal, tagPageSize.value);
       if (tagPage.value > maxPage && allowPageClamp) {
@@ -1560,7 +1568,6 @@ export function useSettings(deps: SettingsDeps) {
           role_code: "auditor",
           person_id: "",
         };
-    if (!user) void loadUnlinkedPeople();
     showUserModal.value = true;
     nextTick(() => userFormRef.value?.clearValidate());
   }
@@ -1802,15 +1809,11 @@ export function useSettings(deps: SettingsDeps) {
     customFieldFormErrors.value = {};
     customFieldForm.value = field
       ? {
-          device_type: field.device_type == null ? "" : String(field.device_type),
           key: field.key,
           name: field.name,
           field_type: field.field_type,
-          required: field.required,
           default_value: field.default_value || "",
-          sort_order: field.sort_order || 0,
           is_active: field.is_active,
-          group: field.group || "",
           help_text: field.help_text || "",
           placeholder: field.placeholder || "",
           form_visible: field.form_visible !== false,
@@ -1820,15 +1823,11 @@ export function useSettings(deps: SettingsDeps) {
           validation_config: { ...(field.validation_config || {}) },
         }
       : {
-          device_type: customFieldDeviceType.value,
           key: "",
           name: "",
           field_type: "text",
-          required: false,
           default_value: "",
-          sort_order: 0,
           is_active: true,
-          group: "",
           help_text: "",
           placeholder: "",
           form_visible: true,
@@ -1843,20 +1842,23 @@ export function useSettings(deps: SettingsDeps) {
   function normalizedCustomFieldValidationConfig() {
     const config = customFieldForm.value.validation_config || {};
     const keysByType: Record<string, string[]> = {
-      text: ["min_length", "max_length"],
-      textarea: ["min_length", "max_length"],
-      number: ["min", "max", "precision"],
-      date: ["min_date", "max_date"],
+      text: ["format", "pattern", "min_length", "max_length"],
+      textarea: ["format", "pattern", "min_length", "max_length"],
+      number: [],
+      date: [],
       multiselect: ["min_items", "max_items"],
       select: [],
       boolean: [],
     };
     const keys = keysByType[customFieldForm.value.field_type] || [];
-    return Object.fromEntries(
+    const normalized = Object.fromEntries(
       keys
         .filter((key) => config[key as keyof typeof config] !== undefined && config[key as keyof typeof config] !== null && config[key as keyof typeof config] !== "")
         .map((key) => [key, config[key as keyof typeof config]]),
     );
+    if (normalized.format === "any") delete normalized.format;
+    if (normalized.format !== "regex") delete normalized.pattern;
+    return normalized;
   }
 
   async function saveCustomField() {
@@ -1870,7 +1872,6 @@ export function useSettings(deps: SettingsDeps) {
       customFieldForm.value.key = customFieldForm.value.key.trim().toLowerCase();
       customFieldForm.value.name = customFieldForm.value.name.trim();
       customFieldForm.value.default_value = customFieldForm.value.default_value.trim();
-      customFieldForm.value.group = customFieldForm.value.group.trim();
       customFieldForm.value.help_text = customFieldForm.value.help_text.trim();
       customFieldForm.value.placeholder = customFieldForm.value.placeholder.trim();
       await deps.request(path, {
@@ -1878,8 +1879,6 @@ export function useSettings(deps: SettingsDeps) {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           ...customFieldForm.value,
-          device_type: customFieldForm.value.device_type ? Number(customFieldForm.value.device_type) : null,
-          sort_order: Number(customFieldForm.value.sort_order),
           validation_config: normalizedCustomFieldValidationConfig(),
         }),
       });
@@ -1887,13 +1886,10 @@ export function useSettings(deps: SettingsDeps) {
       markCustomFieldSchemaChanged();
     } catch (error) {
       customFieldFormErrors.value = extractFieldErrors(error, [
-        "device_type",
         "key",
         "name",
         "field_type",
         "default_value",
-        "sort_order",
-        "group",
         "help_text",
         "placeholder",
         "form_visible",
@@ -2003,9 +1999,14 @@ export function useSettings(deps: SettingsDeps) {
       customFieldOptionSaving.value = false;
     }
     if (!saved) return;
-    showCustomFieldOptionModal.value = false;
     setActionMessage(tr("customField.optionSaved"));
+    editingCustomFieldOption.value = null;
+    customFieldOptionFormErrors.value = {};
+    customFieldOptionForm.value = { value: "", label: "", sort_order: 0, is_active: true };
+    const optionField = editingCustomField.value;
+    const optionRefreshed = await loadCustomFieldOptions(optionField);
     const refreshed = await loadCustomFields();
+    if (!optionRefreshed && customFieldOptionError.value) setActionMessage(tr("customField.optionSavedRefreshFailed"), "error");
     if (!refreshed && customFieldListError.value) setActionMessage(tr("customField.optionSavedRefreshFailed"), "error");
   }
   async function deleteCustomFieldOption(option: CustomFieldOption) {
@@ -2123,7 +2124,6 @@ export function useSettings(deps: SettingsDeps) {
         ((item as DictionaryItem).licenses_count || 0) > 0 ||
         ((item as DictionaryItem).spare_parts_count || 0) > 0
       )) ||
-      (dictionarySection.value === "device-types" && ((item as DictionaryItem).custom_fields_count || 0) > 0) ||
       (dictionarySection.value === "spare-categories" && ((item as SparePartCategory).spare_parts_count || 0) > 0)
     );
   }
@@ -2136,9 +2136,10 @@ export function useSettings(deps: SettingsDeps) {
           name: item.name,
           code: "code" in item ? item.code || "" : "",
           color: "color" in item ? item.color || "#1677EF" : "#1677EF",
+          default_fieldset: "default_fieldset" in item && item.default_fieldset != null ? String(item.default_fieldset) : "",
           is_active: item.is_active,
         }
-      : { name: "", code: "", color: "#1677EF", is_active: true };
+      : { name: "", code: "", color: "#1677EF", default_fieldset: "", is_active: true };
     showDictionaryModal.value = true;
   }
   function retryDictionaries() {
@@ -2195,6 +2196,7 @@ export function useSettings(deps: SettingsDeps) {
         ? {
             name: dictionaryForm.value.name,
             color: dictionaryForm.value.color,
+            default_fieldset: dictionaryForm.value.default_fieldset ? Number(dictionaryForm.value.default_fieldset) : null,
             is_active: dictionaryForm.value.is_active,
           }
         : section === "manufacturers"
@@ -2203,7 +2205,7 @@ export function useSettings(deps: SettingsDeps) {
       await deps.request(path, { method, headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload) });
       saved = true;
     } catch (error) {
-      dictionaryFormErrors.value = extractFieldErrors(error, ["name", "code", "color"]);
+      dictionaryFormErrors.value = extractFieldErrors(error, ["name", "code", "color", "default_fieldset"]);
       setActionError(error, tr("settings.dictionarySaveFailed", { item: label }));
     } finally {
       dictionarySaving.value = false;
@@ -2536,8 +2538,9 @@ export function useSettings(deps: SettingsDeps) {
     customFieldCount,
     customFieldPage,
     customFieldPageSize,
-    customFieldDeviceType,
     customFieldActive,
+    customFieldSearch,
+    customFieldType,
     customFieldForm,
     customFieldOptionForm,
     editingCustomField,
@@ -2614,6 +2617,7 @@ export function useSettings(deps: SettingsDeps) {
     showDictionaryModal,
     editingDictionary,
     dictionaryForm,
+    dictionaryFieldsets,
     dictionaryLoading,
     dictionaryError,
     dictionarySaving,

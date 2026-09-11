@@ -2,11 +2,12 @@
 import { computed, nextTick, ref, watch } from "vue";
 import { useI18n } from "vue-i18n";
 import type { FormInstance, FormRules } from "element-plus";
-import type { Rack, RackFormState } from "../types";
+import type { Rack, RackFormState, ServerRoom } from "../types";
 import type { RackManagementContext } from "../page-context";
 import FieldHelp from "./FieldHelp.vue";
 import FormDialogShell from "./FormDialogShell.vue";
 import { RACK_STATUS_OPTIONS, businessOptionLabel } from "../business-enums";
+import SearchableSelect, { type SearchableSelectOption } from "./SearchableSelect.vue";
 
 const props = defineProps<{ context: RackManagementContext }>();
 const { t } = useI18n();
@@ -76,6 +77,21 @@ const currentRoomLabel = computed(() => {
   return t("rackForm.currentRoom");
 });
 
+function mapRoom(item: Record<string, unknown>): SearchableSelectOption {
+  const room = item as unknown as ServerRoom;
+  return {
+    value: room.id,
+    label: room.name,
+    secondary: room.data_center_name || "",
+    data: room,
+  };
+}
+
+const selectedRoomOption = computed<SearchableSelectOption | null>(() => {
+  const room = currentRoom.value;
+  return room ? mapRoom(room as unknown as Record<string, unknown>) : null;
+});
+
 const currentHighestOccupiedU = computed(() => {
   const rack = editingRack.value as Rack | null;
   if (!rack?.allocations?.length) return 0;
@@ -133,10 +149,15 @@ watch(showRackModal, (open) => {
         <h3 class="form-dialog__section-title">{{ t('rackForm.basicInfo') }}</h3>
         <div class="horizontal-form__rows">
           <el-form-item :label="t('rackForm.room')" prop="room" :error="fieldError('room')">
-            <el-select v-model="rackForm.room" filterable :placeholder="currentRoomLabel">
-              <el-option v-if="editingRack && !currentRoom" :label="currentRoomLabel" :value="rackForm.room" />
-              <el-option v-for="room in availableRooms" :key="room.id" :label="`${room.data_center_name} / ${room.name}`" :value="String(room.id)" />
-            </el-select>
+            <SearchableSelect
+              v-model="rackForm.room"
+              :request="context.request"
+              endpoint="/server-rooms/"
+              :map-option="mapRoom"
+              :placeholder="currentRoomLabel"
+              :selected-option="selectedRoomOption"
+              :base-query="{ is_active: true }"
+            />
             <FieldHelp v-if="editingRack?.allocations?.length" :text="t('rackForm.locationCorrectionHelp')" />
           </el-form-item>
           <el-form-item :label="t('rack.rackCode')" prop="code" :error="fieldError('code')">

@@ -1,9 +1,9 @@
 <!-- UX Reference: standard data-list page. Reuse interaction patterns, not asset-specific fields. -->
 <script setup lang="ts">
-import { computed, nextTick, ref, watch } from "vue";
+import { computed, nextTick, reactive, ref, watch } from "vue";
 import { useI18n } from "vue-i18n";
-import { ArrowDown, Check, CopyDocument, Delete, Download, Edit, Operation, Printer, Upload } from "@element-plus/icons-vue";
-import type { Asset, AssetBatchAssignmentAction, PersonOption } from "../types";
+import { CopyDocument, Delete, Download, Edit, Filter, Operation, Plus, Printer, Upload } from "@element-plus/icons-vue";
+import type { Asset, AssetBatchAssignmentAction, AssetCustomFilter, CustomFieldFilterOperator, PersonOption } from "../types";
 import PagedTable from "./PagedTable.vue";
 import SearchField from "./SearchField.vue";
 import PageContainer from "./page/PageContainer.vue";
@@ -17,11 +17,15 @@ import TableIconButton from "./TableIconButton.vue";
 import AssetQrDialog from "./AssetQrDialog.vue";
 import DynamicFieldDisplay from "./fields/DynamicFieldDisplay.vue";
 import ToolbarIconButton from "./page/ToolbarIconButton.vue";
+import SearchableSelect, { type SearchableSelectOption } from "./SearchableSelect.vue";
 import type { AssetLedgerContext } from "../page-context";
 import { ASSET_STATUS_OPTIONS, businessOptionLabel, isAssetStatus } from "../business-enums";
 import {
   ASSET_SORT_FIELD_MAP,
+  CUSTOM_FIELD_FILTER_OPERATORS,
   MAX_DYNAMIC_ASSET_COLUMNS,
+  MAX_DYNAMIC_ASSET_FILTERS,
+  defaultCustomFieldFilterOperator,
 } from "../composables/useAssets";
 
 const props = defineProps<{ context: AssetLedgerContext }>();
@@ -31,11 +35,18 @@ const {
   assetSearch,
   searchLedger,
   assetFilters,
+  draftCustomFilters,
+  assetFilterCustomFieldSchema,
+  assetFilterCustomSchemaLoading,
+  assetFilterCustomSchemaError,
+  retryAssetFilterCustomSchema,
   assetListLoading,
   assetListError,
   exportingAssets,
   resetAssetFilters,
   tags,
+  manufacturers,
+  dataCenters,
   deviceTypes,
   assetColumnOptions,
   assetDynamicColumnOptions,
@@ -83,10 +94,6 @@ const {
   changeAssetSort,
   changeAssetPage,
   changeAssetPageSize,
-  people,
-  peopleLoading,
-  peopleError,
-  loadResponsibilitySubjects,
 } = context;
 
 const assetTableRef = ref<{
@@ -136,30 +143,14 @@ const batchAssignmentCanSubmit = computed(() => Boolean(
   !assetBatchAssignmentSaving.value,
 ));
 
-function handleAssetBatchAction(command: string) {
-  if (command === "assign" || command === "transfer") {
-    openBatchAssignment(command);
-    return;
-  }
-  if (command === "qr") {
-    openSelectedQrDialog();
-    return;
-  }
-  if (command === "fault") {
-    registerFaultFromSelection();
-    return;
-  }
-  if (command === "delete") deleteSelectedAssets();
-}
-
-function personLabel(person: PersonOption): string {
-  return person.display_name || person.name;
-}
-
-function personMeta(person: PersonOption): string {
-  return [person.employee_no, person.department_name]
-    .filter((value) => Boolean(value && value.trim()))
-    .join(" · ");
+function mapPerson(item: Record<string, unknown>): SearchableSelectOption {
+  const person = item as unknown as PersonOption;
+  return {
+    value: person.id,
+    label: person.display_name || person.name,
+    secondary: [person.employee_no, person.department_name].filter(Boolean).join(" · "),
+    data: person,
+  };
 }
 
 function openBatchAssignment(action: AssetBatchAssignmentAction) {
@@ -174,7 +165,6 @@ function openBatchAssignment(action: AssetBatchAssignmentAction) {
     context.assetBatchAssignmentError.value = t("asset.batchAssignmentLimit");
     return;
   }
-  void loadResponsibilitySubjects("");
 }
 
 function closeBatchAssignment() {
@@ -184,8 +174,10 @@ function closeBatchAssignment() {
   context.assetBatchAssignmentError.value = "";
 }
 
-function searchBatchPeople(query: string) {
-  void loadResponsibilitySubjects(query);
+function handleBatchPersonUpdate(value: unknown) {
+  const selected = Array.isArray(value) ? value[0] : value;
+  batchAssignmentTargetPersonId.value = selected == null ? "" : String(selected);
+  batchAssignmentFormError.value = "";
 }
 
 async function submitBatchAssignment() {
@@ -217,6 +209,52 @@ watch(selectedAssetIds, (ids) => {
 
 const activeTags = computed(() => tags.value.filter((item) => item.is_active));
 const activeDeviceTypes = computed(() => deviceTypes.value.filter((item) => item.is_active));
+const activeManufacturers = computed(() => manufacturers.value.filter((item) => item.is_active));
+const activeDataCenters = computed(() => dataCenters.value.filter((item) => item.is_active !== false));
+
+function mapLedgerDictionaryOption(item: Record<string, unknown>): SearchableSelectOption {
+  return {
+    value: String(item.id ?? ""),
+    label: String(item.name ?? ""),
+    secondary: String(item.code ?? ""),
+    data: item,
+  };
+}
+
+function mapLedgerTagOption(item: Record<string, unknown>): SearchableSelectOption {
+  return {
+    value: String(item.id ?? ""),
+    label: String(item.name ?? ""),
+    secondary: item.is_active === false ? t("status.inactive") : "",
+    disabled: item.is_active === false,
+    data: item,
+  };
+}
+
+function mapLedgerDataCenterOption(item: Record<string, unknown>): SearchableSelectOption {
+  return {
+    value: String(item.id ?? ""),
+    label: String(item.name ?? ""),
+    secondary: String(item.address ?? ""),
+    data: item,
+  };
+}
+
+const selectedDeviceTypeOption = computed<SearchableSelectOption | null>(() => {
+  const item = activeDeviceTypes.value.find((entry) => String(entry.id) === assetFilters.deviceType);
+  return item ? mapLedgerDictionaryOption(item as unknown as Record<string, unknown>) : null;
+});
+const selectedTagOptions = computed<SearchableSelectOption[]>(() => activeTags.value
+  .filter((item) => assetFilters.tag.includes(String(item.id)))
+  .map((item) => mapLedgerTagOption(item as unknown as Record<string, unknown>)));
+const selectedManufacturerOption = computed<SearchableSelectOption | null>(() => {
+  const item = activeManufacturers.value.find((entry) => String(entry.id) === advancedFilters.manufacturer);
+  return item ? mapLedgerDictionaryOption(item as unknown as Record<string, unknown>) : null;
+});
+const selectedDataCenterOption = computed<SearchableSelectOption | null>(() => {
+  const item = activeDataCenters.value.find((entry) => String(entry.id) === advancedFilters.dataCenter);
+  return item ? mapLedgerDataCenterOption(item as unknown as Record<string, unknown>) : null;
+});
 const hasAssetFilters = computed(() => Boolean(
   assetSearch.value.trim() ||
   assetFilters.status ||
@@ -230,7 +268,6 @@ const hasAssetFilters = computed(() => Boolean(
 ));
 const assetColumnMinWidths: Record<string, number> = {
   name: 220,
-  asset_no: 145,
   device_type: 120,
   manufacturer: 150,
   status: 105,
@@ -267,7 +304,7 @@ function assetName(asset: Asset): string {
 }
 
 const staticAssetColumnLabelKeys: Record<string, string> = {
-  name: "asset.name",
+  name: "asset.identity",
   asset_no: "asset.code",
   device_type: "asset.deviceType",
   manufacturer: "asset.manufacturer",
@@ -299,51 +336,93 @@ function assetColumnLabel(column: { key: string; label: string }): string {
   return key ? t(key) : column.label;
 }
 
-type AssetHeaderFilterKey = "device_type" | "status";
-type AssetHeaderFilterOption = { label: string; value: string };
+const showAdvancedFilters = ref(false);
+const advancedFilters = reactive({ manufacturer: "", model: "", dataCenter: "", warranty: "" });
 
-const assetHeaderDropdownOpen = ref<AssetHeaderFilterKey | null>(null);
-const assetStatusHeaderOptions = computed<AssetHeaderFilterOption[]>(() => [
-  { label: t("common.all"), value: "" },
-  ...ASSET_STATUS_OPTIONS.map((option) => ({ label: businessOptionLabel(ASSET_STATUS_OPTIONS, option.value), value: option.value })),
-]);
-const assetDeviceTypeHeaderOptions = computed<AssetHeaderFilterOption[]>(() => [
-  { label: t("common.all"), value: "" },
-  ...activeDeviceTypes.value.map((item) => ({ label: item.name, value: String(item.id) })),
-]);
+const customFilterFields = computed(() => assetFilterCustomFieldSchema.value.filter((field) => field.is_active !== false && field.filterable));
+const customFilterOperators = (filter: AssetCustomFilter): CustomFieldFilterOperator[] => {
+  const field = customFilterFields.value.find((item) => item.key === filter.fieldKey);
+  return field ? CUSTOM_FIELD_FILTER_OPERATORS[field.field_type] : ["contains", "eq"];
+};
+const customFieldForFilter = (filter: AssetCustomFilter) => customFilterFields.value.find((field) => field.key === filter.fieldKey);
 
-function isAssetHeaderFilterKey(columnKey: string): columnKey is AssetHeaderFilterKey {
-  return columnKey === "device_type" || columnKey === "status";
+function openAdvancedFilters() {
+  advancedFilters.manufacturer = assetFilters.manufacturer;
+  advancedFilters.model = assetFilters.model;
+  advancedFilters.dataCenter = assetFilters.dataCenter;
+  advancedFilters.warranty = assetFilters.warranty;
+  draftCustomFilters.value = appliedCustomFilters.value.map((filter) => ({ ...filter }));
+  showAdvancedFilters.value = true;
+  if (!assetFilterCustomFieldSchema.value.length && !assetFilterCustomSchemaLoading.value) void retryAssetFilterCustomSchema();
 }
 
-function assetHeaderFilterOptions(columnKey: string): readonly AssetHeaderFilterOption[] {
-  if (columnKey === "device_type") return assetDeviceTypeHeaderOptions.value;
-  if (columnKey === "status") return assetStatusHeaderOptions.value;
-  return [];
+function addCustomFilter() {
+  if (draftCustomFilters.value.length >= MAX_DYNAMIC_ASSET_FILTERS) return;
+  draftCustomFilters.value.push({ fieldKey: "", operator: "contains", value: "" });
 }
 
-function isAssetHeaderFilterSelected(columnKey: string, value: string): boolean {
-  if (columnKey === "device_type") return assetFilters.deviceType === value;
-  if (columnKey === "status") return assetFilters.status === value;
-  return value === "";
+function removeCustomFilter(index: number) {
+  draftCustomFilters.value.splice(index, 1);
 }
 
-function handleAssetHeaderDropdownVisible(columnKey: string, visible: boolean) {
-  if (!isAssetHeaderFilterKey(columnKey)) return;
-  if (visible) {
-    assetHeaderDropdownOpen.value = columnKey;
-  } else if (assetHeaderDropdownOpen.value === columnKey) {
-    assetHeaderDropdownOpen.value = null;
+function updateCustomFilterField(filter: AssetCustomFilter) {
+  const field = customFieldForFilter(filter);
+  filter.operator = field ? defaultCustomFieldFilterOperator(field.field_type) : "contains";
+  filter.value = "";
+}
+
+async function applyAdvancedFilters() {
+  assetFilters.manufacturer = advancedFilters.manufacturer;
+  assetFilters.model = advancedFilters.model.trim();
+  assetFilters.dataCenter = advancedFilters.dataCenter;
+  assetFilters.warranty = advancedFilters.warranty;
+  await context.applyAssetCustomFilters(draftCustomFilters.value);
+  showAdvancedFilters.value = false;
+}
+
+function clearAdvancedFilters() {
+  advancedFilters.manufacturer = "";
+  advancedFilters.model = "";
+  advancedFilters.dataCenter = "";
+  advancedFilters.warranty = "";
+  draftCustomFilters.value = [];
+}
+
+const activeFilterChips = computed(() => {
+  const chips: Array<{ key: string; label: string }> = [];
+  if (assetSearch.value.trim()) chips.push({ key: "search", label: `${t("common.search")}：${assetSearch.value.trim()}` });
+  if (assetFilters.status) chips.push({ key: "status", label: `${t("asset.status")}：${businessOptionLabel(ASSET_STATUS_OPTIONS, assetFilters.status)}` });
+  if (assetFilters.deviceType) chips.push({ key: "deviceType", label: `${t("asset.deviceType")}：${activeDeviceTypes.value.find((item) => String(item.id) === assetFilters.deviceType)?.name || assetFilters.deviceType}` });
+  if (assetFilters.tag.length) chips.push({ key: "tag", label: `${t("asset.tag")}：${activeTags.value.filter((item) => assetFilters.tag.includes(String(item.id))).map((item) => item.name).join(", ")}` });
+  if (assetFilters.manufacturer) chips.push({ key: "manufacturer", label: `${t("asset.manufacturer")}：${activeManufacturers.value.find((item) => String(item.id) === assetFilters.manufacturer)?.name || assetFilters.manufacturer}` });
+  if (assetFilters.model.trim()) chips.push({ key: "model", label: `${t("asset.model")}：${assetFilters.model.trim()}` });
+  if (assetFilters.dataCenter) chips.push({ key: "dataCenter", label: `${t("location.dataCenter")}：${activeDataCenters.value.find((item) => String(item.id) === assetFilters.dataCenter)?.name || assetFilters.dataCenter}` });
+  if (assetFilters.warranty) chips.push({ key: "warranty", label: `${t("asset.warranty")}：${t(`asset.${assetFilters.warranty}`)}` });
+  appliedCustomFilters.value.forEach((filter, index) => {
+    const field = customFieldForFilter(filter);
+    chips.push({
+      key: `custom:${index}`,
+      label: `${field?.name || filter.fieldKey} ${t(`asset.operator.${filter.operator}`)}：${filter.value}`,
+    });
+  });
+  return chips;
+});
+
+async function removeFilterChip(key: string) {
+  if (key === "search") assetSearch.value = "";
+  else if (key === "status") assetFilters.status = "";
+  else if (key === "deviceType") assetFilters.deviceType = "";
+  else if (key === "tag") assetFilters.tag = [];
+  else if (key === "manufacturer") assetFilters.manufacturer = "";
+  else if (key === "model") assetFilters.model = "";
+  else if (key === "dataCenter") assetFilters.dataCenter = "";
+  else if (key === "warranty") assetFilters.warranty = "";
+  else if (key.startsWith("custom:")) {
+    const index = Number(key.slice("custom:".length));
+    await context.applyAssetCustomFilters(appliedCustomFilters.value.filter((_filter, filterIndex) => filterIndex !== index));
+    return;
   }
-}
-
-function handleAssetHeaderFilterCommand(columnKey: string, command: string) {
-  if (columnKey === "status") {
-    assetFilters.status = isAssetStatus(command) ? command : "";
-  } else if (columnKey === "device_type") {
-    assetFilters.deviceType = /^\d+$/.test(command) && Number(command) > 0 ? command : "";
-  }
-  return searchLedger();
+  await searchLedger();
 }
 
 function clearAssetSelection() {
@@ -379,64 +458,50 @@ async function openAllQrDialog() {
           <template #filters>
             <div class="page-toolbar__filter-group">
               <el-select
-                v-model="assetFilters.tag"
-                multiple
+                v-model="assetFilters.status"
                 clearable
-                filterable
-                collapse-tags
-                :max-collapse-tags="2"
-                :loading="tagListLoading"
-                :placeholder="t('asset.tag')"
+                :placeholder="t('asset.status')"
                 @change="searchLedger"
               >
-                <el-option v-for="tag in activeTags" :key="tag.id" :label="tag.name" :value="String(tag.id)" />
+                <el-option v-for="option in ASSET_STATUS_OPTIONS" :key="option.value" :label="businessOptionLabel(ASSET_STATUS_OPTIONS, option.value)" :value="option.value" />
               </el-select>
+              <SearchableSelect
+                v-model="assetFilters.deviceType"
+                :request="context.request"
+                endpoint="/device-types/"
+                :map-option="mapLedgerDictionaryOption"
+                :selected-option="selectedDeviceTypeOption"
+                :base-query="{ is_active: true }"
+                :placeholder="t('asset.deviceType')"
+                :aria-label="t('asset.deviceType')"
+                clearable
+                @update:model-value="searchLedger"
+              />
+              <SearchableSelect
+                v-model="assetFilters.tag"
+                :request="context.request"
+                endpoint="/tags/"
+                :map-option="mapLedgerTagOption"
+                :selected-options="selectedTagOptions"
+                :base-query="{ is_active: true }"
+                :placeholder="t('asset.tag')"
+                :aria-label="t('asset.tag')"
+                multiple
+                clearable
+                collapse-tags
+                :max-collapse-tags="2"
+                @update:model-value="searchLedger"
+              />
+              <ToolbarIconButton
+                :icon="Filter"
+                :label="t('asset.moreFilters')"
+                :title="t('asset.moreFilters')"
+                @click="openAdvancedFilters"
+              />
             </div>
           </template>
           <template #actions>
-            <div v-if="selectedAssetIds.length" class="asset-batch-actions">
-              <el-tag type="info">{{ t('common.selectedItems', { count: selectedAssetIds.length }) }}</el-tag>
-              <el-dropdown
-                class="asset-batch-actions__dropdown"
-                trigger="click"
-                placement="bottom-start"
-                :disabled="assetBatchDeleteSaving || assetBatchAssignmentSaving"
-                @command="handleAssetBatchAction"
-              >
-                <el-button
-                  type="primary"
-                  plain
-                  class="asset-batch-actions__trigger"
-                  :disabled="assetBatchDeleteSaving || assetBatchAssignmentSaving"
-                  :aria-label="t('asset.batchActions')"
-                >
-                  {{ t('asset.batchActions') }}
-                  <el-icon class="el-icon--right" aria-hidden="true"><ArrowDown /></el-icon>
-                </el-button>
-                <template #dropdown>
-                  <el-dropdown-menu class="asset-batch-actions__menu">
-                    <el-dropdown-item v-if="can('assets.manage')" command="assign">
-                      {{ t('asset.batchAssignPerson') }}
-                    </el-dropdown-item>
-                    <el-dropdown-item v-if="can('assets.manage')" command="transfer">
-                      {{ t('asset.batchTransferPerson') }}
-                    </el-dropdown-item>
-                    <el-dropdown-item command="qr" :disabled="!selectedQrAssets.length">
-                      {{ t('asset.printLabels') }}
-                    </el-dropdown-item>
-                    <el-dropdown-item v-if="can('faults.manage') && selectedAssetIds.length === 1" command="fault">
-                      {{ t('asset.registerFault') }}
-                    </el-dropdown-item>
-                    <el-dropdown-item v-if="can('assets.manage')" command="delete" divided class="asset-batch-actions__danger">
-                      {{ t('common.delete') }}
-                    </el-dropdown-item>
-                  </el-dropdown-menu>
-                </template>
-              </el-dropdown>
-              <el-button link :disabled="assetBatchDeleteSaving || assetBatchAssignmentSaving" @click="clearAssetSelection">{{ t('common.cancel') }}</el-button>
-            </div>
-            <template v-else>
-              <div class="asset-ledger-action-group asset-ledger-action-group--view" role="group" :aria-label="t('asset.viewTools')">
+            <div class="asset-ledger-action-group asset-ledger-action-group--view" role="group" :aria-label="t('asset.viewTools')">
                 <el-popover placement="bottom" trigger="click">
                   <template #reference>
                     <el-button
@@ -477,13 +542,12 @@ async function openAllQrDialog() {
                   :disabled="assetLabelPrintLoading"
                   @click="openAllQrDialog"
                 />
-              </div>
-              <span v-if="can('assets.manage') || can('assets.export')" class="asset-ledger-action-divider" aria-hidden="true" />
-              <div v-if="can('assets.manage') || can('assets.export')" class="asset-ledger-action-group asset-ledger-action-group--data" role="group" :aria-label="t('asset.dataTools')">
-                <ToolbarIconButton v-if="can('assets.manage')" :icon="Upload" :label="t('asset.importAssets')" @click="openImportDialog" />
-                <ToolbarIconButton v-if="can('assets.export')" :icon="Download" :label="t('asset.exportData')" :loading="exportingAssets" :disabled="exportingAssets" @click="exportAssets" />
-              </div>
-            </template>
+            </div>
+            <span v-if="can('assets.manage') || can('assets.export')" class="asset-ledger-action-divider" aria-hidden="true" />
+            <div v-if="can('assets.manage') || can('assets.export')" class="asset-ledger-action-group asset-ledger-action-group--data" role="group" :aria-label="t('asset.dataTools')">
+              <ToolbarIconButton v-if="can('assets.manage')" :icon="Upload" :label="t('asset.importAssets')" @click="openImportDialog" />
+              <ToolbarIconButton v-if="can('assets.export')" :icon="Download" :label="t('asset.exportData')" :loading="exportingAssets" :disabled="exportingAssets" @click="exportAssets" />
+            </div>
           </template>
           <template #primary>
             <el-button v-if="can('assets.manage')" class="page-primary-action" type="primary" @click="openNewAssetModal">{{ t('asset.addAsset') }}</el-button>
@@ -491,6 +555,25 @@ async function openAllQrDialog() {
         </PageToolbar>
       </template>
       <PageContent surface>
+        <div v-if="selectedAssetIds.length" class="asset-selection-bar" role="region" :aria-label="t('asset.batchActions')">
+          <div class="asset-selection-bar__summary">
+            <strong>{{ t('common.selectedItems', { count: selectedAssetIds.length }) }}</strong>
+            <span>{{ t('asset.currentPageSelection') }}</span>
+          </div>
+          <div class="asset-selection-bar__actions">
+            <el-button v-if="can('assets.manage')" type="primary" plain :disabled="assetBatchDeleteSaving || assetBatchAssignmentSaving || selectedAssetIds.length > 100" @click="openBatchAssignment('assign')">{{ t('asset.batchAssignPerson') }}</el-button>
+            <el-button v-if="can('assets.manage')" type="primary" plain :disabled="assetBatchDeleteSaving || assetBatchAssignmentSaving || selectedAssetIds.length > 100" @click="openBatchAssignment('transfer')">{{ t('asset.batchTransferPerson') }}</el-button>
+            <el-button :disabled="assetBatchDeleteSaving || assetBatchAssignmentSaving || !selectedQrAssets.length" @click="openSelectedQrDialog">{{ t('asset.printLabels') }}</el-button>
+            <el-button v-if="can('faults.manage') && selectedAssetIds.length === 1" :disabled="assetBatchDeleteSaving || assetBatchAssignmentSaving" @click="registerFaultFromSelection">{{ t('asset.registerFault') }}</el-button>
+            <el-button v-if="can('assets.manage')" type="danger" plain :loading="assetBatchDeleteSaving" :disabled="assetBatchAssignmentSaving" @click="deleteSelectedAssets">{{ t('common.delete') }}</el-button>
+            <el-button link :disabled="assetBatchDeleteSaving || assetBatchAssignmentSaving" @click="clearAssetSelection">{{ t('common.cancel') }}</el-button>
+          </div>
+        </div>
+        <div v-if="activeFilterChips.length" class="asset-active-filters" aria-live="polite">
+          <span class="asset-active-filters__label">{{ t('asset.activeFilters') }}</span>
+          <el-tag v-for="chip in activeFilterChips" :key="chip.key" closable @close="removeFilterChip(chip.key)">{{ chip.label }}</el-tag>
+          <el-button link type="primary" @click="resetAssetFilters">{{ t('common.clearFilters') }}</el-button>
+        </div>
         <ResourceState :error="assetListError" @retry="searchLedger">
           <template #error="{ error }">
             <el-alert :title="t('common.dataLoadFailed')" :description="error" type="error" show-icon :closable="false" />
@@ -519,43 +602,11 @@ async function openAllQrDialog() {
               :label="assetColumnLabel(column)"
               :prop="column.key"
               :min-width="assetColumnMinWidth(column)"
+              :fixed="column.key === 'name' || column.key === 'status' ? 'left' : undefined"
               :show-overflow-tooltip="['data_center', 'server_room', 'rack_code', 'u_range'].includes(column.key)"
               :sortable="assetSortFieldForColumn(column.key) ? 'custom' : false"
             >
-              <template #header>
-                <el-dropdown
-                  v-if="isAssetHeaderFilterKey(column.key)"
-                  class="asset-table-header-dropdown"
-                  trigger="click"
-                  placement="bottom-start"
-                  @command="(command: string) => handleAssetHeaderFilterCommand(column.key, command)"
-                  @visible-change="(visible: boolean) => handleAssetHeaderDropdownVisible(column.key, visible)"
-                >
-                  <el-button
-                    text
-                    class="asset-table-header-filter-trigger"
-                    :aria-expanded="assetHeaderDropdownOpen === column.key"
-                    :aria-label="t('common.search') + ' ' + assetColumnLabel(column)"
-                    aria-haspopup="menu"
-                  >
-                    <span class="asset-table-header-filter-trigger__label">{{ assetColumnLabel(column) }}</span>
-                    <el-icon aria-hidden="true">
-                      <ArrowDown />
-                    </el-icon>
-                  </el-button>
-                  <template #dropdown>
-                    <el-dropdown-menu>
-                      <el-dropdown-item v-for="option in assetHeaderFilterOptions(column.key)" :key="option.value" :command="option.value">
-                        <span class="asset-table-header-dropdown-option">
-                          <el-icon class="asset-table-header-dropdown-option__check" :class="{ 'is-selected': isAssetHeaderFilterSelected(column.key, option.value) }" aria-hidden="true"><Check /></el-icon>
-                          <span>{{ option.label }}</span>
-                        </span>
-                      </el-dropdown-item>
-                    </el-dropdown-menu>
-                  </template>
-                </el-dropdown>
-                <span v-else>{{ assetColumnLabel(column) }}</span>
-              </template>
+              <template #header><span>{{ assetColumnLabel(column) }}</span></template>
               <template #default="{ row }">
                 <template v-if="column.key === 'name'">
                   <el-button link type="primary" class="asset-identity-cell" :aria-label="t('asset.viewAsset') + ' ' + assetName(row)" @click.stop="openAssetDetail(row.id)">
@@ -583,6 +634,81 @@ async function openAllQrDialog() {
         </ResourceState>
       </PageContent>
   </PageContainer>
+
+  <el-drawer v-model="showAdvancedFilters" :title="t('asset.moreFilters')" size="420px" append-to-body>
+    <div class="asset-filter-drawer">
+      <el-form label-position="top">
+        <el-form-item :label="t('asset.manufacturer')">
+          <SearchableSelect
+            v-model="advancedFilters.manufacturer"
+            :request="context.request"
+            endpoint="/manufacturers/"
+            :map-option="mapLedgerDictionaryOption"
+            :selected-option="selectedManufacturerOption"
+            :base-query="{ is_active: true }"
+            :placeholder="t('asset.manufacturer')"
+            :aria-label="t('asset.manufacturer')"
+            clearable
+          />
+        </el-form-item>
+        <el-form-item :label="t('asset.model')">
+          <el-input v-model="advancedFilters.model" clearable :placeholder="t('asset.modelFilterPlaceholder')" />
+        </el-form-item>
+        <el-form-item :label="t('location.dataCenter')">
+          <SearchableSelect
+            v-model="advancedFilters.dataCenter"
+            :request="context.request"
+            endpoint="/data-centers/"
+            :map-option="mapLedgerDataCenterOption"
+            :selected-option="selectedDataCenterOption"
+            :base-query="{ is_active: true }"
+            :placeholder="t('location.dataCenter')"
+            :aria-label="t('location.dataCenter')"
+            clearable
+          />
+        </el-form-item>
+        <el-form-item :label="t('asset.warranty')">
+          <el-select v-model="advancedFilters.warranty" clearable class="asset-filter-drawer__control">
+            <el-option :label="t('asset.within_30_days')" value="within_30_days" />
+            <el-option :label="t('asset.expired')" value="expired" />
+          </el-select>
+        </el-form-item>
+      </el-form>
+
+      <section class="asset-filter-drawer__custom">
+        <div class="asset-filter-drawer__section-heading">
+          <h3>{{ t('asset.customFilters') }}</h3>
+          <el-button link type="primary" :disabled="draftCustomFilters.length >= MAX_DYNAMIC_ASSET_FILTERS || !customFilterFields.length" @click="addCustomFilter">
+            <el-icon aria-hidden="true"><Plus /></el-icon>{{ t('asset.addFilter') }}
+          </el-button>
+        </div>
+        <el-alert v-if="assetFilterCustomSchemaError" :title="assetFilterCustomSchemaError" type="error" show-icon :closable="false">
+          <template #default><el-button link type="danger" :loading="assetFilterCustomSchemaLoading" @click="retryAssetFilterCustomSchema">{{ t('common.retry') }}</el-button></template>
+        </el-alert>
+        <el-skeleton v-else-if="assetFilterCustomSchemaLoading" :rows="3" animated />
+        <el-empty v-else-if="!customFilterFields.length" :image-size="48" :description="t('asset.noFilterFields')" />
+        <div v-else class="asset-filter-drawer__custom-list">
+          <div v-for="(filter, index) in draftCustomFilters" :key="`${index}-${filter.fieldKey}`" class="asset-filter-drawer__custom-row">
+            <el-select v-model="filter.fieldKey" filterable :placeholder="t('asset.customField')" @change="updateCustomFilterField(filter)">
+              <el-option v-for="field in customFilterFields" :key="field.key" :label="field.name" :value="field.key" />
+            </el-select>
+            <el-select v-model="filter.operator" :aria-label="t('asset.filterOperator')">
+              <el-option v-for="operator in customFilterOperators(filter)" :key="operator" :label="t(`asset.operator.${operator}`)" :value="operator" />
+            </el-select>
+            <el-input v-model="filter.value" :placeholder="t('asset.filterValue')" @keyup.enter="applyAdvancedFilters" />
+            <el-button text type="danger" :aria-label="t('common.delete')" @click="removeCustomFilter(index)"><el-icon><Delete /></el-icon></el-button>
+          </div>
+        </div>
+      </section>
+    </div>
+    <template #footer>
+      <div class="asset-filter-drawer__footer">
+        <el-button @click="clearAdvancedFilters">{{ t('asset.clearAdvancedFilters') }}</el-button>
+        <el-button @click="showAdvancedFilters = false">{{ t('common.cancel') }}</el-button>
+        <el-button type="primary" @click="applyAdvancedFilters">{{ t('asset.applyFilters') }}</el-button>
+      </div>
+    </template>
+  </el-drawer>
 
   <ActionDialogShell
     v-model="showAssetBatchDeleteResult"
@@ -626,15 +752,6 @@ async function openAllQrDialog() {
       show-icon
       class="action-dialog__alert"
     />
-    <el-alert
-      v-if="peopleError"
-      :title="t('asset.peopleLoadFailed')"
-      :description="peopleError"
-      type="error"
-      :closable="false"
-      show-icon
-      class="action-dialog__alert"
-    />
     <dl class="asset-batch-assignment__summary">
       <div>
         <dt>{{ t('asset.batchAssignmentSelected') }}</dt>
@@ -653,30 +770,16 @@ async function openAllQrDialog() {
         required
         :error="batchAssignmentFormError"
       >
-        <el-select
-          v-model="batchAssignmentTargetPersonId"
-          filterable
-          remote
-          reserve-keyword
-          clearable
-          :remote-method="searchBatchPeople"
-          :loading="peopleLoading"
+        <SearchableSelect
+          :model-value="batchAssignmentTargetPersonId"
+          :request="context.request"
+          endpoint="/people/"
+          :map-option="mapPerson"
+          :base-query="{ is_active: true }"
           :placeholder="t('asset.selectPerson')"
-          :no-data-text="t('common.noData')"
-          :no-match-text="t('common.noData')"
           :aria-label="t('asset.batchAssignmentTarget')"
-          @change="batchAssignmentFormError = ''"
-        >
-          <el-option
-            v-for="person in people"
-            :key="person.id"
-            :label="personLabel(person)"
-            :value="String(person.id)"
-          >
-            <span>{{ personLabel(person) }}</span>
-            <small v-if="personMeta(person)"> · {{ personMeta(person) }}</small>
-          </el-option>
-        </el-select>
+          @update:model-value="handleBatchPersonUpdate"
+        />
       </el-form-item>
       <el-form-item :label="t('asset.batchAssignmentReason')">
         <el-input

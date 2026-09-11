@@ -92,36 +92,55 @@ class DeviceType(Timestamped):
     name = models.CharField(max_length=80, unique=True)
     color = models.CharField(max_length=7, default="#1677EF")
     is_active = models.BooleanField(default=True)
+    default_fieldset = models.ForeignKey(
+        "CustomFieldSet",
+        null=True,
+        blank=True,
+        on_delete=models.PROTECT,
+        related_name="default_for_device_types",
+    )
 
     def __str__(self):
         return self.name
 
 
 class AssetModel(Timestamped):
-    """Reusable asset model metadata used as a create-time template."""
+    """Canonical model metadata shared by every linked asset."""
 
     name = models.CharField(max_length=160)
     manufacturer = models.ForeignKey(
         Manufacturer,
-        null=True,
-        blank=True,
-        on_delete=models.SET_NULL,
+        on_delete=models.PROTECT,
         related_name="asset_models",
     )
     device_type = models.ForeignKey(
         DeviceType,
+        on_delete=models.PROTECT,
+        related_name="asset_models",
+    )
+    fieldset = models.ForeignKey(
+        "CustomFieldSet",
         null=True,
         blank=True,
-        on_delete=models.SET_NULL,
+        on_delete=models.PROTECT,
         related_name="asset_models",
     )
     model_number = models.CharField(max_length=160, blank=True)
     default_warranty_months = models.PositiveIntegerField(null=True, blank=True)
     expected_life_months = models.PositiveIntegerField(null=True, blank=True)
+    notes = models.TextField(blank=True)
     is_active = models.BooleanField(default=True)
 
     class Meta:
         ordering = ["name", "manufacturer__name", "id"]
+        constraints = [
+            models.UniqueConstraint(fields=["manufacturer", "name"], name="uniq_asset_model_name_per_manufacturer"),
+            models.UniqueConstraint(
+                fields=["manufacturer", "model_number"],
+                condition=~models.Q(model_number=""),
+                name="uniq_asset_model_number_per_manufacturer",
+            ),
+        ]
 
     def __str__(self):
         return self.name
@@ -138,21 +157,11 @@ class CustomField(Timestamped):
         ("boolean", "是/否"),
     ]
 
-    device_type = models.ForeignKey(
-        DeviceType,
-        null=True,
-        blank=True,
-        on_delete=models.PROTECT,
-        related_name="custom_fields",
-    )
     key = models.CharField(max_length=80, unique=True)
     name = models.CharField(max_length=120)
     field_type = models.CharField(max_length=20, choices=FIELD_TYPES)
-    required = models.BooleanField(default=False)
     default_value = models.CharField(max_length=255, blank=True)
-    sort_order = models.PositiveIntegerField(default=0)
     is_active = models.BooleanField(default=True)
-    group = models.CharField(max_length=80, blank=True, default="")
     help_text = models.TextField(max_length=1000, blank=True, default="")
     placeholder = models.CharField(max_length=255, blank=True, default="")
     form_visible = models.BooleanField(default=True)
@@ -162,11 +171,36 @@ class CustomField(Timestamped):
     validation_config = models.JSONField(default=dict, blank=True)
 
     class Meta:
-        ordering = ["device_type__name", "sort_order", "id"]
+        ordering = ["name", "id"]
 
     def __str__(self):
-        scope = self.device_type.name if self.device_type_id else "全部资产"
-        return f"{scope} / {self.name}"
+        return self.name
+
+
+class CustomFieldSet(Timestamped):
+    name = models.CharField(max_length=120, unique=True)
+    description = models.TextField(blank=True)
+    is_active = models.BooleanField(default=True)
+
+    class Meta:
+        ordering = ["name", "id"]
+
+    def __str__(self):
+        return self.name
+
+
+class CustomFieldSetItem(Timestamped):
+    fieldset = models.ForeignKey(CustomFieldSet, on_delete=models.CASCADE, related_name="items")
+    field = models.ForeignKey(CustomField, on_delete=models.PROTECT, related_name="fieldset_items")
+    required = models.BooleanField(default=False)
+    group = models.CharField(max_length=80, blank=True, default="")
+    sort_order = models.PositiveIntegerField(default=0)
+
+    class Meta:
+        ordering = ["sort_order", "id"]
+        constraints = [
+            models.UniqueConstraint(fields=["fieldset", "field"], name="uniq_custom_fieldset_field"),
+        ]
 
 
 class CustomFieldOption(Timestamped):
@@ -383,6 +417,7 @@ class Person(Timestamped):
         on_delete=models.PROTECT,
         related_name="people",
     )
+    email = models.EmailField(max_length=254, blank=True, default="")
     organization = models.CharField(max_length=160, blank=True)
     contact = models.CharField(max_length=160, blank=True)
     is_active = models.BooleanField(default=True)
@@ -393,6 +428,15 @@ class Person(Timestamped):
     def display_name(self):
         return self.name
 
+    def notification_email(self):
+        """Return the current address used for operational email delivery."""
+
+        direct_email = (self.email or "").strip().lower()
+        if direct_email:
+            return direct_email
+        account = self.account if self.account_id else None
+        return (getattr(account, "email", "") or "").strip().lower()
+
     def __str__(self):
         return self.display_name() or f"人员 #{self.pk}"
 
@@ -401,7 +445,6 @@ class Asset(Timestamped):
     STATUS = [("in_stock", "在库"), ("in_use", "在用"), ("idle", "闲置"), ("repair", "维修中"), ("retired", "已报废")]
     asset_no = models.CharField(max_length=80, unique=True)
     name = models.CharField(max_length=160)
-    manufacturer_model = models.CharField(max_length=160, blank=True)
     serial_number = models.CharField(max_length=160, blank=True, unique=True, null=True)
     purpose = models.CharField(max_length=255, blank=True)
     status = models.CharField(max_length=20, choices=STATUS, default="in_stock")
@@ -430,8 +473,6 @@ class Asset(Timestamped):
         blank=True,
         default=None,
     )
-    manufacturer = models.ForeignKey(Manufacturer, null=True, blank=True, on_delete=models.SET_NULL, related_name="assets")
-    device_type = models.ForeignKey(DeviceType, null=True, blank=True, on_delete=models.SET_NULL, related_name="assets")
     asset_data_center = models.ForeignKey(
         DataCenter,
         null=True,
@@ -446,9 +487,23 @@ class Asset(Timestamped):
         blank=True,
         on_delete=models.PROTECT,
         related_name="assets",
-        help_text="结构化资产型号；型号元数据仅用于创建资产时的默认值",
+        help_text="结构化资产型号；关联后实时使用型号的厂商、设备类型和字段集",
     )
-    model = models.CharField(max_length=160, blank=True)
+    model_text = models.CharField(max_length=160, blank=True)
+    standalone_manufacturer = models.ForeignKey(
+        Manufacturer,
+        null=True,
+        blank=True,
+        on_delete=models.PROTECT,
+        related_name="standalone_assets",
+    )
+    standalone_device_type = models.ForeignKey(
+        DeviceType,
+        null=True,
+        blank=True,
+        on_delete=models.PROTECT,
+        related_name="standalone_assets",
+    )
     warranty_months = models.PositiveIntegerField(null=True, blank=True)
     assigned_person = models.ForeignKey(
         "Person",
@@ -459,6 +514,64 @@ class Asset(Timestamped):
         help_text="当前使用人；指定、归还和转交通过使用人操作维护",
     )
     notes = models.TextField(blank=True)
+
+    class Meta:
+        constraints = [
+            models.CheckConstraint(
+                condition=(
+                    models.Q(
+                        asset_model__isnull=False,
+                        standalone_manufacturer__isnull=True,
+                        standalone_device_type__isnull=True,
+                        model_text="",
+                    )
+                    | models.Q(asset_model__isnull=True, standalone_device_type__isnull=False)
+                ),
+                name="asset_model_or_standalone_metadata",
+            ),
+        ]
+
+    @property
+    def resolved_manufacturer(self):
+        return self.asset_model.manufacturer if self.asset_model_id else self.standalone_manufacturer
+
+    @property
+    def manufacturer(self):
+        return self.resolved_manufacturer
+
+    @property
+    def manufacturer_id(self):
+        manufacturer = self.resolved_manufacturer
+        return manufacturer.pk if manufacturer is not None else None
+
+    @property
+    def resolved_device_type(self):
+        return self.asset_model.device_type if self.asset_model_id else self.standalone_device_type
+
+    @property
+    def device_type(self):
+        return self.resolved_device_type
+
+    @property
+    def device_type_id(self):
+        device_type = self.resolved_device_type
+        return device_type.pk if device_type is not None else None
+
+    @property
+    def resolved_fieldset(self):
+        if self.asset_model_id:
+            return self.asset_model.fieldset or self.asset_model.device_type.default_fieldset
+        if self.standalone_device_type_id:
+            return self.standalone_device_type.default_fieldset
+        return None
+
+    @property
+    def resolved_model_name(self):
+        return self.asset_model.name if self.asset_model_id else self.model_text
+
+    @property
+    def resolved_model_number(self):
+        return self.asset_model.model_number if self.asset_model_id else ""
 
     def __str__(self):
         return f"{self.asset_no} {self.name}"
@@ -616,6 +729,7 @@ class SystemSetting(Timestamped):
     branding_compact_logo = models.BinaryField(default=bytes, blank=True)
     branding_favicon = models.BinaryField(default=bytes, blank=True)
     email_digest_enabled = models.BooleanField(default=False)
+    email_digest_people = models.JSONField(default=list, blank=True)
     email_digest_recipients = models.JSONField(default=list, blank=True)
     application_url = models.URLField(max_length=500, blank=True, default="")
 

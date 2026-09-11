@@ -2,7 +2,7 @@ from rest_framework.routers import DefaultRouter
 from django.urls import path
 from .branding import public_branding, branding_image, branding_configuration
 from .operations import operational_status
-from .views import AssetModelViewSet, AuditLogViewSet, AssetViewSet, CustomFieldOptionViewSet, CustomFieldViewSet, DataCenterViewSet, DepartmentViewSet, DeviceTypeViewSet, FaultEventViewSet, GroupViewSet, InventoryItemViewSet, InventoryTaskViewSet, ManufacturerViewSet, NotificationDeliveryViewSet, PersonViewSet, RackViewSet, RepairRecordViewSet, ServerRoomViewSet, SoftwareLicenseViewSet, SparePartCategoryViewSet, SparePartViewSet, SpareStockViewSet, SpareStockTransactionViewSet, TagViewSet, UserViewSet, alerts_overview, asset_inventory_records, dashboard_overview, facilities_summary, inventory_inspectors, license_export, license_summary, repair_record_export, rack_layout_export, spare_part_export, spare_transaction_export, auth_login, auth_me, auth_logout, auth_csrf, auth_change_password, auth_ldap_status, auth_ldap_config, auth_ldap_diagnostics, smtp_test_email, system_reset, system_settings, asset_import, asset_import_preview, asset_import_template, asset_export
+from .views import AssetModelViewSet, AuditLogViewSet, AssetViewSet, CustomFieldOptionViewSet, CustomFieldSetViewSet, CustomFieldViewSet, DataCenterViewSet, DepartmentViewSet, DeviceTypeViewSet, FaultEventViewSet, GroupViewSet, InventoryItemViewSet, InventoryTaskViewSet, ManufacturerViewSet, NotificationDeliveryViewSet, PersonViewSet, RackViewSet, RepairRecordViewSet, ServerRoomViewSet, SoftwareLicenseViewSet, SparePartCategoryViewSet, SparePartViewSet, SpareStockViewSet, SpareStockTransactionViewSet, TagViewSet, UserViewSet, alerts_overview, asset_inventory_records, asset_model_export, asset_model_import, asset_model_import_preview, asset_model_import_template, dashboard_overview, facilities_summary, inventory_inspectors, license_export, license_summary, repair_record_export, rack_layout_export, spare_part_export, spare_transaction_export, auth_login, auth_me, auth_logout, auth_csrf, auth_change_password, auth_ldap_status, auth_ldap_config, auth_ldap_diagnostics, smtp_test_email, system_reset, system_settings, asset_import, asset_import_preview, asset_import_template, asset_export
 
 router = DefaultRouter()
 router.register("assets", AssetViewSet)
@@ -16,6 +16,7 @@ router.register("device-types", DeviceTypeViewSet, basename="device-type")
 router.register("asset-models", AssetModelViewSet, basename="asset-model")
 router.register("spare-part-categories", SparePartCategoryViewSet, basename="spare-part-category")
 router.register("custom-fields", CustomFieldViewSet, basename="custom-field")
+router.register("custom-fieldsets", CustomFieldSetViewSet, basename="custom-fieldset")
 router.register("custom-field-options", CustomFieldOptionViewSet, basename="custom-field-option")
 router.register("tags", TagViewSet, basename="tag")
 router.register("users", UserViewSet, basename="user")
@@ -50,6 +51,10 @@ urlpatterns = [
     path("assets/import/template/", asset_import_template),
     path("assets/import/preview/", asset_import_preview),
     path("assets/import/", asset_import),
+    path("asset-models/import/template/", asset_model_import_template),
+    path("asset-models/import/preview/", asset_model_import_preview),
+    path("asset-models/import/", asset_model_import),
+    path("reports/asset-models/export/", asset_model_export),
     path("reports/assets/export/", asset_export),
     path("reports/repairs/export/", repair_record_export),
     path("reports/licenses/export/", license_export),

@@ -13,7 +13,8 @@ import PageContainer from "./page/PageContainer.vue";
 import PageContent from "./page/PageContent.vue";
 import PageToolbar from "./page/PageToolbar.vue";
 import ToolbarIconButton from "./page/ToolbarIconButton.vue";
-import type { Rack, RackStatus, ServerRoom } from "../types";
+import SearchableSelect, { type SearchableSelectOption, type SearchableSelectValue } from "./SearchableSelect.vue";
+import type { DataCenter, Rack, RackStatus, ServerRoom } from "../types";
 import type { RackSharedContext } from "../page-context";
 import { rackStatusValue } from "../business-enums";
 
@@ -42,6 +43,29 @@ const exportingRackLayout = context.exportingRackLayout;
 const rackUsedU = context.rackUsedU;
 const rackUtilization = context.rackUtilization;
 const rackUtilizationColor = context.rackUtilizationColor;
+
+function mapDataCenter(item: Record<string, unknown>): SearchableSelectOption {
+  const center = item as unknown as DataCenter;
+  return { value: center.id, label: center.name, secondary: center.address || "", data: center };
+}
+
+function mapRoom(item: Record<string, unknown>): SearchableSelectOption {
+  const room = item as unknown as ServerRoom;
+  return { value: room.id, label: room.name, secondary: room.data_center_name || "", data: room };
+}
+
+const selectedLocationDataCenterOption = computed<SearchableSelectOption | null>(() => {
+  const center = dataCenters.value.find((item) => String(item.id) === locationDataCenter.value);
+  return center ? mapDataCenter(center as unknown as Record<string, unknown>) : null;
+});
+const selectedViewDataCenterOption = computed<SearchableSelectOption | null>(() => {
+  const center = dataCenters.value.find((item) => String(item.id) === selectedDataCenter.value);
+  return center ? mapDataCenter(center as unknown as Record<string, unknown>) : null;
+});
+const selectedViewRoomOption = computed<SearchableSelectOption | null>(() => {
+  const room = roomOptions.value.find((item) => String(item.id) === selectedRoom.value);
+  return room ? mapRoom(room as unknown as Record<string, unknown>) : null;
+});
 
 const rooms = computed<ServerRoom[]>(() => serverRooms.value || []);
 
@@ -83,8 +107,9 @@ function rackLocationLabel(rack: Rack | null) {
   return [rack?.data_center_name, rack?.server_room_name].filter(Boolean).join(" / ") || t("rack.unlinkedLocation");
 }
 
-function changeViewRoom(value: string | number | null | undefined) {
-  const roomId = value == null ? "" : String(value);
+function changeViewRoom(value: SearchableSelectValue | SearchableSelectValue[] | null | undefined) {
+  const selectedValue = Array.isArray(value) ? value[0] : value;
+  const roomId = selectedValue == null ? "" : String(selectedValue);
   context.selectedRoom.value = roomId;
   context.selectedRack.value = "";
   context.selectedRackDeviceTypeId.value = "";
@@ -149,21 +174,7 @@ function deleteCurrentRack() {
                 <el-option :label="t('location.dataCenter')" value="data-center" />
                 <el-option :label="t('location.room')" value="room" />
               </el-select>
-              <el-select
-                v-model="locationDataCenter"
-                :placeholder="t('location.dataCenter')"
-                :aria-label="t('location.dataCenter')"
-                clearable
-                @change="context.changeLocationDataCenter"
-              >
-                <el-option :label="t('location.allDataCenters')" value="" />
-                <el-option
-                  v-for="center in dataCenters"
-                  :key="center.id"
-                  :label="center.name"
-                  :value="String(center.id)"
-                />
-              </el-select>
+              <SearchableSelect v-model="locationDataCenter" :request="context.request" endpoint="/data-centers/" :map-option="mapDataCenter" :selected-option="selectedLocationDataCenterOption" :base-query="{ is_active: 'all' }" :placeholder="t('location.dataCenter')" :aria-label="t('location.dataCenter')" clearable @update:model-value="context.changeLocationDataCenter" />
               <el-select
                 v-model="locationStatus"
                 :placeholder="t('location.allStatuses')"
@@ -178,37 +189,8 @@ function deleteCurrentRack() {
           </template>
           <template v-else-if="rackSection === 'view'" #filters>
             <div class="page-toolbar__filter-group">
-              <el-select
-              v-model="selectedDataCenter"
-              :placeholder="t('location.dataCenter')"
-              :aria-label="t('location.dataCenter')"
-              clearable
-              @change="context.changeDataCenter"
-            >
-              <el-option :label="t('location.allDataCenters')" value="" />
-              <el-option
-                v-for="center in dataCenters"
-                :key="center.id"
-                :label="center.name"
-                :value="String(center.id)"
-              />
-              </el-select>
-              <el-select
-              v-model="selectedRoom"
-              :placeholder="t('location.room')"
-              :aria-label="t('location.room')"
-              clearable
-              :disabled="!roomOptions.length"
-              @change="changeViewRoom"
-            >
-              <el-option :label="t('location.allRooms')" value="" />
-              <el-option
-                v-for="room in roomOptions"
-                :key="room.id"
-                :label="room.name"
-                :value="room.id"
-              />
-              </el-select>
+              <SearchableSelect v-model="selectedDataCenter" :request="context.request" endpoint="/data-centers/" :map-option="mapDataCenter" :selected-option="selectedViewDataCenterOption" :base-query="{ is_active: true }" :placeholder="t('location.dataCenter')" :aria-label="t('location.dataCenter')" clearable @update:model-value="context.changeDataCenter" />
+              <SearchableSelect v-model="selectedRoom" :request="context.request" endpoint="/server-rooms/" :map-option="mapRoom" :selected-option="selectedViewRoomOption" :base-query="{ data_center: selectedDataCenter, is_active: true }" :placeholder="t('location.room')" :aria-label="t('location.room')" clearable @update:model-value="changeViewRoom" />
             </div>
           </template>
           <template v-if="rackSection === 'view'" #actions>

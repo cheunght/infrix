@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, ref, watch } from "vue";
+import { useRouter } from "vue-router";
 import { useI18n } from "vue-i18n";
 import { CircleCheck, CircleClose, Delete, Edit, Key, View } from "@element-plus/icons-vue";
 import PagedTable from "./PagedTable.vue";
@@ -11,6 +12,7 @@ import PeopleSettingsPage from "./ResponsibilitySubjectSettingsPage.vue";
 import BrandingSettings from "./BrandingSettings.vue";
 import SystemOperations from "./SystemOperations.vue";
 import NotificationDeliveryLogs from "./NotificationDeliveryLogs.vue";
+import SearchableSelect, { type SearchableSelectOption } from "./SearchableSelect.vue";
 import DescriptionList from "./DescriptionList.vue";
 import PageContainer from "./page/PageContainer.vue";
 import PageContent from "./page/PageContent.vue";
@@ -19,9 +21,10 @@ import PageToolbar from "./page/PageToolbar.vue";
 import StatusTag from "./StatusTag.vue";
 import ActionDialogShell from "./ActionDialogShell.vue";
 import TableIconButton from "./TableIconButton.vue";
+import { pageItems, type PageResult } from "../api";
 import type { SettingsContext } from "../page-context";
-import type { SystemSettingsTab } from "../router";
-import type { AuditLog } from "../types";
+import { routeForPage, type SystemSettingsTab } from "../router";
+import type { AuditLog, Department, PersonOption } from "../types";
 import { ASSET_STATUS_OPTIONS, businessOptionLabel, roleDescription, roleLabel } from "../business-enums";
 import {
   auditActionOptions,
@@ -36,7 +39,30 @@ import {
 
 const props = defineProps<{ context: SettingsContext }>();
 const { t } = useI18n();
+const router = useRouter();
 const context = props.context;
+function mapDigestPerson(item: Record<string, unknown>): SearchableSelectOption {
+  const person = item as unknown as PersonOption;
+  const email = person.notification_email || person.email || person.account_email || "";
+  return {
+    value: person.id,
+    label: person.display_name || person.name,
+    secondary: [person.employee_no, person.department_name, email].filter(Boolean).join(" · "),
+    disabled: person.is_active === false || !email,
+    data: person,
+  };
+}
+
+function mapDepartment(item: Record<string, unknown>): SearchableSelectOption {
+  const department = item as unknown as Department;
+  return {
+    value: department.id,
+    label: department.name,
+    secondary: [department.code, department.parent_name].filter(Boolean).join(" · "),
+    disabled: department.id === editingDepartment.value?.id,
+    data: department,
+  };
+}
 const maintenanceTab = ref("operations");
 const maintenanceTabs = computed<PageTabItem[]>(() => [
   { value: "operations", label: t("operations.statusTab") },
@@ -292,7 +318,13 @@ const localizedDictionaryLabel = computed(() => {
 const hasDictionaryFilters = computed(() => Boolean(dictionarySearch.value.trim()));
 const hasUserSearch = computed(() => Boolean(userSearch.value.trim()));
 const hasDepartmentSearch = computed(() => Boolean(departmentSearch.value.trim()));
-const departmentParentOptions = computed(() => departmentOptions.value.filter((item) => item.id !== editingDepartment.value?.id));
+const selectedDepartmentParentOption = computed<SearchableSelectOption | null>(() => {
+  const selectedId = departmentForm.value.parent;
+  if (!selectedId) return null;
+  const item = [...departments.value, ...departmentOptions.value]
+    .find((entry) => String(entry.id) === selectedId && entry.id !== editingDepartment.value?.id);
+  return item ? mapDepartment(item as unknown as Record<string, unknown>) : null;
+});
 const userBatchFailures = computed(() =>
   (userBatchResult.value?.results || []).filter((result) => !result.success),
 );
@@ -365,6 +397,14 @@ onBeforeUnmount(clearUserSearchTimer);
 function clearDictionarySearch() {
   dictionarySearch.value = "";
   return searchDictionaries();
+}
+
+function handleDictionarySectionChange(value: string) {
+  if (value === "device-types") {
+    void router.replace(routeForPage("asset-config", { assetConfigSection: "device-types" }));
+    return;
+  }
+  return changeDictionarySection();
 }
 
 function clearAuditFilters() {
@@ -642,16 +682,45 @@ function userDirectoryTooltip(user: { auth_source: string; directory_provider: s
                 </div>
                   </section>
               <section v-else-if="systemSettingsTab === 'notifications'" class="settings-system__section">
+                <div class="settings-system__notification-sections">
+                  <section class="settings-system__notification-section">
+                    <header class="settings-system__notification-section-heading">
+                      <h2>{{ t('settings.emailDigestSection') }}</h2>
+                      <p>{{ t('settings.emailDigestSectionDescription') }}</p>
+                    </header>
                     <el-form-item :label="t('operations.emailEnabled')" :error="systemSettingsFormErrors.email_digest_enabled">
                       <el-switch v-model="systemSettingsForm.email_digest_enabled" :disabled="!can('settings.manage') || systemSettingsSaving" />
                     </el-form-item>
-                    <el-form-item :label="t('operations.recipients')" :error="systemSettingsFormErrors.email_digest_recipients">
-                      <el-select v-model="systemSettingsForm.email_digest_recipients" multiple filterable allow-create default-first-option :reserve-keyword="false" :disabled="!can('settings.manage') || systemSettingsSaving" />
+                    <el-form-item :label="t('operations.recipients')" :error="systemSettingsFormErrors.email_digest_people">
+                      <SearchableSelect
+                        v-model="systemSettingsForm.email_digest_people"
+                        multiple
+                        collapse-tags
+                        :max-collapse-tags="3"
+                        :request="context.request"
+                        endpoint="/people/"
+                        :map-option="mapDigestPerson"
+                        :base-query="{ is_active: 'all', email_configured: true }"
+                        :disabled="!can('settings.manage') || systemSettingsSaving"
+                        :placeholder="t('operations.peoplePlaceholder')"
+                        :aria-label="t('operations.recipients')"
+                      />
                       <div class="settings-system__help">{{ t('operations.emailHelp') }}</div>
+                    </el-form-item>
+                    <el-form-item :label="t('operations.additionalRecipients')" :error="systemSettingsFormErrors.email_digest_recipients">
+                      <el-select v-model="systemSettingsForm.email_digest_recipients" multiple filterable allow-create default-first-option :reserve-keyword="false" :disabled="!can('settings.manage') || systemSettingsSaving" />
+                      <div class="settings-system__help">{{ t('operations.additionalEmailHelp') }}</div>
                     </el-form-item>
                     <el-form-item :label="t('operations.applicationUrl')" :error="systemSettingsFormErrors.application_url">
                       <el-input v-model="systemSettingsForm.application_url" :disabled="!can('settings.manage') || systemSettingsSaving" />
                     </el-form-item>
+                  </section>
+
+                  <section class="settings-system__notification-section">
+                    <header class="settings-system__notification-section-heading">
+                      <h2>{{ t('settings.inAppNotificationsSection') }}</h2>
+                      <p>{{ t('settings.inAppNotificationsSectionDescription') }}</p>
+                    </header>
                     <div class="settings-system__notification-list">
                       <div class="settings-system__notification-row">
                         <div class="settings-system__notification-copy">
@@ -669,7 +738,7 @@ function userDirectoryTooltip(user: { auth_source: string; directory_provider: s
                           <el-form-item class="settings-system__notification-form-item" :error="systemSettingsFormErrors.notify_maintenance">
                             <el-switch v-model="systemSettingsForm.notify_maintenance" :disabled="!can('settings.manage') || systemSettingsSaving" :aria-label="systemSettingLabel('notify_maintenance')" />
                           </el-form-item>
-                          <span class="settings-system__notification-switch-label">{{ t('status.enabled') }}</span>
+                          <span class="settings-system__notification-switch-label">{{ systemSettingsForm.notify_maintenance ? t('status.enabled') : t('status.disabled') }}</span>
                         </div>
                       </div>
 
@@ -689,7 +758,7 @@ function userDirectoryTooltip(user: { auth_source: string; directory_provider: s
                           <el-form-item class="settings-system__notification-form-item" :error="systemSettingsFormErrors.notify_license_expiry">
                             <el-switch v-model="systemSettingsForm.notify_license_expiry" :disabled="!can('settings.manage') || systemSettingsSaving" :aria-label="systemSettingLabel('notify_license_expiry')" />
                           </el-form-item>
-                          <span class="settings-system__notification-switch-label">{{ t('status.enabled') }}</span>
+                          <span class="settings-system__notification-switch-label">{{ systemSettingsForm.notify_license_expiry ? t('status.enabled') : t('status.disabled') }}</span>
                         </div>
                       </div>
 
@@ -703,7 +772,7 @@ function userDirectoryTooltip(user: { auth_source: string; directory_provider: s
                           <el-form-item class="settings-system__notification-form-item" :error="systemSettingsFormErrors.notify_open_faults">
                             <el-switch v-model="systemSettingsForm.notify_open_faults" :disabled="!can('settings.manage') || systemSettingsSaving" :aria-label="systemSettingLabel('notify_open_faults')" />
                           </el-form-item>
-                          <span class="settings-system__notification-switch-label">{{ t('status.enabled') }}</span>
+                          <span class="settings-system__notification-switch-label">{{ systemSettingsForm.notify_open_faults ? t('status.enabled') : t('status.disabled') }}</span>
                         </div>
                       </div>
 
@@ -717,7 +786,7 @@ function userDirectoryTooltip(user: { auth_source: string; directory_provider: s
                           <el-form-item class="settings-system__notification-form-item" :error="systemSettingsFormErrors.notify_overdue_inventory">
                             <el-switch v-model="systemSettingsForm.notify_overdue_inventory" :disabled="!can('settings.manage') || systemSettingsSaving" :aria-label="systemSettingLabel('notify_overdue_inventory')" />
                           </el-form-item>
-                          <span class="settings-system__notification-switch-label">{{ t('status.enabled') }}</span>
+                          <span class="settings-system__notification-switch-label">{{ systemSettingsForm.notify_overdue_inventory ? t('status.enabled') : t('status.disabled') }}</span>
                         </div>
                       </div>
 
@@ -731,11 +800,13 @@ function userDirectoryTooltip(user: { auth_source: string; directory_provider: s
                           <el-form-item class="settings-system__notification-form-item" :error="systemSettingsFormErrors.notify_low_spare_stock">
                             <el-switch v-model="systemSettingsForm.notify_low_spare_stock" :disabled="!can('settings.manage') || systemSettingsSaving" :aria-label="systemSettingLabel('notify_low_spare_stock')" />
                           </el-form-item>
-                          <span class="settings-system__notification-switch-label">{{ t('status.enabled') }}</span>
+                          <span class="settings-system__notification-switch-label">{{ systemSettingsForm.notify_low_spare_stock ? t('status.enabled') : t('status.disabled') }}</span>
                         </div>
                       </div>
                     </div>
                   </section>
+                </div>
+              </section>
               <BrandingSettings v-else-if="systemSettingsTab === 'branding'" :context="context" />
             </el-form>
           </template>
@@ -746,7 +817,7 @@ function userDirectoryTooltip(user: { auth_source: string; directory_provider: s
 
     <PageContainer v-else-if="settingsSection === 'dictionaries'">
       <template #subnav>
-        <PageTabs v-model="dictionarySection" :items="dictionaryTabs" @update:model-value="changeDictionarySection">
+        <PageTabs v-model="dictionarySection" :items="dictionaryTabs" @update:model-value="handleDictionarySectionChange">
         </PageTabs>
       </template>
       <template #toolbar>
@@ -797,6 +868,9 @@ function userDirectoryTooltip(user: { auth_source: string; directory_provider: s
               </template>
               <template v-else>{{ row.code || "—" }}</template>
             </template>
+          </el-table-column>
+          <el-table-column v-if="dictionarySection === 'device-types'" prop="default_fieldset_name" :label="t('settings.defaultFieldset')" min-width="180">
+            <template #default="{ row }">{{ row.default_fieldset_name || t('settings.noDefaultFieldset') }}</template>
           </el-table-column>
           <el-table-column :label="t('common.status')" width="100">
             <template #default="{ row }">
@@ -909,9 +983,7 @@ function userDirectoryTooltip(user: { auth_source: string; directory_provider: s
           </template>
           <template v-if="organizationTab === 'people'" #filters>
             <div class="page-toolbar__filter-group">
-              <el-select v-model="responsibilityDirectoryType" :placeholder="t('settings.personDepartment')" clearable :disabled="responsibilityDirectoryLoading" @change="searchResponsibilityDirectory">
-                <el-option v-for="department in departmentOptions" :key="department.id" :label="`${department.name} · ${department.code}`" :value="String(department.id)" />
-              </el-select>
+              <SearchableSelect v-model="responsibilityDirectoryType" :request="context.request" endpoint="/departments/" :map-option="mapDepartment" :base-query="{ is_active: 'all' }" :placeholder="t('settings.personDepartment')" :disabled="responsibilityDirectoryLoading" clearable @update:model-value="searchResponsibilityDirectory" />
               <el-select v-model="responsibilityDirectoryActive" :placeholder="t('common.all')" :disabled="responsibilityDirectoryLoading" @change="searchResponsibilityDirectory">
                 <el-option :label="t('common.all')" value="all" />
                 <el-option :label="t('status.active')" value="true" />
@@ -1242,9 +1314,7 @@ function userDirectoryTooltip(user: { auth_source: string; directory_provider: s
           <el-input v-model="departmentForm.code" :disabled="departmentSaving" maxlength="50" />
         </el-form-item>
         <el-form-item :label="t('settings.parentDepartment')" :error="departmentFormErrors.parent">
-          <el-select v-model="departmentForm.parent" clearable filterable :disabled="departmentSaving" :placeholder="t('settings.parentDepartment')">
-            <el-option v-for="item in departmentParentOptions" :key="item.id" :label="`${item.name} · ${item.code}`" :value="String(item.id)" />
-          </el-select>
+          <SearchableSelect v-model="departmentForm.parent" :request="context.request" endpoint="/departments/" :map-option="mapDepartment" :base-query="{ is_active: true }" :selected-option="selectedDepartmentParentOption" clearable :disabled="departmentSaving" :placeholder="t('settings.parentDepartment')" />
         </el-form-item>
       </el-form>
       <template #footer>

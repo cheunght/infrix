@@ -4,17 +4,19 @@ import { computed, nextTick, ref, watch } from "vue";
 import { useI18n } from "vue-i18n";
 import type { FormInstance, FormRules } from "element-plus";
 import type { AssetFormContext } from "../page-context";
-import type { CustomFieldSchema, Tag } from "../types";
+import type { AssetModel, CustomFieldSchema, CustomFieldSet, DataCenter, DictionaryItem, PersonOption, Rack, ServerRoom, Tag } from "../types";
+import { normalizeApiError } from "../error-handling";
 import { isPositiveDecimalString, percentageToRate } from "../depreciation";
 import DynamicFieldRenderer from "./fields/DynamicFieldRenderer.vue";
 import FieldHelp from "./FieldHelp.vue";
 import FormDialogShell from "./FormDialogShell.vue";
 import MoneyInput from "./MoneyInput.vue";
+import SearchableSelect, { type SearchableSelectOption } from "./SearchableSelect.vue";
 import { businessOptionLabel } from "../business-enums";
 import {
-  compareDecimalText,
-  decimalPrecisionLimit,
   decimalStorageIssue,
+  customFieldFormatMatches,
+  CUSTOM_FIELD_NUMBER_MAX_DECIMAL_PLACES,
   isValidIsoDate,
 } from "../custom-field-validation";
 import { systemDatePickerFormat } from "../system-settings";
@@ -23,6 +25,8 @@ const props = defineProps<{ context: AssetFormContext }>();
 const { t } = useI18n();
 const context = props.context;
 const {
+  can,
+  request,
   showAssetModal,
   assetModalMode,
   editingAsset,
@@ -35,22 +39,12 @@ const {
   assetCloneCustomValueWarning,
   retryAssetFormLoad,
   clearAssetFormErrors,
-  activeDeviceTypes,
   syncAssetDeviceType,
-  manufacturerOptions,
   assetModels,
-  assetModelsLoading,
-  assetModelsError,
-  retryAssetModels,
   people,
-  peopleLoading,
-  peopleError,
-  retryPeople,
   activeDataCenters,
   changeAssetDataCenter,
-  assetRoomOptions,
   changeAssetRoom,
-  assetRackOptions,
   changeAssetRack,
   setAssetRackMounted,
   assetCustomFieldSchema,
@@ -62,26 +56,33 @@ const {
   syncDepreciationStartFromPurchase,
   updateAssetCustomFieldValue,
   tags,
-  tagListLoading,
-  tagListError,
-  retryTagList,
   saveAsset,
 } = context;
+
+const showQuickModel = ref(false);
+const quickModelSaving = ref(false);
+const quickModelError = ref("");
+const quickModelForm = ref({ name: "", model_number: "", manufacturer: "", device_type: "", fieldset: "" });
 
 const formRef = ref<FormInstance>();
 const visibleAssetCustomFields = computed(() =>
   assetCustomFieldSchema.value.filter((field) => field.is_active !== false && field.form_visible !== false),
 );
-type DynamicFieldGroup = { name: string; fields: CustomFieldSchema[] };
+type DynamicFieldGroup = { key: string; name: string; fields: CustomFieldSchema[] };
 const dynamicFieldGroups = computed<DynamicFieldGroup[]>(() => {
   const groups = new Map<string, CustomFieldSchema[]>();
   for (const field of visibleAssetCustomFields.value) {
-    const groupName = field.group?.trim() || t("asset.otherInfo");
-    const fields = groups.get(groupName) || [];
+    const groupName = field.group?.trim() || "";
+    const groupKey = groupName || "__default__";
+    const fields = groups.get(groupKey) || [];
     fields.push(field);
-    groups.set(groupName, fields);
+    groups.set(groupKey, fields);
   }
-  return Array.from(groups, ([name, fields]) => ({ name, fields }));
+  return Array.from(groups, ([key, fields]) => ({
+    key,
+    name: key === "__default__" ? "" : key,
+    fields,
+  }));
 });
 
 const selectableTags = computed<Tag[]>(() => {
@@ -99,6 +100,9 @@ const residualRateHelp = computed(() => t("assetForm.residualRateHelp"));
 const selectedAssetModel = computed(() =>
   assetModels.value.find((item) => String(item.id) === assetForm.value.asset_model_id) || null,
 );
+const selectedAssetModelOption = computed<SearchableSelectOption | null>(() =>
+  selectedAssetModel.value ? mapAssetModel(selectedAssetModel.value as unknown as Record<string, unknown>) : null,
+);
 
 const warrantyMonthsValue = computed<number | null>({
   get: () => numberFromText(assetForm.value.warranty_months),
@@ -107,36 +111,145 @@ const warrantyMonthsValue = computed<number | null>({
   },
 });
 
-const assetModelOptions = computed(() => {
-  const current = selectedAssetModel.value;
-  return assetModels.value.filter((item) => item.is_active || item.id === current?.id);
-});
-
-function assetModelOptionLabel(model: (typeof assetModels.value)[number]): string {
-  return [model.name, model.model_number, model.manufacturer_name, model.device_type_name]
-    .filter(Boolean)
-    .join(" · ");
-}
-
 async function applyAssetModel(modelId: string | null) {
   const model = modelId ? assetModels.value.find((item) => String(item.id) === modelId) : null;
   if (!model) return;
   assetForm.value.manufacturer_id = model.manufacturer ? String(model.manufacturer) : "";
   assetForm.value.device_type = model.device_type ? String(model.device_type) : "";
-  assetForm.value.model = "";
-  assetForm.value.manufacturer_model = "";
+  assetForm.value.model_text = "";
   if (!assetForm.value.warranty_months && model.default_warranty_months != null) {
     assetForm.value.warranty_months = String(model.default_warranty_months);
   }
   await syncAssetDeviceType();
 }
 
-function personOptionLabel(person: (typeof people.value)[number]): string {
-  const parts = [person.name || person.display_name];
-  if (person.employee_no) parts.push(person.employee_no);
-  if (person.department_name) parts.push(person.department_name);
-  return parts.filter(Boolean).join(" · ");
+async function openQuickModel() {
+  if (!can("settings.manage")) return;
+  quickModelError.value = "";
+  quickModelForm.value = {
+    name: "",
+    model_number: "",
+    manufacturer: assetForm.value.manufacturer_id,
+    device_type: assetForm.value.device_type,
+    fieldset: "",
+  };
+  showQuickModel.value = true;
 }
+
+async function saveQuickModel() {
+  const value = quickModelForm.value;
+  if (!value.name.trim() || !value.manufacturer || !value.device_type || quickModelSaving.value) return;
+  quickModelSaving.value = true;
+  quickModelError.value = "";
+  try {
+    const created = await request<AssetModel>("/asset-models/", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        name: value.name.trim(),
+        model_number: value.model_number.trim(),
+        manufacturer: Number(value.manufacturer),
+        device_type: Number(value.device_type),
+        fieldset: value.fieldset ? Number(value.fieldset) : null,
+        is_active: true,
+      }),
+    });
+    if (!assetModels.value.some((item) => item.id === created.id)) {
+      assetModels.value = [...assetModels.value, created];
+    }
+    assetForm.value.asset_model_id = String(created.id);
+    await applyAssetModel(String(created.id));
+    showQuickModel.value = false;
+  } catch (error) {
+    quickModelError.value = normalizeApiError(error).message || t("assetModel.saveFailed");
+  } finally {
+    quickModelSaving.value = false;
+  }
+}
+
+function personMeta(person: PersonOption) {
+  return [person.employee_no, person.department_name].filter(Boolean).join(" · ");
+}
+
+function mapAssetModel(item: Record<string, unknown>): SearchableSelectOption {
+  const model = item as unknown as AssetModel;
+  return {
+    value: model.id,
+    label: model.name,
+    secondary: [model.model_number, model.manufacturer_name, model.device_type_name].filter(Boolean).join(" · "),
+    data: model,
+  };
+}
+
+function mapPerson(item: Record<string, unknown>): SearchableSelectOption {
+  const person = item as unknown as PersonOption;
+  return { value: person.id, label: person.name || person.display_name, secondary: personMeta(person), data: person };
+}
+
+function mapDictionary(item: Record<string, unknown>): SearchableSelectOption {
+  const dictionary = item as unknown as DictionaryItem;
+  return { value: dictionary.id, label: dictionary.name, secondary: dictionary.code || "", data: dictionary };
+}
+
+function mapDataCenter(item: Record<string, unknown>): SearchableSelectOption {
+  const center = item as unknown as DataCenter;
+  return { value: center.id, label: center.name, secondary: center.address || "", data: center };
+}
+
+function mapRoom(item: Record<string, unknown>): SearchableSelectOption {
+  const room = item as unknown as ServerRoom;
+  return { value: room.id, label: room.name, secondary: room.data_center_name || "", data: room };
+}
+
+function mapRack(item: Record<string, unknown>): SearchableSelectOption {
+  const rack = item as unknown as Rack;
+  return { value: rack.id, label: rack.code, secondary: [rack.name, rack.server_room_name, rack.data_center_name].filter(Boolean).join(" · "), data: rack };
+}
+
+function mapFieldset(item: Record<string, unknown>): SearchableSelectOption {
+  const fieldset = item as unknown as CustomFieldSet;
+  return { value: fieldset.id, label: fieldset.name, secondary: fieldset.description || "", data: fieldset };
+}
+
+function mapTag(item: Record<string, unknown>): SearchableSelectOption {
+  const tag = item as unknown as Tag;
+  return {
+    value: String(tag.id),
+    label: tag.name,
+    secondary: tag.is_active === false ? t("status.inactive") : "",
+    disabled: tag.is_active === false,
+    data: tag,
+  };
+}
+
+function handleAssetModelSelect(option: SearchableSelectOption | SearchableSelectOption[] | null) {
+  const selected = Array.isArray(option) ? option[0] : option;
+  const model = selected?.data as AssetModel | undefined;
+  if (model && !assetModels.value.some((item) => item.id === model.id)) assetModels.value = [...assetModels.value, model];
+  void applyAssetModel(model ? String(model.id) : null);
+}
+
+function handleRackSelect(option: SearchableSelectOption | SearchableSelectOption[] | null) {
+  const selected = Array.isArray(option) ? option[0] : option;
+  const rack = selected?.data as Rack | undefined;
+  if (rack) assetForm.value.rack_total_u = String(rack.total_u || 45);
+  void changeAssetRack();
+}
+
+const selectedPersonOption = computed<SearchableSelectOption | null>(() => {
+  const person = people.value.find((item) => String(item.id) === assetForm.value.assigned_person);
+  return person ? mapPerson(person as unknown as Record<string, unknown>) : null;
+});
+
+const selectedTagOptions = computed<SearchableSelectOption[]>(() => selectableTags.value
+  .filter((tag) => assetForm.value.tags.includes(String(tag.id)))
+  .map((tag) => mapTag(tag as unknown as Record<string, unknown>)));
+
+const selectedDataCenterOption = computed<SearchableSelectOption | null>(() => {
+  const id = assetForm.value.rack_mounted ? assetForm.value.data_center : assetForm.value.asset_data_center;
+  const center = activeDataCenters.value.find((item) => String(item.id) === id);
+  return center ? mapDataCenter(center as unknown as Record<string, unknown>) : null;
+});
 
 const rackMountedSelectValue = computed({
   get: () => (assetForm.value.rack_mounted ? "mounted" : "unmounted"),
@@ -299,6 +412,9 @@ function customFieldRule(field: CustomFieldSchema) {
 
       const config = field.validation_config || {};
       if (field.field_type === "text" || field.field_type === "textarea") {
+        if (!customFieldFormatMatches(String(value), config.format || "any", config.pattern)) {
+          return callback(new Error(t("assetForm.fieldFormat", { field: field.name })));
+        }
         const length = String(value).length;
         if (config.min_length != null && length < config.min_length) {
           return callback(new Error(t("assetForm.fieldMinLength", { field: field.name, count: config.min_length })));
@@ -309,28 +425,16 @@ function customFieldRule(field: CustomFieldSchema) {
       }
 
       if (field.field_type === "number") {
-        const precision = decimalPrecisionLimit(config.precision);
-        const storageIssue = decimalStorageIssue(value, precision);
+        const precision = CUSTOM_FIELD_NUMBER_MAX_DECIMAL_PLACES;
+        const storageIssue = decimalStorageIssue(value);
         if (storageIssue === "invalid") return callback(new Error(t("assetForm.fieldNumber", { field: field.name })));
         if (storageIssue === "integer") return callback(new Error(t("assetForm.fieldIntegerDigits", { field: field.name })));
         if (storageIssue === "precision") return callback(new Error(t("assetForm.fieldPrecision", { field: field.name, count: precision })));
-        if (config.min != null && config.min !== "") {
-          const comparison = compareDecimalText(value, config.min);
-          if (comparison === null) return callback(new Error(t("assetForm.fieldNumber", { field: field.name })));
-          if (comparison < 0) return callback(new Error(t("assetForm.fieldMin", { field: field.name, count: config.min })));
-        }
-        if (config.max != null && config.max !== "") {
-          const comparison = compareDecimalText(value, config.max);
-          if (comparison === null) return callback(new Error(t("assetForm.fieldNumber", { field: field.name })));
-          if (comparison > 0) return callback(new Error(t("assetForm.fieldMax", { field: field.name, count: config.max })));
-        }
       }
 
       if (field.field_type === "date") {
         const date = String(value);
         if (!isValidIsoDate(date)) return callback(new Error(t("assetForm.fieldDateFormat", { field: field.name })));
-        if (config.min_date && date < config.min_date) return callback(new Error(t("assetForm.fieldDateMin", { field: field.name, date: config.min_date })));
-        if (config.max_date && date > config.max_date) return callback(new Error(t("assetForm.fieldDateMax", { field: field.name, date: config.max_date })));
       }
 
       if (field.field_type === "multiselect") {
@@ -462,47 +566,69 @@ watch(() => assetForm.value.purchase_date, () => {
           <el-input v-model="assetForm.name" />
         </el-form-item>
         <el-form-item :label="t('assetForm.assetModel')" :error="fieldError('asset_model_id')">
-          <el-select
+          <SearchableSelect
             v-model="assetForm.asset_model_id"
+            :request="request"
+            endpoint="/asset-models/"
+            :map-option="mapAssetModel"
             :placeholder="t('assetForm.selectAssetModel')"
-            clearable
-            filterable
-            :loading="assetModelsLoading"
-            @change="applyAssetModel"
-          >
-            <el-option
-              v-for="item in assetModelOptions"
-              :key="item.id"
-              :label="assetModelOptionLabel(item)"
-              :value="String(item.id)"
-            />
-          </el-select>
-          <div v-if="assetModelsError" class="asset-form-related-state asset-form-related-state--error">
-            <span>{{ assetModelsError }}</span>
-            <el-button link type="primary" :disabled="assetModelsLoading" @click="retryAssetModels">{{ t('common.retry') }}</el-button>
-          </div>
+            :selected-option="selectedAssetModelOption"
+            :base-query="{ is_active: true }"
+            @select="handleAssetModelSelect"
+          />
+          <el-button v-if="can('settings.manage')" class="asset-form-quick-model" link type="primary" @click="openQuickModel">{{ t('assetForm.quickAddModel') }}</el-button>
           <div v-if="selectedAssetModel" class="asset-model-metadata">
-            <span>{{ selectedAssetModel.manufacturer_name || t('assetForm.unsetMetadata') }}</span>
-            <span>{{ selectedAssetModel.device_type_name || t('assetForm.unsetMetadata') }}</span>
-            <span v-if="selectedAssetModel.model_number">{{ selectedAssetModel.model_number }}</span>
-            <span v-if="selectedAssetModel.default_warranty_months != null">{{ t('assetForm.defaultWarrantyMonths', { months: selectedAssetModel.default_warranty_months }) }}</span>
-            <span v-if="selectedAssetModel.expected_life_months != null">{{ t('assetForm.expectedLifeMonths', { months: selectedAssetModel.expected_life_months }) }}</span>
+            <span class="asset-model-metadata__item">
+              <strong>{{ t('assetModel.manufacturer') }}</strong>
+              <span>{{ selectedAssetModel.manufacturer_name || t('assetForm.unsetMetadata') }}</span>
+            </span>
+            <span class="asset-model-metadata__item">
+              <strong>{{ t('assetModel.category') }}</strong>
+              <span>{{ selectedAssetModel.device_type_name || t('assetForm.unsetMetadata') }}</span>
+            </span>
+            <span v-if="selectedAssetModel.model_number" class="asset-model-metadata__item">
+              <strong>{{ t('assetModel.modelNumber') }}</strong>
+              <span>{{ selectedAssetModel.model_number }}</span>
+            </span>
+            <span class="asset-model-metadata__item">
+              <strong>{{ t('assetModel.fieldset') }}</strong>
+              <span>{{ selectedAssetModel.effective_fieldset?.name || t('assetForm.unsetMetadata') }}</span>
+            </span>
+            <span v-if="selectedAssetModel.default_warranty_months != null" class="asset-model-metadata__item">
+              <strong>{{ t('assetModel.defaultWarranty') }}</strong>
+              <span>{{ t('assetForm.defaultWarrantyMonths', { months: selectedAssetModel.default_warranty_months }) }}</span>
+            </span>
+            <span v-if="selectedAssetModel.expected_life_months != null" class="asset-model-metadata__item">
+              <strong>{{ t('assetModel.expectedLife') }}</strong>
+              <span>{{ t('assetForm.expectedLifeMonths', { months: selectedAssetModel.expected_life_months }) }}</span>
+            </span>
           </div>
           <FieldHelp v-if="selectedAssetModel" :text="t('assetForm.assetModelSelectionHint')" />
         </el-form-item>
-        <el-form-item v-if="!assetForm.asset_model_id" :label="t('assetForm.customModel')" :error="fieldError('model')">
-          <el-input v-model="assetForm.model" :placeholder="t('assetForm.modelPlaceholder')" />
+        <el-form-item v-if="!assetForm.asset_model_id" :label="t('assetForm.customModel')" :error="fieldError('model_text')">
+          <el-input v-model="assetForm.model_text" :placeholder="t('assetForm.modelPlaceholder')" />
           <FieldHelp :text="t('assetForm.customModelHint')" />
         </el-form-item>
-        <el-form-item :label="t('asset.deviceType')" prop="device_type" required :error="fieldError('device_type')">
-          <el-select v-model="assetForm.device_type" :placeholder="t('assetForm.unlinkedDeviceType')" clearable :disabled="!!assetForm.asset_model_id && !!selectedAssetModel?.device_type" @change="syncAssetDeviceType">
-            <el-option v-for="item in activeDeviceTypes" :key="item.id" :label="item.name" :value="String(item.id)" />
-          </el-select>
+        <el-form-item v-if="!assetForm.asset_model_id" :label="t('asset.deviceType')" prop="device_type" required :error="fieldError('device_type')">
+          <SearchableSelect
+            v-model="assetForm.device_type"
+            :request="request"
+            endpoint="/device-types/"
+            :map-option="mapDictionary"
+            :placeholder="t('assetForm.unlinkedDeviceType')"
+            :base-query="{ is_active: true }"
+            @select="syncAssetDeviceType"
+          />
         </el-form-item>
-        <el-form-item :label="t('asset.manufacturer')" :error="fieldError('manufacturer_id')">
-          <el-select v-model="assetForm.manufacturer_id" :placeholder="t('assetForm.unlinkedManufacturer')" clearable :disabled="!!assetForm.asset_model_id && !!selectedAssetModel?.manufacturer">
-            <el-option v-for="item in manufacturerOptions" :key="item.id" :label="item.name" :value="String(item.id)" />
-          </el-select>
+        <el-form-item v-if="!assetForm.asset_model_id" :label="t('asset.manufacturer')" :error="fieldError('manufacturer_id')">
+          <SearchableSelect
+            v-model="assetForm.manufacturer_id"
+            :request="request"
+            endpoint="/manufacturers/"
+            :map-option="mapDictionary"
+            :placeholder="t('assetForm.unlinkedManufacturer')"
+            :base-query="{ is_active: true }"
+          />
         </el-form-item>
         <el-form-item :label="t('asset.status')" prop="status" required :error="fieldError('status')">
           <el-select v-model="assetForm.status">
@@ -516,24 +642,15 @@ watch(() => assetForm.value.purchase_date, () => {
         <el-form-item :label="t('asset.serialNumber')" :error="fieldError('serial_number')"><el-input v-model="assetForm.serial_number" /></el-form-item>
         <el-form-item :label="t('asset.purpose')" :error="fieldError('purpose')"><el-input v-model="assetForm.purpose" /></el-form-item>
         <el-form-item :label="t('asset.assignedPerson')" :error="fieldError('assigned_person')">
-          <el-select
+          <SearchableSelect
             v-model="assetForm.assigned_person"
-            clearable
-            filterable
-            :loading="peopleLoading"
+            :request="request"
+            endpoint="/people/"
+            :map-option="mapPerson"
             :placeholder="t('assetForm.selectAssignedPerson')"
-          >
-            <el-option
-              v-for="item in people"
-              :key="item.id"
-              :label="personOptionLabel(item)"
-              :value="String(item.id)"
-            />
-          </el-select>
-          <div v-if="peopleError" class="asset-form-related-state asset-form-related-state--error">
-            <span>{{ peopleError }}</span>
-            <el-button link type="primary" :disabled="peopleLoading" @click="retryPeople">{{ t('common.retry') }}</el-button>
-          </div>
+            :selected-option="selectedPersonOption"
+            :base-query="{ is_active: true }"
+          />
         </el-form-item>
         <el-form-item :label="t('asset.assignmentReason')" :error="fieldError('assignment_reason')">
           <el-input
@@ -557,26 +674,51 @@ watch(() => assetForm.value.purchase_date, () => {
             <FieldHelp :text="rackPlacementHelp" />
           </el-form-item>
           <el-form-item v-if="!assetForm.rack_mounted" :label="t('common.dataCenter')" :error="fieldError('asset_data_center')">
-            <el-select v-model="assetForm.asset_data_center" :placeholder="t('assetForm.noDataCenter')" clearable>
-              <el-option v-for="center in activeDataCenters" :key="center.id" :label="center.name" :value="String(center.id)" />
-            </el-select>
+            <SearchableSelect
+              v-model="assetForm.asset_data_center"
+              :request="request"
+              endpoint="/data-centers/"
+              :map-option="mapDataCenter"
+              :placeholder="t('assetForm.noDataCenter')"
+              :selected-option="selectedDataCenterOption"
+              :base-query="{ is_active: true }"
+            />
           </el-form-item>
         </div>
         <div v-if="assetForm.rack_mounted" class="horizontal-form__rows">
         <el-form-item :label="t('common.dataCenter')" :error="fieldError('data_center')">
-          <el-select v-model="assetForm.data_center" :placeholder="t('assetForm.noDataCenter')" clearable @change="changeAssetDataCenter">
-            <el-option v-for="center in activeDataCenters" :key="center.id" :label="center.name" :value="String(center.id)" />
-          </el-select>
+          <SearchableSelect
+            v-model="assetForm.data_center"
+            :request="request"
+            endpoint="/data-centers/"
+            :map-option="mapDataCenter"
+            :placeholder="t('assetForm.noDataCenter')"
+            :selected-option="selectedDataCenterOption"
+            :base-query="{ is_active: true }"
+            @update:model-value="changeAssetDataCenter"
+          />
         </el-form-item>
         <el-form-item :label="t('common.room')" :error="fieldError('server_room_id')">
-          <el-select v-model="assetForm.server_room_id" :placeholder="t('assetForm.selectRoom')" clearable @change="changeAssetRoom">
-            <el-option v-for="room in assetRoomOptions" :key="room.id" :label="room.name" :value="String(room.id)" />
-          </el-select>
+          <SearchableSelect
+            v-model="assetForm.server_room_id"
+            :request="request"
+            endpoint="/server-rooms/"
+            :map-option="mapRoom"
+            :placeholder="t('assetForm.selectRoom')"
+            :base-query="{ data_center: assetForm.data_center, is_active: true }"
+            @update:model-value="changeAssetRoom"
+          />
         </el-form-item>
         <el-form-item :label="t('rack.rackCode')" prop="rack_id" :error="fieldError('rack_id')">
-          <el-select v-model="assetForm.rack_id" :placeholder="t('assetForm.selectRack')" clearable @change="changeAssetRack">
-            <el-option v-for="rack in assetRackOptions" :key="rack.id" :label="rack.code" :value="String(rack.id)" />
-          </el-select>
+          <SearchableSelect
+            v-model="assetForm.rack_id"
+            :request="request"
+            endpoint="/racks/"
+            :map-option="mapRack"
+            :placeholder="t('assetForm.selectRack')"
+            :base-query="{ room: assetForm.server_room_id, is_active: true, status: 'in_use' }"
+            @select="handleRackSelect"
+          />
         </el-form-item>
         <el-form-item :label="t('assetForm.totalRackU')" :error="fieldError('rack_total_u')"><el-input v-model="assetForm.rack_total_u" disabled /></el-form-item>
         <el-form-item :label="t('assetForm.startU')" prop="rack_start_u" :error="fieldError('rack_start_u')">
@@ -649,23 +791,24 @@ watch(() => assetForm.value.purchase_date, () => {
         <h3 class="form-dialog__section-title">{{ t('assetForm.extendedInfo') }}</h3>
         <div class="horizontal-form__rows">
           <el-form-item :label="t('assetForm.tags')" :error="fieldError('tags')">
-            <el-select v-model="assetForm.tags" multiple clearable filterable :loading="tagListLoading" :disabled="tagListLoading" :placeholder="t('assetForm.selectTags')">
-              <el-option
-                v-for="tag in selectableTags"
-                :key="tag.id"
-                :label="tag.is_active ? tag.name : `${tag.name}（${t('status.inactive')}）`"
-                :value="String(tag.id)"
-              />
-            </el-select>
-            <div v-if="tagListError" class="asset-form-tag-state asset-form-tag-state--error">
-              <span>{{ tagListError }}</span>
-              <el-button link type="primary" :disabled="tagListLoading" @click="retryTagList">{{ t('assetForm.retry') }}</el-button>
-            </div>
-            <div v-else-if="!tagListLoading && !selectableTags.length" class="asset-form-tag-state">{{ t('assetForm.noAvailableTags') }}</div>
+            <SearchableSelect
+              v-model="assetForm.tags"
+              :request="request"
+              endpoint="/tags/"
+              :map-option="mapTag"
+              :selected-options="selectedTagOptions"
+              :base-query="{ is_active: true }"
+              multiple
+              clearable
+              collapse-tags
+              :max-collapse-tags="3"
+              :placeholder="t('assetForm.selectTags')"
+              :aria-label="t('assetForm.tags')"
+            />
           </el-form-item>
         </div>
         <div v-if="assetCustomSchemaLoading || assetCustomSchemaError || dynamicFieldGroups.length" class="form-dialog__subsection">
-          <div class="form-dialog__subsection-title">{{ t('assetForm.dynamicFields') }}</div>
+          <div class="form-dialog__section-title">{{ t('assetForm.dynamicFields') }}</div>
           <el-alert
             v-if="assetCloneCustomValueWarning"
             :title="assetCloneCustomValueWarning"
@@ -682,12 +825,13 @@ watch(() => assetForm.value.purchase_date, () => {
             <el-button type="primary" plain :disabled="assetFormSaving" @click="retryAssetCustomSchema">{{ t('assetForm.retry') }}</el-button>
           </div>
           <div v-else-if="dynamicFieldGroups.length" class="asset-custom-field-groups">
-            <section v-for="group in dynamicFieldGroups" :key="group.name" class="asset-custom-field-group">
-              <div class="asset-custom-field-group__title">{{ group.name }}</div>
+            <section v-for="group in dynamicFieldGroups" :key="group.key" class="asset-custom-field-group" :class="{ 'asset-custom-field-group--default': !group.name }">
+              <div v-if="group.name" class="asset-custom-field-group__title">{{ group.name }}</div>
               <div class="horizontal-form__rows">
                 <el-form-item
                   v-for="field in group.fields"
                   :key="field.id"
+                  :label="field.name"
                   :prop="`custom_values.${field.key}`"
                   :required="field.required"
                   :error="fieldError(`custom_values.${field.key}`)"
@@ -713,5 +857,25 @@ watch(() => assetForm.value.purchase_date, () => {
         {{ t('assetForm.save') }}
       </el-button>
     </template>
+  </FormDialogShell>
+
+  <FormDialogShell v-model="showQuickModel" :title="t('assetModel.createTitle')" :description="t('assetForm.quickAddModelHint')" size="small" :saving="quickModelSaving" :close-disabled="quickModelSaving">
+    <el-form class="horizontal-form" :model="quickModelForm" label-position="right" @submit.prevent="saveQuickModel">
+      <el-alert v-if="quickModelError" :title="quickModelError" type="error" show-icon :closable="false" />
+      <div class="horizontal-form__rows">
+        <el-form-item :label="t('assetModel.name')" required><el-input v-model="quickModelForm.name" maxlength="160" /></el-form-item>
+        <el-form-item :label="t('assetModel.modelNumber')"><el-input v-model="quickModelForm.model_number" maxlength="160" /></el-form-item>
+        <el-form-item :label="t('assetModel.manufacturer')" required>
+          <SearchableSelect v-model="quickModelForm.manufacturer" :request="request" endpoint="/manufacturers/" :map-option="mapDictionary" :base-query="{ is_active: true }" />
+        </el-form-item>
+        <el-form-item :label="t('assetModel.category')" required>
+          <SearchableSelect v-model="quickModelForm.device_type" :request="request" endpoint="/device-types/" :map-option="mapDictionary" :base-query="{ is_active: true }" />
+        </el-form-item>
+        <el-form-item :label="t('assetModel.fieldset')">
+          <SearchableSelect v-model="quickModelForm.fieldset" :request="request" endpoint="/custom-fieldsets/" :map-option="mapFieldset" :base-query="{ is_active: true }" :placeholder="t('assetModel.inheritFieldset')" />
+        </el-form-item>
+      </div>
+    </el-form>
+    <template #footer><el-button :disabled="quickModelSaving" @click="showQuickModel = false">{{ t('common.cancel') }}</el-button><el-button type="primary" :loading="quickModelSaving" :disabled="!quickModelForm.name.trim() || !quickModelForm.manufacturer || !quickModelForm.device_type" @click="saveQuickModel">{{ t('common.save') }}</el-button></template>
   </FormDialogShell>
 </template>

@@ -47,8 +47,8 @@ production host.
 
 ## Features
 
-- Asset records, imports, exports, custom fields, tags, lifecycle data, and
-  optional assigned people.
+- Asset records, standard asset models, reusable fieldsets, a custom-field
+  library, imports, exports, tags, lifecycle data, and optional assigned people.
 - Data centers, server rooms, racks, U-position allocation, and capacity views.
 - Fault registration, repair workflows, costs, and repair history.
 - Software licenses, inventory tasks, spare parts, stock, and transactions.

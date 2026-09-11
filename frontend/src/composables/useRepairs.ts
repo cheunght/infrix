@@ -326,6 +326,16 @@ export function useRepairs(deps: RepairsDeps) {
       || !deps.can("spares.view")
       || !deps.can("spares.manage")
     ) return false;
+    const normalizedSearch = search.trim();
+    if (normalizedSearch.length < 2) {
+      repairPartUsageOptionsRequestId.value += 1;
+      repairPartUsageOptionsController?.abort();
+      repairPartUsageOptionsController = null;
+      repairPartUsageOptions.value = [];
+      repairPartUsageOptionsLoading.value = false;
+      repairPartUsageOptionsError.value = "";
+      return true;
+    }
     const requestId = ++repairPartUsageOptionsRequestId.value;
     repairPartUsageOptionsController?.abort();
     const controller = new AbortController();
@@ -334,7 +344,7 @@ export function useRepairs(deps: RepairsDeps) {
     repairPartUsageOptionsError.value = "";
     try {
       const params = new URLSearchParams({ page: "1", page_size: "20" });
-      if (search.trim()) params.set("search", search.trim());
+      params.set("search", normalizedSearch);
       const payload = await deps.request<PageResult<SparePart> | SparePart[]>(
         `/spare-parts/?${params.toString()}`,
         { signal: controller.signal },
@@ -424,10 +434,6 @@ export function useRepairs(deps: RepairsDeps) {
     repairPartUsageOptionsError.value = "";
     repairPartUsageStocksError.value = "";
     showRepairPartUsageModal.value = true;
-    if (repairPartUsageForm.value.source === "internal_stock") {
-      void loadRepairPartUsageStocks("");
-      void loadRepairPartUsageOptions();
-    }
   }
 
   function changeRepairPartUsageSource(source: RepairPartUsageSource) {
@@ -443,10 +449,7 @@ export function useRepairs(deps: RepairsDeps) {
     repairPartUsageForm.value.vendor_name = "";
     repairPartUsageStocks.value = [];
     repairPartUsageStocksError.value = "";
-    void loadRepairPartUsageStocks("");
-    if (nextSource === "internal_stock") {
-      void loadRepairPartUsageOptions();
-    } else {
+    if (nextSource !== "internal_stock") {
       repairPartUsageOptionsRequestId.value += 1;
       repairPartUsageOptionsController?.abort();
       repairPartUsageOptionsController = null;
@@ -462,11 +465,6 @@ export function useRepairs(deps: RepairsDeps) {
     repairPartUsageForm.value.spare_stock_id = "";
     repairPartUsageStocks.value = [];
     repairPartUsageStocksError.value = "";
-    if (repairPartUsageForm.value.source === "internal_stock") {
-      void loadRepairPartUsageStocks(normalizedPartId);
-    } else {
-      void loadRepairPartUsageStocks("");
-    }
   }
 
   async function saveRepairPartUsage(): Promise<boolean> {

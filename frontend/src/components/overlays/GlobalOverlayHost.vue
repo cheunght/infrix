@@ -14,11 +14,12 @@ import ActionDialogShell from "../ActionDialogShell.vue";
 import FieldHelp from "../FieldHelp.vue";
 import FormDialogShell from "../FormDialogShell.vue";
 import AssetSelect from "../AssetSelect.vue";
+import SearchableSelect, { type SearchableSelectOption, type SearchableSelectValue } from "../SearchableSelect.vue";
 import AssetSummary from "../AssetSummary.vue";
 import MoneyInput from "../MoneyInput.vue";
 import PagedTable from "../PagedTable.vue";
 import StatusTag from "../StatusTag.vue";
-import type { Asset, AssetDetail, Page, PersonOption } from "../../types";
+import type { Asset, AssetDetail, CustomFieldSet, DataCenter, Page, PersonOption, SparePart, SpareStock } from "../../types";
 import type { AssetFormContext, PageContext, RequestFn } from "../../page-context";
 import { statusTone } from "../../status";
 import { type Locale } from "../../i18n";
@@ -81,6 +82,47 @@ const { t } = useI18n();
 const request = props.request;
 const assetContext: AssetFormContext = props.assetContext;
 const assetResponsibilityContext = props.assets;
+
+function mapDataCenter(item: Record<string, unknown>): SearchableSelectOption {
+  const center = item as unknown as DataCenter;
+  return { value: center.id, label: center.name, secondary: center.address || "", data: center };
+}
+
+function mapFieldset(item: Record<string, unknown>): SearchableSelectOption {
+  const fieldset = item as unknown as CustomFieldSet;
+  return { value: fieldset.id, label: fieldset.name, secondary: fieldset.description || "", data: fieldset };
+}
+
+function mapSparePart(item: Record<string, unknown>): SearchableSelectOption {
+  const part = item as unknown as SparePart;
+  return {
+    value: part.id,
+    label: part.name,
+    secondary: [part.code, part.model, part.manufacturer_name].filter(Boolean).join(" · "),
+    data: part,
+  };
+}
+
+function mapSpareStock(item: Record<string, unknown>): SearchableSelectOption {
+  const stock = item as unknown as SpareStock;
+  return {
+    value: stock.id,
+    label: [stock.data_center_name, stock.server_room_name || t("spare.centerStock")].filter(Boolean).join(" / "),
+    secondary: `${stock.quantity} ${spareUnitLabel(repairPartUsageSelectedPart.value?.unit || "piece")}`,
+    disabled: stock.quantity <= 0,
+    data: stock,
+  };
+}
+
+const selectedDataCenterOption = computed<SearchableSelectOption | null>(() => {
+  const center = dataCenters.value.find((item) => String(item.id) === roomForm.value.data_center);
+  return center ? mapDataCenter(center as unknown as Record<string, unknown>) : null;
+});
+
+const selectedDictionaryFieldsetOption = computed<SearchableSelectOption | null>(() => {
+  const fieldset = dictionaryFieldsets.value.find((item) => String(item.id) === dictionaryForm.value.default_fieldset);
+  return fieldset ? mapFieldset(fieldset as unknown as Record<string, unknown>) : null;
+});
 const {
   page,
   showAssetDetail,
@@ -140,6 +182,23 @@ const {
   clearLicenseFormErrors,
   saveLicense,
 } = props.licenses;
+
+function mapLicenseManufacturer(item: Record<string, unknown>): SearchableSelectOption {
+  return {
+    value: String(item.id ?? ""),
+    label: String(item.name ?? ""),
+    secondary: item.is_active === false ? t("status.inactive") : String(item.code ?? ""),
+    disabled: item.is_active === false,
+    data: item,
+  };
+}
+
+const selectedLicenseManufacturerOption = computed<SearchableSelectOption | null>(() => {
+  const manufacturer = licenseManufacturerOptions.value.find(
+    (item) => String(item.id) === licenseForm.value.manufacturer_id,
+  );
+  return manufacturer ? mapLicenseManufacturer(manufacturer as unknown as Record<string, unknown>) : null;
+});
 
 function numberFromText(value: unknown): number | null {
   const text = String(value ?? "").trim();
@@ -263,6 +322,26 @@ const repairPartUsageSelectedStock = computed(() => {
   const stockId = Number(repairPartUsageForm.value.spare_stock_id);
   return repairPartUsageStocks.value.find((stock) => stock.id === stockId) || null;
 });
+
+function keepRepairPartOption(option: SearchableSelectOption | SearchableSelectOption[] | null) {
+  const selected = Array.isArray(option) ? option[0] : option;
+  const part = selected?.data as SparePart | undefined;
+  if (part && !repairPartUsageOptions.value.some((item) => item.id === part.id)) {
+    repairPartUsageOptions.value = [...repairPartUsageOptions.value, part];
+  }
+}
+
+function updateRepairPartUsagePart(value: SearchableSelectValue | SearchableSelectValue[] | null | undefined) {
+  changeRepairPartUsagePart(Array.isArray(value) ? value[0] : value);
+}
+
+function keepRepairStockOption(option: SearchableSelectOption | SearchableSelectOption[] | null) {
+  const selected = Array.isArray(option) ? option[0] : option;
+  const stock = selected?.data as SpareStock | undefined;
+  if (stock && !repairPartUsageStocks.value.some((item) => item.id === stock.id)) {
+    repairPartUsageStocks.value = [...repairPartUsageStocks.value, stock];
+  }
+}
 const repairPartUsageQuantity = computed<number | null>({
   get: () => repairPartUsageForm.value.quantity,
   set: (value) => {
@@ -496,10 +575,6 @@ const {
   canChangeUserRole,
   userSaving,
   userFormErrors,
-  unlinkedPeople,
-  unlinkedPeopleLoading,
-  unlinkedPeopleError,
-  loadUnlinkedPeople,
   roles,
   saveUser,
   showDictionaryModal,
@@ -507,6 +582,7 @@ const {
   currentDictionaryLabel,
   dictionarySection,
   dictionaryForm,
+  dictionaryFieldsets,
   dictionaryFormErrors,
   dictionarySaving,
   saveDictionary,
@@ -690,14 +766,14 @@ function importRowErrorText(row: { errors: Array<{ label: string; message: strin
   return row.errors.map((error) => `${error.label}：${error.message}`).join("；");
 }
 
-function personOptionLabel(person: PersonOption): string {
-  return [person.name || person.display_name, person.employee_no, person.department_name]
-    .filter(Boolean)
-    .join(" · ");
-}
-
-function handleUnlinkedPeopleVisible(visible: boolean): void {
-  if (visible && !unlinkedPeople.value.length) void loadUnlinkedPeople();
+function mapUnlinkedPerson(item: Record<string, unknown>): SearchableSelectOption {
+  const person = item as unknown as PersonOption;
+  return {
+    value: person.id,
+    label: person.name || person.display_name,
+    secondary: [person.employee_no, person.department_name].filter(Boolean).join(" · "),
+    data: person,
+  };
 }
 </script>
 
@@ -746,21 +822,17 @@ function handleUnlinkedPeopleVisible(visible: boolean): void {
         <h3 class="form-dialog__section-title">{{ t('overlay.personInformation') }}</h3>
         <div class="horizontal-form__rows">
           <el-form-item :label="t('settings.person')" prop="person_id" :error="userFormErrors.person_id">
-            <el-select
+            <SearchableSelect
               v-model="userForm.person_id"
-              clearable
-              filterable
-              :loading="unlinkedPeopleLoading"
+              :request="request"
+              endpoint="/people/"
+              :map-option="mapUnlinkedPerson"
+              :base-query="{ is_active: true, account: 'unlinked' }"
               :placeholder="t('overlay.selectPersonOptional')"
-              @visible-change="handleUnlinkedPeopleVisible"
-            >
-              <el-option v-for="person in unlinkedPeople" :key="person.id" :label="personOptionLabel(person)" :value="String(person.id)" />
-            </el-select>
+              :aria-label="t('settings.person')"
+              clearable
+            />
             <FieldHelp :text="t('overlay.personSelectHelp')" />
-            <div v-if="unlinkedPeopleError" class="asset-form-related-state asset-form-related-state--error">
-              <span>{{ unlinkedPeopleError }}</span>
-              <el-button link type="primary" :disabled="unlinkedPeopleLoading" @click="loadUnlinkedPeople">{{ t('common.retry') }}</el-button>
-            </div>
           </el-form-item>
         </div>
       </section>
@@ -935,6 +1007,19 @@ function handleUnlinkedPeopleVisible(visible: boolean): void {
               <el-input v-model="dictionaryForm.color" maxlength="7" />
             </div>
           </el-form-item>
+          <el-form-item v-if="dictionarySection === 'device-types'" :label="t('settings.defaultFieldset')" prop="default_fieldset" :error="dictionaryFormErrors.default_fieldset">
+            <SearchableSelect
+              v-model="dictionaryForm.default_fieldset"
+              :request="request"
+              endpoint="/custom-fieldsets/"
+              :map-option="mapFieldset"
+              :selected-option="selectedDictionaryFieldsetOption"
+              :base-query="{ is_active: true }"
+              clearable
+              :placeholder="t('settings.noDefaultFieldset')"
+            />
+            <FieldHelp :text="t('settings.defaultFieldsetHelp')" />
+          </el-form-item>
           <el-form-item :label="t('common.status')">
             <el-select v-model="dictionaryForm.is_active" :aria-label="t('common.status')">
               <el-option :label="t('status.active')" :value="true" />
@@ -991,14 +1076,17 @@ function handleUnlinkedPeopleVisible(visible: boolean): void {
             <FieldHelp :text="usedCountHelp" />
           </el-form-item>
           <el-form-item :label="t('license.vendor')" prop="manufacturer_id" :error="licenseFormErrors.manufacturer_id">
-            <el-select v-model="licenseForm.manufacturer_id" clearable filterable :placeholder="t('assetForm.unlinkedManufacturer')" :validate-event="false">
-              <el-option
-                v-for="manufacturer in licenseManufacturerOptions"
-                :key="manufacturer.id"
-                :label="manufacturer.is_active ? manufacturer.name : `${manufacturer.name} (${t('status.inactive')})`"
-                :value="String(manufacturer.id)"
-              />
-            </el-select>
+            <SearchableSelect
+              v-model="licenseForm.manufacturer_id"
+              :request="request"
+              endpoint="/manufacturers/"
+              :map-option="mapLicenseManufacturer"
+              :selected-option="selectedLicenseManufacturerOption"
+              :base-query="{ is_active: 'all' }"
+              clearable
+              :placeholder="t('assetForm.unlinkedManufacturer')"
+              :aria-label="t('license.vendor')"
+            />
           </el-form-item>
           <el-form-item :label="t('license.licenseType')" prop="license_type" :error="licenseFormErrors.license_type">
             <el-input v-model="licenseForm.license_type" maxlength="80" :placeholder="t('overlay.licenseTypePlaceholder')" :validate-event="false" />
@@ -1263,50 +1351,34 @@ function handleUnlinkedPeopleVisible(visible: boolean): void {
       </el-form-item>
       <template v-if="repairPartUsageForm.source === 'internal_stock'">
         <el-form-item :label="t('repair.partUsagePart')" prop="spare_part_id" required :error="repairPartUsageFormErrors.spare_part_id">
-          <el-select
+          <SearchableSelect
             v-model="repairPartUsageForm.spare_part_id"
             class="repair-part-usage-form__wide"
-            filterable
-            remote
+            :request="request"
+            endpoint="/spare-parts/"
+            :map-option="mapSparePart"
+            :selected-option="repairPartUsageSelectedPart ? mapSparePart(repairPartUsageSelectedPart as unknown as Record<string, unknown>) : null"
+            :base-query="{ is_active: true }"
             clearable
-            reserve-keyword
-            :loading="repairPartUsageOptionsLoading"
-            :remote-method="scheduleRepairPartUsagePartSearch"
             :placeholder="t('repair.partUsagePartPlaceholder')"
-            @change="changeRepairPartUsagePart"
-          >
-            <el-option
-              v-for="part in repairPartUsageOptions"
-              :key="part.id"
-              :label="repairPartUsageOptionLabel(part)"
-              :value="String(part.id)"
-            />
-          </el-select>
-          <div v-if="repairPartUsageOptionsError" class="repair-part-usage-form__inline-error">
-            <span>{{ repairPartUsageOptionsError }}</span>
-            <el-button link type="danger" @click="loadRepairPartUsageOptions()">{{ t('common.retry') }}</el-button>
-          </div>
+            @update:model-value="updateRepairPartUsagePart"
+            @select="keepRepairPartOption"
+          />
         </el-form-item>
         <el-form-item :label="t('repair.partUsageStock')" prop="spare_stock_id" required :error="repairPartUsageFormErrors.spare_stock_id">
-          <el-select
+          <SearchableSelect
             v-model="repairPartUsageForm.spare_stock_id"
             class="repair-part-usage-form__wide"
+            :request="request"
+            endpoint="/spare-stocks/"
+            :map-option="mapSpareStock"
+            :selected-option="repairPartUsageSelectedStock ? mapSpareStock(repairPartUsageSelectedStock as unknown as Record<string, unknown>) : null"
+            :base-query="{ part: repairPartUsageForm.spare_part_id }"
             clearable
             :disabled="!repairPartUsageForm.spare_part_id || repairPartUsageStocksLoading"
-            :loading="repairPartUsageStocksLoading"
             :placeholder="repairPartUsageForm.spare_part_id ? t('repair.partUsageStockPlaceholder') : t('repair.partUsageSelectPartFirst')"
-          >
-            <el-option
-              v-for="stock in repairPartUsageStocks"
-              :key="stock.id"
-              :label="repairPartUsageStockLabel(stock)"
-              :value="String(stock.id)"
-            />
-          </el-select>
-          <div v-if="repairPartUsageStocksError" class="repair-part-usage-form__inline-error">
-            <span>{{ repairPartUsageStocksError }}</span>
-            <el-button link type="danger" @click="loadRepairPartUsageStocks()">{{ t('common.retry') }}</el-button>
-          </div>
+            @select="keepRepairStockOption"
+          />
         </el-form-item>
       </template>
       <template v-else>
@@ -1514,15 +1586,15 @@ function handleUnlinkedPeopleVisible(visible: boolean): void {
         <h3 class="form-dialog__section-title">{{ t('overlay.basicInformation') }}</h3>
         <div class="horizontal-form__rows">
           <el-form-item :label="t('common.dataCenter')" prop="data_center" required :error="roomFormErrors.data_center">
-            <el-select v-model="roomForm.data_center" :placeholder="t('overlay.selectDataCenter')">
-              <el-option
-                v-for="center in dataCenters"
-                :key="center.id"
-                :label="center.is_active ? center.name : `${center.name} (${t('status.inactive')})`"
-                :value="String(center.id)"
-                :disabled="!center.is_active && String(center.id) !== roomForm.data_center"
-              />
-            </el-select>
+            <SearchableSelect
+              v-model="roomForm.data_center"
+              :request="request"
+              endpoint="/data-centers/"
+              :map-option="mapDataCenter"
+              :placeholder="t('overlay.selectDataCenter')"
+              :selected-option="selectedDataCenterOption"
+              :base-query="{ is_active: true }"
+            />
           </el-form-item>
           <el-form-item :label="t('overlay.roomName')" prop="name" required :error="roomFormErrors.name"><el-input v-model="roomForm.name" maxlength="120" /></el-form-item>
           <el-form-item :label="t('rack.owner')" prop="owner_name" :error="roomFormErrors.owner_name"><el-input v-model="roomForm.owner_name" maxlength="120" /></el-form-item>
