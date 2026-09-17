@@ -1,0 +1,26 @@
+{% extends "admin/base_site.html" %}
+{% load i18n static %}
+
+{% block extrastyle %}{{ block.super }}
+<style>
+  .two-factor-help { margin: 0 0 1.25rem; color: var(--body-quiet-color); }
+  .two-factor-error { color: var(--error-fg); margin: 0 0 1rem; }
+</style>
+{% endblock %}
+
+{% block content %}
+<form method="post" id="two-factor-form">
+  {% csrf_token %}
+  {% if form.non_field_errors %}
+    <div class="two-factor-error">{{ form.non_field_errors }}</div>
+  {% endif %}
+  <p class="two-factor-help">{% blocktrans with username=username %}Enter the six-digit code from your authenticator app for {{ username }}.{% endblocktrans %}</p>
+  <div class="form-row{% if form.code.errors %} errors{% endif %}">
+    {{ form.code.errors }}
+    {{ form.code.label_tag }} {{ form.code }}
+  </div>
+  <div class="submit-row">
+    <input type="submit" value="{% translate 'Verify' %}">
+  </div>
+</form>
+{% endblock %}

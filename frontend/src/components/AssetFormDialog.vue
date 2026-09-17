@@ -113,7 +113,12 @@ const warrantyMonthsValue = computed<number | null>({
 
 async function applyAssetModel(modelId: string | null) {
   const model = modelId ? assetModels.value.find((item) => String(item.id) === modelId) : null;
-  if (!model) return;
+  if (!model) {
+    // Clearing a standard model restores the standalone device-type schema;
+    // it must not leave the previous model's custom-field schema mounted.
+    await syncAssetDeviceType();
+    return;
+  }
   assetForm.value.manufacturer_id = model.manufacturer ? String(model.manufacturer) : "";
   assetForm.value.device_type = model.device_type ? String(model.device_type) : "";
   assetForm.value.model_text = "";
@@ -232,8 +237,7 @@ function handleAssetModelSelect(option: SearchableSelectOption | SearchableSelec
 function handleRackSelect(option: SearchableSelectOption | SearchableSelectOption[] | null) {
   const selected = Array.isArray(option) ? option[0] : option;
   const rack = selected?.data as Rack | undefined;
-  if (rack) assetForm.value.rack_total_u = String(rack.total_u || 45);
-  void changeAssetRack();
+  void changeAssetRack(rack);
 }
 
 const selectedPersonOption = computed<SearchableSelectOption | null>(() => {

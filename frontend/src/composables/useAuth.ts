@@ -233,6 +233,7 @@ export function useAuth(deps: AuthDeps) {
     deps.bootstrapError.value = false;
     let sessionEstablished = false;
     try {
+      await deps.loadCsrf();
       const user = await deps.request<AuthPayload>("/auth/login/", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -276,6 +277,7 @@ export function useAuth(deps: AuthDeps) {
     deps.bootstrapError.value = false;
     let sessionEstablished = false;
     try {
+      await deps.loadCsrf();
       const user = await deps.request<AuthPayload>("/auth/2fa/verify/", {
         method: "POST",
         headers: { "Content-Type": "application/json" },

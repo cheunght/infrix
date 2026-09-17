@@ -88,6 +88,11 @@ def _network_address_duplicate_message(address, *, same_asset=False):
 
 def _validated_network_configuration(asset, data):
     """Normalize all submitted IPs and reject duplicate current addresses."""
+    current_ids = set(
+        AssetNetworkAddress.objects.select_for_update()
+        .filter(asset_id=asset.pk)
+        .values_list("pk", flat=True)
+    )
     entries = []
     seen = {}
     for role, key in NETWORK_CONFIGURATION_FIELDS:
@@ -105,14 +110,13 @@ def _validated_network_configuration(asset, data):
                 key: _network_address_duplicate_message(address, same_asset=True),
             })
 
-        current_id = (
-            AssetNetworkAddress.objects.filter(asset_id=asset.pk, role=role)
-            .values_list("pk", flat=True)
-            .first()
-        )
         conflicts = AssetNetworkAddress.objects.filter(address=address)
-        if current_id is not None:
-            conflicts = conflicts.exclude(pk=current_id)
+        if current_ids:
+            # A role relocation may submit an address that currently belongs
+            # to another role of this same asset. All of the asset's old rows
+            # are owned by this atomic configuration operation and must be
+            # excluded from the cross-asset uniqueness check.
+            conflicts = conflicts.exclude(pk__in=current_ids)
         conflict = conflicts.select_related("asset").first()
         if conflict:
             raise ValidationError({
@@ -384,8 +388,6 @@ def resolve_inventory_item(*, item_id, action, note, actor, request):
         "resolved_by",
         "actual_rack__room__data_center",
     ).get(pk=item_id)
-    asset = Asset.objects.select_for_update().get(pk=item.asset_id)
-
     if item.status not in INVENTORY_EXCEPTION_STATUSES:
         raise DRFValidationError({"detail": "只有异常盘点项可以处理"})
     if item.resolution_status != "pending":
@@ -398,8 +400,6 @@ def resolve_inventory_item(*, item_id, action, note, actor, request):
     if action == "update_asset" and item.status != "location_mismatch":
         raise DRFValidationError({"action": "更新资产台账目前只适用于位置不符"})
 
-    before_item = InventoryItemSerializer(item).data
-    asset_changed = False
     if action == "update_asset":
         if (
             item.actual_rack_id is None
@@ -407,6 +407,16 @@ def resolve_inventory_item(*, item_id, action, note, actor, request):
             or item.actual_end_u is None
         ):
             raise DRFValidationError({"action": "位置不符必须包含完整的实际机柜和起止 U 位"})
+        # Asset placement uses data center -> room -> rack -> allocation ->
+        # asset. Acquire that graph before the asset row so inventory
+        # correction cannot invert the lock order used by rack edits.
+        lock_asset_location_graph(item.asset_id, {"rack_id": item.actual_rack_id})
+
+    asset = Asset.objects.select_for_update().get(pk=item.asset_id)
+
+    before_item = InventoryItemSerializer(item).data
+    asset_changed = False
+    if action == "update_asset":
         before_asset = asset_audit_snapshot(asset.pk)
         try:
             asset_changed = update_asset_placement(
@@ -473,16 +483,107 @@ def resolve_inventory_item(*, item_id, action, note, actor, request):
     return item
 
 
+def lock_physical_location_graph(
+    *,
+    data_center_ids=(),
+    room_ids=(),
+    rack_ids=(),
+    allocation_rack_ids=(),
+    asset_ids=(),
+):
+    """Lock physical-location rows in one deterministic order.
+
+    Every operation that can change rack ancestry or an asset allocation uses
+    data center -> server room -> rack -> allocation -> asset.  The sorted
+    primary keys make two concurrent multi-row corrections acquire the same
+    lock sequence and avoid MariaDB deadlocks caused by opposite traversal.
+    """
+
+    def _ids(values):
+        return {int(value) for value in values if value not in (None, "")}
+
+    data_center_ids = _ids(data_center_ids)
+    room_ids = _ids(room_ids)
+    rack_ids = _ids(rack_ids)
+    allocation_rack_ids = _ids(allocation_rack_ids) or set(rack_ids)
+    asset_ids = _ids(asset_ids)
+
+    list(
+        DataCenter.objects.select_for_update()
+        .filter(pk__in=sorted(data_center_ids))
+        .order_by("pk")
+    )
+    list(
+        ServerRoom.objects.select_for_update()
+        .filter(pk__in=sorted(room_ids))
+        .order_by("pk")
+    )
+    list(
+        Rack.objects.select_for_update()
+        .filter(pk__in=sorted(rack_ids))
+        .order_by("pk")
+    )
+    allocations = list(
+        RackUnitAllocation.objects.select_for_update()
+        .filter(rack_id__in=sorted(allocation_rack_ids))
+        .order_by("pk")
+    )
+    asset_ids.update(item.asset_id for item in allocations)
+    list(
+        Asset.objects.select_for_update()
+        .filter(pk__in=sorted(asset_ids))
+        .order_by("pk")
+    )
+    return allocations
+
+
+def _rack_location_ids(rack_ids):
+    rows = list(
+        Rack.objects.filter(pk__in=tuple(rack_ids)).values(
+            "pk", "room_id", "room__data_center_id"
+        )
+    )
+    return (
+        {row["room__data_center_id"] for row in rows if row["room__data_center_id"] is not None},
+        {row["room_id"] for row in rows if row["room_id"] is not None},
+    )
+
+
+def lock_asset_location_graph(asset_id, configuration=None):
+    """Lock the current and requested rack ancestry before an asset write."""
+
+    current_rack_id = (
+        RackUnitAllocation.objects.filter(asset_id=asset_id)
+        .values_list("rack_id", flat=True)
+        .first()
+    )
+    target_rack_id = None
+    if isinstance(configuration, dict):
+        try:
+            candidate = int(configuration.get("rack_id"))
+            if candidate > 0:
+                target_rack_id = candidate
+        except (TypeError, ValueError):
+            pass
+    affected_rack_ids = {
+        value for value in (current_rack_id, target_rack_id) if value is not None
+    }
+    data_center_ids, room_ids = _rack_location_ids(affected_rack_ids)
+    return lock_physical_location_graph(
+        data_center_ids=data_center_ids,
+        room_ids=room_ids,
+        rack_ids=affected_rack_ids,
+        allocation_rack_ids=affected_rack_ids,
+        asset_ids=(asset_id,),
+    )
+
+
 def update_asset_placement(asset: Asset, *, rack: Rack, start_u: int, end_u: int) -> bool:
     """Update only an asset's rack placement using the canonical placement rules."""
-    # A retired asset may still contain a legacy allocation that needs a
-    # corrective unmount through ``configure_asset``.  It must not be mounted
-    # or moved, however.  Check this before taking the rack lock so a retired
-    # placement request cannot deadlock with the normal rack -> allocation ->
-    # asset lock order used below.
-    current_status = Asset.objects.filter(pk=asset.pk).values_list("status", flat=True).first()
-    if current_status == "retired":
-        locked_asset = Asset.objects.select_for_update().get(pk=asset.pk)
+    lock_asset_location_graph(asset.pk, {"rack_id": rack.pk})
+    rack = Rack.objects.select_related("room__data_center").get(pk=rack.pk)
+    locked_asset = Asset.objects.get(pk=asset.pk)
+    if locked_asset.status == "retired":
         allocation = RackUnitAllocation.objects.filter(asset_id=locked_asset.pk).first()
         if allocation and (
             allocation.rack_id == rack.pk
@@ -494,7 +595,6 @@ def update_asset_placement(asset: Asset, *, rack: Rack, start_u: int, end_u: int
             "configuration": "已报废资产不能新增或调整机柜位置，请先保持下架",
         })
 
-    rack = Rack.objects.select_related("room__data_center").select_for_update().get(pk=rack.pk)
     if (
         not rack.is_active
         or not rack.room.is_active
@@ -509,8 +609,8 @@ def update_asset_placement(asset: Asset, *, rack: Rack, start_u: int, end_u: int
     if end_u > rack.total_u:
         raise ValidationError({"rack_end_u": f"结束 U 位不能超过机柜容量 U{rack.total_u}"})
 
-    # Lock all allocations in the target rack before checking for overlap.
-    list(RackUnitAllocation.objects.select_for_update().filter(rack=rack))
+    # The location graph helper already locked the target rack and all of its
+    # allocations before this validation read.
     # Keep this as a locking read as well as locking the parent rack.  On
     # MySQL's default REPEATABLE READ isolation, a plain SELECT could reuse a
     # snapshot taken before another placement committed while this transaction
@@ -529,20 +629,7 @@ def update_asset_placement(asset: Asset, *, rack: Rack, start_u: int, end_u: int
             )
         })
 
-    locked_asset = Asset.objects.select_for_update().get(pk=asset.pk)
-    if locked_asset.status == "retired":
-        allocation = RackUnitAllocation.objects.select_for_update().filter(asset=locked_asset).first()
-        if allocation and (
-            allocation.rack_id == rack.pk
-            and allocation.start_u == start_u
-            and allocation.end_u == end_u
-        ):
-            return False
-        raise ValidationError({
-            "configuration": "已报废资产不能新增或调整机柜位置，请先保持下架",
-        })
-
-    allocation = RackUnitAllocation.objects.select_for_update().filter(asset=locked_asset).first()
+    allocation = RackUnitAllocation.objects.filter(asset=locked_asset).first()
     changed = not (
         allocation
         and allocation.rack_id == rack.pk
@@ -575,6 +662,7 @@ def unrack_asset(asset: Asset) -> None:
 @transaction.atomic
 def clear_asset_placement(asset: Asset) -> None:
     """Clear the complete physical location, including the data center."""
+    lock_asset_location_graph(asset.pk)
     RackUnitAllocation.objects.filter(asset_id=asset.pk).delete()
     if asset.asset_data_center_id is not None:
         asset.asset_data_center_id = None
@@ -588,16 +676,19 @@ def synchronize_asset_location_hierarchy(*, rack_ids, data_center_id) -> int:
     Rack/room edits are correction operations, not asset moves.  The rack and
     allocation rows are locked by their caller (and locked again here for
     direct service use) before the affected assets are updated.  This follows
-    the rack -> allocation -> asset lock order used by placement writes.
+    the shared data center -> room -> rack -> allocation -> asset order.
     """
     rack_ids = tuple(rack_ids)
     if not rack_ids:
         return 0
 
-    list(
-        RackUnitAllocation.objects.select_for_update()
-        .filter(rack_id__in=rack_ids)
-        .order_by("asset_id")
+    current_data_center_ids, room_ids = _rack_location_ids(rack_ids)
+    current_data_center_ids.add(data_center_id)
+    lock_physical_location_graph(
+        data_center_ids=current_data_center_ids,
+        room_ids=room_ids,
+        rack_ids=rack_ids,
+        allocation_rack_ids=rack_ids,
     )
     assets = (
         Asset.objects.select_for_update()
@@ -825,6 +916,12 @@ def configure_asset(asset: Asset, data):
     partial-configuration compatibility rule in the serializer.
     """
     data = _merge_current_supporting_configuration(asset, data or {})
+    # Configuration updates may remove an existing allocation even when the
+    # submitted payload contains only supporting fields. Acquire the physical
+    # graph before the network rows so callers cannot hold an asset lock while
+    # a concurrent rack correction holds the rack/allocation locks.
+    if asset.pk:
+        lock_asset_location_graph(asset.pk, data)
     network_entries = _validated_network_configuration(asset, data)
     data_center_value = _value(data, "data_center")
     room_id = _value(data, "server_room_id")

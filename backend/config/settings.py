@@ -1,5 +1,6 @@
 from pathlib import Path
 import os
+from ipaddress import ip_address
 from urllib.parse import urlsplit
 
 from django.core.exceptions import ImproperlyConfigured
@@ -47,6 +48,17 @@ def _env_list(name, default=()):
     if raw_value is None:
         return list(default)
     return [item.strip() for item in raw_value.split(",") if item.strip()]
+
+
+def _env_ip_list(name, default=()):
+    values = _env_list(name, default)
+    normalized = []
+    for value in values:
+        try:
+            normalized.append(str(ip_address(value)))
+        except ValueError as exc:
+            raise ImproperlyConfigured(f"{name} must contain valid IP addresses.") from exc
+    return normalized
 
 
 def validate_database_settings(
@@ -113,6 +125,7 @@ def validate_production_settings(
     use_x_forwarded_host,
     x_frame_options,
     clickjacking_middleware_enabled,
+    trusted_proxy_ips,
 ):
     """Reject an incomplete or internally inconsistent production config."""
     normalized_secret = (secret_key or "").strip()
@@ -177,6 +190,10 @@ def validate_production_settings(
         raise ImproperlyConfigured(
             "Direct HTTPS mode must not trust a forwarded protocol header."
         )
+    if https_mode == "proxy" and not trusted_proxy_ips:
+        raise ImproperlyConfigured(
+            "Proxy mode requires DJANGO_TRUSTED_PROXY_IPS to identify the local or external proxy."
+        )
     if use_x_forwarded_host:
         raise ImproperlyConfigured(
             "USE_X_FORWARDED_HOST is disabled for this deployment; use the validated Host header."
@@ -191,7 +208,7 @@ DJANGO_ENV = os.getenv("DJANGO_ENV", "development").strip().lower()
 if DJANGO_ENV not in {"development", "production"}:
     raise ImproperlyConfigured("DJANGO_ENV must be either 'development' or 'production'.")
 IS_PRODUCTION = DJANGO_ENV == "production"
-PRODUCT_VERSION = "0.1.0"
+PRODUCT_VERSION = "0.2.0"
 
 SECRET_KEY = os.getenv(
     "DJANGO_SECRET_KEY",
@@ -211,6 +228,10 @@ CSRF_TRUSTED_ORIGINS = _env_list(
 HTTPS_MODE = os.getenv("DJANGO_HTTPS_MODE", "" if IS_PRODUCTION else "direct").strip().lower()
 if not IS_PRODUCTION and HTTPS_MODE not in {"proxy", "direct"}:
     raise ImproperlyConfigured("DJANGO_HTTPS_MODE must be either 'proxy' or 'direct'.")
+TRUSTED_PROXY_IPS = _env_ip_list(
+    "DJANGO_TRUSTED_PROXY_IPS",
+    ("127.0.0.1", "::1"),
+)
 
 SECURE_SSL_REDIRECT = _env_bool(
     "DJANGO_SECURE_SSL_REDIRECT", "1" if IS_PRODUCTION else "0"
@@ -276,6 +297,7 @@ if IS_PRODUCTION:
         clickjacking_middleware_enabled=(
             "django.middleware.clickjacking.XFrameOptionsMiddleware" in MIDDLEWARE
         ),
+        trusted_proxy_ips=TRUSTED_PROXY_IPS,
     )
 ROOT_URLCONF = "config.urls"
 TEMPLATES = [{

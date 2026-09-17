@@ -1,5 +1,9 @@
 from django.contrib import admin
+from .admin_auth import SecureAdminSite
 from .models import *
+
+
+secure_admin_site = SecureAdminSite(name="admin")
 
 
 class ReadOnlyInspectionAdmin(admin.ModelAdmin):
@@ -62,10 +66,9 @@ for model in [
     InventoryTask,
     InventoryItem,
 ]:
-    admin.site.register(model, ReadOnlyInspectionAdmin)
+    secure_admin_site.register(model, ReadOnlyInspectionAdmin)
 
 
-@admin.register(SpareStock)
 class SpareStockAdmin(ReadOnlyInspectionAdmin):
     list_display = ("part", "data_center", "server_room", "quantity", "updated_at")
     list_filter = ("data_center", "server_room")
@@ -78,7 +81,6 @@ class SpareStockAdmin(ReadOnlyInspectionAdmin):
     list_select_related = ("part", "part__category", "data_center", "server_room")
 
 
-@admin.register(SpareStockTransaction)
 class SpareStockTransactionAdmin(ReadOnlyInspectionAdmin):
     list_display = (
         "created_at",
@@ -116,7 +118,6 @@ class SpareStockTransactionAdmin(ReadOnlyInspectionAdmin):
     )
 
 
-@admin.register(AuditLog)
 class AuditLogAdmin(admin.ModelAdmin):
     list_display = ("created_at", "actor", "resource_type", "action", "resource_id")
     list_filter = ("resource_type", "action", "created_at")
@@ -131,3 +132,8 @@ class AuditLogAdmin(admin.ModelAdmin):
 
     def has_delete_permission(self, request, obj=None):
         return False
+
+
+secure_admin_site.register(SpareStock, SpareStockAdmin)
+secure_admin_site.register(SpareStockTransaction, SpareStockTransactionAdmin)
+secure_admin_site.register(AuditLog, AuditLogAdmin)

@@ -1176,6 +1176,48 @@ def _remove_tree(path: Path) -> None:
         path.unlink()
 
 
+def _stage_media_tree(source: Path, media_root: Path) -> Path:
+    """Copy restored media beside MEDIA_ROOT before touching the database.
+
+    The extracted archive normally lives under the backup directory, which
+    may be mounted on a different filesystem from MEDIA_ROOT.  Staging beside
+    the destination makes the later directory swap an atomic same-filesystem
+    rename and lets us fail before database restore if the copy cannot finish.
+    """
+
+    staged: Path | None = None
+    try:
+        if source.is_symlink() or not source.is_dir():
+            raise BackupServiceError(
+                "备份媒体目录无效，无法恢复媒体文件。",
+                code="media_restore_failed",
+                status_code=400,
+            )
+        media_root.parent.mkdir(mode=0o750, parents=True, exist_ok=True)
+        staged = media_root.parent / f".{media_root.name}.infrix-staged-{uuid4().hex}"
+        _copy_tree_without_symlinks(source, staged)
+        staged.chmod(0o750)
+        return staged
+    except BackupServiceError:
+        if staged is not None:
+            try:
+                _remove_tree(staged)
+            except OSError:
+                logger.exception("Unable to remove incomplete staged media")
+        raise
+    except OSError as exc:
+        if staged is not None:
+            try:
+                _remove_tree(staged)
+            except OSError:
+                logger.exception("Unable to remove incomplete staged media")
+        raise BackupServiceError(
+            "媒体文件恢复失败，无法准备媒体目录。",
+            code="media_restore_failed",
+            status_code=502,
+        ) from exc
+
+
 def _replace_media_tree(staged_media: Path, media_root: Path) -> Path | None:
     if media_root.exists() and media_root.is_symlink():
         raise BackupServiceError(
@@ -1297,23 +1339,39 @@ def restore_backup(
         media_status = "not_started"
         rollback_path: Path | None = None
         media_root = _configured_media_root()
+        staged_media: Path | None = None
         try:
             with tempfile.TemporaryDirectory(prefix=".infrix-restore-", dir=str(ensure_backup_root(create=True))) as temp_directory:
                 extracted_root = Path(temp_directory) / "archive"
                 _extract_archive(validated, extracted_root)
+                if bool(validated.manifest.get("media_included")):
+                    # Complete the cross-filesystem copy before importing the
+                    # database. A failed media stage therefore cannot leave a
+                    # restored database paired with old media.
+                    staged_media = _stage_media_tree(
+                        extracted_root / MEDIA_DIRECTORY_NAME,
+                        media_root,
+                    )
+                    # Swap only after the complete copy is ready. If the
+                    # same-filesystem rename fails, the database is untouched.
+                    rollback_path = _replace_media_tree(staged_media, media_root)
+                    staged_media = None
+                    media_status = "restored"
                 # The manifest database name is informational only.  The
                 # client is given the current Django database name above, and
                 # the dump is created without --databases/USE wrappers so a
                 # backup from another environment cannot redirect the import.
                 _restore_database(extracted_root)
                 database_status = "restored"
-                if bool(validated.manifest.get("media_included")):
-                    rollback_path = _replace_media_tree(extracted_root / MEDIA_DIRECTORY_NAME, media_root)
-                    media_status = "restored"
-                else:
+                if not bool(validated.manifest.get("media_included")):
                     media_status = "unchanged"
                 sessions_invalidated, warnings = _post_restore()
         except BackupServiceError as exc:
+            if staged_media is not None:
+                try:
+                    _remove_tree(staged_media)
+                except OSError:
+                    logger.exception("Unable to remove staged media after restore failure")
             if rollback_path is not None:
                 media_status = "rollback_succeeded" if _rollback_media(media_root, rollback_path) else "rollback_failed"
             raise BackupServiceError(
@@ -1328,6 +1386,11 @@ def restore_backup(
                 },
             ) from exc
         finally:
+            if staged_media is not None:
+                try:
+                    _remove_tree(staged_media)
+                except OSError:
+                    logger.exception("Unable to remove staged media after restore")
             if rollback_path is not None and media_status == "restored":
                 _finalize_media_rollback(rollback_path)
 

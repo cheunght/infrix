@@ -273,7 +273,7 @@ export interface AssetFormContext {
   assetRoomOptions: Ref<ServerRoom[]>;
   changeAssetRoom: () => void | Promise<void>;
   assetRackOptions: Ref<Rack[]>;
-  changeAssetRack: () => void | Promise<void>;
+  changeAssetRack: (rack?: Rack) => void | Promise<void>;
   setAssetRackMounted: (value: boolean) => void;
   assetCustomFieldSchema: Ref<CustomFieldSchema[]>;
   updateAssetCustomFieldValue: (key: string, value: unknown) => void;

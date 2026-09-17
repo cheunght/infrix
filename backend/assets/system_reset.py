@@ -12,6 +12,7 @@ from .audit import write_audit_log
 from .bootstrap import initialize_system_data
 from .models import (
     Asset,
+    AssetModel,
     AssetCustomValue,
     AssetNetworkAddress,
     AssetAssignmentEvent,
@@ -20,6 +21,8 @@ from .models import (
     AuthThrottleState,
     CustomField,
     CustomFieldOption,
+    CustomFieldSet,
+    CustomFieldSetItem,
     DataCenter,
     Department,
     DeviceType,
@@ -103,6 +106,10 @@ def _clear_mutable_data(preserved_user_ids):
     _delete_queryset(counts, "procurement_records", ProcurementRecord.objects.all())
     _delete_queryset(counts, "maintenance_contracts", MaintenanceContract.objects.all())
     _delete_queryset(counts, "assets", Asset.objects.all())
+    # AssetModel and the fieldset links are protected references.  Remove
+    # models before their manufacturer/device-type/fieldset parents, then
+    # remove fieldset memberships before the protected CustomField rows.
+    _delete_queryset(counts, "asset_models", AssetModel.objects.all())
 
     _delete_queryset(counts, "software_licenses", SoftwareLicense.objects.all())
     _delete_queryset(counts, "spare_stock_transactions", SpareStockTransaction.objects.all())
@@ -110,14 +117,18 @@ def _clear_mutable_data(preserved_user_ids):
     _delete_queryset(counts, "spare_parts", SparePart.objects.all())
     _delete_queryset(counts, "spare_part_categories", SparePartCategory.objects.all())
 
+    _delete_queryset(counts, "custom_fieldset_items", CustomFieldSetItem.objects.all())
     _delete_queryset(counts, "custom_field_options", CustomFieldOption.objects.all())
+    # DeviceType.default_fieldset is PROTECT, so device types must be removed
+    # before the fieldsets they reference.
+    _delete_queryset(counts, "device_types", DeviceType.objects.all())
+    _delete_queryset(counts, "custom_fieldsets", CustomFieldSet.objects.all())
     _delete_queryset(counts, "custom_fields", CustomField.objects.all())
     _delete_queryset(counts, "racks", Rack.objects.all())
     _delete_queryset(counts, "server_rooms", ServerRoom.objects.all())
     _delete_queryset(counts, "data_centers", DataCenter.objects.all())
     _delete_queryset(counts, "tags", Tag.objects.all())
     _delete_queryset(counts, "manufacturers", Manufacturer.objects.all())
-    _delete_queryset(counts, "device_types", DeviceType.objects.all())
     _delete_queryset(
         counts,
         "people",

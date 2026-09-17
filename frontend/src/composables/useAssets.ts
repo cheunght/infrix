@@ -2612,9 +2612,16 @@ export function useAssets(deps: AssetsDeps) {
     assetForm.value.rack_start_u = "";
     assetForm.value.rack_end_u = "";
   }
-  function changeAssetRack() {
-    const rack = deps.racks.value.find((item) => String(item.id) === assetForm.value.rack_id);
-    assetForm.value.rack_total_u = rack ? String(rack.total_u) : "45";
+  function changeAssetRack(selectedRack?: Rack) {
+    const rack = selectedRack || deps.racks.value.find((item) => String(item.id) === assetForm.value.rack_id);
+    if (rack) {
+      assetForm.value.rack_total_u = String(rack.total_u);
+      return;
+    }
+    // A selected rack may come from a filtered/remote option list that is not
+    // present in the local cache. Preserve its real capacity instead of
+    // replacing it with the historical 45U default.
+    if (!assetForm.value.rack_total_u) assetForm.value.rack_total_u = "45";
   }
   function setAssetRackMounted(value: boolean) {
     assetForm.value.rack_mounted = value;

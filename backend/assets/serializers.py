@@ -33,7 +33,7 @@ from .enum_contracts import (
 )
 from .license_status import LICENSE_STATUS_LABELS, license_status_value
 from .reporting.capacity import rack_effective_used_u
-from .services import CustomFieldConflictError, apply_asset_custom_values, apply_asset_tags, apply_spare_stock_transaction, assign_asset, configure_asset, inventory_snapshot_location, inventory_task_can_delete, return_asset, synchronize_asset_location_hierarchy, transfer_asset, validate_inventory_resolution_request
+from .services import CustomFieldConflictError, apply_asset_custom_values, apply_asset_tags, apply_spare_stock_transaction, assign_asset, configure_asset, inventory_snapshot_location, inventory_task_can_delete, lock_asset_location_graph, lock_physical_location_graph, return_asset, synchronize_asset_location_hierarchy, transfer_asset, validate_inventory_resolution_request
 from .custom_fields import validate_custom_field_value
 from .custom_fields import normalize_validation_config as _normalize_validation_config
 from .attachment_security import validate_attachment_file
@@ -1261,6 +1261,19 @@ class CustomFieldSerializer(serializers.ModelSerializer):
 
     def validate(self, attrs):
         field_type = attrs.get("field_type", self.instance.field_type if self.instance else None)
+        effective_form_visible = attrs.get(
+            "form_visible",
+            self.instance.form_visible if self.instance else True,
+        )
+        if (
+            self.instance
+            and self.instance.form_visible
+            and not effective_form_visible
+            and CustomFieldSetItem.objects.filter(field_id=self.instance.pk, required=True).exists()
+        ):
+            raise serializers.ValidationError({
+                "form_visible": "字段已在字段集中设为必填，不能隐藏；请先取消必填或移出字段集",
+            })
         if self.instance and "field_type" in attrs and attrs["field_type"] != self.instance.field_type:
             if self.instance.asset_values.exists() or self.instance.options.exists():
                 raise serializers.ValidationError({"field_type": "字段已有资产值或选项，不能修改字段类型"})
@@ -1926,6 +1939,15 @@ class ServerRoomSerializer(serializers.ModelSerializer):
         data_center = validated_data.get("data_center")
         location_submitted = "data_center" in self.initial_data
         with transaction.atomic():
+            if location_submitted and data_center is not None:
+                rack_ids = list(Rack.objects.filter(room_id=instance.pk).values_list("pk", flat=True))
+                lock_physical_location_graph(
+                    data_center_ids={instance.data_center_id, data_center.pk},
+                    room_ids=(instance.pk,),
+                    rack_ids=rack_ids,
+                    allocation_rack_ids=rack_ids,
+                )
+                instance = ServerRoom.objects.select_for_update().get(pk=instance.pk)
             instance = super().update(instance, validated_data)
             if location_submitted and data_center is not None:
                 rack_ids = Rack.objects.filter(room_id=instance.pk).values_list("pk", flat=True)
@@ -2852,6 +2874,14 @@ class AssetWriteSerializer(serializers.ModelSerializer):
                 # Re-read and lock the asset before applying lifecycle checks;
                 # serializer validation runs before the view transaction and
                 # must not be the final authority for retirement races.
+                if configuration is not None:
+                    if self._configuration_includes_placement(configuration):
+                        configuration = self._merge_partial_placement_configuration(instance, configuration)
+                    # All configuration writes can reach configure_asset,
+                    # which may clear an allocation. Lock the current graph
+                    # before the asset row even for network-only or empty
+                    # configuration payloads.
+                    lock_asset_location_graph(instance.pk, configuration)
                 instance = Asset.objects.select_for_update().get(pk=instance.pk)
                 if (
                     requested_asset_data_center is not missing
@@ -3348,6 +3378,24 @@ class RackSerializer(serializers.ModelSerializer):
         room = validated_data.get("room")
         location_submitted = "room" in self.initial_data
         with transaction.atomic():
+            if location_submitted and room is not None:
+                source_data_center_id = (
+                    ServerRoom.objects.filter(pk=instance.room_id)
+                    .values_list("data_center_id", flat=True)
+                    .first()
+                )
+                target_data_center_id = (
+                    ServerRoom.objects.filter(pk=room.pk)
+                    .values_list("data_center_id", flat=True)
+                    .first()
+                )
+                lock_physical_location_graph(
+                    data_center_ids={source_data_center_id, target_data_center_id},
+                    room_ids={instance.room_id, room.pk},
+                    rack_ids=(instance.pk,),
+                    allocation_rack_ids=(instance.pk,),
+                )
+                instance = Rack.objects.select_for_update().get(pk=instance.pk)
             instance = super().update(instance, validated_data)
             if location_submitted and room is not None:
                 synchronize_asset_location_hierarchy(

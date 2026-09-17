@@ -191,6 +191,11 @@ SKIP_MARIADB=1
 
 随附 Nginx 部署的 Django 设置仍使用 `DJANGO_HTTPS_MODE=proxy`。网关模式下只有可信网关可以设置转发协议头；自签名模式下应将生成的证书加入客户端信任，或在诊断时作为 CA 传入，否则浏览器会提示证书不受信任。
 
+登录限流使用可信代理解析后的客户端 IP。随附 Nginx 与 Gunicorn 同机时保留
+`DJANGO_TRUSTED_PROXY_IPS=127.0.0.1,::1`；如果 Gunicorn 前还有其他固定地址的
+反向代理，把这些地址以逗号分隔加入环境文件。未列入该变量的请求会忽略
+`X-Forwarded-For` 和 `X-Real-IP`，避免客户端伪造限流来源。
+
 安装器启动服务后会执行真实 HTTPS 检查，之后也可以单独执行：
 
 ```bash

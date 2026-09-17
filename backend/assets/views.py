@@ -28,6 +28,7 @@ from drf_spectacular.utils import OpenApiParameter, extend_schema
 from django.http import FileResponse, HttpResponse, QueryDict
 from django.shortcuts import get_object_or_404
 from django.utils import timezone
+from django.views.decorators.csrf import csrf_protect
 from datetime import date, datetime, timedelta
 from openpyxl import Workbook
 from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
@@ -54,6 +55,8 @@ from .services import (
     confirm_inventory_item_normal,
     create_repair_part_usage,
     inventory_task_delete_block_reason,
+    lock_asset_location_graph,
+    lock_physical_location_graph,
     reopen_repair,
     reset_inventory_resolution,
     resolve_inventory_item,
@@ -105,6 +108,12 @@ from .ldap_configuration import (
 from .configuration_secrets import ConfigurationSecretError, decrypt_secret, encrypt_secret
 from .attachment_storage import cleanup_attachment_file
 from .auth_security import default_api_token_expiry, generate_api_token, generate_totp_secret, provisioning_uri, totp_step_for_code
+from .auth_throttle import (
+    clear_two_factor_throttle,
+    register_two_factor_failure,
+    trusted_client_ip,
+    two_factor_lock_status,
+)
 from .smtp import SmtpConfigurationError, send_smtp_test_email
 from .permissions import BusinessRolePermission, CanExportAssets, CanExportFaults, CanExportInventory, CanExportLicenses, CanExportRacks, CanExportSpares, CanImportAssets, CanManageInventory, CanManageSystemSettings, CanResetSystem, CanViewAssetCustomFieldSchema, CanViewAssetTagsRuntime, CanViewAuditLog, CanViewDashboard, CanViewDepartmentRuntime, CanViewInventory, CanViewLicenses, CanViewManufacturerRuntime, CanViewPeopleRuntime, CanViewSparePartCategoryRuntime, IsSystemAdministrator
 from .roles import ROLE_DEFINITIONS, ROLE_NAME_TO_CODE, user_capabilities, user_has_capability, user_role_code, user_role_codes
@@ -1013,6 +1022,7 @@ class AssetViewSet(AuditedModelViewSetMixin, viewsets.ModelViewSet):
             # transaction exit is translated into the same 4xx contract as a
             # Django ProtectedError.
             with transaction.atomic():
+                lock_asset_location_graph(instance.pk)
                 locked_instance = get_object_or_404(
                     Asset.objects.select_for_update(),
                     pk=instance.pk,
@@ -1038,6 +1048,7 @@ class AssetViewSet(AuditedModelViewSetMixin, viewsets.ModelViewSet):
             asset_no = f"ID {asset_id}"
             try:
                 with transaction.atomic():
+                    lock_asset_location_graph(asset_id)
                     instance = Asset.objects.select_for_update().get(pk=asset_id)
                     asset_no = instance.asset_no
                     _delete_asset_with_audit(
@@ -1288,6 +1299,12 @@ class AssetViewSet(AuditedModelViewSetMixin, viewsets.ModelViewSet):
             asset_no = f"ID {asset_id}"
             try:
                 with transaction.atomic():
+                    location_change = validated["changes"].get("location", {})
+                    if location_change.get("enabled"):
+                        if location_change.get("action") == "clear":
+                            lock_asset_location_graph(asset_id)
+                        else:
+                            lock_asset_location_graph(asset_id, {"rack_id": location_change.get("rack")})
                     instance = Asset.objects.select_for_update().get(pk=asset_id)
                     asset_no = instance.asset_no
                     self._apply_bulk_edit(request, instance, validated["changes"], batch_operation_id)
@@ -1580,19 +1597,24 @@ class RackViewSet(AuditedModelViewSetMixin, viewsets.ModelViewSet):
 
     @transaction.atomic
     def perform_update(self, serializer):
-        # Match the rack -> allocations lock order used by asset placement and
-        # repeat validation after acquiring the locks. Otherwise a concurrent
-        # placement can make an earlier capacity check stale before save.
-        locked_rack = Rack.objects.select_for_update().get(pk=serializer.instance.pk)
+        # Lock the complete physical hierarchy in the same order as asset
+        # placement: data centers -> rooms -> racks -> allocations -> assets.
+        current_room_id = serializer.instance.room_id
         target_room = serializer.validated_data.get("room")
-        target_room_id = target_room.pk if target_room is not None else locked_rack.room_id
-        locked_target_room = ServerRoom.objects.select_for_update().get(pk=target_room_id)
-        DataCenter.objects.select_for_update().get(pk=locked_target_room.data_center_id)
-        list(
-            RackUnitAllocation.objects.select_for_update()
-            .filter(rack_id=locked_rack.pk)
-            .order_by("pk")
+        target_room_id = target_room.pk if target_room is not None else current_room_id
+        source_data_center_id = ServerRoom.objects.filter(pk=current_room_id).values_list(
+            "data_center_id", flat=True
+        ).first()
+        target_data_center_id = ServerRoom.objects.filter(pk=target_room_id).values_list(
+            "data_center_id", flat=True
+        ).first()
+        lock_physical_location_graph(
+            data_center_ids={source_data_center_id, target_data_center_id},
+            room_ids={current_room_id, target_room_id},
+            rack_ids=(serializer.instance.pk,),
+            allocation_rack_ids=(serializer.instance.pk,),
         )
+        locked_rack = Rack.objects.select_for_update().get(pk=serializer.instance.pk)
         locked_serializer = self.get_serializer(
             locked_rack,
             data=self.request.data,
@@ -1606,6 +1628,13 @@ class RackViewSet(AuditedModelViewSetMixin, viewsets.ModelViewSet):
     def perform_destroy(self, instance):
         from django.db.models.deletion import ProtectedError
 
+        current_rack = Rack.objects.select_related("room__data_center").get(pk=instance.pk)
+        lock_physical_location_graph(
+            data_center_ids=(current_rack.room.data_center_id,),
+            room_ids=(current_rack.room_id,),
+            rack_ids=(current_rack.pk,),
+            allocation_rack_ids=(current_rack.pk,),
+        )
         instance = Rack.objects.select_for_update().get(pk=instance.pk)
         if instance.allocations.exists():
             raise DRFValidationError("机柜仍有资产占用，不能删除，请先迁移资产或停用机柜")
@@ -1679,26 +1708,26 @@ class ServerRoomViewSet(AuditedModelViewSetMixin, viewsets.ModelViewSet):
         locked_room = None
         if needs_location_lock:
             # A room reparenting changes the effective data center of every
-            # rack below it. Lock the same rack -> allocation hierarchy used
-            # by asset placement, then validate again against the locked rows.
-            locked_room = ServerRoom.objects.select_for_update().get(pk=serializer.instance.pk)
+            # rack below it. Lock the complete hierarchy before validating
+            # again against the locked rows.
+            room_id = serializer.instance.pk
+            current_data_center_id = ServerRoom.objects.filter(pk=room_id).values_list(
+                "data_center_id", flat=True
+            ).first()
             target_data_center = serializer.validated_data.get("data_center")
             target_data_center_id = (
                 target_data_center.pk
                 if target_data_center is not None
-                else locked_room.data_center_id
+                else current_data_center_id
             )
-            DataCenter.objects.select_for_update().get(pk=target_data_center_id)
-            list(
-                Rack.objects.select_for_update()
-                .filter(room_id=locked_room.pk)
-                .order_by("pk")
+            rack_ids = list(Rack.objects.filter(room_id=room_id).values_list("pk", flat=True))
+            lock_physical_location_graph(
+                data_center_ids={current_data_center_id, target_data_center_id},
+                room_ids=(room_id,),
+                rack_ids=rack_ids,
+                allocation_rack_ids=rack_ids,
             )
-            list(
-                RackUnitAllocation.objects.select_for_update()
-                .filter(rack__room_id=locked_room.pk)
-                .order_by("pk")
-            )
+            locked_room = ServerRoom.objects.select_for_update().get(pk=room_id)
             locked_serializer = self.get_serializer(
                 locked_room,
                 data=self.request.data,
@@ -3094,7 +3123,8 @@ class InventoryTaskViewSet(AuditedModelViewSetMixin, viewsets.ModelViewSet):
 
     @transaction.atomic
     def perform_destroy(self, instance):
-        items = list(InventoryItem.objects.filter(task_id=instance.pk).select_for_update().order_by("pk").only(
+        task = InventoryTask.objects.select_for_update().get(pk=instance.pk)
+        items = list(InventoryItem.objects.filter(task_id=task.pk).select_for_update().order_by("pk").only(
             "status",
             "resolution_status",
             "resolution_action",
@@ -3102,11 +3132,25 @@ class InventoryTaskViewSet(AuditedModelViewSetMixin, viewsets.ModelViewSet):
             "resolved_by",
             "resolved_at",
         ))
-        task = InventoryTask.objects.select_for_update().get(pk=instance.pk)
         block_reason = inventory_task_delete_block_reason(task, items)
         if block_reason:
             raise DRFValidationError({"detail": block_reason})
         super().perform_destroy(task)
+
+    @transaction.atomic
+    def perform_update(self, serializer):
+        # DRF validates before entering perform_update. Re-read the task under
+        # a lock so a completion committed between those two phases cannot be
+        # overwritten by a stale full-row save.
+        task = InventoryTask.objects.select_for_update().get(pk=serializer.instance.pk)
+        locked_serializer = self.get_serializer(
+            task,
+            data=self.request.data,
+            partial=getattr(serializer, "partial", self.request.method == "PATCH"),
+        )
+        locked_serializer.is_valid(raise_exception=True)
+        super().perform_update(locked_serializer)
+        serializer.instance = locked_serializer.instance
 
     @extend_schema(
         parameters=[InventoryScopePreviewQuerySerializer],
@@ -3737,9 +3781,7 @@ def _locked_security_profile(user):
 
 
 def _login_ip(request):
-    # REMOTE_ADDR is the only trusted value unless a deployment explicitly
-    # adds a trusted proxy middleware in front of Django.
-    return (request.META.get("REMOTE_ADDR") or "unknown")[:255]
+    return trusted_client_ip(request)
 
 
 def _login_account_key(username):
@@ -3909,6 +3951,7 @@ def _auth_response(user):
 @extend_schema(request=OpenApiTypes.OBJECT, responses=OpenApiTypes.OBJECT)
 @api_view(["POST"])
 @permission_classes([AllowAny])
+@csrf_protect
 def auth_login(request):
     _clear_pending_two_factor(request)
     username = str(request.data.get("username", "")).strip()
@@ -4222,6 +4265,7 @@ def auth_2fa_disable(request):
 @extend_schema(request=TwoFactorCodeSerializer, responses=OpenApiTypes.OBJECT)
 @api_view(["POST"])
 @permission_classes([AllowAny])
+@csrf_protect
 def auth_2fa_verify(request):
     pending_user_id = request.session.get(TWO_FACTOR_PENDING_USER_KEY)
     if not pending_user_id:
@@ -4238,6 +4282,14 @@ def auth_2fa_verify(request):
             status=400,
         )
     code = str(request.data.get("code", "")).strip()
+    client_ip = _login_ip(request)
+    locked, retry_after = two_factor_lock_status(user.pk, client_ip)
+    if locked:
+        return Response(
+            {"detail": "双重验证失败次数过多，请稍后再试", "code": "two_factor_locked", "retry_after": retry_after},
+            status=429,
+            headers={"Retry-After": str(retry_after)},
+        )
     with transaction.atomic():
         profile = _locked_security_profile(user)
         if not profile.two_factor_enabled or not profile.two_factor_secret_encrypted:
@@ -4254,24 +4306,24 @@ def auth_2fa_verify(request):
                 status=503,
             )
         step = totp_step_for_code(secret, code)
-        failures = int(request.session.get(TWO_FACTOR_PENDING_FAILURES_KEY, 0) or 0)
         if step is None or step == profile.two_factor_last_used_step:
-            failures += 1
+            failures = int(request.session.get(TWO_FACTOR_PENDING_FAILURES_KEY, 0) or 0) + 1
             request.session[TWO_FACTOR_PENDING_FAILURES_KEY] = failures
+            is_locked, retry_after = register_two_factor_failure(user.pk, client_ip)
             write_audit_log(
                 request,
                 action="login_2fa_failure",
                 resource_type="auth_login",
                 resource_id=user.username,
                 actor=user,
-                extra=_auth_audit_extra(request, user.username),
+                extra=_auth_audit_extra(request, user.username, retry_after=retry_after),
             )
-            if failures >= 5:
+            if is_locked:
                 _clear_pending_two_factor(request)
                 return Response(
-                    {"detail": "验证码错误次数过多，请重新登录", "code": "two_factor_locked"},
+                    {"detail": "双重验证失败次数过多，请稍后再试", "code": "two_factor_locked", "retry_after": retry_after},
                     status=429,
-                    headers={"Retry-After": "300"},
+                    headers={"Retry-After": str(retry_after)},
                 )
             return Response(
                 {"detail": "验证码不正确或已过期", "code": "invalid_two_factor_code"},
@@ -4279,6 +4331,7 @@ def auth_2fa_verify(request):
             )
         profile.two_factor_last_used_step = step
         profile.save(update_fields=["two_factor_last_used_step", "updated_at"])
+        clear_two_factor_throttle(user.pk, client_ip)
         source = request.session.get(TWO_FACTOR_PENDING_SOURCE_KEY)
         if source == AUTH_SOURCE_LDAP:
             login(request, user, backend=LDAP_MODEL_BACKEND)
