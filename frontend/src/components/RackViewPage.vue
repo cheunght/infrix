@@ -1,0 +1,323 @@
+<script setup lang="ts">
+import { computed } from "vue";
+import { useI18n } from "vue-i18n";
+import { Download } from "@element-plus/icons-vue";
+import RackAssetInspector from "./RackAssetInspector.vue";
+import RackDetailPanel from "./RackDetailPanel.vue";
+import RackFormDialog from "./RackFormDialog.vue";
+import RackLayoutCanvas from "./RackLayoutCanvas.vue";
+import RackListPanel from "./RackListPanel.vue";
+import LocationManagementPage from "./LocationManagementPage.vue";
+import SearchField from "./SearchField.vue";
+import PageContainer from "./page/PageContainer.vue";
+import PageContent from "./page/PageContent.vue";
+import PageToolbar from "./page/PageToolbar.vue";
+import ToolbarIconButton from "./page/ToolbarIconButton.vue";
+import SearchableSelect, { type SearchableSelectOption, type SearchableSelectValue } from "./SearchableSelect.vue";
+import type { DataCenter, Rack, RackStatus, ServerRoom } from "../types";
+import type { RackSharedContext } from "../page-context";
+import { rackStatusValue } from "../business-enums";
+
+const props = defineProps<{ context: RackSharedContext }>();
+const { t } = useI18n();
+const context = props.context;
+const rackSection = context.rackSection;
+const serverRooms = context.serverRooms;
+const can = context.can;
+const dataCenters = context.dataCenters;
+const locationSearch = context.locationSearch;
+const locationType = context.locationType;
+const locationStatus = context.locationStatus;
+const locationDataCenter = context.locationDataCenter;
+const locationManagementLoading = context.locationManagementLoading;
+const selectedDataCenter = context.selectedDataCenter;
+const selectedRoom = context.selectedRoom;
+const selectedRack = context.selectedRack;
+const roomOptions = context.roomOptions;
+const rackListLoading = context.rackListLoading;
+const rackListError = context.rackListError;
+const rackDetailOpen = context.rackDetailOpen;
+const deletingRackId = context.deletingRackId;
+const updatingRackId = context.updatingRackId;
+const exportingRackLayout = context.exportingRackLayout;
+const rackUsedU = context.rackUsedU;
+const rackUtilization = context.rackUtilization;
+const rackUtilizationColor = context.rackUtilizationColor;
+
+function mapDataCenter(item: Record<string, unknown>): SearchableSelectOption {
+  const center = item as unknown as DataCenter;
+  return { value: center.id, label: center.name, secondary: center.address || "", data: center };
+}
+
+function mapLocationDataCenter(item: Record<string, unknown>): SearchableSelectOption {
+  const center = item as unknown as DataCenter;
+  return { value: String(center.id), label: center.name, secondary: center.address || "", data: center };
+}
+
+function mapRoom(item: Record<string, unknown>): SearchableSelectOption {
+  const room = item as unknown as ServerRoom;
+  return { value: room.id, label: room.name, secondary: room.data_center_name || "", data: room };
+}
+
+const selectedLocationDataCenterOption = computed<SearchableSelectOption | null>(() => {
+  const center = dataCenters.value.find((item) => String(item.id) === String(locationDataCenter.value));
+  return center ? mapLocationDataCenter(center as unknown as Record<string, unknown>) : null;
+});
+const selectedViewDataCenterOption = computed<SearchableSelectOption | null>(() => {
+  const center = dataCenters.value.find((item) => item.id === selectedDataCenter.value);
+  return center ? mapDataCenter(center as unknown as Record<string, unknown>) : null;
+});
+const selectedViewRoomOption = computed<SearchableSelectOption | null>(() => {
+  const room = roomOptions.value.find((item) => item.id === selectedRoom.value);
+  return room ? mapRoom(room as unknown as Record<string, unknown>) : null;
+});
+
+const rooms = computed<ServerRoom[]>(() => serverRooms.value || []);
+
+const viewRoom = computed(() =>
+  rooms.value.find((room) => room.id === context.selectedRoom.value)
+    || (context.focusedRack.value
+      ? rooms.value.find((room) => room.id === context.focusedRack.value?.room)
+      : null)
+    || null,
+);
+const currentRack = context.focusedRack;
+const currentRackHasAssets = computed(() => Boolean(
+  currentRack.value?.assets_count || currentRack.value?.allocations?.length,
+));
+
+const rackDeleteHint = computed(() => t("rack.rackOccupiedDeleteHint"));
+
+function rackStatusCode(rack: Rack): RackStatus {
+  return rackStatusValue(rack.status, rack.is_active);
+}
+
+function rackStatusActionLabel(rack: Rack) {
+  return rackStatusCode(rack) === "disabled" ? t("status.active") : t("status.inactive");
+}
+
+function rackStatusAction(rack: Rack): RackStatus {
+  return rackStatusCode(rack) === "disabled" ? "in_use" : "disabled";
+}
+
+function rackReservationAction(rack: Rack): RackStatus {
+  return rackStatusCode(rack) === "reserved" ? "in_use" : "reserved";
+}
+
+function rackReservationActionLabel(rack: Rack) {
+  return rackStatusCode(rack) === "reserved" ? t("rack.setInUse") : t("rack.setReserved");
+}
+
+function rackLocationLabel(rack: Rack | null) {
+  return [rack?.data_center_name, rack?.server_room_name].filter(Boolean).join(" / ") || t("rack.unlinkedLocation");
+}
+
+function optionId(value: SearchableSelectValue | SearchableSelectValue[] | null | undefined): number | null {
+  const selected = Array.isArray(value) ? value[0] : value;
+  if (selected === null || selected === undefined || selected === "") return null;
+  const parsed = Number(selected);
+  return Number.isSafeInteger(parsed) && parsed > 0 ? parsed : null;
+}
+
+function changeViewRoom(value: SearchableSelectValue | SearchableSelectValue[] | null | undefined) {
+  const roomId = optionId(value);
+  context.selectedRoom.value = roomId;
+  context.selectedRack.value = "";
+  context.selectedRackDeviceTypeId.value = "";
+  context.focusedRackId.value = null;
+  context.rackPage.value = 1;
+  context.changeRoomFilter();
+}
+
+function changeViewDataCenter(value: SearchableSelectValue | SearchableSelectValue[] | null | undefined) {
+  const dataCenterId = optionId(value);
+  if (context.selectedDataCenter.value === dataCenterId) return;
+  context.selectedDataCenter.value = dataCenterId;
+  context.changeDataCenter();
+}
+
+function updateCurrentRackStatus() {
+  const rack = currentRack.value;
+  if (!rack || !can("racks.manage")) return;
+  void context.updateRackStatus(rack, rackStatusAction(rack));
+}
+
+function updateCurrentRackReservation() {
+  const rack = currentRack.value;
+  if (!rack || !can("racks.manage")) return;
+  void context.updateRackStatus(rack, rackReservationAction(rack));
+}
+
+function deleteCurrentRack() {
+  const rack = currentRack.value;
+  if (!rack || !can("racks.manage") || currentRackHasAssets.value) return;
+  void context.deleteRack(rack);
+}
+</script>
+
+<template>
+  <div class="infrix-page racks-page">
+    <PageContainer class="racks-module-page">
+      <template #toolbar>
+        <PageToolbar :class="{ 'rack-view-toolbar': rackSection === 'view' }">
+          <template v-if="rackSection === 'locations'" #search>
+            <SearchField
+              v-model="locationSearch"
+              :loading="locationManagementLoading"
+              :placeholder="t('location.searchPlaceholder')"
+              :aria-label="t('rack.searchLocationNameOrAddress')"
+              @search="context.changeLocationSearch"
+            />
+          </template>
+          <template v-else #search>
+            <SearchField
+              v-model="selectedRack"
+              :placeholder="t('rack.search')"
+              :aria-label="t('rack.searchRackNameOrCode')"
+              @search="context.changeRackFilter"
+            />
+          </template>
+          <template v-if="rackSection === 'locations'" #filters>
+            <div class="page-toolbar__filter-group">
+              <el-select
+                v-model="locationType"
+                class="toolbar-filter--sm"
+                :placeholder="t('location.allTypes')"
+                :aria-label="t('common.type')"
+                clearable
+                @change="context.changeLocationType"
+              >
+                <el-option :label="t('location.dataCenter')" value="data-center" />
+                <el-option :label="t('location.room')" value="room" />
+              </el-select>
+              <SearchableSelect v-model="locationDataCenter" class="toolbar-filter--lg" :request="context.request" endpoint="/data-centers/" :map-option="mapLocationDataCenter" :selected-option="selectedLocationDataCenterOption" :base-query="{ is_active: 'all' }" :placeholder="t('location.dataCenter')" :aria-label="t('location.dataCenter')" clearable @select="context.changeLocationDataCenter" />
+              <el-select
+                v-model="locationStatus"
+                class="toolbar-filter--sm"
+                :placeholder="t('location.allStatuses')"
+                :aria-label="t('common.status')"
+                clearable
+                @change="context.changeLocationStatus"
+              >
+                <el-option :label="t('status.active')" value="active" />
+                <el-option :label="t('status.inactive')" value="inactive" />
+              </el-select>
+            </div>
+          </template>
+          <template v-else-if="rackSection === 'view'" #filters>
+            <div class="page-toolbar__filter-group">
+              <SearchableSelect :model-value="selectedDataCenter" class="toolbar-filter--lg" :request="context.request" endpoint="/data-centers/" :map-option="mapDataCenter" :selected-option="selectedViewDataCenterOption" :base-query="{ is_active: true }" :placeholder="t('location.dataCenter')" :aria-label="t('location.dataCenter')" clearable @update:model-value="changeViewDataCenter" />
+              <SearchableSelect :model-value="selectedRoom" class="toolbar-filter--md" :request="context.request" endpoint="/server-rooms/" :map-option="mapRoom" :selected-option="selectedViewRoomOption" :base-query="{ data_center: selectedDataCenter, is_active: true }" :placeholder="t('location.room')" :aria-label="t('location.room')" clearable @update:model-value="changeViewRoom" />
+            </div>
+          </template>
+          <template v-if="rackSection === 'view'" #actions>
+            <ToolbarIconButton
+              v-if="can('racks.export')"
+              :icon="Download"
+              :label="t('rack.exportLayout')"
+              :loading="exportingRackLayout"
+              :disabled="exportingRackLayout"
+              @click="context.exportRackLayout"
+            />
+          </template>
+          <template #primary>
+            <el-button v-if="can('racks.manage') && rackSection === 'locations'" class="page-primary-action" type="primary" @click="context.openDataCenterModal()">
+              {{ t('location.createDataCenter') }}
+            </el-button>
+            <el-button v-else-if="can('racks.manage') && rackSection === 'view'" class="page-primary-action" type="primary" @click="context.openRackModal()">
+              {{ t('rack.addRack') }}
+            </el-button>
+          </template>
+        </PageToolbar>
+      </template>
+
+      <PageContent v-if="rackSection === 'locations'" surface>
+        <LocationManagementPage :context="context" />
+      </PageContent>
+
+      <PageContent v-else min-height="0">
+        <section
+          class="resource-workspace resource-workspace--rack"
+          :aria-label="t('rack.locationWorkspace')"
+        >
+          <RackListPanel :context="context" />
+
+          <el-card class="resource-panel resource-detail-panel resource-rack-detail" shadow="never">
+            <template #header>
+              <div class="resource-detail-header">
+                <div class="resource-detail-title">
+                  <strong>{{ currentRack?.code || t('rack.title') }}</strong>
+                  <span v-if="currentRack">{{ rackLocationLabel(currentRack) }}</span>
+                  <span v-else>{{ t('rack.selectRackHint') }}</span>
+                </div>
+                <div v-if="currentRack && can('racks.view') && can('racks.manage')" class="resource-detail-actions">
+                  <el-button
+                    link
+                    type="primary"
+                    :disabled="deletingRackId === currentRack.id || updatingRackId === currentRack.id"
+                    @click="context.openRackModal(currentRack, viewRoom || undefined)"
+                  >{{ t('common.edit') }}</el-button>
+                  <el-button
+                    link
+                    :loading="updatingRackId === currentRack.id"
+                    :disabled="deletingRackId === currentRack.id || updatingRackId === currentRack.id || exportingRackLayout"
+                    @click="updateCurrentRackStatus"
+                  >{{ rackStatusActionLabel(currentRack) }}</el-button>
+                  <el-button
+                    link
+                    :loading="updatingRackId === currentRack.id"
+                    :disabled="deletingRackId === currentRack.id || updatingRackId === currentRack.id || exportingRackLayout"
+                    @click="updateCurrentRackReservation"
+                  >{{ rackReservationActionLabel(currentRack) }}</el-button>
+                  <el-button
+                    link
+                    type="danger"
+                    :loading="deletingRackId === currentRack.id"
+                    :disabled="currentRackHasAssets || deletingRackId === currentRack.id || updatingRackId === currentRack.id || exportingRackLayout"
+                    :title="currentRackHasAssets ? rackDeleteHint : undefined"
+                    @click="deleteCurrentRack"
+                  >{{ t('common.delete') }}</el-button>
+                </div>
+              </div>
+            </template>
+
+            <div class="resource-detail-body">
+              <template v-if="rackListLoading && !currentRack">
+                <el-skeleton :rows="8" animated />
+              </template>
+              <div v-else-if="rackListError && !currentRack" class="resource-panel-state resource-panel-error" role="alert">
+                <strong>{{ t('rack.rackLoadFailed') }}</strong>
+                <span>{{ rackListError }}</span>
+                <el-button type="primary" plain @click="context.retryRackView">{{ t('common.retry') }}</el-button>
+              </div>
+              <div v-else-if="!currentRack" class="resource-panel-empty">
+                <el-empty :image-size="56" :description="selectedRoom ? t('rack.noRacksInRoom') : t('rack.selectRoomHint')" />
+              </div>
+              <template v-else>
+                <div class="rack-detail-grid">
+                  <div class="rack-detail-grid__canvas">
+                    <div class="rack-canvas-shell">
+                      <RackLayoutCanvas :context="context" />
+                    </div>
+                  </div>
+                  <div class="rack-detail-grid__side">
+                    <RackAssetInspector :context="context" />
+                    <RackDetailPanel
+                      v-show="!rackDetailOpen"
+                      :rack="currentRack"
+                      :used-u="rackUsedU(currentRack)"
+                      :utilization="rackUtilization(currentRack)"
+                      :utilization-color="rackUtilizationColor(currentRack)"
+                    />
+                  </div>
+                </div>
+              </template>
+            </div>
+          </el-card>
+        </section>
+      </PageContent>
+    </PageContainer>
+
+    <RackFormDialog :context="context" />
+  </div>
+</template>

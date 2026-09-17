@@ -1,0 +1,129 @@
+:root {
+  font-family: Inter, "PingFang SC", "Microsoft YaHei", sans-serif;
+  color: var(--el-text-color-primary, #172033);
+  font-size: 14px;
+}
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+}
+
+.form-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 15px;
+}
+
+.form-hint {
+  color: var(--el-text-color-secondary, #7183a0);
+  font-size: 12px;
+  line-height: 18px;
+}
+
+.login-screen {
+  display: grid;
+  min-height: 100vh;
+  place-items: center;
+}
+
+.login-card {
+  position: relative;
+  text-align: center;
+}
+
+.login-language-switcher {
+  position: absolute;
+  top: 12px;
+  right: 12px;
+}
+
+.language-switcher__trigger {
+  width: 40px;
+  height: 40px;
+  min-height: 40px;
+  padding: 0;
+  justify-content: center;
+}
+
+.language-switcher__trigger .el-icon {
+  font-size: 20px;
+}
+
+.header-control-icon {
+  width: 20px;
+  height: 20px;
+  flex: 0 0 20px;
+  font-size: 20px;
+  line-height: 20px;
+}
+
+.language-switcher__option {
+  display: inline-flex;
+  width: 100%;
+  align-items: center;
+  justify-content: space-between;
+  gap: 24px;
+}
+
+.login-card form {
+  text-align: left;
+}
+
+.login-button {
+  width: 100%;
+}
+
+.login-card small {
+  display: block;
+  margin-top: 20px;
+  color: var(--el-text-color-secondary, #9aa6b6);
+}
+
+.login-error {
+  padding: 9px;
+  border-radius: 6px;
+  background: var(--el-color-danger-light-9, #fff1f1);
+  color: var(--el-color-danger, #d44848);
+}
+
+.two-factor-login-copy {
+  display: grid;
+  gap: 6px;
+  margin-bottom: 18px;
+  text-align: left;
+}
+
+.two-factor-login-copy strong {
+  color: var(--el-text-color-primary, #172033);
+  font-size: 18px;
+}
+
+.two-factor-login-copy span {
+  color: var(--el-text-color-secondary, #7183a0);
+  line-height: 1.5;
+}
+
+.two-factor-back-button {
+  display: block;
+  width: 100%;
+  margin: 10px 0 0 !important;
+}
+
+.loading-screen {
+  display: grid;
+  min-height: 100vh;
+  place-items: center;
+  color: var(--el-text-color-secondary, #70819b);
+}
+
+@media (max-width: 700px) {
+  .form-grid {
+    grid-template-columns: 1fr;
+  }
+}

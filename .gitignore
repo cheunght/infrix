@@ -1,0 +1,61 @@
+# Local OS/editor files
+.DS_Store
+.AppleDouble
+.LSOverride
+*.swp
+*.swo
+.idea/
+.vscode/
+
+# Environment files and secrets
+.env
+.env.*
+!.env.example
+!**/.env.example
+backend/.env
+**/*.local
+
+# Local databases, backups and logs
+*.sqlite3
+*.sqlite3-journal
+*.db
+*.sql
+*.sql.gz
+*.log
+backups/
+backend/backups/
+
+# Python environments, caches and test output
+.venv/
+backend/.venv/
+**/__pycache__/
+*.py[cod]
+.pytest_cache/
+.coverage
+htmlcov/
+
+# Private development and audit materials (kept outside the repository)
+/docs/ui-reference.md
+/pytest.ini
+/backend/pytest.ini
+/backend/**/tests.py
+/backend/**/test_*.py
+/backend/**/*_tests.py
+/frontend/scripts/check-*.mjs
+/scripts/check-branding.mjs
+/scripts/check-release.sh
+
+# Frontend dependencies and build output
+frontend/node_modules/
+frontend/dist/
+frontend/.vite/
+
+# Deployment/runtime output
+backend/staticfiles/
+deploy/*.pid
+
+# Local deployment script (keep locally, never commit)
+deploy-to-rocky.sh
+
+# Reasonix local tool state (never commit)
+.reasonix/

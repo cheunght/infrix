@@ -1,0 +1,716 @@
+:root {
+  --page-padding-x: var(--page-padding-inline, 24px);
+  --page-padding-y: var(--page-padding-block, 20px);
+  --space-xs: var(--space-1, 4px);
+  --space-sm: var(--space-2, 8px);
+  --space-md: var(--space-3, 12px);
+  --space-lg: var(--space-4, 16px);
+  --space-xl: var(--space-5, 24px);
+  --space-2xl: var(--space-6, 32px);
+  --page-section-gap: 16px;
+  --page-toolbar-gap: 12px;
+  --page-header-min-height: 48px;
+  --page-content-min-height: 0px;
+  --toolbar-search-width: 300px;
+  --toolbar-search-min-width: 248px;
+  --toolbar-filter-sm-width: 150px;
+  --toolbar-filter-sm-min-width: 136px;
+  --toolbar-filter-md-width: 200px;
+  --toolbar-filter-md-min-width: 168px;
+  --toolbar-filter-lg-width: 260px;
+  --toolbar-filter-lg-min-width: 208px;
+}
+
+.page-container {
+  box-sizing: border-box;
+  display: flex;
+  min-width: 0;
+  width: 100%;
+  max-width: 100%;
+  flex-direction: column;
+  gap: var(--page-section-gap);
+  margin: 0;
+  padding: 0 var(--page-padding-x);
+}
+
+.page-container__header,
+.page-container__subnav,
+.page-container__toolbar {
+  min-width: 0;
+  margin: 0;
+}
+
+.page-container__body {
+  min-width: 0;
+  width: 100%;
+}
+
+.page-container__body > * {
+  min-width: 0;
+}
+
+/* Keep compact-control pages on the same vertical rhythm as every other page.
+   The modifier must not create a special grid that changes the baseline. */
+.page-container--compact-controls {
+  display: flex;
+  flex-direction: column;
+}
+
+/* The global stylesheet contains a naked `header { margin-bottom: 28px; }`
+   rule.  Keep the new page header completely scoped so it cannot introduce
+   an unexpected vertical gap when it is mounted inside a routed page. */
+header.page-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-lg);
+  box-sizing: border-box;
+  min-height: var(--page-header-min-height);
+  margin: 0 !important;
+  padding: 0 !important;
+}
+
+/* Pages whose shell already provides the title can use an action-only
+   header.  Let that header size itself to the controls instead of reserving
+   the two-line title/description height. */
+header.page-header.page-header--compact {
+  min-height: 0;
+}
+
+.page-header__copy {
+  min-width: 0;
+}
+
+.page-header__leading {
+  display: flex;
+  align-items: center;
+  gap: var(--space-sm);
+  min-width: 0;
+}
+
+.page-header__leading-action {
+  flex: 0 0 auto;
+}
+
+.page-header__title {
+  margin: 0;
+  color: var(--infrix-sidebar-text, #24324a);
+  font-size: var(--el-font-size-extra-large, 20px);
+  font-weight: 600;
+  line-height: 24px;
+}
+
+.page-header__description {
+  margin: 0;
+  color: var(--infrix-sidebar-muted, #7183a0);
+  font-size: var(--el-font-size-small, 13px);
+  line-height: 18px;
+}
+
+.page-header__actions {
+  display: flex;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: var(--space-sm);
+  min-width: 0;
+}
+
+.page-tabs-row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-lg);
+  min-width: 0;
+}
+
+.page-tabs-row > .page-tabs {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.page-tabs-actions {
+  display: flex;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: var(--space-sm);
+  min-height: var(--el-component-size);
+  padding: 0;
+}
+
+.page-tabs {
+  min-width: 0;
+  margin: 0;
+}
+
+.page-tabs .el-tabs__header {
+  margin: 0;
+}
+
+.page-tabs__label {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-sm);
+}
+
+/* Keep search/filters and actions in two flexible rails. Element Plus remains
+   responsible for control geometry; the rail becomes a single row on wide
+   screens and wraps as complete groups when the available width is limited. */
+.page-toolbar,
+.ep-main .page-toolbar {
+  box-sizing: border-box;
+  display: flex;
+  flex-direction: row;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: flex-start;
+  gap: var(--page-toolbar-gap);
+  width: 100%;
+  min-height: var(--el-component-size);
+  margin: 0;
+  padding: 0;
+}
+
+.page-toolbar__left {
+  display: flex;
+  flex: 1 1 520px;
+  flex-direction: row;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--page-toolbar-gap);
+  min-width: 0;
+  max-width: 100%;
+}
+
+.page-toolbar__right {
+  display: flex;
+  flex: 0 0 auto;
+  flex-direction: row;
+  flex-wrap: nowrap;
+  align-items: center;
+  justify-content: flex-end;
+  gap: var(--page-toolbar-gap);
+  min-width: 0;
+  max-width: 100%;
+  margin-left: auto;
+}
+
+.page-toolbar__left > .toolbar-slot,
+.page-toolbar__right > .toolbar-slot {
+  box-sizing: border-box;
+  flex: 0 1 auto;
+  min-width: 0;
+  max-width: 100%;
+}
+
+.page-toolbar__left > .toolbar-search {
+  box-sizing: border-box;
+  flex: 0 1 var(--toolbar-search-width);
+  width: min(100%, var(--toolbar-search-width));
+  min-width: min(var(--toolbar-search-min-width), 100%);
+}
+
+.page-toolbar__left > .toolbar-filters {
+  display: flex;
+  /* The filter rail shares the flexible portion of the left side.  Its
+     controls keep their semantic token widths, but can shrink as a group
+     before the toolbar ever needs a second desktop row. */
+  flex: 1 1 0;
+  flex-direction: row;
+  align-items: center;
+  gap: var(--page-toolbar-gap);
+  flex-wrap: wrap;
+  min-width: 0;
+  max-width: 100%;
+  overflow: visible;
+}
+
+.page-toolbar__right > .toolbar-primary-action,
+.page-toolbar__right > .toolbar-secondary-actions {
+  flex: 0 1 auto;
+  width: auto;
+  max-width: 100%;
+  overflow: visible;
+}
+
+.page-toolbar__actions {
+  display: flex;
+  flex: 0 1 auto;
+  flex-direction: row;
+  flex-wrap: wrap;
+  width: auto;
+  max-width: 100%;
+  min-width: 0;
+  align-items: center;
+  justify-content: flex-end;
+  gap: var(--space-sm);
+}
+
+.page-toolbar__filter-group {
+  display: flex;
+  flex: 1 1 0;
+  flex-direction: row;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--page-toolbar-gap);
+  min-width: 0;
+  max-width: 100%;
+}
+
+.page-toolbar .el-button + .el-button,
+.page-toolbar .el-upload + .el-button,
+.page-toolbar .el-button + .el-upload {
+  margin-left: 0;
+}
+
+.toolbar-slot > .infrix-search-field,
+.toolbar-slot > .el-input,
+.toolbar-slot > .el-select,
+.toolbar-slot > .el-date-editor,
+.toolbar-slot > .el-button,
+.toolbar-slot > .el-popover {
+  box-sizing: border-box;
+  min-width: 0;
+}
+
+/* Unclassified first-level filters use the medium slot. Pages add a semantic
+   modifier when a control is clearly shorter or needs more context. */
+.page-toolbar .toolbar-filters > .el-select,
+.page-toolbar .page-toolbar__filter-group > .el-select,
+.page-toolbar .toolbar-filters > .el-date-editor,
+.page-toolbar .page-toolbar__filter-group > .el-date-editor,
+.page-toolbar .toolbar-filters > .el-input,
+.page-toolbar .page-toolbar__filter-group > .el-input {
+  box-sizing: border-box;
+  flex: 0 1 var(--toolbar-filter-md-width);
+  width: var(--toolbar-filter-md-width);
+  max-width: 100%;
+  min-width: min(var(--toolbar-filter-md-min-width), 100%);
+}
+
+.page-toolbar .toolbar-filters > .toolbar-filter--sm,
+.page-toolbar .page-toolbar__filter-group > .toolbar-filter--sm {
+  flex: 0 1 var(--toolbar-filter-sm-width);
+  width: var(--toolbar-filter-sm-width);
+  max-width: 100%;
+  min-width: min(var(--toolbar-filter-sm-min-width), 100%);
+}
+
+.page-toolbar .toolbar-filters > .toolbar-filter--md,
+.page-toolbar .page-toolbar__filter-group > .toolbar-filter--md {
+  flex: 0 1 var(--toolbar-filter-md-width);
+  width: var(--toolbar-filter-md-width);
+  max-width: 100%;
+  min-width: min(var(--toolbar-filter-md-min-width), 100%);
+}
+
+.page-toolbar .toolbar-filters > .toolbar-filter--lg,
+.page-toolbar .page-toolbar__filter-group > .toolbar-filter--lg {
+  flex: 0 1 var(--toolbar-filter-lg-width);
+  width: var(--toolbar-filter-lg-width);
+  max-width: 100%;
+  min-width: min(var(--toolbar-filter-lg-min-width), 100%);
+}
+
+.toolbar-search > .infrix-search-field {
+  width: 100%;
+  max-width: 100%;
+}
+
+.toolbar-secondary-action {
+  flex: 0 0 auto;
+  white-space: nowrap;
+}
+
+/* The first-level create action is a page-layout primitive. */
+.page-primary-action.el-button {
+  box-sizing: border-box;
+  justify-content: center;
+  text-align: center;
+  white-space: nowrap;
+}
+
+.page-content {
+  box-sizing: border-box;
+  min-width: 0;
+  min-height: var(--page-content-min-height);
+}
+
+.page-content--surface {
+  min-height: var(--page-content-min-height);
+}
+
+.page-content--surface > .el-card__body {
+  min-width: 0;
+  min-height: var(--page-content-min-height);
+}
+
+.paged-table {
+  display: flex;
+  min-width: 0;
+  min-height: var(--page-content-min-height);
+  flex-direction: column;
+}
+
+.paged-table__footer {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  justify-content: flex-end;
+  margin-top: var(--space-lg);
+}
+
+.page-section {
+  min-width: 0;
+  padding: var(--space-lg) 0;
+}
+
+.page-section + .page-section {
+  border-top: 1px solid var(--color-border-soft, #edf1f6);
+}
+
+.page-section__header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: var(--space-lg);
+  min-width: 0;
+  margin-bottom: var(--space-lg);
+}
+
+.page-section__copy {
+  min-width: 0;
+}
+
+.page-section__title {
+  margin: 0;
+  color: var(--color-text-primary, #172033);
+  font-size: var(--el-font-size-medium, 16px);
+  font-weight: 600;
+  line-height: 22px;
+}
+
+.page-section__description {
+  margin: var(--space-xs) 0 0;
+  color: var(--color-text-muted, #7183a0);
+  font-size: var(--el-font-size-extra-small, 12px);
+  line-height: 18px;
+}
+
+.page-section__actions {
+  display: flex;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: var(--space-sm);
+}
+
+.page-section__content {
+  min-width: 0;
+}
+
+/* A desktop toolbar should read as one deliberate action rail. The left rail
+   owns the flexible space and its controls can shrink to a readable minimum;
+   the right rail stays intact so actions never become a second toolbar row. */
+@media (min-width: 1100px) {
+  .page-toolbar,
+  .ep-main .page-toolbar,
+  .page-toolbar__left,
+  .page-toolbar__left > .toolbar-filters,
+  .page-toolbar__filter-group,
+  .page-toolbar__actions {
+    gap: var(--space-sm);
+    flex-wrap: nowrap;
+  }
+
+  .page-toolbar__left {
+    flex: 1 1 0;
+    min-width: 0;
+  }
+
+  .page-toolbar__left > .toolbar-search {
+    flex: 0 1 var(--toolbar-search-width);
+    width: min(100%, var(--toolbar-search-width));
+    min-width: min(var(--toolbar-search-min-width), 100%);
+  }
+
+  .page-toolbar__left > .toolbar-filters,
+  .page-toolbar__filter-group {
+    flex: 1 1 0;
+    min-width: 0;
+  }
+
+  .page-toolbar__right {
+    flex: 0 0 auto;
+    flex-shrink: 0;
+    gap: var(--space-sm);
+    max-width: none;
+    min-width: max-content;
+    white-space: nowrap;
+  }
+
+  .page-toolbar__right > .toolbar-slot,
+  .page-toolbar__actions {
+    flex: 0 0 auto;
+    flex-shrink: 0;
+    max-width: none;
+    min-width: max-content;
+    white-space: nowrap;
+  }
+}
+
+@media (max-width: 760px) {
+  .page-header {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .page-toolbar {
+    align-items: stretch;
+  }
+
+  .page-toolbar__left {
+    flex: 1 1 100%;
+    flex-wrap: wrap;
+    width: 100%;
+    min-width: 0;
+  }
+
+  .page-toolbar__right {
+    flex: 0 0 100%;
+    flex-wrap: wrap;
+    width: 100%;
+    max-width: none;
+    margin-left: 0;
+    justify-content: flex-end;
+  }
+
+  .page-toolbar__left > .toolbar-search,
+  .page-toolbar__left > .toolbar-filters {
+    flex: 1 1 100%;
+    width: 100%;
+    max-width: none;
+    min-width: 0;
+    flex-wrap: wrap;
+  }
+
+  .page-toolbar__filter-group {
+    flex-wrap: wrap;
+  }
+
+  .toolbar-search > .infrix-search-field {
+    width: 100%;
+    max-width: none;
+    min-width: 0;
+  }
+
+  .page-toolbar__left > .toolbar-filters,
+  .page-toolbar__filter-group {
+    flex: 1 1 100%;
+    width: 100%;
+    max-width: none;
+    min-width: 0;
+  }
+
+  .page-toolbar__filter-group > .el-select,
+  .toolbar-filters > .el-select {
+    flex: 1 1 100%;
+    width: 100%;
+    max-width: none;
+    min-width: 0;
+  }
+
+  .page-toolbar__filter-group > .el-date-editor,
+  .toolbar-filters > .el-date-editor {
+    flex: 1 1 100%;
+    width: 100%;
+    max-width: none;
+    min-width: 0;
+  }
+
+  .page-toolbar__filter-group > .el-input,
+  .toolbar-filters > .el-input {
+    flex: 1 1 100%;
+    width: 100%;
+    max-width: none;
+    min-width: 0;
+  }
+
+  .page-toolbar .toolbar-filters > .toolbar-filter--sm,
+  .page-toolbar .page-toolbar__filter-group > .toolbar-filter--sm,
+  .page-toolbar .toolbar-filters > .toolbar-filter--md,
+  .page-toolbar .page-toolbar__filter-group > .toolbar-filter--md,
+  .page-toolbar .toolbar-filters > .toolbar-filter--lg,
+  .page-toolbar .page-toolbar__filter-group > .toolbar-filter--lg {
+    flex: 1 1 100%;
+    width: 100%;
+    max-width: none;
+    min-width: 0;
+  }
+
+  .page-header__actions {
+    width: 100%;
+  }
+
+  .page-tabs-row {
+    align-items: flex-start;
+    flex-wrap: wrap;
+    gap: var(--space-sm) var(--space-lg);
+  }
+
+  .page-tabs-actions {
+    width: 100%;
+    justify-content: flex-end;
+    padding-bottom: 0;
+  }
+
+  .page-section__header {
+    flex-direction: column;
+  }
+
+  .page-section__actions {
+    width: 100%;
+  }
+
+  .paged-table__footer {
+    justify-content: flex-start;
+    flex-wrap: wrap;
+  }
+}
+
+/* -------------------------------------------------------------------------
+   App Shell / routed page baseline
+   -------------------------------------------------------------------------
+   The shell owns the viewport and the horizontal page edge.  Routed pages
+   only own their internal sequence: tabs, toolbar, then content.  Keeping
+   the scroll container here prevents each page from inventing its own
+   height, padding, or top offset.
+   ------------------------------------------------------------------------- */
+.shell {
+  box-sizing: border-box;
+  width: 100%;
+  height: 100dvh;
+  min-height: 100dvh;
+  overflow: hidden;
+}
+
+.ep-sidebar {
+  box-sizing: border-box;
+  height: 100dvh;
+  min-height: 0;
+  overflow-x: hidden;
+  overflow-y: auto;
+}
+
+.shell-main {
+  box-sizing: border-box;
+  min-width: 0;
+  min-height: 0;
+  flex: 1 1 auto;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.ep-main {
+  box-sizing: border-box;
+  flex: 1 1 auto;
+  width: auto;
+  height: auto;
+  min-height: 0;
+  padding: 0;
+  overflow-x: hidden;
+  overflow-y: auto;
+  scrollbar-gutter: stable;
+}
+
+.app-header {
+  box-sizing: border-box;
+  flex: 0 0 var(--header-height);
+  width: 100%;
+  height: var(--header-height);
+  min-height: var(--header-height);
+  margin: 0;
+  padding: 0 var(--page-padding-x);
+}
+
+.app-route-shell {
+  position: relative;
+  flex: 0 0 auto;
+  width: 100%;
+  min-width: 0;
+  min-height: 0;
+  padding-top: var(--page-section-gap);
+}
+
+.app-route-view,
+.app-route-shell > .api-error-alert {
+  min-width: 0;
+  max-width: 100%;
+}
+
+.app-route-shell > .api-error-alert {
+  margin: 0 var(--page-padding-x) var(--page-section-gap);
+}
+
+.page-container {
+  flex: 0 0 auto;
+}
+
+.page-content,
+.paged-table {
+  min-height: 0;
+}
+
+@media (max-width: 900px) {
+  .app-header {
+    flex-basis: auto;
+    height: auto;
+    min-height: var(--header-height);
+    align-items: center;
+    flex-wrap: wrap;
+  }
+
+  .app-header .header-tools {
+    width: auto;
+    margin-top: 0;
+    min-width: 0;
+    flex-wrap: wrap;
+  }
+}
+
+@media (max-width: 760px) {
+  .app-header {
+    padding-inline: var(--page-padding-x);
+  }
+
+  .app-header .header-tools {
+    width: auto;
+    margin-top: 0;
+  }
+
+  .page-container {
+    padding-inline: var(--page-padding-x);
+  }
+}
+
+@media (max-width: 560px) {
+  .app-header {
+    padding-inline: 14px;
+  }
+
+  .app-header .header-tools {
+    width: 100%;
+    gap: var(--space-sm);
+  }
+
+  .app-header .ep-global-search {
+    flex: 1 1 100%;
+    width: 100%;
+    max-width: none;
+  }
+
+  .page-container {
+    padding-inline: 14px;
+  }
+
+  .app-route-shell > .api-error-alert {
+    margin-inline: 14px;
+  }
+}
