@@ -33,7 +33,8 @@ from .enum_contracts import (
 )
 from .license_status import LICENSE_STATUS_LABELS, license_status_value
 from .reporting.capacity import rack_effective_used_u
-from .services import CustomFieldConflictError, apply_asset_custom_values, apply_asset_tags, apply_spare_stock_transaction, assign_asset, configure_asset, inventory_snapshot_location, inventory_task_can_delete, lock_asset_location_graph, lock_physical_location_graph, return_asset, synchronize_asset_location_hierarchy, transfer_asset, validate_inventory_resolution_request
+from .services import CustomFieldConflictError, apply_asset_custom_values, apply_asset_tags, apply_spare_stock_transaction, assign_asset, configure_asset, inventory_snapshot_location, inventory_task_can_delete, return_asset, transfer_asset, validate_inventory_resolution_request
+from .physical_location import lock_asset_location, update_rack, update_server_room
 from .custom_fields import validate_custom_field_value
 from .custom_fields import normalize_validation_config as _normalize_validation_config
 from .attachment_security import validate_attachment_file
@@ -1940,21 +1941,16 @@ class ServerRoomSerializer(serializers.ModelSerializer):
         location_submitted = "data_center" in self.initial_data
         with transaction.atomic():
             if location_submitted and data_center is not None:
-                rack_ids = list(Rack.objects.filter(room_id=instance.pk).values_list("pk", flat=True))
-                lock_physical_location_graph(
-                    data_center_ids={instance.data_center_id, data_center.pk},
-                    room_ids=(instance.pk,),
-                    rack_ids=rack_ids,
-                    allocation_rack_ids=rack_ids,
-                )
-                instance = ServerRoom.objects.select_for_update().get(pk=instance.pk)
-            instance = super().update(instance, validated_data)
-            if location_submitted and data_center is not None:
-                rack_ids = Rack.objects.filter(room_id=instance.pk).values_list("pk", flat=True)
-                synchronize_asset_location_hierarchy(
-                    rack_ids=rack_ids,
-                    data_center_id=data_center.pk,
-                )
+                try:
+                    instance = update_server_room(
+                        room_id=instance.pk,
+                        changes=validated_data,
+                    )
+                except DjangoValidationError as exc:
+                    detail = exc.message_dict if hasattr(exc, "message_dict") else {"detail": exc.messages}
+                    raise serializers.ValidationError(detail) from exc
+            else:
+                instance = super().update(instance, validated_data)
         return instance
 
 
@@ -2881,7 +2877,14 @@ class AssetWriteSerializer(serializers.ModelSerializer):
                     # which may clear an allocation. Lock the current graph
                     # before the asset row even for network-only or empty
                     # configuration payloads.
-                    lock_asset_location_graph(instance.pk, configuration)
+                    lock_asset_location(
+                        asset_id=instance.pk,
+                        target_rack_id=(
+                            configuration.get("rack_id")
+                            if isinstance(configuration, dict)
+                            else None
+                        ),
+                    )
                 instance = Asset.objects.select_for_update().get(pk=instance.pk)
                 if (
                     requested_asset_data_center is not missing
@@ -3379,29 +3382,16 @@ class RackSerializer(serializers.ModelSerializer):
         location_submitted = "room" in self.initial_data
         with transaction.atomic():
             if location_submitted and room is not None:
-                source_data_center_id = (
-                    ServerRoom.objects.filter(pk=instance.room_id)
-                    .values_list("data_center_id", flat=True)
-                    .first()
-                )
-                target_data_center_id = (
-                    ServerRoom.objects.filter(pk=room.pk)
-                    .values_list("data_center_id", flat=True)
-                    .first()
-                )
-                lock_physical_location_graph(
-                    data_center_ids={source_data_center_id, target_data_center_id},
-                    room_ids={instance.room_id, room.pk},
-                    rack_ids=(instance.pk,),
-                    allocation_rack_ids=(instance.pk,),
-                )
-                instance = Rack.objects.select_for_update().get(pk=instance.pk)
-            instance = super().update(instance, validated_data)
-            if location_submitted and room is not None:
-                synchronize_asset_location_hierarchy(
-                    rack_ids=(instance.pk,),
-                    data_center_id=room.data_center_id,
-                )
+                try:
+                    instance = update_rack(
+                        rack_id=instance.pk,
+                        changes=validated_data,
+                    )
+                except DjangoValidationError as exc:
+                    detail = exc.message_dict if hasattr(exc, "message_dict") else {"detail": exc.messages}
+                    raise serializers.ValidationError(detail) from exc
+            else:
+                instance = super().update(instance, validated_data)
         return instance
 
 

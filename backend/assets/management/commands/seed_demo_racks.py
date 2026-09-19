@@ -19,7 +19,7 @@ from assets.models import (
     ServerRoom,
     Tag,
 )
-from assets.services import update_asset_placement
+from assets.physical_location import place_asset
 
 
 DEMO_CENTERS = (
@@ -509,9 +509,9 @@ class Command(BaseCommand):
                     for tag_name in tag_names:
                         AssetTag.objects.get_or_create(asset=asset, tag=tags[tag_name])
 
-                    update_asset_placement(
-                        asset,
-                        rack=rack,
+                    place_asset(
+                        asset_id=asset.pk,
+                        rack_id=rack.pk,
                         start_u=start_u,
                         end_u=end_u,
                     )

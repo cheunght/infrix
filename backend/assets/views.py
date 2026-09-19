@@ -55,19 +55,22 @@ from .services import (
     confirm_inventory_item_normal,
     create_repair_part_usage,
     inventory_task_delete_block_reason,
-    lock_asset_location_graph,
-    lock_physical_location_graph,
     reopen_repair,
     reset_inventory_resolution,
     resolve_inventory_item,
     sync_asset_fault_status,
     sync_fault_completion,
     sync_repair_completion,
-    update_asset_placement,
-    clear_asset_placement,
     assign_asset,
     return_asset,
     transfer_asset,
+)
+from .physical_location import (
+    clear_asset_placement,
+    lock_asset_location,
+    lock_rack_location,
+    lock_server_room_location,
+    place_asset,
 )
 from .inventory import get_inventory_scope_assets
 from .depreciation import calculate_asset_depreciation
@@ -1022,7 +1025,7 @@ class AssetViewSet(AuditedModelViewSetMixin, viewsets.ModelViewSet):
             # transaction exit is translated into the same 4xx contract as a
             # Django ProtectedError.
             with transaction.atomic():
-                lock_asset_location_graph(instance.pk)
+                lock_asset_location(asset_id=instance.pk)
                 locked_instance = get_object_or_404(
                     Asset.objects.select_for_update(),
                     pk=instance.pk,
@@ -1048,7 +1051,7 @@ class AssetViewSet(AuditedModelViewSetMixin, viewsets.ModelViewSet):
             asset_no = f"ID {asset_id}"
             try:
                 with transaction.atomic():
-                    lock_asset_location_graph(asset_id)
+                    lock_asset_location(asset_id=asset_id)
                     instance = Asset.objects.select_for_update().get(pk=asset_id)
                     asset_no = instance.asset_no
                     _delete_asset_with_audit(
@@ -1242,7 +1245,7 @@ class AssetViewSet(AuditedModelViewSetMixin, viewsets.ModelViewSet):
         if location_change.get("enabled"):
             changed_fields.append("location")
             if location_change["action"] == "clear":
-                clear_asset_placement(instance)
+                clear_asset_placement(asset_id=instance.pk)
             else:
                 data_center = DataCenter.objects.filter(pk=location_change["data_center"]).first()
                 room = ServerRoom.objects.select_related("data_center").filter(
@@ -1259,9 +1262,9 @@ class AssetViewSet(AuditedModelViewSetMixin, viewsets.ModelViewSet):
                     raise DRFValidationError({"location.server_room": "机房不属于所选数据中心"})
                 if not rack:
                     raise DRFValidationError({"location.rack": "机柜不属于所选机房"})
-                update_asset_placement(
-                    instance,
-                    rack=rack,
+                place_asset(
+                    asset_id=instance.pk,
+                    rack_id=rack.pk,
                     start_u=location_change["start_u"],
                     end_u=location_change["end_u"],
                 )
@@ -1302,9 +1305,12 @@ class AssetViewSet(AuditedModelViewSetMixin, viewsets.ModelViewSet):
                     location_change = validated["changes"].get("location", {})
                     if location_change.get("enabled"):
                         if location_change.get("action") == "clear":
-                            lock_asset_location_graph(asset_id)
+                            lock_asset_location(asset_id=asset_id)
                         else:
-                            lock_asset_location_graph(asset_id, {"rack_id": location_change.get("rack")})
+                            lock_asset_location(
+                                asset_id=asset_id,
+                                target_rack_id=location_change.get("rack"),
+                            )
                     instance = Asset.objects.select_for_update().get(pk=asset_id)
                     asset_no = instance.asset_no
                     self._apply_bulk_edit(request, instance, validated["changes"], batch_operation_id)
@@ -1602,19 +1608,10 @@ class RackViewSet(AuditedModelViewSetMixin, viewsets.ModelViewSet):
         current_room_id = serializer.instance.room_id
         target_room = serializer.validated_data.get("room")
         target_room_id = target_room.pk if target_room is not None else current_room_id
-        source_data_center_id = ServerRoom.objects.filter(pk=current_room_id).values_list(
-            "data_center_id", flat=True
-        ).first()
-        target_data_center_id = ServerRoom.objects.filter(pk=target_room_id).values_list(
-            "data_center_id", flat=True
-        ).first()
-        lock_physical_location_graph(
-            data_center_ids={source_data_center_id, target_data_center_id},
-            room_ids={current_room_id, target_room_id},
-            rack_ids=(serializer.instance.pk,),
-            allocation_rack_ids=(serializer.instance.pk,),
+        locked_rack = lock_rack_location(
+            rack_id=serializer.instance.pk,
+            target_room_id=target_room_id,
         )
-        locked_rack = Rack.objects.select_for_update().get(pk=serializer.instance.pk)
         locked_serializer = self.get_serializer(
             locked_rack,
             data=self.request.data,
@@ -1628,14 +1625,7 @@ class RackViewSet(AuditedModelViewSetMixin, viewsets.ModelViewSet):
     def perform_destroy(self, instance):
         from django.db.models.deletion import ProtectedError
 
-        current_rack = Rack.objects.select_related("room__data_center").get(pk=instance.pk)
-        lock_physical_location_graph(
-            data_center_ids=(current_rack.room.data_center_id,),
-            room_ids=(current_rack.room_id,),
-            rack_ids=(current_rack.pk,),
-            allocation_rack_ids=(current_rack.pk,),
-        )
-        instance = Rack.objects.select_for_update().get(pk=instance.pk)
+        instance = lock_rack_location(rack_id=instance.pk)
         if instance.allocations.exists():
             raise DRFValidationError("机柜仍有资产占用，不能删除，请先迁移资产或停用机柜")
         try:
@@ -1711,23 +1701,16 @@ class ServerRoomViewSet(AuditedModelViewSetMixin, viewsets.ModelViewSet):
             # rack below it. Lock the complete hierarchy before validating
             # again against the locked rows.
             room_id = serializer.instance.pk
-            current_data_center_id = ServerRoom.objects.filter(pk=room_id).values_list(
-                "data_center_id", flat=True
-            ).first()
             target_data_center = serializer.validated_data.get("data_center")
             target_data_center_id = (
                 target_data_center.pk
                 if target_data_center is not None
-                else current_data_center_id
+                else serializer.instance.data_center_id
             )
-            rack_ids = list(Rack.objects.filter(room_id=room_id).values_list("pk", flat=True))
-            lock_physical_location_graph(
-                data_center_ids={current_data_center_id, target_data_center_id},
-                room_ids=(room_id,),
-                rack_ids=rack_ids,
-                allocation_rack_ids=rack_ids,
+            locked_room = lock_server_room_location(
+                room_id=room_id,
+                target_data_center_id=target_data_center_id,
             )
-            locked_room = ServerRoom.objects.select_for_update().get(pk=room_id)
             locked_serializer = self.get_serializer(
                 locked_room,
                 data=self.request.data,
