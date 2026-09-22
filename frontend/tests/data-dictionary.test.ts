@@ -1,12 +1,18 @@
 // @vitest-environment jsdom
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import { effectScope, ref } from "vue";
 import { ApiError } from "../src/api";
 import { useDataDictionary } from "../src/composables/useDataDictionary";
+import { i18n, loadLocaleMessages } from "../src/i18n";
 import type { ActionMessageType } from "../src/error-handling";
 import type { RequestFn } from "../src/page-context";
 
 const cleanups: Array<() => void> = [];
+
+beforeAll(async () => {
+  await loadLocaleMessages("en-US");
+  i18n.global.locale.value = "en-US";
+});
 
 afterEach(() => {
   cleanups.splice(0).reverse().forEach((cleanup) => cleanup());

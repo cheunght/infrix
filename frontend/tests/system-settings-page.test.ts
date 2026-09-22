@@ -256,6 +256,40 @@ describe("system settings page with the application's plain ref context", () => 
     ).toBe(true);
   });
 
+  it("preserves every edited notification field in one grouped patch", async () => {
+    const { settings, request } = createPage("notifications");
+    await settings.loadSystemSettings();
+    await flushPromises();
+
+    settings.systemSettingsForm.value.notify_maintenance = false;
+    settings.systemSettingsForm.value.license_expiry_days = 60;
+    settings.systemSettingsForm.value.email_digest_enabled = true;
+    settings.systemSettingsForm.value.email_digest_recipients = [
+      "admin@example.com",
+    ];
+
+    await settings.saveSystemSettings([
+      "notify_maintenance",
+      "license_expiry_days",
+      "email_digest_enabled",
+      "email_digest_recipients",
+    ]);
+
+    const [, options] = request.mock.calls.at(-1)!;
+    expect(JSON.parse(String(options?.body))).toEqual({
+      notifications: {
+        in_app: {
+          notify_maintenance: false,
+          license_expiry_days: 60,
+        },
+        email_digest: {
+          email_digest_enabled: true,
+          email_digest_recipients: ["admin@example.com"],
+        },
+      },
+    });
+  });
+
   it.each(["general", "security", "smtp", "notifications"] as const)(
     "preserves read-only access on %s",
     async (tab) => {

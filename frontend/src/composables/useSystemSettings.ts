@@ -219,6 +219,16 @@ function patchFromForm(
   const general = new Set(GROUP_FIELDS.general);
   const security = new Set(GROUP_FIELDS.security);
   const notifications = new Set(GROUP_FIELDS.notifications);
+  const digestFields = new Set([
+    "email_digest_enabled",
+    "email_digest_people",
+    "email_digest_recipients",
+    "application_url",
+  ]);
+  const notificationPatch = {
+    in_app: {} as Record<string, unknown>,
+    email_digest: {} as Record<string, unknown>,
+  };
   for (const key of keys) {
     if (key === "smtp_password") {
       if (form.smtp_password) {
@@ -230,48 +240,17 @@ function patchFromForm(
     } else if (security.has(key)) {
       put("security", key, form[key]);
     } else if (notifications.has(key)) {
-      const digestFields = new Set([
-        "email_digest_enabled",
-        "email_digest_people",
-        "email_digest_recipients",
-        "application_url",
-      ]);
-      put("notifications", digestFields.has(key) ? "email_digest" : "in_app", {
-        [key]: cloneFormValue(form[key]),
-      });
+      const group = digestFields.has(key) ? "email_digest" : "in_app";
+      notificationPatch[group][key] = cloneFormValue(form[key]);
     } else if (key in SMTP_PATCH_FIELDS) {
       put("smtp", SMTP_PATCH_FIELDS[key], form[key]);
     }
   }
-  // Notifications are represented as two nested objects by the API.
-  if (payload.notifications) {
-    const flat = payload.notifications;
-    const digest = flat.email_digest as unknown as
-      Record<string, unknown> | undefined;
-    const inApp = flat.in_app as unknown as Record<string, unknown> | undefined;
-    payload.notifications = {
-      ...(inApp || {}),
-      ...(digest || {}),
-    };
-    const notificationPatch = {
-      in_app: {} as Record<string, unknown>,
-      email_digest: {} as Record<string, unknown>,
-    };
-    for (const [key, value] of Object.entries(payload.notifications)) {
-      const digestKeys = new Set([
-        "email_digest_enabled",
-        "email_digest_people",
-        "email_digest_recipients",
-        "application_url",
-      ]);
-      (digestKeys.has(key)
-        ? notificationPatch.email_digest
-        : notificationPatch.in_app)[key] = value;
-    }
-    payload.notifications = notificationPatch as unknown as Record<
-      string,
-      unknown
-    >;
+  if (
+    Object.keys(notificationPatch.in_app).length ||
+    Object.keys(notificationPatch.email_digest).length
+  ) {
+    payload.notifications = notificationPatch;
   }
   return payload as unknown as SystemSettingsPatch;
 }

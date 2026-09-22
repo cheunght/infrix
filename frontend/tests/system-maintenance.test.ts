@@ -1,7 +1,8 @@
 // @vitest-environment jsdom
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import { effectScope, ref } from "vue";
 import { useSystemMaintenance } from "../src/composables/useSystemMaintenance";
+import { i18n, loadLocaleMessages } from "../src/i18n";
 import type { RequestFn, SystemMaintenanceDependencies } from "../src/page-context";
 import type { BackupEntry } from "../src/types";
 
@@ -24,6 +25,12 @@ const backup: BackupEntry = {
 };
 
 const cleanups: Array<() => void> = [];
+
+beforeAll(async () => {
+  await loadLocaleMessages("en-US");
+  i18n.global.locale.value = "en-US";
+});
+
 afterEach(() => {
   cleanups.splice(0).reverse().forEach((cleanup) => cleanup());
 });
@@ -89,7 +96,9 @@ describe("system maintenance controller", () => {
     await controller.restore();
 
     expect(controller.uncertainOperation.value).toBe(true);
-    expect(controller.backupError.value).toContain("操作结果");
+    expect(controller.backupError.value).toBe(
+      String(i18n.global.t("settings.maintenanceOperationUnknown")),
+    );
     expect(request).toHaveBeenCalledTimes(1);
   });
 
