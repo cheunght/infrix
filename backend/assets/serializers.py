@@ -6,15 +6,15 @@ from django.utils import timezone as django_timezone
 from django.utils.dateparse import parse_datetime
 from rest_framework import serializers
 from rest_framework.exceptions import APIException, ValidationError as DRFValidationError
-from django.contrib.auth.models import Group, User
+from django.contrib.auth.models import User
 from drf_spectacular.types import OpenApiTypes
-from drf_spectacular.utils import extend_schema_field
+from drf_spectacular.utils import extend_schema_field, extend_schema_serializer
 from datetime import date, datetime
 from decimal import Decimal
 from typing import Any
 import json
 import re
-from .models import AssetModel, AuditLog, Asset, AssetAssignmentEvent, AssetCustomValue, AssetNetworkAddress, AssetTag, Attachment, CustomField, CustomFieldOption, CustomFieldSet, CustomFieldSetItem, DataCenter, Department, DeviceType, DirectoryIdentity, FaultEvent, InventoryItem, InventoryTask, MaintenanceContract, Manufacturer, NotificationDelivery, Person, PersonalAccessToken, ProcurementRecord, Rack, RackUnitAllocation, RepairPartUsage, RepairRecord, ServerRoom, SoftwareLicense, SparePart, SparePartCategory, SpareStock, SpareStockTransaction, SystemSetting, Tag, UserSecurityProfile
+from .models import AssetModel, AuditLog, Asset, AssetAssignmentEvent, AssetCustomValue, AssetNetworkAddress, AssetTag, Attachment, CustomField, CustomFieldOption, CustomFieldSet, CustomFieldSetItem, DataCenter, Department, DeviceType, DirectoryIdentity, FaultEvent, InventoryItem, InventoryTask, MaintenanceContract, Manufacturer, NotificationDelivery, Person, PersonalAccessToken, ProcurementRecord, Rack, RackUnitAllocation, RepairPartUsage, RepairRecord, ServerRoom, SoftwareLicense, SparePart, SparePartCategory, SpareStock, SpareStockTransaction, SystemSetting, Tag, UserSecurityProfile, DEFAULT_ASSET_STATUS_CHOICES, SYSTEM_CURRENCY_CHOICES, SYSTEM_DATE_FORMAT_CHOICES, SYSTEM_LOCALE_CHOICES, SMTP_SECURITY_MODE_CHOICES
 from .fieldsets import fieldset_items_queryset, raise_if_fieldset_conflicts, replace_fieldset_items, resolve_fieldset, validate_fieldset_items
 from .depreciation import DepreciationValidationError, calculate_asset_depreciation, validate_depreciation_configuration
 from .enum_contracts import (
@@ -40,19 +40,21 @@ from .custom_fields import normalize_validation_config as _normalize_validation_
 from .attachment_security import validate_attachment_file
 from .attachment_storage import cleanup_attachment_file
 from .lifecycle import allowed_asset_status_values, transition_asset_status, validate_asset_status_transition
-from .roles import ROLE_AUDITOR, ROLE_DEFINITIONS, ROLE_NAME_TO_CODE, preset_group_for_code, user_role_code
+from .organization_access import (
+    ROLE_AUDITOR,
+    assign_role,
+    read_authorization_snapshot,
+    role_codes,
+)
 from .ldap_auth import AUTH_SOURCE_LDAP, AUTH_SOURCE_LOCAL, is_directory_managed
 from .ldap_configuration import DIRECTORY_TYPE_CHOICES, SECURITY_MODE_CHOICES
-from .system_reset import SYSTEM_RESET_CONFIRMATION
 from .system_settings import (
-    SETTING_METADATA,
-    get_system_settings,
-    system_localdate,
-    system_timezone,
-    system_timezone_name,
+    get_local_auth_policy,
+    get_runtime_preferences,
     system_setting_definitions,
     validate_local_password,
 )
+from .runtime_clock import system_localdate, system_timezone
 
 
 class SystemDateTimeInputField(serializers.DateTimeField):
@@ -79,36 +81,19 @@ class CustomFieldConflictAPIException(APIException):
         })
 
 
-class GroupSerializer(serializers.ModelSerializer):
-    user_count = serializers.IntegerField(read_only=True)
-    code = serializers.SerializerMethodField()
-    description = serializers.SerializerMethodField()
-    system_managed = serializers.BooleanField(read_only=True, default=True)
-
-    def get_code(self, obj) -> str | None:
-        return ROLE_NAME_TO_CODE.get(obj.name)
-
-    def get_description(self, obj) -> str:
-        code = ROLE_NAME_TO_CODE.get(obj.name)
-        return ROLE_DEFINITIONS.get(code, {}).get("description", "")
-
-    class Meta:
-        model = Group
-        fields = ["id", "code", "name", "description", "system_managed", "user_count"]
-
-
 class UserSerializer(serializers.ModelSerializer):
     display_name = serializers.SerializerMethodField()
     password = serializers.CharField(
         write_only=True,
         required=False,
     )
-    groups = serializers.PrimaryKeyRelatedField(many=True, read_only=True)
     role_code = serializers.ChoiceField(
-        choices=list(ROLE_DEFINITIONS), required=False, write_only=True
+        choices=list(role_codes()), required=False, write_only=True
     )
-    assigned_role_code = serializers.SerializerMethodField()
-    assigned_role_name = serializers.SerializerMethodField()
+    normalize_roles = serializers.BooleanField(required=False, write_only=True, default=False)
+    roles = serializers.SerializerMethodField()
+    primary_role_code = serializers.SerializerMethodField()
+    role_anomaly = serializers.SerializerMethodField()
     auth_source = serializers.SerializerMethodField()
     directory_provider = serializers.SerializerMethodField()
     directory_login_identifier = serializers.SerializerMethodField()
@@ -125,12 +110,18 @@ class UserSerializer(serializers.ModelSerializer):
     def get_display_name(self, obj) -> str:
         return obj.get_full_name() or obj.username
 
-    def get_assigned_role_code(self, obj) -> str | None:
-        return user_role_code(obj)
+    def get_roles(self, obj) -> list[dict[str, str]]:
+        return [role.as_dict() for role in read_authorization_snapshot(obj).roles]
 
-    def get_assigned_role_name(self, obj) -> str:
-        code = user_role_code(obj)
-        return ROLE_DEFINITIONS.get(code, {}).get("name", "")
+    def get_primary_role_code(self, obj) -> str | None:
+        return read_authorization_snapshot(obj).primary_role_code
+
+    def get_role_anomaly(self, obj) -> str | None:
+        return "multiple" if len(read_authorization_snapshot(obj).role_codes) > 1 else None
+
+    def _actor(self):
+        request = self.context.get("request")
+        return getattr(request, "user", None)
 
     @staticmethod
     def _directory_identity(obj) -> DirectoryIdentity | None:
@@ -182,6 +173,12 @@ class UserSerializer(serializers.ModelSerializer):
         return value.strip()
 
     def validate(self, attrs):
+        if attrs.get("normalize_roles") and "role_code" not in attrs:
+            raise serializers.ValidationError({"role_code": "规范化角色时必须明确选择一个角色"})
+        if self.instance is not None and "role_code" in attrs:
+            snapshot = read_authorization_snapshot(self.instance)
+            if len(snapshot.role_codes) > 1 and not attrs.get("normalize_roles", False):
+                raise serializers.ValidationError({"role_code": "该账号拥有多个角色，确认后才能规范化"})
         if self.instance is not None and "password" in attrs:
             if is_directory_managed(self.instance):
                 raise serializers.ValidationError({"password": "目录账号密码由目录服务管理"})
@@ -191,7 +188,7 @@ class UserSerializer(serializers.ModelSerializer):
         if self.instance is not None and "person" in attrs:
             raise serializers.ValidationError({"person_id": "系统账号只能在创建时关联人员"})
         if self.instance is None and not attrs.get("password"):
-            minimum = get_system_settings().password_min_length
+            minimum = get_local_auth_policy().password_min_length
             raise serializers.ValidationError({"password": f"新用户必须设置至少 {minimum} 位密码"})
         password = attrs.get("password")
         if password:
@@ -204,6 +201,7 @@ class UserSerializer(serializers.ModelSerializer):
 
     def create(self, validated_data):
         role_code = validated_data.pop("role_code", ROLE_AUDITOR)
+        validated_data.pop("normalize_roles", None)
         password = validated_data.pop("password")
         person = validated_data.pop("person", None)
         user = User(**validated_data)
@@ -215,26 +213,23 @@ class UserSerializer(serializers.ModelSerializer):
             user=user,
             defaults={"must_change_password": True, "password_changed_at": None},
         )
-        group = preset_group_for_code(role_code)
-        if group:
-            user.groups.set([group])
+        assign_role(target=user, role_code=role_code, actor=self._actor())
         return user
 
     def update(self, instance, validated_data):
         role_code = validated_data.pop("role_code", None)
+        validated_data.pop("normalize_roles", None)
         for key, value in validated_data.items():
             setattr(instance, key, value)
         instance.save()
         if role_code is not None:
-            group = preset_group_for_code(role_code)
-            if group:
-                instance.groups.set([group])
+            assign_role(target=instance, role_code=role_code, actor=self._actor())
         return instance
 
     class Meta:
         model = User
-        fields = ["id", "username", "display_name", "first_name", "last_name", "email", "is_active", "is_staff", "is_superuser", "groups", "role_code", "assigned_role_code", "assigned_role_name", "auth_source", "directory_provider", "directory_login_identifier", "directory_last_seen_at", "person", "person_id", "password", "last_login", "date_joined"]
-        read_only_fields = ["id", "display_name", "is_staff", "is_superuser", "groups", "assigned_role_code", "assigned_role_name", "last_login", "date_joined"]
+        fields = ["id", "username", "display_name", "first_name", "last_name", "email", "is_active", "is_staff", "is_superuser", "role_code", "normalize_roles", "roles", "primary_role_code", "role_anomaly", "auth_source", "directory_provider", "directory_login_identifier", "directory_last_seen_at", "person", "person_id", "password", "last_login", "date_joined"]
+        read_only_fields = ["id", "display_name", "is_staff", "is_superuser", "roles", "primary_role_code", "role_anomaly", "last_login", "date_joined"]
 
 
 class CurrentUserProfileSerializer(serializers.Serializer):
@@ -312,26 +307,154 @@ class SystemResetSerializer(serializers.Serializer):
         write_only=True,
     )
 
-    def validate_confirmation(self, value):
-        if value != SYSTEM_RESET_CONFIRMATION:
-            raise serializers.ValidationError(
-                f"请输入 {SYSTEM_RESET_CONFIRMATION} 以确认恢复系统初始状态"
-            )
-        return value
+class _StrictSettingsSerializer(serializers.Serializer):
+    """Reject fields outside the explicit settings interface."""
+
+    def to_internal_value(self, data):
+        unknown = sorted(set(data or {}) - set(self.fields))
+        if unknown:
+            raise serializers.ValidationError({key: "该系统设置字段不受支持" for key in unknown})
+        return super().to_internal_value(data)
 
 
-class SystemSettingsSerializer(serializers.ModelSerializer):
-    """Serialize the fixed, editable system-settings contract."""
+class SystemSettingsGeneralSerializer(_StrictSettingsSerializer):
+    default_page_size = serializers.IntegerField(read_only=True)
+    default_asset_status = serializers.CharField(read_only=True)
+    default_locale = serializers.CharField(read_only=True)
+    date_format = serializers.CharField(read_only=True)
+    currency = serializers.CharField(read_only=True)
 
-    timezone = serializers.SerializerMethodField()
+
+class SystemSettingsSecuritySerializer(_StrictSettingsSerializer):
+    password_min_length = serializers.IntegerField(read_only=True)
+    password_expiry_days = serializers.IntegerField(read_only=True)
+    login_max_attempts = serializers.IntegerField(read_only=True)
+    login_window_seconds = serializers.IntegerField(read_only=True)
+    login_lock_seconds = serializers.IntegerField(read_only=True)
+
+
+class SystemSettingsSmtpSerializer(_StrictSettingsSerializer):
+    enabled = serializers.BooleanField(read_only=True)
+    host = serializers.CharField(read_only=True, allow_blank=True)
+    port = serializers.IntegerField(read_only=True)
+    security_mode = serializers.CharField(read_only=True)
+    username = serializers.CharField(read_only=True, allow_blank=True)
+    from_email = serializers.CharField(read_only=True, allow_blank=True)
+    from_name = serializers.CharField(read_only=True, allow_blank=True)
+    timeout = serializers.IntegerField(read_only=True)
+    password_configured = serializers.BooleanField(read_only=True)
+
+
+class SystemSettingsInAppNotificationSerializer(_StrictSettingsSerializer):
+    notify_maintenance = serializers.BooleanField(read_only=True)
+    maintenance_expiry_days = serializers.IntegerField(read_only=True)
+    notify_license_expiry = serializers.BooleanField(read_only=True)
+    license_expiry_days = serializers.IntegerField(read_only=True)
+    notify_open_faults = serializers.BooleanField(read_only=True)
+    notify_overdue_inventory = serializers.BooleanField(read_only=True)
+    notify_low_spare_stock = serializers.BooleanField(read_only=True)
+
+
+class SystemSettingsEmailDigestSerializer(_StrictSettingsSerializer):
+    email_digest_enabled = serializers.BooleanField(read_only=True)
+    email_digest_people = serializers.ListField(child=serializers.IntegerField(), read_only=True)
+    email_digest_recipients = serializers.ListField(child=serializers.EmailField(), read_only=True)
+    application_url = serializers.CharField(read_only=True, allow_blank=True)
+
+
+class SystemSettingsNotificationsSerializer(_StrictSettingsSerializer):
+    in_app = SystemSettingsInAppNotificationSerializer(read_only=True)
+    email_digest = SystemSettingsEmailDigestSerializer(read_only=True)
+
+
+class SystemSettingsRuntimeSerializer(_StrictSettingsSerializer):
+    timezone = serializers.CharField(read_only=True)
+
+
+@extend_schema_serializer(deprecate_fields=["definitions"])
+class SystemSettingsSnapshotSerializer(serializers.Serializer):
+    """Serialize the grouped, secret-safe system-settings snapshot."""
+
+    schema_version = serializers.IntegerField(read_only=True)
+    general = SystemSettingsGeneralSerializer(read_only=True)
+    security = SystemSettingsSecuritySerializer(read_only=True)
+    smtp = SystemSettingsSmtpSerializer(read_only=True)
+    notifications = SystemSettingsNotificationsSerializer(read_only=True)
+    runtime = SystemSettingsRuntimeSerializer(read_only=True)
     definitions = serializers.SerializerMethodField()
+
+    def get_definitions(self, _obj):
+        return system_setting_definitions()
+
+
+class SystemSettingsGeneralPatchSerializer(_StrictSettingsSerializer):
+    default_page_size = serializers.ChoiceField(choices=SystemSetting.PAGE_SIZE_CHOICES, required=False)
+    default_asset_status = serializers.ChoiceField(choices=DEFAULT_ASSET_STATUS_CHOICES, required=False)
+    default_locale = serializers.ChoiceField(choices=SYSTEM_LOCALE_CHOICES, required=False)
+    date_format = serializers.ChoiceField(choices=SYSTEM_DATE_FORMAT_CHOICES, required=False)
+    currency = serializers.ChoiceField(choices=SYSTEM_CURRENCY_CHOICES, required=False)
+
+
+class SystemSettingsSecurityPatchSerializer(_StrictSettingsSerializer):
+    password_min_length = serializers.IntegerField(required=False, min_value=8, max_value=128)
+    password_expiry_days = serializers.IntegerField(required=False, min_value=0, max_value=3650)
+    login_max_attempts = serializers.IntegerField(required=False, min_value=1, max_value=100)
+    login_window_seconds = serializers.IntegerField(required=False, min_value=1, max_value=86400)
+    login_lock_seconds = serializers.IntegerField(required=False, min_value=1, max_value=86400)
+
+
+class SystemSettingsSmtpPatchSerializer(_StrictSettingsSerializer):
+    enabled = serializers.BooleanField(required=False)
+    host = serializers.CharField(required=False, allow_blank=True, max_length=255)
+    port = serializers.IntegerField(required=False, min_value=1, max_value=65535)
+    security_mode = serializers.ChoiceField(choices=SMTP_SECURITY_MODE_CHOICES, required=False)
+    username = serializers.CharField(required=False, allow_blank=True, max_length=255)
+    password = serializers.CharField(required=False, allow_blank=True, trim_whitespace=False, write_only=True)
+    from_email = serializers.EmailField(required=False, allow_blank=True, max_length=254)
+    from_name = serializers.CharField(required=False, allow_blank=True, max_length=150)
+    timeout = serializers.IntegerField(required=False, min_value=1, max_value=120)
+
+    def validate(self, attrs):
+        attrs = super().validate(attrs)
+        header_errors = {
+            key: "该字段不能包含换行符"
+            for key in ("host", "username", "from_email", "from_name")
+            if key in attrs and any(char in str(attrs[key]) for char in ("\r", "\n"))
+        }
+        if header_errors:
+            raise serializers.ValidationError(header_errors)
+        if "host" in attrs:
+            host = str(attrs["host"] or "").strip()
+            if host and ("://" in host or any(char.isspace() for char in host)):
+                raise serializers.ValidationError({"host": "请输入主机名或 IP，不要包含协议前缀或空格"})
+        return attrs
+
+
+class SystemSettingsInAppNotificationPatchSerializer(_StrictSettingsSerializer):
+    notify_maintenance = serializers.BooleanField(required=False)
+    maintenance_expiry_days = serializers.IntegerField(required=False, min_value=0, max_value=3650)
+    notify_license_expiry = serializers.BooleanField(required=False)
+    license_expiry_days = serializers.IntegerField(required=False, min_value=0, max_value=3650)
+    notify_open_faults = serializers.BooleanField(required=False)
+    notify_overdue_inventory = serializers.BooleanField(required=False)
+    notify_low_spare_stock = serializers.BooleanField(required=False)
+
+
+class SystemSettingsEmailDigestPatchSerializer(_StrictSettingsSerializer):
+    email_digest_enabled = serializers.BooleanField(required=False)
     email_digest_people = serializers.ListField(
         child=serializers.IntegerField(min_value=1),
         max_length=20,
         required=False,
         allow_empty=True,
     )
-    email_digest_recipients = serializers.ListField(child=serializers.EmailField(max_length=254), max_length=20, required=False, allow_empty=True)
+    email_digest_recipients = serializers.ListField(
+        child=serializers.EmailField(max_length=254),
+        max_length=20,
+        required=False,
+        allow_empty=True,
+    )
+    application_url = serializers.CharField(required=False, allow_blank=True, max_length=500)
 
     def validate_email_digest_people(self, value):
         ids = list(dict.fromkeys(value))
@@ -348,9 +471,7 @@ class SystemSettingsSerializer(serializers.ModelSerializer):
             if not people[person_id].is_active or not people[person_id].notification_email()
         ]
         if unavailable:
-            raise serializers.ValidationError(
-                f"以下人员未启用或未配置邮箱：{', '.join(unavailable)}"
-            )
+            raise serializers.ValidationError(f"以下人员未启用或未配置邮箱：{', '.join(unavailable)}")
         return ids
 
     def validate_email_digest_recipients(self, value):
@@ -359,102 +480,35 @@ class SystemSettingsSerializer(serializers.ModelSerializer):
     def validate_application_url(self, value):
         from urllib.parse import urlsplit
         parsed = urlsplit(value)
-        if value and (parsed.scheme != "https" or not parsed.hostname or parsed.username or parsed.password or parsed.query or parsed.fragment):
+        if value and (
+            parsed.scheme != "https"
+            or not parsed.hostname
+            or parsed.username
+            or parsed.password
+            or parsed.query
+            or parsed.fragment
+        ):
             raise serializers.ValidationError("请输入不含账号、查询参数或片段的 HTTPS 应用地址")
         return value.rstrip("/")
-    smtp_password = serializers.CharField(
-        write_only=True,
-        required=False,
-        allow_blank=True,
-        trim_whitespace=False,
-    )
-    smtp_password_configured = serializers.SerializerMethodField()
-    EDITABLE_FIELDS = frozenset(SETTING_METADATA) | {"smtp_password"}
-    password_min_length = serializers.IntegerField(required=False, min_value=8, max_value=128)
-    password_expiry_days = serializers.IntegerField(required=False, min_value=0, max_value=3650)
-    login_max_attempts = serializers.IntegerField(required=False, min_value=1, max_value=100)
-    login_window_seconds = serializers.IntegerField(required=False, min_value=1, max_value=86400)
-    login_lock_seconds = serializers.IntegerField(required=False, min_value=1, max_value=86400)
-    smtp_port = serializers.IntegerField(required=False, min_value=1, max_value=65535)
-    smtp_timeout = serializers.IntegerField(required=False, min_value=1, max_value=120)
-    maintenance_expiry_days = serializers.IntegerField(required=False, min_value=0, max_value=3650)
-    license_expiry_days = serializers.IntegerField(required=False, min_value=0, max_value=3650)
 
-    class Meta:
-        model = SystemSetting
-        fields = [
-            *SETTING_METADATA,
-            "timezone",
-            "smtp_password",
-            "smtp_password_configured",
-            "definitions",
-        ]
 
-    def get_definitions(self, _obj) -> list[dict[str, Any]]:
-        return system_setting_definitions()
+class SystemSettingsNotificationsPatchSerializer(_StrictSettingsSerializer):
+    in_app = SystemSettingsInAppNotificationPatchSerializer(required=False)
+    email_digest = SystemSettingsEmailDigestPatchSerializer(required=False)
 
-    def get_timezone(self, _obj) -> str:
-        return system_timezone_name()
 
-    def get_smtp_password_configured(self, obj) -> bool:
-        return bool(obj.smtp_password_encrypted)
+class SystemSettingsPatchSerializer(_StrictSettingsSerializer):
+    """Validate the grouped PATCH shape before the locked write interface."""
+
+    general = SystemSettingsGeneralPatchSerializer(required=False)
+    security = SystemSettingsSecurityPatchSerializer(required=False)
+    smtp = SystemSettingsSmtpPatchSerializer(required=False)
+    notifications = SystemSettingsNotificationsPatchSerializer(required=False)
 
     def validate(self, attrs):
-        unknown = sorted(set(self.initial_data.keys()) - self.EDITABLE_FIELDS)
-        if unknown:
-            raise serializers.ValidationError(
-                {key: "该系统设置不支持通过当前接口修改" for key in unknown}
-            )
-
-        header_errors = {
-            key: "该字段不能包含换行符"
-            for key in ("smtp_host", "smtp_username", "smtp_from_email", "smtp_from_name")
-            if key in attrs and any(char in str(attrs[key]) for char in ("\r", "\n"))
-        }
-        if header_errors:
-            raise serializers.ValidationError(header_errors)
-        if "smtp_host" in attrs:
-            host = str(attrs["smtp_host"] or "").strip()
-            if host and ("://" in host or any(char.isspace() for char in host)):
-                raise serializers.ValidationError(
-                    {"smtp_host": "请输入主机名或 IP，不要包含协议前缀或空格"}
-                )
-
-        current = self.instance
-        values = {
-            key: getattr(current, key)
-            for key in SETTING_METADATA
-            if current is not None
-        }
-        values.update({key: value for key, value in attrs.items() if key in SETTING_METADATA})
-        people = values.get("email_digest_people") or []
-        recipients = values.get("email_digest_recipients") or []
-        if len(people) + len(recipients) > 20:
-            raise serializers.ValidationError({"email_digest_people": "摘要人员和其他收件邮箱合计不能超过 20 个"})
-        password_value = attrs.get("smtp_password", "")
-        if values.get("email_digest_enabled"):
-            errors = {}
-            if not people and not recipients:
-                errors["email_digest_recipients"] = "启用邮件摘要前必须配置收件人"
-            if not values.get("application_url"):
-                errors["application_url"] = "启用邮件摘要前必须配置应用访问地址"
-            if errors:
-                raise serializers.ValidationError(errors)
-        password_configured = bool(password_value) or bool(
-            current is not None and current.smtp_password_encrypted
-        )
-        if values.get("smtp_enabled"):
-            errors = {}
-            if not str(values.get("smtp_host") or "").strip():
-                errors["smtp_host"] = "启用 SMTP 前必须填写服务端"
-            if not str(values.get("smtp_from_email") or "").strip():
-                errors["smtp_from_email"] = "启用 SMTP 前必须填写发件人邮箱"
-            if str(values.get("smtp_username") or "").strip() and not password_configured:
-                errors["smtp_password"] = "已填写 SMTP 用户名，请配置密码"
-            if password_value and not str(values.get("smtp_username") or "").strip():
-                errors["smtp_username"] = "配置 SMTP 密码前必须填写用户名"
-            if errors:
-                raise serializers.ValidationError(errors)
+        attrs = super().validate(attrs)
+        if not attrs:
+            raise serializers.ValidationError("至少提交一个系统设置分组")
         return attrs
 
 
@@ -2834,7 +2888,7 @@ class AssetWriteSerializer(serializers.ModelSerializer):
         if validated_data.get("warranty_months") is None and asset_model is not None:
             validated_data["warranty_months"] = asset_model.default_warranty_months
         if "status" not in validated_data:
-            validated_data["status"] = get_system_settings().default_asset_status
+            validated_data["status"] = get_runtime_preferences().default_asset_status
         try:
             validate_asset_status_transition(None, validated_data["status"])
         except DjangoValidationError as exc:

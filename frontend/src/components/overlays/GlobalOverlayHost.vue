@@ -7,7 +7,6 @@ import type { useAssets } from "../../composables/useAssets";
 import type { useFacilities } from "../../composables/useFacilities";
 import type { useLicenses } from "../../composables/useLicenses";
 import type { useRepairs } from "../../composables/useRepairs";
-import type { useSettings } from "../../composables/useSettings";
 import AssetDetailDrawer from "../AssetDetailDrawer.vue";
 import AttachmentSection from "../AttachmentSection.vue";
 import AssetFormDialog from "../AssetFormDialog.vue";
@@ -21,7 +20,7 @@ import AssetSummary from "../AssetSummary.vue";
 import MoneyInput from "../MoneyInput.vue";
 import PagedTable from "../PagedTable.vue";
 import StatusTag from "../StatusTag.vue";
-import type { Asset, AssetDetail, CustomFieldSet, DataCenter, Page, PersonOption, SparePart, SpareStock } from "../../types";
+import type { Asset, AssetDetail, DataCenter, Page, PersonOption, SparePart, SpareStock } from "../../types";
 import type { AssetAttachmentContext, AssetFormContext, PageContext, RequestFn } from "../../page-context";
 import { statusTone } from "../../status";
 import { type Locale } from "../../i18n";
@@ -38,7 +37,6 @@ type AssetsState = ReturnType<typeof useAssets>;
 type FacilitiesState = ReturnType<typeof useFacilities>;
 type LicensesState = ReturnType<typeof useLicenses>;
 type RepairsState = ReturnType<typeof useRepairs>;
-type SettingsState = ReturnType<typeof useSettings>;
 
 const props = defineProps<{
   request: RequestFn;
@@ -54,7 +52,6 @@ const props = defineProps<{
   facilities: FacilitiesState;
   licenses: LicensesState;
   repairs: RepairsState;
-  settings: SettingsState;
   auth: {
     username: Ref<string>;
     loadProfile: () => void | Promise<boolean>;
@@ -70,8 +67,8 @@ const props = defineProps<{
     profileSaving: Ref<boolean>;
     profileError: Ref<string>;
     profileFormErrors: Ref<Record<string, string>>;
-    roleCode: Ref<string>;
-    roleName: Ref<string>;
+    roleCode: Readonly<Ref<string>>;
+    roleName: Readonly<Ref<string>>;
     userIsActive: Ref<boolean>;
     lastLogin: Ref<string | null>;
     saveProfile: () => void | Promise<boolean>;
@@ -88,11 +85,6 @@ const assetResponsibilityContext = props.assets;
 function mapDataCenter(item: Record<string, unknown>): SearchableSelectOption {
   const center = item as unknown as DataCenter;
   return { value: String(center.id), label: center.name, secondary: center.address || "", data: center };
-}
-
-function mapFieldset(item: Record<string, unknown>): SearchableSelectOption {
-  const fieldset = item as unknown as CustomFieldSet;
-  return { value: String(fieldset.id), label: fieldset.name, secondary: fieldset.description || "", data: fieldset };
 }
 
 function mapSparePart(item: Record<string, unknown>): SearchableSelectOption {
@@ -121,10 +113,6 @@ const selectedDataCenterOption = computed<SearchableSelectOption | null>(() => {
   return center ? mapDataCenter(center as unknown as Record<string, unknown>) : null;
 });
 
-const selectedDictionaryFieldsetOption = computed<SearchableSelectOption | null>(() => {
-  const fieldset = dictionaryFieldsets.value.find((item) => String(item.id) === dictionaryForm.value.default_fieldset);
-  return fieldset ? mapFieldset(fieldset as unknown as Record<string, unknown>) : null;
-});
 const {
   page,
   showAssetDetail,
@@ -574,36 +562,6 @@ function formatRepairDateTime(value: string | null | undefined): string {
 }
 
 const {
-  showUserModal,
-  editingUser,
-  userForm,
-  userFormRef,
-  userFormRules,
-  canChangeUserRole,
-  userSaving,
-  userFormErrors,
-  roles,
-  saveUser,
-  showDictionaryModal,
-  editingDictionary,
-  currentDictionaryLabel,
-  dictionarySection,
-  dictionaryForm,
-  dictionaryFieldsets,
-  dictionaryFormErrors,
-  dictionarySaving,
-  saveDictionary,
-} = props.settings;
-
-const dictionaryDialogLabel = computed(() =>
-  dictionarySection.value === "manufacturers"
-    ? t("settings.manufacturer")
-    : dictionarySection.value === "device-types"
-      ? t("settings.dictionaryType")
-      : t("settings.spareCategory"),
-);
-
-const {
   username,
   loadProfile,
   showPasswordModal,
@@ -630,7 +588,6 @@ const localizedRoleName = computed(() => roleLabel(roleCode.value, roleName.valu
 
 const usernameEditHelp = computed(() => t("overlay.usernameEditHelp"));
 const roleHelp = computed(() => t("overlay.roleHelp"));
-const dictionaryStatusHelp = computed(() => t("overlay.dictionaryStatusHelp"));
 const usedCountHelp = computed(() => t("overlay.usedCountHelp"));
 const expiryDateHelp = computed(() => t("overlay.expiryDateHelp"));
 const repairFinishedAtHelp = computed(() => t("overlay.repairFinishedAtHelp"));
@@ -638,33 +595,10 @@ const passwordChangeHelp = computed(() => passwordChangeRequired.value
   ? `${t("auth.passwordHint", { min: systemSettingsState.passwordMinLength })} ${t("auth.firstLoginHint")}`
   : t("auth.passwordHint", { min: systemSettingsState.passwordMinLength }));
 
-const dictionaryFormRef = ref<FormInstance>();
 const dataCenterFormRef = ref<FormInstance>();
 const roomFormRef = ref<FormInstance>();
 const passwordFormRef = ref<FormInstance>();
 const profileFormRef = ref<FormInstance>();
-
-const dictionaryFormRules = computed<FormRules>(() => ({
-  name: [
-    { required: true, whitespace: true, message: t("overlay.enterName"), trigger: "blur" },
-    {
-      max: dictionarySection.value === "device-types" ? 80 : 120,
-      message: dictionarySection.value === "device-types" ? t("overlay.deviceTypeNameMax") : t("overlay.nameMax"),
-      trigger: "blur",
-    },
-  ],
-  code: dictionarySection.value === "manufacturers"
-    ? [{ max: 80, message: t("overlay.manufacturerCodeMax"), trigger: "blur" }]
-    : dictionarySection.value === "spare-categories"
-      ? [
-          { required: true, whitespace: true, message: t("overlay.enterSpareCategoryCode"), trigger: "blur" },
-          { max: 80, message: t("overlay.spareCategoryCodeMax"), trigger: "blur" },
-        ]
-      : [],
-  color: dictionarySection.value === "device-types"
-    ? [{ pattern: /^#[0-9A-Fa-f]{6}$/, message: t("overlay.colorInvalid"), trigger: ["blur", "change"] }]
-    : [],
-}));
 
 const dataCenterFormRules = computed<FormRules>(() => ({
   name: [
@@ -725,12 +659,6 @@ function formatProfileDateTime(value: string | null) {
   return formatSystemDateTime(value) || value;
 }
 
-async function submitDictionary() {
-  const valid = await dictionaryFormRef.value?.validate().catch(() => false);
-  if (valid !== true) return;
-  await saveDictionary();
-}
-
 async function submitDataCenter() {
   const valid = await dataCenterFormRef.value?.validate().catch(() => false);
   if (valid !== true) return;
@@ -779,98 +707,6 @@ function mapUnlinkedPerson(item: Record<string, unknown>): SearchableSelectOptio
 
 <template>
   <AssetFormDialog :context="assetContext" />
-
-  <FormDialogShell
-    v-model="showUserModal"
-    :title="editingUser ? t('settings.editUser') : t('settings.addUser')"
-    :description="t('overlay.userDialogDescription')"
-    size="medium"
-    :saving="userSaving"
-    :show-close="!userSaving"
-    :close-on-click-modal="!userSaving"
-    :close-on-press-escape="!userSaving"
-    :close-disabled="userSaving"
-  >
-    <el-form
-      ref="userFormRef"
-      :model="userForm"
-      :rules="userFormRules"
-      :validate-on-rule-change="false"
-      label-position="right"
-      class="horizontal-form user-account-form"
-      @submit.prevent="saveUser"
-    >
-      <section class="form-dialog__section">
-        <h3 class="form-dialog__section-title">{{ t('overlay.accountInformation') }}</h3>
-        <div class="horizontal-form__rows">
-          <el-form-item :label="t('auth.username')" prop="username" required :error="userFormErrors.username">
-            <el-input v-model="userForm.username" :disabled="!!editingUser" autocomplete="username" :validate-event="false" :prefix-icon="Edit" :placeholder="t('overlay.enterUsername')" />
-            <FieldHelp v-if="editingUser" :text="usernameEditHelp" />
-          </el-form-item>
-          <el-form-item :label="t('auth.email')" prop="email" :error="userFormErrors.email">
-            <el-input v-model="userForm.email" type="email" autocomplete="email" :validate-event="false" :prefix-icon="Message" :placeholder="t('overlay.enterEmailOptional')" />
-          </el-form-item>
-          <el-form-item :label="t('auth.lastName')" prop="last_name" required :error="userFormErrors.last_name">
-            <el-input v-model="userForm.last_name" autocomplete="family-name" :validate-event="false" :prefix-icon="Edit" :placeholder="t('overlay.enterLastName')" />
-          </el-form-item>
-          <el-form-item :label="t('auth.firstName')" prop="first_name" required :error="userFormErrors.first_name">
-            <el-input v-model="userForm.first_name" autocomplete="given-name" :validate-event="false" :prefix-icon="Edit" :placeholder="t('overlay.enterFirstName')" />
-          </el-form-item>
-        </div>
-      </section>
-      <section v-if="!editingUser" class="form-dialog__section">
-        <h3 class="form-dialog__section-title">{{ t('overlay.personInformation') }}</h3>
-        <div class="horizontal-form__rows">
-          <el-form-item :label="t('settings.person')" prop="person_id" :error="userFormErrors.person_id">
-            <SearchableSelect
-              v-model="userForm.person_id"
-              :request="request"
-              endpoint="/people/"
-              :map-option="mapUnlinkedPerson"
-              :base-query="{ is_active: true, account: 'unlinked' }"
-              :placeholder="t('overlay.selectPersonOptional')"
-              :aria-label="t('settings.person')"
-              clearable
-            />
-            <FieldHelp :text="t('overlay.personSelectHelp')" />
-          </el-form-item>
-        </div>
-      </section>
-      <section class="form-dialog__section">
-        <h3 class="form-dialog__section-title">{{ t('overlay.roleAndStatus') }}</h3>
-        <div class="horizontal-form__rows">
-          <el-form-item :label="t('settings.role')" prop="role_code" required :error="userFormErrors.role_code">
-            <el-select v-model="userForm.role_code" class="user-account-role" :placeholder="t('overlay.selectRole')" :validate-event="false" :disabled="!!editingUser && !canChangeUserRole(editingUser)">
-              <template #prefix><el-icon><User /></el-icon></template>
-              <el-option v-for="role in roles" :key="role.id" :label="roleLabel(role.code, role.name)" :value="role.code" />
-            </el-select>
-            <FieldHelp :text="roleHelp" />
-          </el-form-item>
-          <el-form-item :label="t('overlay.accountStatus')" class="user-account-status">
-            <el-select v-model="userForm.is_active" :disabled="!!editingUser && !canChangeUserRole(editingUser)" :aria-label="t('overlay.accountStatus')">
-              <el-option :label="t('status.active')" :value="true" />
-              <el-option :label="t('status.inactive')" :value="false" />
-            </el-select>
-          </el-form-item>
-        </div>
-      </section>
-      <section v-if="!editingUser" class="form-dialog__section">
-        <h3 class="form-dialog__section-title">{{ t('overlay.initialPassword') }}</h3>
-        <div class="horizontal-form__rows">
-          <el-form-item :label="t('overlay.initialPassword')" prop="password" required :error="userFormErrors.password">
-            <el-input v-model="userForm.password" type="password" show-password autocomplete="new-password" :validate-event="false" :prefix-icon="Lock" :placeholder="t('overlay.enterPasswordMin', { min: systemSettingsState.passwordMinLength })" />
-          </el-form-item>
-          <el-form-item :label="t('auth.confirmPassword')" prop="confirm_password" required :error="userFormErrors.confirm_password">
-            <el-input v-model="userForm.confirm_password" type="password" show-password autocomplete="new-password" :validate-event="false" :prefix-icon="Lock" :placeholder="t('overlay.enterPasswordAgain')" />
-          </el-form-item>
-        </div>
-      </section>
-    </el-form>
-    <template #footer>
-      <el-button :disabled="userSaving" @click="showUserModal = false">{{ t('common.cancel') }}</el-button>
-      <el-button type="primary" :loading="userSaving" :disabled="userSaving" @click="saveUser">{{ editingUser ? t('common.save') : t('common.create') }}</el-button>
-    </template>
-  </FormDialogShell>
 
   <FormDialogShell
     v-model="showProfileModal"
@@ -945,65 +781,6 @@ function mapUnlinkedPerson(item: Record<string, unknown>): SearchableSelectOptio
     <template #footer>
       <el-button :disabled="profileSaving" @click="showProfileModal = false">{{ t('common.cancel') }}</el-button>
       <el-button v-if="!profileError" type="primary" :loading="profileSaving" :disabled="profileSaving" @click="submitProfile">{{ t('common.save') }}</el-button>
-    </template>
-  </FormDialogShell>
-
-  <FormDialogShell
-    v-model="showDictionaryModal"
-    :title="`${editingDictionary ? t('common.edit') : t('common.add')}${dictionaryDialogLabel}`"
-    :description="dictionarySection === 'manufacturers' ? '' : t('overlay.dictionaryDialogDescription')"
-    size="small"
-    :saving="dictionarySaving"
-    :show-close="!dictionarySaving"
-    :close-on-click-modal="!dictionarySaving"
-    :close-on-press-escape="!dictionarySaving"
-    :close-disabled="dictionarySaving"
-  >
-    <el-form ref="dictionaryFormRef" class="horizontal-form" :model="dictionaryForm" :rules="dictionaryFormRules" label-position="right" :validate-on-rule-change="false" @submit.prevent="submitDictionary">
-      <section class="form-dialog__section">
-        <h3 class="form-dialog__section-title">{{ t('overlay.basicInformation') }}</h3>
-        <div class="horizontal-form__rows">
-          <el-form-item :label="`${currentDictionaryLabel}${t('overlay.nameSuffix')}`" prop="name" required :error="dictionaryFormErrors.name">
-            <el-input v-model="dictionaryForm.name" :maxlength="dictionarySection === 'device-types' ? 80 : 120" />
-          </el-form-item>
-          <el-form-item v-if="dictionarySection === 'manufacturers'" :label="t('settings.manufacturerCode')" prop="code" :error="dictionaryFormErrors.code">
-            <el-input v-model="dictionaryForm.code" maxlength="80" />
-          </el-form-item>
-          <el-form-item v-if="dictionarySection === 'spare-categories'" :label="t('settings.typeCode')" prop="code" :error="dictionaryFormErrors.code">
-            <el-input v-model="dictionaryForm.code" maxlength="80" />
-          </el-form-item>
-          <el-form-item v-if="dictionarySection === 'device-types'" :label="t('overlay.typeColor')" prop="color" :error="dictionaryFormErrors.color">
-            <div class="color-input">
-              <el-color-picker v-model="dictionaryForm.color" />
-              <el-input v-model="dictionaryForm.color" maxlength="7" />
-            </div>
-          </el-form-item>
-          <el-form-item v-if="dictionarySection === 'device-types'" :label="t('settings.defaultFieldset')" prop="default_fieldset" :error="dictionaryFormErrors.default_fieldset">
-            <SearchableSelect
-              v-model="dictionaryForm.default_fieldset"
-              :request="request"
-              endpoint="/custom-fieldsets/"
-              :map-option="mapFieldset"
-              :selected-option="selectedDictionaryFieldsetOption"
-              :base-query="{ is_active: true }"
-              clearable
-              :placeholder="t('settings.noDefaultFieldset')"
-            />
-            <FieldHelp :text="t('settings.defaultFieldsetHelp')" />
-          </el-form-item>
-          <el-form-item :label="t('common.status')">
-            <el-select v-model="dictionaryForm.is_active" :aria-label="t('common.status')">
-              <el-option :label="t('status.active')" :value="true" />
-              <el-option :label="t('status.inactive')" :value="false" />
-            </el-select>
-            <FieldHelp :text="dictionaryStatusHelp" />
-          </el-form-item>
-        </div>
-      </section>
-    </el-form>
-    <template #footer>
-      <el-button :disabled="dictionarySaving" @click="showDictionaryModal = false">{{ t('common.cancel') }}</el-button>
-      <el-button type="primary" :loading="dictionarySaving" :disabled="dictionarySaving" @click="submitDictionary">{{ editingDictionary ? t('common.save') : t('common.create') }}</el-button>
     </template>
   </FormDialogShell>
 

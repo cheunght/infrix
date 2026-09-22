@@ -10,7 +10,6 @@ from pathlib import PurePath
 import warnings
 
 from PIL import Image, UnidentifiedImageError
-from django.db import transaction
 from django.http import HttpResponse
 from rest_framework import serializers
 from rest_framework.decorators import api_view, permission_classes
@@ -19,10 +18,8 @@ from rest_framework.response import Response
 from drf_spectacular.types import OpenApiTypes
 from drf_spectacular.utils import extend_schema
 
-from .audit import write_audit_log
 from .permissions import CanManageSystemSettings
-from .models import SystemSetting
-from .system_settings import get_system_settings
+from .system_settings import apply_branding_patch, read_system_settings
 
 
 IMAGE_FIELDS = ("logo", "compact_logo", "favicon")
@@ -90,11 +87,17 @@ def branding_payload(setting):
     return payload
 
 
+def reset_branding_settings(*, actor=None, request=None, audit=True):
+    """Restore branding defaults as part of the system-reset composition."""
+
+    return apply_branding_patch({}, reset=True, audit=audit, actor=actor, request=request)
+
+
 @extend_schema(responses=OpenApiTypes.OBJECT)
 @api_view(["GET"])
 @permission_classes([AllowAny])
 def public_branding(request):
-    return Response(branding_payload(get_system_settings()))
+    return Response(branding_payload(read_system_settings()))
 
 
 @extend_schema(request=OpenApiTypes.NONE, responses=OpenApiTypes.BINARY)
@@ -103,7 +106,7 @@ def public_branding(request):
 def branding_image(request, kind):
     if kind not in IMAGE_FIELDS:
         return HttpResponse(status=404)
-    value = getattr(get_system_settings(), f"branding_{kind}")
+    value = getattr(read_system_settings(), f"branding_{kind}")
     if not valid_image(value):
         return HttpResponse(status=404)
     response = HttpResponse(bytes(value), content_type="image/png")
@@ -142,30 +145,16 @@ class BrandingUpdateSerializer(serializers.Serializer):
 @api_view(["GET", "PATCH"])
 @permission_classes([CanManageSystemSettings])
 def branding_configuration(request):
-    setting = get_system_settings()
     if request.method == "GET":
-        return Response(branding_payload(setting))
+        return Response(branding_payload(read_system_settings()))
     serializer = BrandingUpdateSerializer(data=request.data)
     serializer.is_valid(raise_exception=True)
     values = serializer.validated_data
-    with transaction.atomic():
-        setting = SystemSetting.objects.select_for_update().get(pk=setting.pk)
-        before = branding_payload(setting)
-        fields = []
-        if values.get("reset"):
-            setting.branding_display_name = "infrix"
-            fields.append("branding_display_name")
-            for kind in IMAGE_FIELDS:
-                setattr(setting, f"branding_{kind}", b"")
-                fields.append(f"branding_{kind}")
-        else:
-            for key in ("display_name", *IMAGE_FIELDS):
-                if key in values:
-                    setattr(setting, f"branding_{key}", values[key])
-                    fields.append(f"branding_{key}")
-        if fields:
-            setting.save(update_fields=[*fields, "updated_at"])
-            write_audit_log(request, action="branding_reset" if values.get("reset") else "branding_updated",
-                            resource_type="system_settings", resource_id="branding",
-                            before=before, after=branding_payload(setting))
+    reset = bool(values.pop("reset", False))
+    setting = apply_branding_patch(
+        values,
+        reset=reset,
+        actor=request.user,
+        request=request,
+    )
     return Response(branding_payload(setting))

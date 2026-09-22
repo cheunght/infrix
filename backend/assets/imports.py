@@ -29,7 +29,7 @@ from .enum_contracts import ASSET_STATUS_LABELS
 from .lifecycle import validate_asset_status_transition
 from .models import Asset, AssetModel, CustomField, CustomFieldSetItem, DataCenter, Department, DeviceType, Manufacturer, Person, Rack, ServerRoom, Tag
 from .serializers import AssetWriteSerializer
-from .system_settings import get_system_settings
+from .system_settings import get_runtime_preferences
 
 
 IMPORT_MAX_FILE_SIZE = 10 * 1024 * 1024
@@ -488,7 +488,7 @@ def _prepare_payload(row, headers):
     asset_data_center_name = row.get("asset_data_center", "").strip()
     asset_data_center = _named_active(DataCenter.objects, asset_data_center_name, "asset_data_center", "数据中心") if asset_data_center_name else None
 
-    status = row.get("status", "").strip() or get_system_settings().default_asset_status
+    status = row.get("status", "").strip() or get_runtime_preferences().default_asset_status
     status = ASSET_STATUS_IMPORT_ALIASES.get(status, status)
     validate_asset_status_transition(None, status)
 

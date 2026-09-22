@@ -4,11 +4,12 @@ from threading import Lock
 
 from django.contrib.admin.models import LogEntry
 from django.contrib.auth import SESSION_KEY, get_user_model
-from django.contrib.auth.models import Group
 from django.contrib.sessions.models import Session
 from django.db import transaction
 
 from .audit import write_audit_log
+from .backups import backup_operation_lock
+from .branding import reset_branding_settings
 from .bootstrap import initialize_system_data
 from .models import (
     Asset,
@@ -47,12 +48,18 @@ from .models import (
     Tag,
     AuditLog,
 )
-from .roles import ROLE_DEFINITIONS, ROLE_SYSTEM_ADMIN
+from .organization_access import (
+    delete_non_preset_groups,
+    lock_preset_role_rows,
+    reset_preserved_administrator_roles,
+    verify_role_bootstrap,
+)
 from .system_settings import reset_system_settings
 
 
 SYSTEM_RESET_CONFIRMATION = "RESET INFRIX"
 _RESET_LOCK = Lock()
+_verify_bootstrap = verify_role_bootstrap
 
 
 def _delete_queryset(counts, key, queryset):
@@ -160,11 +167,7 @@ def _clear_mutable_data(preserved_user_ids):
         "users",
         User.objects.exclude(pk__in=preserved_user_ids),
     )
-    _delete_queryset(
-        counts,
-        "custom_groups",
-        Group.objects.exclude(name__in=[item["name"] for item in ROLE_DEFINITIONS.values()]),
-    )
+    counts["custom_groups"] = delete_non_preset_groups()
     counts["auth_throttle_states"] = AuthThrottleState.objects.count()
     AuthThrottleState.objects.all().delete()
     counts["sessions"] = _delete_non_preserved_sessions(preserved_user_ids)
@@ -173,42 +176,18 @@ def _clear_mutable_data(preserved_user_ids):
     return counts
 
 
-def _verify_bootstrap(actor_id, preserved_user_ids, groups):
-    User = get_user_model()
-    expected_codes = set(ROLE_DEFINITIONS)
-    if set(groups) != expected_codes:
-        raise RuntimeError("系统初始角色不完整，恢复操作已回滚")
-    group_ids = {group.pk for group in groups.values()}
-    if Group.objects.filter(pk__in=group_ids).count() != len(expected_codes):
-        raise RuntimeError("系统初始角色不完整，恢复操作已回滚")
-    if not User.objects.filter(pk=actor_id, is_active=True).exists():
-        raise RuntimeError("执行恢复操作的管理员不存在或已停用，恢复操作已回滚")
-    if not set(User.objects.filter(pk__in=preserved_user_ids).values_list("pk", flat=True)) == set(preserved_user_ids):
-        raise RuntimeError("保留的管理员账号不完整，恢复操作已回滚")
-
-
 def _reset_system_in_transaction(*, actor, request):
     # Keep a common, non-deleted preset group as the database lock row.  This
     # serializes reset requests on databases that support SELECT FOR UPDATE.
-    groups = initialize_system_data()
-    system_group = groups.get(ROLE_SYSTEM_ADMIN)
-    if system_group is None:
-        raise RuntimeError("系统管理员角色不存在，恢复操作已回滚")
-    system_group = Group.objects.select_for_update().get(pk=system_group.pk)
+    groups = lock_preset_role_rows()
     User = get_user_model()
     actor = User.objects.select_for_update().get(pk=actor.pk)
     preserved_user_ids = _preserved_admin_ids(actor)
 
     deleted = _clear_mutable_data(preserved_user_ids)
+    reset_branding_settings(actor=actor, request=request, audit=False)
     groups = initialize_system_data()
-    system_group = groups[ROLE_SYSTEM_ADMIN]
-    preserved_users = list(User.objects.filter(pk__in=preserved_user_ids))
-    if len(preserved_users) != len(preserved_user_ids):
-        raise RuntimeError("保留的管理员账号不完整，恢复操作已回滚")
-    for user in preserved_users:
-        # The reset returns retained administrator accounts to the canonical
-        # system-admin role without touching their password/hash.
-        user.groups.set([system_group])
+    groups = reset_preserved_administrator_roles(preserved_user_ids)
 
     _verify_bootstrap(actor.pk, preserved_user_ids, groups)
     write_audit_log(
@@ -227,6 +206,7 @@ def _reset_system_in_transaction(*, actor, request):
 
 def reset_system(*, actor, request):
     """Atomically reset mutable application data and preserve administrators."""
-    with _RESET_LOCK:
-        with transaction.atomic():
-            return _reset_system_in_transaction(actor=actor, request=request)
+    with backup_operation_lock():
+        with _RESET_LOCK:
+            with transaction.atomic():
+                return _reset_system_in_transaction(actor=actor, request=request)

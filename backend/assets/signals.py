@@ -1,26 +1,23 @@
 from django.contrib.auth.models import Group, User
-from django.core.exceptions import ValidationError
 from django.db.models.signals import post_save, pre_delete, pre_save
 from django.dispatch import receiver
 
 from .models import Person, UserSecurityProfile
-from .roles import ROLE_NAME_TO_CODE
-from .system_settings import get_system_settings
+from .organization_access import (
+    protect_preset_role_delete as enforce_preset_role_delete,
+    protect_preset_role_rename as enforce_preset_role_rename,
+)
+from .system_settings import get_runtime_preferences
 
 
 @receiver(pre_save, sender=Group)
 def protect_preset_role_rename(sender, instance, **kwargs):
-    if not instance.pk:
-        return
-    original = Group.objects.filter(pk=instance.pk).values_list("name", flat=True).first()
-    if original in ROLE_NAME_TO_CODE and instance.name != original:
-        raise ValidationError("预设角色不能重命名")
+    enforce_preset_role_rename(instance)
 
 
 @receiver(pre_delete, sender=Group)
 def protect_preset_role_delete(sender, instance, **kwargs):
-    if instance.name in ROLE_NAME_TO_CODE:
-        raise ValidationError("预设角色不能删除")
+    enforce_preset_role_delete(instance)
 
 
 @receiver(pre_save, sender=User)
@@ -43,7 +40,7 @@ def ensure_user_security_profile(sender, instance, created, **kwargs):
         user=instance,
         defaults={
             "must_change_password": bool(created),
-            "locale": get_system_settings().default_locale,
+            "locale": get_runtime_preferences().default_locale,
         },
     )
     if not profile_created and getattr(instance, "_password_changed", False):

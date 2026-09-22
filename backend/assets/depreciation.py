@@ -9,7 +9,7 @@ from dataclasses import dataclass
 from datetime import date
 from decimal import Decimal, InvalidOperation, ROUND_HALF_UP
 
-from .system_settings import system_localdate
+from .runtime_clock import system_localdate
 
 
 DEPRECIATION_METHOD_STRAIGHT_LINE = "straight_line"

@@ -61,7 +61,7 @@ from .lifecycle import (
     transition_asset_status,
 )
 from .physical_location import lock_asset_location, place_asset, unrack_asset
-from .roles import user_has_capability
+from .organization_access import can
 
 
 def _value(data, key):
@@ -371,7 +371,7 @@ def validate_inventory_resolution_request(action, note="", *, bulk=False):
 def resolve_inventory_item(*, item_id, action, note, actor, request):
     """Resolve one inventory exception with the canonical row-level rules."""
     validate_inventory_resolution_request(action, note)
-    if action == "update_asset" and not user_has_capability(actor, "assets.manage"):
+    if action == "update_asset" and not can(actor, "assets.manage"):
         raise PermissionDenied("更新资产台账需要 assets.manage 权限")
 
     from .audit import asset_audit_snapshot, write_audit_log
@@ -1155,9 +1155,9 @@ def create_repair_part_usage(*, fault_id, validated_data, operator, request):
     source = validated_data["source"]
     if source not in dict(RepairPartUsage.SOURCE_CHOICES):
         raise DRFValidationError({"source": "不支持的维修用件来源"})
-    if not user_has_capability(operator, "faults.manage"):
+    if not can(operator, "faults.manage"):
         raise PermissionDenied("记录维修用件需要 faults.manage 权限")
-    if source == RepairPartUsage.INTERNAL_STOCK and not user_has_capability(operator, "spares.manage"):
+    if source == RepairPartUsage.INTERNAL_STOCK and not can(operator, "spares.manage"):
         raise PermissionDenied("记录内部库存用件需要 spares.manage 权限")
     quantity = int(validated_data["quantity"])
     if quantity <= 0:

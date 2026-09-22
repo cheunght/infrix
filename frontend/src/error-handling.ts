@@ -57,6 +57,26 @@ function uniqueMessages(messages: string[]): string[] {
   return [...new Set(messages.filter(Boolean))];
 }
 
+function collectNestedFieldErrors(value: unknown, path: string, output: Record<string, string[]>) {
+  if (Array.isArray(value)) {
+    const direct = uniqueMessages(value.flatMap((item) => typeof item === "string" ? collectSafeMessages(item) : []));
+    if (direct.length) {
+      output[path] = [...new Set([...(output[path] || []), ...direct])];
+      return;
+    }
+    value.forEach((item) => collectNestedFieldErrors(item, path, output));
+    return;
+  }
+  if (isRecord(value)) {
+    for (const [key, nested] of Object.entries(value)) {
+      collectNestedFieldErrors(nested, `${path}.${key}`, output);
+    }
+    return;
+  }
+  const message = safeMessage(value);
+  if (message) output[path] = [...new Set([...(output[path] || []), message])];
+}
+
 function errorDetails(error: unknown): unknown {
   return error instanceof ApiError ? error.details : undefined;
 }
@@ -105,8 +125,7 @@ function extractDetails(details: unknown): {
       continue;
     }
     if (metaKeys.has(key)) continue;
-    const messages = uniqueMessages(collectSafeMessages(value));
-    if (messages.length) fieldErrors[key] = messages;
+    collectNestedFieldErrors(value, key, fieldErrors);
   }
 
   if (root && typeof root.detail === "string") {

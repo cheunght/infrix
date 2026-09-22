@@ -1,85 +1,55 @@
 <script setup lang="ts">
-import { computed, onBeforeUnmount, onMounted, ref } from "vue";
+import { toRefs } from "vue";
 import { Delete, Download, Refresh } from "@element-plus/icons-vue";
 import { useI18n } from "vue-i18n";
-import type { SettingsContext } from "../page-context";
-import type { BackupEntry, BackupListResponse, BackupRestoreResult } from "../types";
-import { isAbortError } from "../api";
-import { normalizeApiError } from "../error-handling";
+import type { SystemMaintenanceDependencies } from "../page-context";
+import type { BackupEntry } from "../types";
 import TableIconButton from "./TableIconButton.vue";
 
-const props = defineProps<{ context: SettingsContext }>();
+const props = defineProps<{
+  context: SystemMaintenanceDependencies;
+  backups: BackupEntry[];
+  loading: boolean;
+  creating: boolean;
+  restoring: boolean;
+  deleting: boolean;
+  pendingFilename: string;
+  error: string;
+  notice: string;
+  hasNonTransactionalTables: boolean;
+  restoreDialogVisible: boolean;
+  restoreConfirmation: string;
+  restoreTarget: BackupEntry | null;
+  restoreConfirmationValid: boolean;
+}>();
+const emit = defineEmits<{
+  (event: "update:restore-dialog-visible", value: boolean): void;
+  (event: "update:restore-confirmation", value: string): void;
+  (event: "load"): void;
+  (event: "create"): void;
+  (event: "download", value: BackupEntry): void;
+  (event: "open-restore", value: BackupEntry): void;
+  (event: "close-restore"): void;
+  (event: "restore"): void;
+  (event: "delete", value: BackupEntry): void;
+}>();
 const { t } = useI18n();
 const context = props.context;
-
-const backups = ref<BackupEntry[]>([]);
-const loading = ref(false);
-const creating = ref(false);
-const error = ref("");
-const notice = ref("");
-const pendingFilename = ref("");
-const restoreDialogVisible = ref(false);
-const restoreConfirmation = ref("");
-const restoreTarget = ref<BackupEntry | null>(null);
-const restoring = ref(false);
-let backupListController: AbortController | null = null;
-
-const backupErrorKeys: Record<string, string> = {
-  mariadb_required: "settings.backupMariaDbRequired",
-  backup_directory_invalid: "settings.backupDirectoryInvalid",
-  backup_directory_unwritable: "settings.backupDirectoryUnwritable",
-  dump_client_missing: "settings.backupDumpClientMissing",
-  restore_client_missing: "settings.backupRestoreClientMissing",
-  database_dump_failed: "settings.backupDatabaseDumpFailed",
-  database_dump_empty: "settings.backupDatabaseDumpEmpty",
-  database_archive_failed: "settings.backupDatabaseArchiveFailed",
-  database_configuration_invalid: "settings.backupDatabaseConfigurationInvalid",
-  migration_state_unavailable: "settings.backupMigrationStateUnavailable",
-  backup_archive_failed: "settings.backupArchiveFailed",
-  database_restore_failed: "settings.backupDatabaseRestoreFailed",
-  safety_backup_failed: "settings.backupSafetyBackupFailed",
-  backup_operation_in_progress: "settings.backupOperationInProgress",
-  backup_not_found: "settings.backupNotFound",
-  restore_confirmation_required: "settings.backupRestoreConfirmationRequired",
-  delete_confirmation_required: "settings.backupDeleteConfirmationRequired",
-  backup_delete_failed: "settings.backupDeleteFailed",
-  backup_extract_failed: "settings.backupArchiveInvalid",
-  backup_media_directory_conflict: "settings.backupDirectoryInvalid",
-  backup_public_directory: "settings.backupDirectoryInvalid",
-  media_directory_invalid: "settings.backupDirectoryInvalid",
-  media_backup_failed: "settings.backupMediaBackupFailed",
-  media_contains_symlink: "settings.backupArchiveInvalid",
-  media_contains_special_file: "settings.backupArchiveInvalid",
-  media_missing: "settings.backupArchiveInvalid",
-  media_restore_failed: "settings.backupMediaRestoreFailed",
-  manifest_invalid: "settings.backupArchiveInvalid",
-  post_restore_validation_failed: "settings.backupPostRestoreValidationFailed",
-  restore_failed: "settings.backupRestoreFailed",
-  backup_application_mismatch: "settings.backupApplicationMismatch",
-  backup_database_mismatch: "settings.backupDatabaseMismatch",
-  backup_format_unsupported: "settings.backupFormatUnsupported",
-  migration_state_incompatible: "settings.backupMigrationIncompatible",
-  unsafe_archive_path: "settings.backupUnsafeArchive",
-  unsafe_archive_member: "settings.backupUnsafeArchive",
-  backup_archive_invalid: "settings.backupArchiveInvalid",
-  unsupported_archive_content: "settings.backupArchiveInvalid",
-  database_dump_invalid: "settings.backupArchiveInvalid",
-  database_dump_missing: "settings.backupArchiveInvalid",
-};
-
-const canManage = computed(() => context.can("system.reset"));
-const hasNonTransactionalTables = computed(() => backups.value.some((entry) => Boolean(entry.transaction_consistency_warning)));
-const restoreConfirmationValid = computed(() => restoreConfirmation.value === "RESTORE INFRIX");
-
-function errorText(value: unknown, fallback: string): string {
-  const normalized = normalizeApiError(value);
-  const key = normalized.code ? backupErrorKeys[normalized.code] : undefined;
-  return key ? t(key) : normalized.message || t(fallback);
-}
-
-function backupEndpoint(filename: string, suffix = ""): string {
-  return `/system/backups/${encodeURIComponent(filename)}${suffix}`;
-}
+const {
+  backups,
+  loading,
+  creating,
+  restoring,
+  deleting,
+  pendingFilename,
+  error,
+  notice,
+  hasNonTransactionalTables,
+  restoreDialogVisible,
+  restoreConfirmation,
+  restoreTarget,
+  restoreConfirmationValid,
+} = toRefs(props);
 
 function formatSize(value: number): string {
   if (value < 1024) return `${value} B`;
@@ -92,150 +62,13 @@ function formatCreatedAt(value: string): string {
   return context.formatDateTime(value || null);
 }
 
-async function loadBackups(): Promise<boolean> {
-  if (loading.value) return false;
-  const controller = new AbortController();
-  backupListController?.abort();
-  backupListController = controller;
-  loading.value = true;
-  error.value = "";
-  try {
-    // Keep this page's list request independent from the application-level
-    // route loading controller. Switching into the maintenance tab can
-    // otherwise abort this request immediately after the component mounts.
-    const response = await context.request<BackupListResponse>("/system/backups/", {
-      signal: controller.signal,
-    });
-    backups.value = Array.isArray(response)
-      ? response as unknown as BackupEntry[]
-      : response?.results || [];
-    return true;
-  } catch (value) {
-    if (isAbortError(value)) return false;
-    error.value = errorText(value, "settings.backupListFailed");
-    return false;
-  } finally {
-    if (backupListController === controller) {
-      backupListController = null;
-      loading.value = false;
-    }
-  }
+function updateRestoreDialogVisible(value: boolean) {
+  emit("update:restore-dialog-visible", value);
 }
 
-async function createBackup(): Promise<void> {
-  if (creating.value || loading.value || !canManage.value) return;
-  creating.value = true;
-  notice.value = "";
-  error.value = "";
-  try {
-    const result = await context.request<BackupEntry>("/system/backups/", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: "{}",
-    });
-    const refreshed = await loadBackups();
-    notice.value = t(
-      refreshed ? "settings.backupCreated" : "settings.backupCreatedRefreshFailed",
-      { filename: result.filename },
-    );
-  } catch (value) {
-    error.value = errorText(value, "settings.backupCreateFailed");
-  } finally {
-    creating.value = false;
-  }
+function updateRestoreConfirmation(value: string) {
+  emit("update:restore-confirmation", value);
 }
-
-async function downloadBackup(entry: BackupEntry): Promise<void> {
-  if (!entry.valid || pendingFilename.value || !canManage.value) return;
-  pendingFilename.value = entry.filename;
-  error.value = "";
-  try {
-    await context.downloadFile(backupEndpoint(entry.filename, "/download/"), entry.filename);
-  } catch (value) {
-    error.value = errorText(value, "settings.backupDownloadFailed");
-  } finally {
-    pendingFilename.value = "";
-  }
-}
-
-function openRestore(entry: BackupEntry): void {
-  if (!entry.valid || pendingFilename.value || creating.value || !canManage.value) return;
-  restoreTarget.value = entry;
-  restoreConfirmation.value = "";
-  restoreDialogVisible.value = true;
-}
-
-function closeRestore(): void {
-  if (restoring.value) return;
-  restoreDialogVisible.value = false;
-  restoreConfirmation.value = "";
-  restoreTarget.value = null;
-}
-
-async function restore(): Promise<void> {
-  const target = restoreTarget.value;
-  if (!target || restoring.value || !restoreConfirmationValid.value || !canManage.value) return;
-  restoring.value = true;
-  error.value = "";
-  try {
-    const result = await context.request<BackupRestoreResult>(backupEndpoint(target.filename, "/restore/"), {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ confirmation: restoreConfirmation.value }),
-    });
-    notice.value = t("settings.backupRestored", {
-      filename: result.filename,
-      safety: result.safety_backup,
-    });
-    // The backend invalidates all sessions as part of a successful restore.
-    // Clear the dialog directly because closeRestore intentionally refuses to
-    // close while a restore request is still in flight.
-    restoreDialogVisible.value = false;
-    restoreConfirmation.value = "";
-    restoreTarget.value = null;
-    // Restore invalidates sessions. Do not issue a follow-up request with the
-    // session that the backend has deliberately invalidated.
-  } catch (value) {
-    error.value = errorText(value, "settings.backupRestoreFailed");
-  } finally {
-    restoring.value = false;
-  }
-}
-
-async function deleteBackup(entry: BackupEntry): Promise<void> {
-  if (pendingFilename.value || creating.value || restoring.value || !canManage.value) return;
-  const confirmed = await context.confirmAction(t("settings.backupDeleteConfirm", { filename: entry.filename }));
-  if (!confirmed) return;
-  pendingFilename.value = entry.filename;
-  error.value = "";
-  try {
-    await context.request(backupEndpoint(entry.filename, "/"), {
-      method: "DELETE",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ confirmation: `DELETE ${entry.filename}` }),
-    });
-    const refreshed = await loadBackups();
-    notice.value = t(
-      refreshed ? "settings.backupDeleted" : "settings.backupDeletedRefreshFailed",
-      { filename: entry.filename },
-    );
-  } catch (value) {
-    error.value = errorText(value, "settings.backupDeleteFailed");
-  } finally {
-    pendingFilename.value = "";
-  }
-}
-
-onMounted(() => {
-  void loadBackups();
-});
-
-onBeforeUnmount(() => {
-  backupListController?.abort();
-  backupListController = null;
-});
-
-defineExpose({ loading, creating, restoring, loadBackups, createBackup });
 </script>
 
 <template>
@@ -299,9 +132,9 @@ defineExpose({ loading, creating, restoring, loadBackups, createBackup });
           <template #default="{ row }">
             <div class="backup-restore-table__actions">
               <el-button-group>
-                <TableIconButton :icon="Download" :label="t('settings.downloadBackup')" type="primary" :disabled="pendingFilename !== '' || !row.valid" @click="downloadBackup(row)" />
-                <TableIconButton :icon="Refresh" :label="t('settings.restoreBackup')" :disabled="pendingFilename !== '' || creating || restoring || !row.valid" @click="openRestore(row)" />
-                <TableIconButton :icon="Delete" :label="t('settings.deleteBackup')" type="danger" :loading="pendingFilename === row.filename" :disabled="pendingFilename !== '' || creating || restoring" @click="deleteBackup(row)" />
+                <TableIconButton :icon="Download" :label="t('settings.downloadBackup')" type="primary" :disabled="pendingFilename !== '' || creating || restoring || deleting || !row.valid" @click="emit('download', row)" />
+                <TableIconButton :icon="Refresh" :label="t('settings.restoreBackup')" :disabled="pendingFilename !== '' || creating || restoring || deleting || !row.valid" @click="emit('open-restore', row)" />
+                <TableIconButton :icon="Delete" :label="t('settings.deleteBackup')" type="danger" :loading="pendingFilename === row.filename" :disabled="pendingFilename !== '' || creating || restoring || deleting" @click="emit('delete', row)" />
               </el-button-group>
             </div>
             <small v-if="!row.valid" class="backup-restore-table__error">{{ row.validation_error || t("settings.backupInvalid") }}</small>
@@ -326,9 +159,9 @@ defineExpose({ loading, creating, restoring, loadBackups, createBackup });
             <small v-if="!row.valid" class="backup-restore-list__error">{{ row.validation_error || t("settings.backupInvalid") }}</small>
             <div class="backup-restore-table__actions">
               <el-button-group>
-                <TableIconButton :icon="Download" :label="t('settings.downloadBackup')" type="primary" :disabled="pendingFilename !== '' || !row.valid" @click="downloadBackup(row)" />
-                <TableIconButton :icon="Refresh" :label="t('settings.restoreBackup')" :disabled="pendingFilename !== '' || creating || restoring || !row.valid" @click="openRestore(row)" />
-                <TableIconButton :icon="Delete" :label="t('settings.deleteBackup')" type="danger" :loading="pendingFilename === row.filename" :disabled="pendingFilename !== '' || creating || restoring" @click="deleteBackup(row)" />
+                <TableIconButton :icon="Download" :label="t('settings.downloadBackup')" type="primary" :disabled="pendingFilename !== '' || creating || restoring || deleting || !row.valid" @click="emit('download', row)" />
+                <TableIconButton :icon="Refresh" :label="t('settings.restoreBackup')" :disabled="pendingFilename !== '' || creating || restoring || deleting || !row.valid" @click="emit('open-restore', row)" />
+                <TableIconButton :icon="Delete" :label="t('settings.deleteBackup')" type="danger" :loading="pendingFilename === row.filename" :disabled="pendingFilename !== '' || creating || restoring || deleting" @click="emit('delete', row)" />
               </el-button-group>
             </div>
           </div>
@@ -339,14 +172,15 @@ defineExpose({ loading, creating, restoring, loadBackups, createBackup });
     <p class="backup-restore-page__help">{{ t("settings.backupRestoreHelp") }}</p>
 
     <el-dialog
-      v-model="restoreDialogVisible"
       class="backup-restore-dialog"
+      :model-value="restoreDialogVisible"
       :title="t('settings.restoreBackup')"
       width="560px"
       :close-on-click-modal="!restoring"
       :close-on-press-escape="!restoring"
       :show-close="!restoring"
-      @close="closeRestore"
+      @update:model-value="updateRestoreDialogVisible"
+      @close="emit('close-restore')"
     >
       <template v-if="restoreTarget">
         <el-alert :title="t('settings.restoreBackupWarning')" type="warning" show-icon :closable="false" />
@@ -364,16 +198,16 @@ defineExpose({ loading, creating, restoring, loadBackups, createBackup });
           </div>
           <div><dt>{{ t("settings.backupChecksum") }}</dt><dd class="backup-restore-dialog__checksum" :title="restoreTarget.checksum">{{ restoreTarget.checksum }}</dd></div>
         </dl>
-        <el-form label-position="top" @submit.prevent="restore">
+        <el-form label-position="top" @submit.prevent="emit('restore')">
           <el-form-item :label="t('settings.restoreConfirmationLabel')" required>
-            <el-input v-model="restoreConfirmation" :placeholder="t('settings.restoreConfirmationPlaceholder')" autocomplete="off" />
+            <el-input :model-value="restoreConfirmation" :placeholder="t('settings.restoreConfirmationPlaceholder')" autocomplete="off" @update:model-value="updateRestoreConfirmation" />
             <p class="form-hint">{{ t("settings.restoreConfirmationHelp") }}</p>
           </el-form-item>
         </el-form>
       </template>
       <template #footer>
-        <el-button :disabled="restoring" @click="closeRestore">{{ t("common.cancel") }}</el-button>
-        <el-button type="danger" :loading="restoring" :disabled="!restoreConfirmationValid" @click="restore">{{ t("settings.restoreBackup") }}</el-button>
+        <el-button :disabled="restoring" @click="emit('close-restore')">{{ t("common.cancel") }}</el-button>
+        <el-button type="danger" :loading="restoring" :disabled="!restoreConfirmationValid" @click="emit('restore')">{{ t("settings.restoreBackup") }}</el-button>
       </template>
     </el-dialog>
   </section>

@@ -13,7 +13,8 @@ from ..models import (
     SoftwareLicense,
     SparePart,
 )
-from ..system_settings import get_system_settings, system_now
+from ..system_settings import NotificationPolicy, get_notification_policy
+from ..runtime_clock import system_now
 
 
 ALERT_EXPIRY_DAYS = 30
@@ -21,10 +22,10 @@ ALERT_LIMIT = 100
 _LEVEL_ORDER = {"critical": 0, "warning": 1, "notice": 2}
 
 
-def _system_now(setting):
+def _system_now():
     """Use the deployment timezone for alert date boundaries."""
 
-    return system_now(setting)
+    return system_now()
 
 
 def _alert_sort_key(alert):
@@ -292,8 +293,14 @@ def build_alerts_payload(
     that can see the dashboard but not a particular module from receiving
     identifiers from that module.
     """
-    setting = setting or get_system_settings()
-    now = _system_now(setting)
+    setting = (
+        setting
+        if isinstance(setting, NotificationPolicy)
+        else get_notification_policy(setting)
+        if setting is not None
+        else get_notification_policy()
+    )
+    now = _system_now()
     today = now.date()
     alerts = []
     if include_assets and setting.notify_maintenance:

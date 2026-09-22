@@ -11,7 +11,7 @@ from datetime import timedelta
 from django.db.models import Count, Q
 from ..license_status import license_status_counts
 from ..models import AuditLog, FaultEvent, InventoryTask, MaintenanceContract, Rack
-from ..system_settings import system_localdate
+from ..runtime_clock import system_localdate
 from .capacity import build_dashboard_capacity
 from .constants import (
     AUDIT_ACTION_LABELS,

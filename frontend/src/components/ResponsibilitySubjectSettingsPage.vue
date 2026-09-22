@@ -7,9 +7,10 @@ import StatusTag from "./StatusTag.vue";
 import TableIconButton from "./TableIconButton.vue";
 import SearchableSelect, { type SearchableSelectOption } from "./SearchableSelect.vue";
 import type { SettingsContext } from "../page-context";
+import type { OrganizationSettingsState } from "../composables/useOrganizationSettings";
 import type { Department, Person } from "../types";
 
-const props = defineProps<{ context: SettingsContext }>();
+const props = defineProps<{ context: SettingsContext; organization: OrganizationSettingsState }>();
 const { t } = useI18n();
 const {
   responsibilityDirectorySubjects: subjects,
@@ -36,7 +37,7 @@ const {
   toggleResponsibilitySubject: toggleSubject,
   deleteResponsibilitySubject: deleteSubject,
   departmentOptions,
-} = props.context;
+} = props.organization;
 
 const canManage = computed(() => props.context.can("settings.manage"));
 const hasFilters = computed(() => Boolean(search.value.trim() || departmentFilter.value || activeFilter.value !== "true"));

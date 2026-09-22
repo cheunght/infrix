@@ -13,9 +13,9 @@ class StandardPagination(PageNumberPagination):
         if self.page_size_query_param and self.page_size_query_param in request.query_params:
             return super().get_page_size(request)
         try:
-            from .system_settings import get_system_settings
+            from .system_settings import get_runtime_preferences
 
-            return get_system_settings().default_page_size
+            return get_runtime_preferences().default_page_size
         except (OperationalError, ProgrammingError):
             # Keep migrations and management commands usable before the
             # singleton table exists.

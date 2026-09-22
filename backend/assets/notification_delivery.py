@@ -6,7 +6,8 @@ from django.utils import timezone
 from .models import NotificationDelivery, Person
 from .reporting.alerts import build_alerts_payload
 from .smtp import send_smtp_message, SmtpConfigurationError
-from .system_settings import get_system_settings, system_now
+from .system_settings import get_notification_policy
+from .runtime_clock import system_now
 
 LABELS = {
     "zh-CN": {"maintenance": "维保到期", "license": "软件许可", "fault": "未关闭故障", "inventory": "逾期盘点", "spare": "备件低库存"},
@@ -23,7 +24,7 @@ def digest_content(setting, payload):
     labels = LABELS.get(setting.default_locale, LABELS["zh-CN"])
     title = "每日业务提醒" if setting.default_locale == "zh-CN" else "Daily operational digest"
     display_name = _safe_subject_part(setting.branding_display_name) or "infrix"
-    subject = f"{display_name} — {title} — {system_now(setting).date()}"
+    subject = f"{display_name} — {title} — {system_now().date()}"
     lines = [subject, ""]
     for kind, label in labels.items():
         alerts = [item for item in payload["alerts"] if item["kind"] == kind]
@@ -66,7 +67,7 @@ def digest_recipients(setting):
 
 
 def send_digest():
-    setting = get_system_settings()
+    setting = get_notification_policy()
     if not setting.email_digest_enabled:
         return {"status": "disabled", "sent": 0, "failed": 0}
     recipients = digest_recipients(setting)
@@ -76,7 +77,7 @@ def send_digest():
     if not payload["alerts"]:
         return {"status": "empty", "sent": 0, "failed": 0}
     subject, body = digest_content(setting, payload)
-    day = system_now(setting).date()
+    day = system_now().date()
     recipient_count = len(recipients)
     sent = failed = 0
     for recipient in recipients:
@@ -97,7 +98,7 @@ def send_digest():
             row.recipient_count = recipient_count
             row.save()
         try:
-            send_smtp_message(setting, recipient, subject, body)
+            send_smtp_message(recipient, subject, body)
         except SmtpConfigurationError as exc:
             # SMTP disconnects can happen after acceptance. Keep those
             # indeterminate instead of risking duplicate delivery.

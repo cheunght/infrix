@@ -1,4 +1,4 @@
-import { computed, reactive, ref, watch, type ComputedRef, type Ref } from "vue";
+import { computed, reactive, ref, watch, type Ref } from "vue";
 import type { LocationQuery } from "vue-router";
 import { ElMessage } from "element-plus/es/components/message/index.mjs";
 import { ApiError, buildExportQuery, isAbortError, pageItems, pageTotal, type PageResult } from "../api";
@@ -27,7 +27,6 @@ import type {
   InventoryItem,
   Rack,
   ServerRoom,
-  SystemSettingDefinition,
   Tag,
 } from "../types";
 import type { AssetFilters, AssetFormState, CapabilityFn, RequestFn } from "../page-context";
@@ -40,6 +39,7 @@ import {
   rateToPercentageText,
 } from "../depreciation";
 import { systemSettingsState } from "../system-settings";
+import { SYSTEM_SETTING_DEFINITIONS } from "../system-settings-config";
 import { currentLocale, i18n } from "../i18n";
 import {
   clearFieldError,
@@ -324,7 +324,6 @@ export interface AssetsDeps {
   detailError: Ref<string>;
   closeAssetDetail: () => void;
   statusLabel: (status: string) => string;
-  systemSettingsDefinitions: ComputedRef<SystemSettingDefinition[]>;
 }
 
 const defaultColumns: AssetColumnOption[] = [
@@ -577,7 +576,7 @@ export function useAssets(deps: AssetsDeps) {
   const assetModalMode = ref<"new" | "edit" | "clone">("new");
   const assetForm = ref<AssetFormState>(emptyAssetForm());
   const initialAssetStatusValues = computed<Set<AssetStatus>>(() => {
-    const definition = deps.systemSettingsDefinitions.value.find(
+    const definition = SYSTEM_SETTING_DEFINITIONS.find(
       (item) => item.key === "default_asset_status",
     );
     const values = (definition?.options || [])

@@ -4,7 +4,7 @@ from datetime import timedelta
 
 from django.db.models import Case, CharField, Count, F, Q, Value, When
 from .models import SoftwareLicense
-from .system_settings import system_localdate
+from .runtime_clock import system_localdate
 
 LICENSE_STATUS_KEYS = ("normal", "expiring", "expired")
 LICENSE_STATUS_LABELS = {

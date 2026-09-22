@@ -1,6 +1,6 @@
 import { reactive } from "vue";
 import { currentLocale } from "./i18n";
-import type { AssetStatus, CurrencyCode, DateFormat, SystemLocale, SystemSettings } from "./types";
+import type { AssetStatus, CurrencyCode, DateFormat, SystemLocale, SystemSettings, SystemSettingsSnapshot } from "./types";
 
 function detectedTimeZone(): string {
   try {
@@ -118,27 +118,31 @@ export function currencySymbol(value: CurrencyCode = systemSettingsState.currenc
   return currencySymbols[value] || currencySymbols.CNY;
 }
 
-export function applySystemSettings(settings: SystemSettings): void {
-  if (Number.isFinite(settings.default_page_size)) {
-    systemSettingsState.defaultPageSize = settings.default_page_size;
+export function applySystemSettings(settings: SystemSettingsSnapshot | SystemSettings): void {
+  const grouped = "general" in settings;
+  const general = grouped ? settings.general : settings;
+  const security = grouped ? settings.security : settings;
+  const runtime = grouped ? settings.runtime : settings;
+  if (Number.isFinite(general.default_page_size)) {
+    systemSettingsState.defaultPageSize = general.default_page_size;
   }
-  if (typeof settings.default_asset_status === "string") {
-    systemSettingsState.defaultAssetStatus = settings.default_asset_status;
+  if (typeof general.default_asset_status === "string") {
+    systemSettingsState.defaultAssetStatus = general.default_asset_status;
   }
-  if (settings.default_locale === "zh-CN" || settings.default_locale === "en-US") {
-    systemSettingsState.defaultLocale = settings.default_locale;
+  if (general.default_locale === "zh-CN" || general.default_locale === "en-US") {
+    systemSettingsState.defaultLocale = general.default_locale;
   }
-  if (typeof settings.timezone === "string" && settings.timezone.trim()) {
-    systemSettingsState.timezone = safeTimeZone(settings.timezone.trim());
+  if (typeof runtime.timezone === "string" && runtime.timezone.trim()) {
+    systemSettingsState.timezone = safeTimeZone(runtime.timezone.trim());
   }
-  if (["YYYY-MM-DD", "DD/MM/YYYY", "MM/DD/YYYY"].includes(settings.date_format)) {
-    systemSettingsState.dateFormat = settings.date_format;
+  if (["YYYY-MM-DD", "DD/MM/YYYY", "MM/DD/YYYY"].includes(general.date_format)) {
+    systemSettingsState.dateFormat = general.date_format;
   }
-  if (settings.currency in currencySymbols) {
-    systemSettingsState.currency = settings.currency;
+  if (general.currency in currencySymbols) {
+    systemSettingsState.currency = general.currency;
   }
-  if (Number.isFinite(settings.password_min_length)) {
-    systemSettingsState.passwordMinLength = Math.max(8, settings.password_min_length);
+  if (Number.isFinite(security.password_min_length)) {
+    systemSettingsState.passwordMinLength = Math.max(8, security.password_min_length);
   }
   systemSettingsState.loaded = true;
 }

@@ -1,6 +1,6 @@
 from django.core.management.base import BaseCommand, CommandError
 
-from assets.backups import BackupServiceError, create_backup
+from assets.system_maintenance import MaintenanceError, create_backup
 
 
 class Command(BaseCommand):
@@ -9,6 +9,6 @@ class Command(BaseCommand):
     def handle(self, *args, **options):
         try:
             result = create_backup()
-        except BackupServiceError as exc:
+        except MaintenanceError as exc:
             raise CommandError(exc.message) from exc
         self.stdout.write(f"Backup created: {result['filename']}")

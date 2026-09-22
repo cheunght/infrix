@@ -125,6 +125,35 @@
   width: min(100%, 340px);
 }
 
+.settings-system__smtp-test-item {
+  grid-column: 1 / -1;
+}
+
+.settings-system__smtp-test-controls {
+  display: grid;
+  width: min(100%, 520px);
+  min-width: 0;
+  gap: 4px;
+}
+
+.settings-system__smtp-test-row {
+  display: grid;
+  grid-template-columns: minmax(0, 340px) auto;
+  align-items: start;
+  gap: 8px;
+  min-width: 0;
+}
+
+.settings-system__smtp-test-row .el-input {
+  width: 100%;
+  max-width: 340px;
+}
+
+.settings-system__smtp-test-row .el-button {
+  margin: 0;
+  white-space: nowrap;
+}
+
 .settings-system__help {
   margin-top: 4px;
   color: var(--el-text-color-secondary);
@@ -288,7 +317,8 @@
   grid-column: 1 / 3;
 }
 
-.settings-system__notification-row--without-field .settings-system__notification-switch {
+.settings-system__notification-row--without-field
+  .settings-system__notification-switch {
   grid-column: 3;
 }
 
@@ -756,6 +786,10 @@
   gap: var(--space-lg, 16px);
 }
 
+.settings-maintenance__result-alert {
+  margin-top: var(--space-lg, 16px);
+}
+
 .settings-maintenance__section {
   display: grid;
   gap: var(--space-lg, 16px);
@@ -999,6 +1033,18 @@
     flex: 1 1 160px;
   }
 
+  .settings-system__smtp-test-row {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .settings-system__smtp-test-row .el-input {
+    max-width: 100%;
+  }
+
+  .settings-system__smtp-test-row .el-button {
+    justify-self: start;
+  }
+
   .settings-system__notification-section-heading--with-control {
     flex-direction: column;
     gap: 12px;
@@ -1027,7 +1073,8 @@
     align-self: end;
   }
 
-  .settings-system__notification-row--without-field .settings-system__notification-switch {
+  .settings-system__notification-row--without-field
+    .settings-system__notification-switch {
     grid-column: 2;
   }
 }
@@ -1049,7 +1096,8 @@
     justify-content: flex-start;
   }
 
-  .settings-system__notification-row--without-field .settings-system__notification-switch {
+  .settings-system__notification-row--without-field
+    .settings-system__notification-switch {
     grid-column: auto;
   }
 }
@@ -1335,5 +1383,4 @@
     grid-template-columns: 1fr;
     gap: 2px;
   }
-
 }

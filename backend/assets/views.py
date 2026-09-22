@@ -14,7 +14,7 @@ from types import SimpleNamespace
 from django.contrib.auth import authenticate, login, logout, update_session_auth_hash
 from django.core.exceptions import ValidationError as DjangoValidationError
 from django.middleware.csrf import get_token
-from django.contrib.auth.models import Group, User
+from django.contrib.auth.models import User
 from django_filters.rest_framework import DjangoFilterBackend
 from rest_framework import viewsets
 from rest_framework.filters import OrderingFilter, SearchFilter
@@ -34,7 +34,7 @@ from openpyxl import Workbook
 from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
 from openpyxl.utils import get_column_letter
 from urllib.parse import quote
-from .models import AuthThrottleState, AuditLog, Asset, AssetAssignmentEvent, AssetCustomValue, AssetModel, AssetNetworkAddress, AssetTag, Attachment, CustomField, CustomFieldOption, CustomFieldSet, CustomFieldSetItem, DataCenter, Department, DeviceType, DirectoryIdentity, FaultEvent, InventoryItem, InventoryTask, MaintenanceContract, Manufacturer, NotificationDelivery, Person, PersonalAccessToken, ProcurementRecord, Rack, RackUnitAllocation, RepairPartUsage, RepairRecord, ServerRoom, SoftwareLicense, SparePart, SparePartCategory, SpareStock, SpareStockTransaction, SystemSetting, Tag, UserSecurityProfile
+from .models import AuthThrottleState, AuditLog, Asset, AssetAssignmentEvent, AssetCustomValue, AssetModel, AssetNetworkAddress, AssetTag, Attachment, CustomField, CustomFieldOption, CustomFieldSet, CustomFieldSetItem, DataCenter, Department, DeviceType, DirectoryIdentity, FaultEvent, InventoryItem, InventoryTask, MaintenanceContract, NotificationDelivery, Person, PersonalAccessToken, ProcurementRecord, Rack, RackUnitAllocation, RepairPartUsage, RepairRecord, ServerRoom, SoftwareLicense, SparePart, SpareStock, SpareStockTransaction, Tag, UserSecurityProfile
 from .enum_contracts import (
     ASSET_STATUS_LABELS,
     ASSET_STATUS_VALUES,
@@ -48,7 +48,7 @@ from .enum_contracts import (
     STOCK_OPERATION_TYPE_LABELS,
     STOCK_OPERATION_TYPE_VALUES,
 )
-from .serializers import AdminPasswordResetSerializer, ApiTokenCreateSerializer, ApiTokenSerializer, AssetAssignmentEventSerializer, AssetAssignmentReturnSerializer, AssetAssignmentTargetSerializer, AssetBatchAssignmentResponseSerializer, AssetBatchAssignmentSerializer, AssetBatchDeleteResponseSerializer, AssetBatchDeleteSerializer, AssetBulkEditResponseSerializer, AssetBulkEditSerializer, AssetDetailSerializer, AssetListSerializer, AssetModelOptionSerializer, AssetModelSerializer, AssetSerializer, AssetWriteSerializer, AttachmentSerializer, AuditLogSerializer, BackupConfirmationSerializer, CurrentUserProfileSerializer, CustomFieldOptionSerializer, CustomFieldRuntimeSchemaSerializer, CustomFieldSerializer, CustomFieldSetItemsWriteSerializer, CustomFieldSetOptionSerializer, CustomFieldSetSerializer, DataCenterOptionSerializer, DataCenterSerializer, DepartmentOptionSerializer, DepartmentSerializer, DeviceTypeOptionSerializer, DeviceTypeSerializer, DictionaryOptionSerializer, FaultEventSerializer, GroupSerializer, InventoryBulkNormalResponseSerializer, InventoryBulkNormalSerializer, InventoryBulkResolutionResponseSerializer, InventoryBulkResolutionSerializer, InventoryInspectorSerializer, InventoryItemPageSerializer, InventoryItemSerializer, InventoryResolutionSerializer, InventoryScopePreviewQuerySerializer, InventoryScopePreviewSerializer, InventoryTaskSerializer, LdapConfigurationUpdateSerializer, ManufacturerSerializer, NotificationDeliverySerializer, PersonOptionSerializer, PersonSerializer, RackOptionSerializer, RackSerializer, RepairPartUsageCreateSerializer, RepairPartUsageSerializer, RepairRecordSerializer, ServerRoomOptionSerializer, ServerRoomSerializer, SoftwareLicenseSerializer, SparePartCategorySerializer, SparePartDetailSerializer, SparePartOptionSerializer, SparePartSerializer, SpareStockOptionSerializer, SpareStockSerializer, SpareStockTransactionSerializer, SmtpTestEmailSerializer, SystemResetSerializer, SystemSettingsSerializer, TagOptionSerializer, TagSerializer, TwoFactorCodeSerializer, UserBatchStatusResponseSerializer, UserBatchStatusSerializer, UserSerializer, _default_references_option
+from .serializers import AdminPasswordResetSerializer, ApiTokenCreateSerializer, ApiTokenSerializer, AssetAssignmentEventSerializer, AssetAssignmentReturnSerializer, AssetAssignmentTargetSerializer, AssetBatchAssignmentResponseSerializer, AssetBatchAssignmentSerializer, AssetBatchDeleteResponseSerializer, AssetBatchDeleteSerializer, AssetBulkEditResponseSerializer, AssetBulkEditSerializer, AssetDetailSerializer, AssetListSerializer, AssetModelOptionSerializer, AssetModelSerializer, AssetSerializer, AssetWriteSerializer, AttachmentSerializer, AuditLogSerializer, BackupConfirmationSerializer, CurrentUserProfileSerializer, CustomFieldOptionSerializer, CustomFieldRuntimeSchemaSerializer, CustomFieldSerializer, CustomFieldSetItemsWriteSerializer, CustomFieldSetOptionSerializer, CustomFieldSetSerializer, DataCenterOptionSerializer, DataCenterSerializer, DepartmentOptionSerializer, DepartmentSerializer, DeviceTypeOptionSerializer, DeviceTypeSerializer, DictionaryOptionSerializer, FaultEventSerializer, InventoryBulkNormalResponseSerializer, InventoryBulkNormalSerializer, InventoryBulkResolutionResponseSerializer, InventoryBulkResolutionSerializer, InventoryInspectorSerializer, InventoryItemPageSerializer, InventoryItemSerializer, InventoryResolutionSerializer, InventoryScopePreviewQuerySerializer, InventoryScopePreviewSerializer, InventoryTaskSerializer, LdapConfigurationUpdateSerializer, NotificationDeliverySerializer, PersonOptionSerializer, PersonSerializer, RackOptionSerializer, RackSerializer, RepairPartUsageCreateSerializer, RepairPartUsageSerializer, RepairRecordSerializer, ServerRoomOptionSerializer, ServerRoomSerializer, SoftwareLicenseSerializer, SparePartDetailSerializer, SparePartOptionSerializer, SparePartSerializer, SpareStockOptionSerializer, SpareStockSerializer, SpareStockTransactionSerializer, SmtpTestEmailSerializer, SystemResetSerializer, SystemSettingsPatchSerializer, SystemSettingsSnapshotSerializer, TagOptionSerializer, TagSerializer, TwoFactorCodeSerializer, UserBatchStatusResponseSerializer, UserBatchStatusSerializer, UserSerializer, _default_references_option
 from .fieldsets import fieldset_items_queryset, replace_fieldset_items, resolve_fieldset
 from .services import (
     apply_spare_stock_transaction,
@@ -78,13 +78,19 @@ from .license_status import LICENSE_STATUS_KEYS, LICENSE_STATUS_LABELS, filter_l
 from .audit import asset_audit_snapshot, asset_custom_value_changes, json_value, model_snapshot, software_license_audit_snapshot, spare_part_audit_snapshot, spare_stock_transaction_audit_snapshot, write_audit_log
 from .imports import AssetImportService, ImportFileError, ImportValidationError, build_import_template
 from .asset_model_imports import build_asset_model_import_template, commit_asset_model_import, preview_asset_model_import
-from .backups import (
-    BackupServiceError,
-    backup_path_for_download,
+from .system_maintenance import (
+    MaintenanceError,
     create_backup,
     delete_backup,
     list_backups,
+    open_backup_download,
+    read_status,
+    reset_system,
     restore_backup,
+)
+from .data_dictionary import (
+    ManufacturerViewSet,
+    SparePartCategoryViewSet,
 )
 from .ldap_auth import (
     AUTH_SOURCE_LDAP,
@@ -119,7 +125,14 @@ from .auth_throttle import (
 )
 from .smtp import SmtpConfigurationError, send_smtp_test_email
 from .permissions import BusinessRolePermission, CanExportAssets, CanExportFaults, CanExportInventory, CanExportLicenses, CanExportRacks, CanExportSpares, CanImportAssets, CanManageInventory, CanManageSystemSettings, CanResetSystem, CanViewAssetCustomFieldSchema, CanViewAssetTagsRuntime, CanViewAuditLog, CanViewDashboard, CanViewDepartmentRuntime, CanViewInventory, CanViewLicenses, CanViewManufacturerRuntime, CanViewPeopleRuntime, CanViewSparePartCategoryRuntime, IsSystemAdministrator
-from .roles import ROLE_DEFINITIONS, ROLE_NAME_TO_CODE, user_capabilities, user_has_capability, user_role_code, user_role_codes
+from .organization_access import (
+    AccountActionDenied,
+    can,
+    list_role_definitions,
+    role_definition,
+    read_authorization_snapshot,
+    validate_account_action,
+)
 from .reporting import (
     DashboardScopeError,
     build_dashboard_payload,
@@ -130,17 +143,16 @@ from .reporting import (
 )
 from .reporting.constants import RACK_LAYOUT_EXPORT_MAX_RACKS, RACK_LAYOUT_EXPORT_MAX_U_POSITIONS
 from .pagination import StandardPagination
-from .system_reset import reset_system
 from .system_settings import (
-    get_local_account_security_policy,
-    get_system_settings,
+    SystemSettingsValidationError,
+    apply_system_settings_patch,
+    get_local_auth_policy,
+    get_system_settings_snapshot,
+    get_runtime_preferences,
     local_password_expired,
-    system_date_bounds,
-    system_localdate,
-    system_localtime,
-    system_settings_snapshot,
     validate_local_password,
 )
+from .runtime_clock import system_date_bounds, system_localdate, system_localtime
 
 
 EXPORT_MAX_ROWS = 10_000
@@ -224,7 +236,7 @@ def _export_locale(request):
         return _normalize_export_locale(requested_locale)
     profile = getattr(request.user, "security_profile", None)
     return _normalize_export_locale(
-        getattr(profile, "locale", None) or get_system_settings().default_locale
+        getattr(profile, "locale", None) or get_runtime_preferences().default_locale
     )
 
 
@@ -1384,7 +1396,7 @@ class AttachmentViewSet(viewsets.ModelViewSet):
         return parsed
 
     def _require(self, request, capability):
-        if not user_has_capability(request.user, capability):
+        if not can(request.user, capability):
             raise PermissionDenied("当前角色没有附件操作权限")
 
     def _scope_for_instance(self, instance):
@@ -1852,7 +1864,7 @@ class DictionaryViewSet(AuditedModelViewSetMixin, viewsets.ModelViewSet):
         return super().get_serializer_class()
 
     def can_view_inactive(self):
-        return "settings.manage" in user_capabilities(self.request.user)
+        return can(self.request.user, "settings.manage")
 
     def get_queryset(self):
         if self.action == "list" and _compact_requested(self.request):
@@ -1932,67 +1944,6 @@ class DepartmentViewSet(AuditedModelViewSetMixin, viewsets.ModelViewSet):
             super().perform_destroy(instance)
         except ProtectedError as exc:
             raise DRFValidationError("部门仍有子部门使用，不能删除，请先调整部门层级") from exc
-
-
-class ManufacturerViewSet(DictionaryViewSet):
-    queryset = Manufacturer.objects.all()
-    serializer_class = ManufacturerSerializer
-    audit_resource = "manufacturer"
-
-    def get_permissions(self):
-        if self.action in {"list", "retrieve"}:
-            return [CanViewManufacturerRuntime()]
-        return super().get_permissions()
-
-    def can_view_inactive(self):
-        if super().can_view_inactive():
-            return True
-        return self.action in {"list", "retrieve"} and any(
-            user_has_capability(self.request.user, capability)
-            for capability in (
-                "assets.view",
-                "assets.manage",
-                "licenses.view",
-                "licenses.manage",
-                "spares.view",
-                "spares.manage",
-            )
-        )
-
-    def get_queryset(self):
-        if self.action == "list" and _compact_requested(self.request):
-            queryset = Manufacturer.objects.only("id", "name", "is_active")
-        else:
-            queryset = self.queryset.annotate(
-                assets_count=Count("standalone_assets", distinct=True) + Count("asset_models__assets", distinct=True),
-                licenses_count=Count("software_licenses", distinct=True),
-                spare_parts_count=Count("spare_parts", distinct=True),
-            )
-        if self.action in {"retrieve", "update", "partial_update", "destroy"}:
-            return queryset
-        active = self.request.query_params.get("is_active", "true").strip().lower()
-        if not self.can_view_inactive():
-            active = "true"
-        return queryset.filter(is_active=active == "true") if active in {"true", "false"} else queryset
-
-    def perform_create(self, serializer):
-        super().perform_create(serializer)
-        instance = serializer.instance
-        instance.assets_count = 0
-        instance.licenses_count = 0
-        instance.spare_parts_count = 0
-
-    def perform_update(self, serializer):
-        AuditedModelViewSetMixin.perform_update(self, serializer)
-        instance = serializer.instance
-        instance.assets_count = instance.standalone_assets.count() + Asset.objects.filter(asset_model__manufacturer=instance).count()
-        instance.licenses_count = instance.software_licenses.count()
-        instance.spare_parts_count = instance.spare_parts.count()
-
-    def perform_destroy(self, instance):
-        if instance.standalone_assets.exists() or instance.asset_models.filter(assets__isnull=False).exists() or instance.software_licenses.exists() or instance.spare_parts.exists():
-            raise DRFValidationError("厂商正在被资产、软件许可或备件使用，不能删除，请先停用")
-        AuditedModelViewSetMixin.perform_destroy(self, instance)
 
 
 class DeviceTypeViewSet(DictionaryViewSet):
@@ -2099,47 +2050,6 @@ class AssetModelViewSet(DictionaryViewSet):
         return queryset
 
 
-class SparePartCategoryViewSet(AuditedModelViewSetMixin, viewsets.ModelViewSet):
-    queryset = SparePartCategory.objects.annotate(spare_parts_count=Count("spare_parts", distinct=True)).order_by("name", "id")
-    serializer_class = SparePartCategorySerializer
-    permission_classes = [BusinessRolePermission]
-    permission_resource = "settings"
-    audit_resource = "spare_part_category"
-    filter_backends = [DjangoFilterBackend, SearchFilter, OrderingFilter]
-    filterset_fields = ["is_active"]
-    search_fields = ["name", "code"]
-    ordering_fields = ["name", "code", "created_at", "updated_at"]
-
-    def get_serializer_class(self):
-        if self.action == "list" and _compact_requested(self.request):
-            return DictionaryOptionSerializer
-        return super().get_serializer_class()
-
-    def get_permissions(self):
-        if self.request.method in {"GET", "HEAD", "OPTIONS"} or self.action in {"list", "retrieve"}:
-            return [CanViewSparePartCategoryRuntime()]
-        return super().get_permissions()
-
-    def get_queryset(self):
-        if self.action == "list" and _compact_requested(self.request):
-            queryset = SparePartCategory.objects.only("id", "name", "is_active")
-        else:
-            queryset = super().get_queryset()
-        if self.action in {"retrieve", "update", "partial_update", "destroy"}:
-            return queryset
-        active = self.request.query_params.get("is_active", "true").strip().lower()
-        if "settings.manage" not in user_capabilities(self.request.user):
-            active = "true"
-        if active in {"true", "false"}:
-            queryset = queryset.filter(is_active=active == "true")
-        return queryset
-
-    def perform_destroy(self, instance):
-        if instance.spare_parts.exists():
-            raise DRFValidationError("备件类型正在被备件使用，不能删除，请先停用")
-        super().perform_destroy(instance)
-
-
 class CustomFieldSetViewSet(AuditedModelViewSetMixin, viewsets.ModelViewSet):
     queryset = CustomFieldSet.objects.prefetch_related(
         Prefetch("items", queryset=fieldset_items_queryset(include_inactive_options=True))
@@ -2169,7 +2079,7 @@ class CustomFieldSetViewSet(AuditedModelViewSetMixin, viewsets.ModelViewSet):
         if self.action in {"retrieve", "update", "partial_update", "destroy", "replace_items"}:
             return queryset
         active = self.request.query_params.get("is_active", "true").strip().lower()
-        if "custom_fields.manage" not in user_capabilities(self.request.user):
+        if not can(self.request.user, "custom_fields.manage"):
             active = "true"
         if active in {"true", "false"}:
             queryset = queryset.filter(is_active=active == "true")
@@ -2237,7 +2147,7 @@ class CustomFieldViewSet(AuditedModelViewSetMixin, viewsets.ModelViewSet):
         queryset = super().get_queryset()
         if self.action not in {"retrieve", "update", "partial_update", "destroy"}:
             active = self.request.query_params.get("is_active", "true").strip().lower()
-            if "custom_fields.manage" not in user_capabilities(self.request.user):
+            if not can(self.request.user, "custom_fields.manage"):
                 active = "true"
             if active in {"true", "false"}:
                 queryset = queryset.filter(is_active=active == "true")
@@ -2384,7 +2294,7 @@ class TagViewSet(AuditedModelViewSetMixin, viewsets.ModelViewSet):
             queryset = super().get_queryset()
         if self.action not in {"retrieve", "update", "partial_update", "destroy"}:
             active = self.request.query_params.get("is_active", "true").strip().lower()
-            if "tags.manage" not in user_capabilities(self.request.user):
+            if not can(self.request.user, "tags.manage"):
                 active = "true"
             if active in {"true", "false"}:
                 queryset = queryset.filter(is_active=active == "true")
@@ -2633,17 +2543,17 @@ class SoftwareLicenseViewSet(AuditedModelViewSetMixin, viewsets.ModelViewSet):
         return filter_licenses_by_status(queryset, status)
 
 
-class GroupViewSet(viewsets.ReadOnlyModelViewSet):
-    queryset = Group.objects.filter(name__in=ROLE_NAME_TO_CODE).annotate(user_count=Count("user")).order_by("id")
-    serializer_class = GroupSerializer
+class GroupViewSet(viewsets.ViewSet):
     permission_classes = [IsSystemAdministrator]
-    filter_backends = [SearchFilter, OrderingFilter]
-    search_fields = ["name"]
-    ordering_fields = ["name", "user_count"]
+
+    def list(self, request):
+        return Response({"results": list_role_definitions(request.user)})
 
 
 def _user_audit_snapshot(user):
-    role_code = user_role_code(user)
+    authorization = read_authorization_snapshot(user)
+    role_code = authorization.primary_role_code
+    definition = role_definition(role_code)
     return {
         "username": user.username,
         "display_name": user.get_full_name() or user.username,
@@ -2651,13 +2561,14 @@ def _user_audit_snapshot(user):
         "last_name": user.last_name,
         "email": user.email,
         "role_code": role_code,
-        "role_name": ROLE_DEFINITIONS.get(role_code, {}).get("name", ""),
+        "role_codes": list(authorization.role_codes),
+        "role_name": definition.name if definition else "",
         "is_active": user.is_active,
     }
 
 
 class UserViewSet(viewsets.ModelViewSet):
-    queryset = User.objects.select_related("directory_identity").prefetch_related("groups").order_by("username")
+    queryset = User.objects.select_related("directory_identity").order_by("username")
     serializer_class = UserSerializer
     permission_classes = [IsSystemAdministrator]
     filter_backends = [SearchFilter, OrderingFilter]
@@ -2679,15 +2590,24 @@ class UserViewSet(viewsets.ModelViewSet):
         instance = serializer.instance
         requested_role = serializer.validated_data.get("role_code")
         requested_active = serializer.validated_data.get("is_active")
-        current_role = user_role_code(instance)
-        is_current_user = instance.pk == self.request.user.pk
-        if requested_role is not None and requested_role != current_role:
-            if instance.is_superuser:
-                raise DRFValidationError({"role_code": "不能修改超级管理员角色"})
-            if is_current_user:
-                raise DRFValidationError({"role_code": "不能修改当前登录账号的角色"})
-        if requested_active is False and (instance.is_superuser or is_current_user):
-            raise DRFValidationError({"is_active": "不能停用当前登录账号或超级管理员"})
+        current_role = read_authorization_snapshot(instance).primary_role_code
+        try:
+            if requested_role is not None and requested_role != current_role:
+                validate_account_action(
+                    target=instance,
+                    action="change_role",
+                    actor=self.request.user,
+                )
+            if requested_active is False:
+                validate_account_action(
+                    target=instance,
+                    action="deactivate",
+                    actor=self.request.user,
+                )
+        except AccountActionDenied as exc:
+            if exc.field:
+                raise DRFValidationError({exc.field: str(exc)}) from exc
+            raise DRFValidationError(str(exc)) from exc
 
     @transaction.atomic
     def perform_update(self, serializer):
@@ -2725,7 +2645,7 @@ class UserViewSet(viewsets.ModelViewSet):
                 username = f"ID {user_id}"
                 try:
                     with transaction.atomic():
-                        instance = User.objects.select_for_update().prefetch_related("groups").get(pk=user_id)
+                        instance = User.objects.select_for_update().get(pk=user_id)
                         username = instance.username
                         serializer = UserSerializer(
                             instance=instance,
@@ -2785,13 +2705,10 @@ class UserViewSet(viewsets.ModelViewSet):
     @transaction.atomic
     def reset_password(self, request, pk=None):
         instance = self.get_object()
-        if is_directory_managed(instance):
-            raise DRFValidationError(
-                {
-                    "detail": "Directory-managed accounts must change passwords through the corporate directory.",
-                    "code": "directory_password_managed",
-                }
-            )
+        try:
+            validate_account_action(target=instance, action="reset_password", actor=request.user)
+        except AccountActionDenied as exc:
+            raise DRFValidationError({"detail": str(exc), "code": exc.code}) from exc
         serializer = AdminPasswordResetSerializer(
             data=request.data,
             context={"user": instance},
@@ -2814,17 +2731,12 @@ class UserViewSet(viewsets.ModelViewSet):
 
     @transaction.atomic
     def perform_destroy(self, instance):
-        if instance.pk == self.request.user.pk:
-            raise DRFValidationError("不能删除当前登录账号")
-        if instance.is_superuser:
-            raise DRFValidationError("不能通过业务接口删除超级管理员")
-        if is_directory_managed(instance):
-            raise DRFValidationError(
-                {
-                    "detail": "Directory-managed accounts must be removed from the corporate directory first.",
-                    "code": "directory_user_protected",
-                }
-            )
+        try:
+            validate_account_action(target=instance, action="delete", actor=self.request.user)
+        except AccountActionDenied as exc:
+            if exc.code != "protected":
+                raise DRFValidationError({"detail": str(exc), "code": exc.code}) from exc
+            raise DRFValidationError(str(exc)) from exc
         if InventoryTask.objects.filter(inspector_id=instance.pk).exists():
             raise DRFValidationError("用户仍被盘点任务引用，不能删除")
         before = _user_audit_snapshot(instance)
@@ -3449,7 +3361,7 @@ class InventoryItemViewSet(viewsets.ModelViewSet):
         request_serializer.is_valid(raise_exception=True)
         action_name = request_serializer.validated_data["action"]
         note = request_serializer.validated_data.get("note", "")
-        if action_name == "update_asset" and not user_has_capability(request.user, "assets.manage"):
+        if action_name == "update_asset" and not can(request.user, "assets.manage"):
             raise PermissionDenied("更新资产台账需要 assets.manage 权限")
         item = self.get_object()
         resolved_item = resolve_inventory_item(
@@ -3750,7 +3662,7 @@ def _security_profile(user):
         user=user,
         defaults={
             "must_change_password": False,
-            "locale": get_system_settings().default_locale,
+            "locale": get_runtime_preferences().default_locale,
         },
     )
     return profile
@@ -3849,10 +3761,10 @@ def _register_login_failure(
 ):
     now = timezone.now()
     ip = _login_ip(request)
-    policy = get_local_account_security_policy()
-    window = timedelta(seconds=max(1, policy["login_window_seconds"]))
-    lock_duration = timedelta(seconds=max(1, policy["login_lock_seconds"]))
-    max_attempts = max(1, policy["login_max_attempts"])
+    policy = get_local_auth_policy()
+    window = timedelta(seconds=max(1, policy.login_window_seconds))
+    lock_duration = timedelta(seconds=max(1, policy.login_lock_seconds))
+    max_attempts = max(1, policy.login_max_attempts)
     with transaction.atomic():
         states = [_throttle_state("account", _login_account_key(username), now), _throttle_state("ip", ip, now)]
         locked_until = None
@@ -3895,8 +3807,7 @@ def _clear_login_throttle(username, ip):
 
 
 def _auth_response(user):
-    role_codes = user_role_codes(user)
-    role_code = role_codes[0] if role_codes else None
+    authorization = read_authorization_snapshot(user)
     security_profile = _security_profile(user)
     directory_identity = DirectoryIdentity.objects.filter(user_id=user.pk).first()
     return {
@@ -3908,14 +3819,7 @@ def _auth_response(user):
         "is_active": user.is_active,
         "is_staff": user.is_staff,
         "is_superuser": user.is_superuser,
-        "is_admin": user_has_capability(user, "organization.manage"),
-        "role_code": role_code,
-        "role_name": ROLE_DEFINITIONS.get(role_code, {}).get("name", ""),
-        "roles": [
-            {"code": code, "name": ROLE_DEFINITIONS[code]["name"]}
-            for code in role_codes
-        ],
-        "permissions": user_capabilities(user),
+        "authorization": authorization.as_dict(),
         "auth_source": AUTH_SOURCE_LDAP if directory_identity is not None else AUTH_SOURCE_LOCAL,
         "directory_provider": directory_identity.provider if directory_identity is not None else None,
         "directory_login_identifier": (
@@ -4739,6 +4643,14 @@ def _backup_error_response(error):
     return Response(payload, status=error.status_code)
 
 
+@extend_schema(responses=OpenApiTypes.OBJECT)
+@api_view(["GET"])
+@permission_classes([CanManageSystemSettings])
+def operational_status(request):
+    del request
+    return Response(read_status())
+
+
 @extend_schema(request=OpenApiTypes.NONE, responses=OpenApiTypes.OBJECT, methods=["POST"])
 @extend_schema(request=OpenApiTypes.NONE, responses=OpenApiTypes.OBJECT, methods=["GET"])
 @api_view(["GET", "POST"])
@@ -4747,11 +4659,11 @@ def system_backups(request):
     if request.method == "GET":
         try:
             return Response({"results": list_backups()})
-        except BackupServiceError as exc:
+        except MaintenanceError as exc:
             return _backup_error_response(exc)
     try:
         return Response(create_backup(request=request, actor=request.user), status=201)
-    except BackupServiceError as exc:
+    except MaintenanceError as exc:
         return _backup_error_response(exc)
 
 
@@ -4761,24 +4673,15 @@ def system_backups(request):
 def system_backup_download(request, backup_id):
     del request
     try:
-        path = backup_path_for_download(backup_id)
-    except BackupServiceError as exc:
+        download = open_backup_download(backup_id)
+    except MaintenanceError as exc:
         return _backup_error_response(exc)
-    try:
-        return FileResponse(
-            path.open("rb"),
-            as_attachment=True,
-            filename=path.name,
-            content_type="application/gzip",
-        )
-    except OSError:
-        return _backup_error_response(
-            BackupServiceError(
-                "无法读取备份文件。",
-                code="backup_not_found",
-                status_code=404,
-            )
-        )
+    return FileResponse(
+        download.stream,
+        as_attachment=True,
+        filename=download.filename,
+        content_type="application/gzip",
+    )
 
 
 @extend_schema(request=BackupConfirmationSerializer, responses=OpenApiTypes.OBJECT)
@@ -4786,17 +4689,15 @@ def system_backup_download(request, backup_id):
 @permission_classes([CanResetSystem])
 def system_backup_delete(request, backup_id):
     try:
-        expected = f"DELETE {backup_id}"
-        if request.data.get("confirmation") != expected:
-            return _backup_error_response(
-                BackupServiceError(
-                    "请输入准确的删除确认文本。",
-                    code="delete_confirmation_required",
-                    status_code=400,
-                )
+        return Response(
+            delete_backup(
+                backup_id,
+                request.data.get("confirmation", ""),
+                request=request,
+                actor=request.user,
             )
-        return Response(delete_backup(backup_id, request=request, actor=request.user))
-    except BackupServiceError as exc:
+        )
+    except MaintenanceError as exc:
         return _backup_error_response(exc)
 
 
@@ -4814,7 +4715,7 @@ def system_backup_restore(request, backup_id):
                 actor=request.user,
             )
         )
-    except BackupServiceError as exc:
+    except MaintenanceError as exc:
         return _backup_error_response(exc)
 
 
@@ -4824,53 +4725,40 @@ def system_backup_restore(request, backup_id):
 def system_reset(request):
     serializer = SystemResetSerializer(data=request.data)
     serializer.is_valid(raise_exception=True)
-    return Response(reset_system(actor=request.user, request=request))
+    try:
+        return Response(
+            reset_system(
+                confirmation=serializer.validated_data["confirmation"],
+                actor=request.user,
+                request=request,
+            )
+        )
+    except MaintenanceError as exc:
+        return _backup_error_response(exc)
 
 
-@extend_schema(request=SystemSettingsSerializer, responses=SystemSettingsSerializer)
-@api_view(["GET", "PUT"])
+@extend_schema(request=SystemSettingsPatchSerializer, responses=SystemSettingsSnapshotSerializer, methods=["PATCH"])
+@extend_schema(responses=SystemSettingsSnapshotSerializer, methods=["GET"])
+@api_view(["GET", "PATCH"])
 @permission_classes([CanManageSystemSettings])
 def system_settings(request):
     if request.method == "GET":
-        return Response(SystemSettingsSerializer(get_system_settings()).data)
+        snapshot = get_system_settings_snapshot()
+        return Response(SystemSettingsSnapshotSerializer(snapshot).data)
 
+    serializer = SystemSettingsPatchSerializer(data=request.data)
+    serializer.is_valid(raise_exception=True)
     try:
-        with transaction.atomic():
-            setting = get_system_settings()
-            setting = SystemSetting.objects.select_for_update().get(pk=setting.pk)
-            before = system_settings_snapshot(setting)
-            serializer = SystemSettingsSerializer(setting, data=request.data, partial=True)
-            serializer.is_valid(raise_exception=True)
-            smtp_password = serializer.validated_data.pop("smtp_password", "")
-            encrypted_smtp_password = (
-                encrypt_secret(smtp_password, field_name="SMTP 密码")
-                if smtp_password
-                else None
-            )
-            setting = serializer.save()
-            if encrypted_smtp_password is not None:
-                setting.smtp_password_encrypted = encrypted_smtp_password
-                setting.save(update_fields=["smtp_password_encrypted", "updated_at"])
-            after = system_settings_snapshot(setting)
-            changed_fields = [
-                key for key in after
-                if before.get(key) != after.get(key)
-            ]
-            if smtp_password:
-                changed_fields.append("smtp_password")
-            if changed_fields:
-                write_audit_log(
-                    request,
-                    action="update",
-                    resource_type="system_settings",
-                    resource_id="system",
-                    before=before,
-                    after=after,
-                    extra={"changed_fields": sorted(set(changed_fields))},
-                )
+        snapshot = apply_system_settings_patch(
+            serializer.validated_data,
+            actor=request.user,
+            request=request,
+        )
+    except SystemSettingsValidationError as exc:
+        return Response(exc.detail, status=400)
     except ConfigurationSecretError as exc:
-        return Response({"smtp_password": [str(exc)]}, status=400)
-    return Response(SystemSettingsSerializer(setting).data)
+        return Response({"smtp": {"password": [str(exc)]}}, status=400)
+    return Response(SystemSettingsSnapshotSerializer(snapshot).data)
 
 
 @extend_schema(request=SmtpTestEmailSerializer, responses=OpenApiTypes.OBJECT)
@@ -4879,9 +4767,8 @@ def system_settings(request):
 def smtp_test_email(request):
     serializer = SmtpTestEmailSerializer(data=request.data)
     serializer.is_valid(raise_exception=True)
-    setting = get_system_settings()
     try:
-        send_smtp_test_email(setting, serializer.validated_data["recipient"])
+        send_smtp_test_email(serializer.validated_data["recipient"])
     except SmtpConfigurationError as exc:
         write_audit_log(
             request,
@@ -5365,8 +5252,8 @@ def dashboard_overview(request):
         return Response({"detail": str(exc)}, status=400)
     return Response(build_dashboard_payload(
         scope,
-        include_faults=user_has_capability(request.user, "faults.view"),
-        include_licenses=user_has_capability(request.user, "licenses.view"),
+        include_faults=can(request.user, "faults.view"),
+        include_licenses=can(request.user, "licenses.view"),
     ))
 
 
@@ -5376,11 +5263,11 @@ def dashboard_overview(request):
 def alerts_overview(request):
     """Return actionable reminders assembled from existing business data."""
     return Response(build_alerts_payload(
-        include_assets=user_has_capability(request.user, "assets.view"),
-        include_licenses=user_has_capability(request.user, "licenses.view"),
-        include_faults=user_has_capability(request.user, "faults.view"),
-        include_inventory=user_has_capability(request.user, "inventory.view"),
-        include_spares=user_has_capability(request.user, "spares.view"),
+        include_assets=can(request.user, "assets.view"),
+        include_licenses=can(request.user, "licenses.view"),
+        include_faults=can(request.user, "faults.view"),
+        include_inventory=can(request.user, "inventory.view"),
+        include_spares=can(request.user, "spares.view"),
     ))
 
 

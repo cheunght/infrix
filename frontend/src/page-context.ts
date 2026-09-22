@@ -1,6 +1,7 @@
 import type { ComputedRef, Ref } from "vue";
 import type { BusinessOption } from "./business-enums";
 import type { ActionMessageType } from "./error-handling";
+import type { OrganizationSettingsState } from "./composables/useOrganizationSettings";
 import type {
   LocationStatusFilter,
   LocationTypeFilter,
@@ -31,11 +32,6 @@ import type {
   FacilitySummary,
   FaultEvent,
   InventoryItem,
-  LdapConfiguration,
-  LdapConfigurationForm,
-  LdapDiagnosticResult,
-  LdapStatus,
-  ManagedUser,
   PersonOption,
   Rack,
   RackFormState,
@@ -43,8 +39,6 @@ import type {
   RepairPartUsage,
   RepairPartUsageFormState,
   RepairPartUsageSource,
-  Role,
-  PersonFormState,
   ServerRoom,
   SoftwareLicense,
   SparePart,
@@ -53,7 +47,6 @@ import type {
   SpareStock,
   SpareTransaction,
   StockOperationType,
-  SystemSettingDefinition,
   SystemSettings,
   SystemSettingsForm,
   Tag,
@@ -617,6 +610,15 @@ export interface InventoryContext {
   updateRouteQuery?: (updates: Record<string, string | undefined>) => boolean;
 }
 
+export interface SystemMaintenanceDependencies {
+  request: RequestFn;
+  downloadFile: (path: string, filename?: string) => Promise<void>;
+  confirmAction: (message: string) => Promise<boolean>;
+  can: CapabilityFn;
+  formatDateTime: (value: string | null) => string;
+  reload: () => void;
+}
+
 export interface SettingsContext extends CustomFieldContext, TagContext {
   request: RequestFn;
   downloadFile: (path: string, filename?: string) => Promise<void>;
@@ -627,36 +629,12 @@ export interface SettingsContext extends CustomFieldContext, TagContext {
   settingsSection: Ref<SettingsSection>;
   organizationTab: Ref<OrganizationTab>;
   changeOrganizationTab: (value: string) => void;
-  responsibilityDirectorySubjects: Ref<Person[]>;
-  responsibilityDirectoryTotal: Ref<number>;
-  responsibilityDirectoryPage: Ref<number>;
-  responsibilityDirectoryPageSize: Ref<number>;
-  responsibilityDirectorySearch: Ref<string>;
-  responsibilityDirectoryType: Ref<string>;
-  responsibilityDirectoryActive: Ref<string>;
-  responsibilityDirectoryLoading: Ref<boolean>;
-  responsibilityDirectoryError: Ref<string>;
-  responsibilityDirectorySaving: Ref<boolean>;
-  responsibilityDirectoryActionId: Ref<number | null>;
-  responsibilityDirectoryFormErrors: Ref<Record<string, string>>;
-  responsibilityDirectoryForm: Ref<PersonFormState>;
-  editingResponsibilitySubject: Ref<Person | null>;
-  showResponsibilitySubjectModal: Ref<boolean>;
-  loadResponsibilityDirectory: () => void | Promise<boolean>;
-  searchResponsibilityDirectory: () => void | Promise<void>;
-  retryResponsibilityDirectory: () => void | Promise<boolean>;
-  changeResponsibilityDirectoryPage: (page: number) => void | Promise<void>;
-  changeResponsibilityDirectoryPageSize: (size: number) => void | Promise<void>;
-  openResponsibilitySubjectModal: (subject?: Person) => void;
-  saveResponsibilitySubject: () => void | Promise<void>;
-  toggleResponsibilitySubject: (subject: Person) => void | Promise<void>;
-  deleteResponsibilitySubject: (subject: Person) => void | Promise<void>;
+  organizationSettings: OrganizationSettingsState;
   systemSettingsTab: Ref<SystemSettingsTab>;
   changeSystemSettingsTab: (value: string) => void;
   can: CapabilityFn;
   systemSettings: Ref<SystemSettings | null>;
   systemSettingsForm: Ref<SystemSettingsForm>;
-  systemSettingsDefinitions: ComputedRef<SystemSettingDefinition[]>;
   systemSettingsLoading: Ref<boolean>;
   systemSettingsSaving: Ref<boolean>;
   systemSettingsError: Ref<string>;
@@ -669,103 +647,7 @@ export interface SettingsContext extends CustomFieldContext, TagContext {
   resetSystemSettingsForm: (keys?: readonly (keyof SystemSettingsForm)[]) => void;
   saveSystemSettings: (keys?: readonly (keyof SystemSettingsForm)[]) => void | Promise<void>;
   testSystemSmtp: () => void | Promise<void>;
-  ldapStatus: Ref<LdapStatus | null>;
-  ldapConfiguration: Ref<LdapConfiguration | null>;
-  ldapConfigurationForm: Ref<LdapConfigurationForm>;
-  ldapConfigurationLoading: Ref<boolean>;
-  ldapConfigurationSaving: Ref<boolean>;
-  ldapConfigurationError: Ref<string>;
-  ldapConfigurationFormErrors: Ref<Record<string, string>>;
-  ldapConfigurationDirty: ComputedRef<boolean>;
-  ldapStatusLoading: Ref<boolean>;
-  ldapStatusError: Ref<string>;
-  ldapDiagnosticLoading: Ref<boolean>;
-  ldapDiagnosticResult: Ref<LdapDiagnosticResult | null>;
-  ldapDiagnosticError: Ref<string>;
-  loadLdapStatus: () => void | Promise<boolean>;
-  retryLdapStatus: () => void | Promise<boolean>;
-  loadLdapConfiguration: () => void | Promise<boolean>;
-  retryLdapConfiguration: () => void | Promise<boolean>;
-  saveLdapConfiguration: () => void | Promise<boolean>;
-  resetLdapConfigurationForm: () => void;
-  runLdapDiagnostics: () => void | Promise<boolean>;
-  dictionarySection: Ref<string>;
-  dictionaryPage: Ref<number>;
-  dictionaryPageSize: Ref<number>;
-  dictionaryCount: ComputedRef<number>;
-  dictionarySearch: Ref<string>;
-  loadDictionaries: () => void | Promise<boolean>;
-  changeDictionarySection: () => void | Promise<void>;
-  searchDictionaries: () => void | Promise<void>;
-  changeDictionaryPage: (page: number) => void;
-  changeDictionaryPageSize: (size: number) => void;
-  retryDictionaries: () => void | Promise<boolean>;
-  dictionaryLoading: Ref<boolean>;
-  dictionaryError: Ref<string>;
-  dictionarySaving: Ref<boolean>;
-  dictionaryActionId: Ref<number | null>;
-  dictionaryFormErrors: Ref<Record<string, string>>;
-  currentDictionaryLabel: ComputedRef<string>;
-  openDictionaryModal: (item?: DictionaryItem) => void;
-  currentDictionaryItems: ComputedRef<Array<DictionaryItem | SparePartCategory>>;
-  toggleDictionary: (item: DictionaryItem) => void | Promise<void>;
-  deleteDictionary: (item: DictionaryItem) => void | Promise<void>;
-  dictionaryItemUsed: (item: DictionaryItem) => boolean;
-  departments: Ref<Department[]>;
-  departmentOptions: Ref<Department[]>;
-  departmentCount: Ref<number>;
-  departmentPage: Ref<number>;
-  departmentPageSize: Ref<number>;
-  departmentSearch: Ref<string>;
-  departmentLoading: Ref<boolean>;
-  departmentError: Ref<string>;
-  departmentSaving: Ref<boolean>;
-  departmentActionId: Ref<number | null>;
-  departmentFormErrors: Ref<Record<string, string>>;
-  departmentForm: Ref<{ name: string; code: string; parent: string }>;
-  editingDepartment: Ref<Department | null>;
-  showDepartmentModal: Ref<boolean>;
-  loadDepartments: () => void | Promise<boolean>;
-  searchDepartments: () => void | Promise<void>;
-  changeDepartmentPage: (page: number) => void | Promise<void>;
-  changeDepartmentPageSize: (size: number) => void | Promise<void>;
-  retryDepartments: () => void | Promise<boolean>;
-  openDepartmentModal: (department?: Department) => void;
-  saveDepartment: () => void | Promise<void>;
-  deleteDepartment: (department: Department) => void | Promise<void>;
-  currentUsername: Ref<string>;
-  organizationLoading: Ref<boolean>;
-  organizationError: ComputedRef<string>;
-  userListError: Ref<string>;
-  roleListError: Ref<string>;
-  retryOrganization: () => void | Promise<boolean>;
-  users: Ref<ManagedUser[]>;
-  userSearch: Ref<string>;
-  userPage: Ref<number>;
-  userPageSize: Ref<number>;
-  userCount: Ref<number>;
-  selectedUserIds: Ref<number[]>;
-  userBatchSaving: Ref<boolean>;
-  userBatchResult: Ref<import("./types").UserBatchStatusResponse | null>;
-  showUserBatchResult: Ref<boolean>;
-  searchUsers: () => void | Promise<void>;
-  retryUserList: () => void | Promise<boolean>;
-  changeUserPage: (page: number) => void | Promise<void>;
-  changeUserPageSize: (size: number) => void | Promise<void>;
-  handleUserSelection: (rows: ManagedUser[]) => void;
-  clearUserSelection: () => void;
-  batchUpdateUserStatus: (isActive: boolean) => void | Promise<void>;
-  closeUserBatchResult: () => void;
-  openUserModal: (user?: ManagedUser) => void;
-  toggleUser: (user: ManagedUser) => void | Promise<void>;
-  deleteUser: (user: ManagedUser) => void | Promise<void>;
-  userProtectionReason: (user: ManagedUser) => string;
-  userDeleteProtectionReason: (user: ManagedUser) => string;
-  canChangeUserRole: (user: ManagedUser) => boolean;
-  userSaving: Ref<boolean>;
-  userPendingId: Ref<number | null>;
-  userFormErrors: Ref<Record<string, string>>;
-  roles: Ref<Role[]>;
+  systemMaintenance: SystemMaintenanceDependencies;
   auditFilters: Ref<Record<string, string>>;
   auditListLoading: Ref<boolean>;
   auditListError: Ref<string>;
@@ -779,14 +661,6 @@ export interface SettingsContext extends CustomFieldContext, TagContext {
   auditCount: Ref<number>;
   changeAuditPage: (page: number) => void | Promise<void>;
   changeAuditPageSize: (size: number) => void | Promise<void>;
-  showSystemResetDialog: Ref<boolean>;
-  systemResetConfirmation: Ref<string>;
-  systemResetConfirmationToken: Ref<string>;
-  systemResetSaving: Ref<boolean>;
-  systemResetError: Ref<string>;
-  openSystemResetDialog: () => void;
-  closeSystemResetDialog: () => void;
-  resetSystem: () => void | Promise<void>;
 }
 
 export interface CustomFieldContext {

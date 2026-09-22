@@ -78,7 +78,7 @@ class BackupServiceError(Exception):
 class BackupOperationInProgress(BackupServiceError):
     def __init__(self) -> None:
         super().__init__(
-            "另一个备份或恢复操作正在进行，请稍后重试。",
+            "另一个系统维护操作正在进行，请稍后重试。",
             code="backup_operation_in_progress",
             status_code=409,
         )
@@ -1361,6 +1361,7 @@ def restore_backup(
                 # client is given the current Django database name above, and
                 # the dump is created without --databases/USE wrappers so a
                 # backup from another environment cannot redirect the import.
+                database_status = "restoring"
                 _restore_database(extracted_root)
                 database_status = "restored"
                 if not bool(validated.manifest.get("media_included")):

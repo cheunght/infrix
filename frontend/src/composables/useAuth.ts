@@ -9,8 +9,8 @@ import {
 import type { RequestFn } from "../page-context";
 import { i18n, normalizeLocale, type Locale } from "../i18n";
 import type { AuthSource } from "../types";
-import { roleLabel } from "../business-enums";
-import { hasCapability } from "../permissions";
+import type { AuthorizationSnapshot } from "../types";
+import { emptyAuthorizationSnapshot, normalizeAuthorizationSnapshot } from "./useAuthorization";
 
 export interface AuthDeps {
   request: RequestFn;
@@ -25,9 +25,9 @@ export interface AuthDeps {
   authChecked: Ref<boolean>;
   passwordChangeRequired: Ref<boolean>;
   authSource: Ref<AuthSource>;
-  isAdmin: Ref<boolean>;
-  roleCode: Ref<string>;
-  permissions: Ref<string[]>;
+  authorization: Ref<AuthorizationSnapshot>;
+  can: (capability: string) => boolean;
+  hasBusinessCapability: Ref<boolean>;
   userName: Ref<string>;
   username: Ref<string>;
   password: Ref<string>;
@@ -47,7 +47,6 @@ export interface AuthDeps {
   profileSaving: Ref<boolean>;
   profileError: Ref<string>;
   profileFormErrors: Ref<Record<string, string>>;
-  roleName: Ref<string>;
   userIsActive: Ref<boolean>;
   lastLogin: Ref<string | null>;
   actionMessage: Ref<string>;
@@ -64,11 +63,8 @@ type AuthPayload = {
   last_name?: string;
   email?: string;
   is_staff: boolean;
-  is_admin?: boolean;
   is_active?: boolean;
-  role_code?: string | null;
-  role_name?: string;
-  permissions: string[];
+  authorization: AuthorizationSnapshot;
   auth_source?: AuthSource;
   directory_provider?: string | null;
   directory_login_identifier?: string | null;
@@ -147,24 +143,17 @@ export function useAuth(deps: AuthDeps) {
       locale: normalizeLocale(user.locale || deps.locale.value),
     };
     deps.setLocale(user.locale || deps.locale.value);
-    const roleCode = user.role_code || "";
-    deps.roleName.value = roleLabel(roleCode, user.role_name || roleCode);
     deps.userIsActive.value = user.is_active !== false;
     deps.lastLogin.value = user.last_login || null;
-    deps.roleCode.value = roleCode;
-    deps.permissions.value = user.permissions;
-    deps.isAdmin.value = hasCapability(deps.permissions.value, "organization.manage");
+    deps.authorization.value = normalizeAuthorizationSnapshot(user.authorization);
     deps.authSource.value = user.auth_source === "ldap" ? "ldap" : "local";
     deps.passwordChangeRequired.value = Boolean(user.password_change_required);
   }
 
   function clearSessionIdentity() {
     deps.authenticated.value = false;
-    deps.isAdmin.value = false;
+    deps.authorization.value = emptyAuthorizationSnapshot();
     deps.authSource.value = "local";
-    deps.roleCode.value = "";
-    deps.roleName.value = "";
-    deps.permissions.value = [];
     deps.userName.value = "";
     deps.username.value = "";
     deps.userIsActive.value = false;
@@ -191,7 +180,7 @@ export function useAuth(deps: AuthDeps) {
       deps.syncRouteState();
       deps.ensureRouteAccess();
       if (deps.passwordChangeRequired.value) openPasswordModal();
-      if (!hasCapability(deps.permissions.value, "organization.manage") && deps.settingsSection.value === "organization") {
+      if (!deps.can("organization.manage") && deps.settingsSection.value === "organization") {
         deps.settingsSection.value = "system";
       }
     } catch (error) {
@@ -212,7 +201,7 @@ export function useAuth(deps: AuthDeps) {
     applyAuthPayload(user);
     deps.syncRouteState();
     deps.ensureRouteAccess();
-    if (!hasCapability(deps.permissions.value, "organization.manage") && deps.settingsSection.value === "organization") {
+    if (!deps.can("organization.manage") && deps.settingsSection.value === "organization") {
       deps.settingsSection.value = "system";
     }
     deps.password.value = "";
@@ -221,7 +210,7 @@ export function useAuth(deps: AuthDeps) {
       openPasswordModal();
       return;
     }
-    if (deps.permissions.value.length === 0) return;
+    if (!deps.hasBusinessCapability.value) return;
     await deps.bootstrapApplication();
   }
 
@@ -312,10 +301,8 @@ export function useAuth(deps: AuthDeps) {
     } finally {
       deps.resetBootstrap();
       deps.authenticated.value = false;
-      deps.isAdmin.value = false;
+      deps.authorization.value = emptyAuthorizationSnapshot();
       deps.authSource.value = "local";
-      deps.roleCode.value = "";
-      deps.permissions.value = [];
       deps.userName.value = "";
       deps.username.value = "";
       deps.passwordChangeRequired.value = false;
@@ -326,7 +313,6 @@ export function useAuth(deps: AuthDeps) {
       resetPasswordState();
       deps.showProfileModal.value = false;
       deps.profileForm.value = { first_name: "", last_name: "", email: "", locale: deps.locale.value };
-      deps.roleName.value = "";
       deps.userIsActive.value = false;
       deps.lastLogin.value = null;
       await deps.routerReplace("/");

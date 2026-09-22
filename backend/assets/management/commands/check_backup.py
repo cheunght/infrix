@@ -1,6 +1,6 @@
 from django.core.management.base import BaseCommand, CommandError
 
-from assets.backups import BackupServiceError, backup_preflight
+from assets.system_maintenance import MaintenanceError, check_backup_support
 
 
 class Command(BaseCommand):
@@ -11,8 +11,8 @@ class Command(BaseCommand):
 
     def handle(self, *args, **options):
         try:
-            result = backup_preflight()
-        except BackupServiceError as exc:
+            result = check_backup_support()
+        except MaintenanceError as exc:
             raise CommandError(exc.message) from exc
         required = (
             result["database_engine"] == "mariadb"

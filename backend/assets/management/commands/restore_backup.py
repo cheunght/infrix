@@ -1,6 +1,6 @@
 from django.core.management.base import BaseCommand, CommandError
 
-from assets.backups import BackupServiceError, restore_backup
+from assets.system_maintenance import MaintenanceError, restore_backup
 
 
 class Command(BaseCommand):
@@ -18,9 +18,9 @@ class Command(BaseCommand):
         try:
             result = restore_backup(
                 options["backup_id_or_filename"],
-                confirmation=options["confirm_restore"],
+                options["confirm_restore"],
             )
-        except BackupServiceError as exc:
+        except MaintenanceError as exc:
             raise CommandError(exc.message) from exc
         self.stdout.write(
             self.style.SUCCESS(

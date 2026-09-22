@@ -29,11 +29,14 @@ import { useApiClient } from "./composables/useApiClient";
 import { useDashboard } from "./composables/useDashboard";
 import { useAssets } from "./composables/useAssets";
 import { useAuth } from "./composables/useAuth";
+import { useAuthorization } from "./composables/useAuthorization";
 import { useFacilities } from "./composables/useFacilities";
 import { useLicenses } from "./composables/useLicenses";
 import { useRepairs } from "./composables/useRepairs";
 import { useSpareParts } from "./composables/useSpareParts";
 import { useSettings } from "./composables/useSettings";
+import { useOrganizationSettings } from "./composables/useOrganizationSettings";
+import { useSystemSettings } from "./composables/useSystemSettings";
 import { isAbortError } from "./api";
 import { normalizeApiError, type ActionMessageType } from "./error-handling";
 import { useRoute, useRouter, type RouteLocationRaw } from "vue-router";
@@ -42,7 +45,6 @@ import SearchField from "./components/SearchField.vue";
 import NotificationCenter from "./components/NotificationCenter.vue";
 import LanguageSwitcher from "./components/LanguageSwitcher.vue";
 import { branding, brandingLogo, brandingMark, brandingImageFailed, loadBranding } from "./branding";
-import { hasCapability } from "./permissions";
 import { statusLabel } from "./status";
 import { currentLocale, elementPlusLocale, normalizeLocale, setLocale, type Locale } from "./i18n";
 import { useI18n } from "vue-i18n";
@@ -61,6 +63,7 @@ import {
 import type {
   Page,
   AssetDetail,
+  AuthorizationSnapshot,
   OperationalAlert,
 } from "./types";
 import type { PageContext } from "./page-context";
@@ -124,11 +127,18 @@ let bootstrapAttemptId = 0;
 let bootstrapController: AbortController | null = null;
 const passwordChangeRequired = ref(false);
 const authSource = ref<"local" | "ldap">("local");
-const isAdmin = ref(false);
-const roleCode = ref("");
-const permissions = ref<string[]>([]);
-const can = (capability: string) => hasCapability(permissions.value, capability);
-const hasBusinessCapability = computed(() => permissions.value.length > 0);
+const authorization = ref<AuthorizationSnapshot>({
+  primary_role_code: null,
+  roles: [],
+  capabilities: [],
+  is_system_admin: false,
+});
+const {
+  can,
+  roleCode,
+  roleName,
+  hasBusinessCapability,
+} = useAuthorization(authorization);
 const sidebarCollapsed = ref(
   localStorage.getItem("infrix.sidebar.collapsed") === "1" ||
     (window.matchMedia?.("(max-width: 900px)").matches &&
@@ -206,7 +216,6 @@ const profileSaving = ref(false);
 const localeSaving = ref(false);
 const profileError = ref("");
 const profileFormErrors = ref<Record<string, string>>({});
-const roleName = ref("");
 const userIsActive = ref(false);
 const lastLogin = ref<string | null>(null);
 const viewportHeight = ref(window.innerHeight);
@@ -318,18 +327,32 @@ const settings = useSettings({
   beginLoad,
   isCurrentLoad,
   confirmAction,
-  reload: () => window.location.reload(),
   can,
-  currentUsername: username,
-  settingsSection,
   actionMessage,
   actionMessageType,
   customFieldSchemaVersion,
 });
+const organizationSettings = useOrganizationSettings({
+  request,
+  beginLoad,
+  isCurrentLoad,
+  confirmAction,
+  can,
+  currentUsername: username,
+  actionMessage,
+  actionMessageType,
+});
+const systemSettingsController = useSystemSettings({
+  request,
+  beginLoad,
+  isCurrentLoad,
+  can,
+  actionMessage,
+  actionMessageType,
+});
 const {
   systemSettings,
   systemSettingsForm,
-  systemSettingsDefinitions,
   systemSettingsLoading,
   systemSettingsSaving,
   systemSettingsError,
@@ -337,31 +360,13 @@ const {
   systemSettingsDirty,
   systemSmtpTesting,
   systemSmtpTestRecipient,
-  testSystemSmtp,
-  ldapStatus,
-  ldapConfiguration,
-  ldapConfigurationForm,
-  ldapConfigurationLoading,
-  ldapConfigurationSaving,
-  ldapConfigurationError,
-  ldapConfigurationFormErrors,
-  ldapConfigurationDirty,
-  ldapStatusLoading,
-  ldapStatusError,
-  ldapDiagnosticLoading,
-  ldapDiagnosticResult,
-  ldapDiagnosticError,
-  loadLdapStatus,
-  retryLdapStatus,
-  loadLdapConfiguration,
-  retryLdapConfiguration,
-  saveLdapConfiguration,
-  resetLdapConfigurationForm,
-  runLdapDiagnostics,
   loadSystemSettings,
   retrySystemSettings,
   resetSystemSettingsForm,
   saveSystemSettings,
+  testSystemSmtp,
+} = systemSettingsController;
+const {
   manufacturers,
   deviceTypes,
   spareCategories,
@@ -407,10 +412,69 @@ const {
   tagFormErrors,
   editingTag,
   showTagModal,
-  users,
+  auditLogs,
+  auditCount,
+  auditPage,
+  auditPageSize,
+  auditFilters,
+  auditListLoading,
+  auditListError,
+  loadCustomFields,
+  retryCustomFieldList,
+  refreshCustomFieldList,
+  changeCustomFieldPage,
+  changeCustomFieldPageSize,
+  changeCustomFieldOptionPage,
+  changeCustomFieldOptionPageSize,
+  loadCustomFieldOptions,
+  retryCustomFieldOptions,
+  loadTags,
+  retryTagList,
+  refreshTagList,
+  changeTagPage,
+  changeTagPageSize,
+  loadAuditLogs,
+  retryAuditLogs,
+  openCustomFieldModal,
+  saveCustomField,
+  toggleCustomField,
+  deleteCustomField,
+  openCustomFieldOptionModal,
+  saveCustomFieldOption,
+  deleteCustomFieldOption,
+  openTagModal,
+  saveTag,
+  toggleTag,
+  deleteTag,
+  formatDateTime,
+  changeAuditPage,
+  changeAuditPageSize,
+  searchAuditLogs,
+} = settings;
+const {
+  ldapStatus,
+  ldapConfiguration,
+  ldapConfigurationForm,
+  ldapConfigurationLoading,
+  ldapConfigurationSaving,
+  ldapConfigurationError,
+  ldapConfigurationFormErrors,
+  ldapConfigurationDirty,
+  ldapStatusLoading,
+  ldapStatusError,
+  ldapDiagnosticLoading,
+  ldapDiagnosticResult,
+  ldapDiagnosticError,
+  loadLdapStatus,
+  retryLdapStatus,
+  loadLdapConfiguration,
+  retryLdapConfiguration,
+  saveLdapConfiguration,
+  resetLdapConfigurationForm,
+  runLdapDiagnostics,
+  departments,
   organizationLoading,
   organizationError,
-  departments,
   departmentOptions,
   departmentCount,
   departmentPage,
@@ -424,6 +488,14 @@ const {
   departmentForm,
   editingDepartment,
   showDepartmentModal,
+  loadDepartments,
+  searchDepartments,
+  changeDepartmentPage,
+  changeDepartmentPageSize,
+  retryDepartments,
+  openDepartmentModal,
+  saveDepartment,
+  deleteDepartment,
   responsibilityDirectorySubjects,
   responsibilityDirectoryTotal,
   responsibilityDirectoryPage,
@@ -448,20 +520,11 @@ const {
   saveResponsibilitySubject,
   toggleResponsibilitySubject,
   deleteResponsibilitySubject,
-  loadDepartments,
-  searchDepartments,
-  changeDepartmentPage,
-  changeDepartmentPageSize,
-  retryDepartments,
-  openDepartmentModal,
-  saveDepartment,
-  deleteDepartment,
   userListError,
   roleListError,
-  userSaving,
-  userPendingId,
-  userFormErrors,
-  roles,
+  loadOrganization,
+  retryOrganization,
+  users,
   userSearch,
   userPage,
   userPageSize,
@@ -470,50 +533,13 @@ const {
   userBatchSaving,
   userBatchResult,
   showUserBatchResult,
-  showUserModal,
-  editingUser,
-  userForm,
-  userFormRef,
-  userFormRules,
-  dictionarySection,
-  dictionaryPage,
-  dictionaryPageSize,
-  dictionaryCount,
-  dictionaryLoading,
-  dictionaryError,
-  dictionarySaving,
-  dictionaryActionId,
-  dictionarySearch,
-  showDictionaryModal,
-  editingDictionary,
-  dictionaryForm,
-  dictionaryFormErrors,
-  auditLogs,
-  auditCount,
-  auditPage,
-  auditPageSize,
-  auditFilters,
-  auditListLoading,
-  auditListError,
-  loadDictionaries,
-  retryDictionaries,
-  loadCustomFields,
-  retryCustomFieldList,
-  refreshCustomFieldList,
-  changeCustomFieldPage,
-  changeCustomFieldPageSize,
-  changeCustomFieldOptionPage,
-  changeCustomFieldOptionPageSize,
-  loadCustomFieldOptions,
-  retryCustomFieldOptions,
-  loadTags,
-  retryTagList,
-  refreshTagList,
-  changeTagPage,
-  changeTagPageSize,
-  loadOrganization,
-  retryOrganization,
-  loadUsers,
+  userFormErrors,
+  userSaving,
+  userPendingId,
+  openUserModal,
+  toggleUser,
+  deleteUser,
+  roles,
   retryUserList,
   handleUserSelection,
   clearUserSelection,
@@ -522,50 +548,10 @@ const {
   searchUsers,
   changeUserPage,
   changeUserPageSize,
-  loadAuditLogs,
-  retryAuditLogs,
-  openUserModal,
-  saveUser,
   userProtectionReason,
   userDeleteProtectionReason,
   canChangeUserRole,
-  toggleUser,
-  deleteUser,
-  openCustomFieldModal,
-  saveCustomField,
-  toggleCustomField,
-  deleteCustomField,
-  openCustomFieldOptionModal,
-  saveCustomFieldOption,
-  deleteCustomFieldOption,
-  openTagModal,
-  saveTag,
-  toggleTag,
-  deleteTag,
-  currentDictionaryItems,
-  changeDictionarySection,
-  searchDictionaries,
-  changeDictionaryPage,
-  changeDictionaryPageSize,
-  currentDictionaryLabel,
-  dictionaryItemUsed,
-  openDictionaryModal,
-  saveDictionary,
-  toggleDictionary,
-  deleteDictionary,
-  formatDateTime,
-  changeAuditPage,
-  changeAuditPageSize,
-  searchAuditLogs,
-  showSystemResetDialog,
-  systemResetConfirmation,
-  systemResetConfirmationToken,
-  systemResetSaving,
-  systemResetError,
-  openSystemResetDialog,
-  closeSystemResetDialog,
-  resetSystem,
-} = settings;
+} = organizationSettings;
 const auth = useAuth({
   request,
   loadCsrf,
@@ -579,9 +565,9 @@ const auth = useAuth({
   authChecked,
   passwordChangeRequired,
   authSource,
-  isAdmin,
-  roleCode,
-  permissions,
+  authorization,
+  can,
+  hasBusinessCapability,
   userName,
   username,
   password,
@@ -601,7 +587,6 @@ const auth = useAuth({
   profileSaving,
   profileError,
   profileFormErrors,
-  roleName,
   userIsActive,
   lastLogin,
   actionMessage,
@@ -667,7 +652,6 @@ const assetsApi = useAssets({
   detailError,
   closeAssetDetail,
   statusLabel,
-  systemSettingsDefinitions,
 });
 const {
   assets,
@@ -1700,8 +1684,9 @@ async function load() {
       }
       else if (settingsSection.value === "audit" && can("audit.view"))
         await loadAuditLogs(version);
-      else if (settingsSection.value === "dictionaries")
-        await loadDictionaries(version);
+      else if (settingsSection.value === "dictionaries") {
+        // DataDictionaryPage owns its local list loading and cancellation.
+      }
       else if (settingsSection.value === "custom-fields")
         await loadCustomFields(version);
       else if (settingsSection.value === "tags")
@@ -1810,9 +1795,16 @@ function openAssetConfiguration(section: AssetConfigSection) {
   navigateToRoute(routeForPage("asset-config", { assetConfigSection: section }), true);
 }
 function openDictionarySection(section: "manufacturers" | "device-types" | "spare-categories") {
+  if (section === "device-types") {
+    openAssetConfiguration("device-types");
+    return;
+  }
   if (!can("settings.view")) return;
-  dictionarySection.value = section;
   openSettingsSection("dictionaries");
+  void router.replace({
+    name: "settings-dictionaries",
+    query: { tab: section },
+  });
 }
 function openProfileSettings() {
   showProfileModal.value = true;
@@ -1965,6 +1957,14 @@ const pageContext = {
   request,
   confirmAction,
   downloadFile: download,
+  systemMaintenance: {
+    request,
+    downloadFile: download,
+    confirmAction,
+    can,
+    formatDateTime,
+    reload: () => window.location.reload(),
+  },
   currentUsername: username,
   actionMessage,
   actionMessageType,
@@ -2058,40 +2058,11 @@ const pageContext = {
   clearResponsibilityActionErrors, clearResponsibilityActionFieldError, assignAsset, returnAsset, transferAsset,
   rackCount, rackPage, rackPageSize, changeRackPage,
   settingsSection, organizationTab, changeOrganizationTab, systemSettingsTab, changeSystemSettingsTab,
-  systemSettings, systemSettingsForm, systemSettingsDefinitions, systemSettingsLoading,
+  organizationSettings,
+  systemSettings, systemSettingsForm, systemSettingsLoading,
   systemSettingsSaving, systemSettingsError, systemSettingsFormErrors, systemSettingsDirty,
   systemSmtpTesting, systemSmtpTestRecipient,
-  ldapStatus, ldapConfiguration, ldapConfigurationForm, ldapConfigurationLoading, ldapConfigurationSaving,
-  ldapConfigurationError, ldapConfigurationFormErrors, ldapConfigurationDirty,
-  ldapStatusLoading, ldapStatusError, ldapDiagnosticLoading, ldapDiagnosticResult, ldapDiagnosticError,
-  loadLdapStatus, retryLdapStatus, loadLdapConfiguration, retryLdapConfiguration, saveLdapConfiguration,
-  resetLdapConfigurationForm, runLdapDiagnostics,
   loadSystemSettings, retrySystemSettings, resetSystemSettingsForm, saveSystemSettings, testSystemSmtp,
-  dictionarySection, dictionaryPage, dictionaryPageSize, dictionaryCount,
-  dictionarySearch, dictionaryLoading, dictionaryError, dictionarySaving, dictionaryActionId,
-  dictionaryFormErrors,
-  showSystemResetDialog, systemResetConfirmation, systemResetConfirmationToken,
-  systemResetSaving, systemResetError, openSystemResetDialog, closeSystemResetDialog, resetSystem,
-  loadDictionaries, changeDictionarySection, searchDictionaries, changeDictionaryPage, changeDictionaryPageSize, retryDictionaries, currentDictionaryLabel,
-  openDictionaryModal, currentDictionaryItems, toggleDictionary,
-  dictionaryItemUsed, deleteDictionary, organizationLoading, organizationError,
-  departmentOptions, departmentCount, departmentPage, departmentPageSize, departmentSearch,
-  departmentSaving, departmentActionId, departmentFormErrors, departmentForm, editingDepartment,
-  showDepartmentModal, loadDepartments, searchDepartments, changeDepartmentPage, changeDepartmentPageSize,
-  openDepartmentModal, saveDepartment, deleteDepartment,
-  responsibilityDirectorySubjects, responsibilityDirectoryTotal, responsibilityDirectoryPage, responsibilityDirectoryPageSize,
-  responsibilityDirectorySearch, responsibilityDirectoryType, responsibilityDirectoryActive,
-  responsibilityDirectoryLoading, responsibilityDirectoryError, responsibilityDirectorySaving, responsibilityDirectoryActionId,
-  responsibilityDirectoryFormErrors, responsibilityDirectoryForm, editingResponsibilitySubject, showResponsibilitySubjectModal,
-  loadResponsibilityDirectory, searchResponsibilityDirectory, retryResponsibilityDirectory,
-  changeResponsibilityDirectoryPage, changeResponsibilityDirectoryPageSize, openResponsibilitySubjectModal,
-  saveResponsibilitySubject, toggleResponsibilitySubject, deleteResponsibilitySubject,
-  userListError, roleListError, retryOrganization, users, userSearch, userPage, userPageSize, userCount,
-  selectedUserIds, userBatchSaving, userBatchResult, showUserBatchResult,
-  userFormErrors, userSaving, userPendingId, openUserModal,
-  toggleUser, deleteUser, roles, retryUserList, handleUserSelection, clearUserSelection, batchUpdateUserStatus, closeUserBatchResult,
-  searchUsers, changeUserPage, changeUserPageSize,
-  userProtectionReason, userDeleteProtectionReason, canChangeUserRole,
   auditFilters, auditListLoading, auditListError,
   loadAuditLogs, retryAuditLogs, searchAuditLogs, auditLogs, auditPage, auditPageSize, auditCount,
   changeAuditPage, changeAuditPageSize,
@@ -2160,9 +2131,7 @@ const hasOpenGlobalOverlay = computed(() => Boolean(
   showLicenseModal.value ||
   showFaultModal.value ||
   showRepairModal.value ||
-  showUserModal.value ||
   showProfileModal.value ||
-  showDictionaryModal.value ||
   showPasswordModal.value,
 ));
 watch(hasOpenGlobalOverlay, (isOpen) => {
@@ -2438,7 +2407,6 @@ watch(hasOpenGlobalOverlay, (isOpen) => {
           :facilities="facilities"
           :licenses="licensesApi"
           :repairs="repairs"
-          :settings="settings"
           :auth="overlayAuth"
         />
       </el-main>

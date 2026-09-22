@@ -116,7 +116,81 @@ export type SystemSettings = Omit<SystemSettingsForm, "smtp_password"> & {
   /** Runtime timezone inherited from the operating system; not editable. */
   timezone: string;
   smtp_password_configured: boolean;
-  definitions: SystemSettingDefinition[];
+};
+
+export type GeneralSettings = {
+  default_page_size: number;
+  default_asset_status: AssetStatus;
+  default_locale: SystemLocale;
+  date_format: DateFormat;
+  currency: CurrencyCode;
+};
+
+export type SecuritySettings = {
+  password_min_length: number;
+  password_expiry_days: number;
+  login_max_attempts: number;
+  login_window_seconds: number;
+  login_lock_seconds: number;
+};
+
+export type SmtpSettings = {
+  enabled: boolean;
+  host: string;
+  port: number;
+  security_mode: SmtpSecurityMode;
+  username: string;
+  from_email: string;
+  from_name: string;
+  timeout: number;
+  password_configured: boolean;
+};
+
+export type InAppNotificationSettings = {
+  notify_maintenance: boolean;
+  maintenance_expiry_days: number;
+  notify_license_expiry: boolean;
+  license_expiry_days: number;
+  notify_open_faults: boolean;
+  notify_overdue_inventory: boolean;
+  notify_low_spare_stock: boolean;
+};
+
+export type EmailDigestSettings = {
+  email_digest_enabled: boolean;
+  email_digest_people: number[];
+  email_digest_recipients: string[];
+  application_url: string;
+};
+
+export type NotificationSettings = {
+  in_app: InAppNotificationSettings;
+  email_digest: EmailDigestSettings;
+};
+
+export type RuntimeSettings = {
+  timezone: string;
+};
+
+export type SystemSettingsSnapshot = {
+  schema_version: number;
+  general: GeneralSettings;
+  security: SecuritySettings;
+  smtp: SmtpSettings;
+  notifications: NotificationSettings;
+  runtime: RuntimeSettings;
+  /** Deprecated transition-only metadata; form code must not consume it. */
+  definitions?: SystemSettingDefinition[];
+};
+
+export type SystemSettingsPatch = {
+  general?: Partial<GeneralSettings>;
+  security?: Partial<SecuritySettings>;
+  smtp?: Partial<Omit<SmtpSettings, "password_configured">> & { password?: string };
+  notifications?: {
+    in_app?: Partial<InAppNotificationSettings>;
+    email_digest?: Partial<EmailDigestSettings>;
+  };
 };
 
 export type BackupEntry = {
@@ -906,7 +980,14 @@ export type RepairPartUsageFormState = {
   quantity: number | null;
   notes: string;
 };
-export type Role = { id: number; code: string; name: string; description: string; user_count?: number };
+export type AuthorizationRole = { code: string; name: string };
+export type AuthorizationSnapshot = {
+  primary_role_code: string | null;
+  roles: AuthorizationRole[];
+  capabilities: string[];
+  is_system_admin: boolean;
+};
+export type Role = { code: string; name: string; description: string; capabilities: string[]; user_count?: number };
 export type AuthSource = "local" | "ldap";
 export type ManagedUser = {
   id: number;
@@ -918,9 +999,9 @@ export type ManagedUser = {
   is_active: boolean;
   is_staff: boolean;
   is_superuser: boolean;
-  groups: number[];
-  assigned_role_code: string | null;
-  assigned_role_name: string;
+  roles: AuthorizationRole[];
+  primary_role_code: string | null;
+  role_anomaly: "multiple" | null;
   auth_source: AuthSource;
   directory_provider: string | null;
   directory_login_identifier: string | null;

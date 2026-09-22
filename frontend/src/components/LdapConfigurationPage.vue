@@ -3,9 +3,10 @@ import { computed, ref, watch } from "vue";
 import { useI18n } from "vue-i18n";
 import StatusTag from "./StatusTag.vue";
 import type { SettingsContext } from "../page-context";
+import type { OrganizationSettingsState } from "../composables/useOrganizationSettings";
 import { formatSystemDateTime } from "../system-settings";
 
-const props = defineProps<{ context: SettingsContext }>();
+const props = defineProps<{ context: SettingsContext; organization: OrganizationSettingsState }>();
 const { t } = useI18n();
 const {
   ldapConfiguration,
@@ -18,7 +19,7 @@ const {
   ldapDiagnosticError,
   retryLdapConfiguration,
   saveLdapConfiguration,
-} = props.context;
+} = props.organization;
 
 const ldapPasswordEditing = ref(false);
 const ldapPrimaryPortTouched = ref(false);

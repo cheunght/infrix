@@ -8,6 +8,7 @@ from smtplib import SMTPAuthenticationError, SMTPRecipientsRefused, SMTPSenderRe
 from django.core.mail import EmailMessage, get_connection
 
 from .configuration_secrets import ConfigurationSecretError, decrypt_secret
+from .system_settings import read_system_settings
 
 
 class SmtpConfigurationError(Exception):
@@ -19,7 +20,12 @@ class SmtpConfigurationError(Exception):
         self.detail = detail
 
 
-def _configured_password(setting) -> str:
+def _smtp_setting(setting=None):
+    return setting or read_system_settings()
+
+
+def _configured_password(setting=None) -> str:
+    setting = _smtp_setting(setting)
     if not setting.smtp_password_encrypted:
         return ""
     try:
@@ -31,15 +37,33 @@ def _configured_password(setting) -> str:
         ) from exc
 
 
-def send_smtp_test_email(setting, recipient: str) -> None:
+def send_smtp_test_email(recipient: str, *, setting=None) -> None:
     """Send one synchronous test message using only the saved configuration."""
 
-    send_smtp_message(setting, recipient, "infrix SMTP test email", "This is a test email sent by infrix.")
+    send_smtp_message(recipient, "infrix SMTP test email", "This is a test email sent by infrix.", setting=setting)
 
 
-def send_smtp_message(setting, recipient: str, subject: str, body: str) -> None:
+def smtp_status(setting=None) -> str:
+    """Return a safe operational state without exposing SMTP credentials."""
+
+    setting = _smtp_setting(setting)
+    if not setting.smtp_enabled:
+        return "disabled"
+    if not setting.smtp_host or not setting.smtp_from_email:
+        return "unconfigured"
+    if setting.smtp_username:
+        try:
+            if not _configured_password(setting):
+                return "unconfigured"
+        except SmtpConfigurationError:
+            return "attention"
+    return "healthy"
+
+
+def send_smtp_message(recipient: str, subject: str, body: str, *, setting=None) -> None:
     """Send through the existing encrypted SMTP configuration boundary."""
 
+    setting = _smtp_setting(setting)
     if not setting.smtp_enabled:
         raise SmtpConfigurationError("smtp_disabled", "请先启用 SMTP")
     if not setting.smtp_host.strip() or not setting.smtp_from_email.strip():

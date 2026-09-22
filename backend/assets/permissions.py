@@ -1,6 +1,6 @@
 from rest_framework.permissions import BasePermission, SAFE_METHODS
 
-from .roles import user_has_capability
+from .organization_access import can
 
 
 class BusinessRolePermission(BasePermission):
@@ -16,14 +16,14 @@ class BusinessRolePermission(BasePermission):
             if request.method in SAFE_METHODS or action in {"list", "retrieve"}
             else f"{resource}.manage"
         )
-        return user_has_capability(request.user, capability)
+        return can(request.user, capability)
 
 
 class CanViewAssetCustomFieldSchema(BasePermission):
     message = "当前角色没有读取资产业务字段 Schema 的权限"
 
     def has_permission(self, request, view):
-        return user_has_capability(request.user, "assets.view") or user_has_capability(
+        return can(request.user, "assets.view") or can(
             request.user, "assets.manage"
         )
 
@@ -35,7 +35,7 @@ class CanViewAssetTagsRuntime(BasePermission):
 
     def has_permission(self, request, view):
         return any(
-            user_has_capability(request.user, capability)
+            can(request.user, capability)
             for capability in ("tags.view", "tags.manage", "assets.view", "assets.manage")
         )
 
@@ -47,7 +47,7 @@ class CanViewManufacturerRuntime(BasePermission):
 
     def has_permission(self, request, view):
         return any(
-            user_has_capability(request.user, capability)
+            can(request.user, capability)
             for capability in (
                 "assets.view",
                 "assets.manage",
@@ -68,7 +68,7 @@ class CanViewDepartmentRuntime(BasePermission):
 
     def has_permission(self, request, view):
         return any(
-            user_has_capability(request.user, capability)
+            can(request.user, capability)
             for capability in (
                 "assets.view",
                 "assets.manage",
@@ -85,7 +85,7 @@ class CanViewPeopleRuntime(BasePermission):
 
     def has_permission(self, request, view):
         return any(
-            user_has_capability(request.user, capability)
+            can(request.user, capability)
             for capability in (
                 "assets.view",
                 "assets.manage",
@@ -102,7 +102,7 @@ class CanViewSparePartCategoryRuntime(BasePermission):
 
     def has_permission(self, request, view):
         return any(
-            user_has_capability(request.user, capability)
+            can(request.user, capability)
             for capability in ("spares.view", "spares.manage", "settings.manage")
         )
 
@@ -111,14 +111,14 @@ class IsSystemAdministrator(BasePermission):
     message = "仅系统管理员可以执行此操作"
 
     def has_permission(self, request, view):
-        return user_has_capability(request.user, "organization.manage")
+        return can(request.user, "organization.manage")
 
 
 class CanResetSystem(BasePermission):
     message = "当前账号没有执行系统恢复的权限"
 
     def has_permission(self, request, view):
-        return user_has_capability(request.user, "system.reset")
+        return can(request.user, "system.reset")
 
 
 class CanManageSystemSettings(BasePermission):
@@ -128,88 +128,88 @@ class CanManageSystemSettings(BasePermission):
 
     def has_permission(self, request, view):
         capability = "settings.view" if request.method in SAFE_METHODS else "settings.manage"
-        return user_has_capability(request.user, capability)
+        return can(request.user, capability)
 
 
 class CanImportAssets(BasePermission):
     message = "当前角色没有资产管理权限"
 
     def has_permission(self, request, view):
-        return user_has_capability(request.user, "assets.manage")
+        return can(request.user, "assets.manage")
 
 
 class CanExportAssets(BasePermission):
     message = "当前角色没有导出资产的权限"
 
     def has_permission(self, request, view):
-        return user_has_capability(request.user, "assets.export")
+        return can(request.user, "assets.export")
 
 
 class CanExportRacks(BasePermission):
     message = "当前角色没有导出机柜的权限"
 
     def has_permission(self, request, view):
-        return user_has_capability(request.user, "racks.export")
+        return can(request.user, "racks.export")
 
 
 class CanExportFaults(BasePermission):
     message = "当前角色没有导出维修记录的权限"
 
     def has_permission(self, request, view):
-        return user_has_capability(request.user, "faults.export")
+        return can(request.user, "faults.export")
 
 
 class CanExportLicenses(BasePermission):
     message = "当前角色没有导出软件许可的权限"
 
     def has_permission(self, request, view):
-        return user_has_capability(request.user, "licenses.export")
+        return can(request.user, "licenses.export")
 
 
 class CanExportSpares(BasePermission):
     message = "当前角色没有导出备件的权限"
 
     def has_permission(self, request, view):
-        return user_has_capability(request.user, "spares.export")
+        return can(request.user, "spares.export")
 
 
 class CanViewAuditLog(BasePermission):
     message = "当前角色没有查看操作日志的权限"
 
     def has_permission(self, request, view):
-        return user_has_capability(request.user, "audit.view")
+        return can(request.user, "audit.view")
 
 
 class CanViewDashboard(BasePermission):
     message = "当前角色没有查看仪表盘的权限"
 
     def has_permission(self, request, view):
-        return user_has_capability(request.user, "dashboard.view")
+        return can(request.user, "dashboard.view")
 
 
 class CanViewLicenses(BasePermission):
     message = "当前角色没有查看软件许可的权限"
 
     def has_permission(self, request, view):
-        return user_has_capability(request.user, "licenses.view")
+        return can(request.user, "licenses.view")
 
 
 class CanViewInventory(BasePermission):
     message = "当前角色没有查看盘点任务的权限"
 
     def has_permission(self, request, view):
-        return user_has_capability(request.user, "inventory.view")
+        return can(request.user, "inventory.view")
 
 
 class CanManageInventory(BasePermission):
     message = "当前角色没有管理盘点任务的权限"
 
     def has_permission(self, request, view):
-        return user_has_capability(request.user, "inventory.manage")
+        return can(request.user, "inventory.manage")
 
 
 class CanExportInventory(BasePermission):
     message = "当前角色没有导出盘点结果的权限"
 
     def has_permission(self, request, view):
-        return user_has_capability(request.user, "inventory.export")
+        return can(request.user, "inventory.export")

@@ -65,11 +65,11 @@ def trusted_client_ip(request) -> str:
     return remote_addr[:255]
 
 
-def _security_policy() -> dict[str, int]:
+def _security_policy():
     # Import lazily: system_settings imports the models used by this module.
-    from .system_settings import get_local_account_security_policy
+    from .system_settings import get_local_auth_policy
 
-    return get_local_account_security_policy()
+    return get_local_auth_policy()
 
 
 def _two_factor_keys(user_id, client_ip: str):
@@ -108,9 +108,9 @@ def two_factor_lock_status(user_id, client_ip: str, *, now=None) -> tuple[bool, 
 def register_two_factor_failure(user_id, client_ip: str, *, now=None) -> tuple[bool, int]:
     now = now or timezone.now()
     policy = _security_policy()
-    window = timedelta(seconds=max(1, policy["login_window_seconds"]))
-    lock_duration = timedelta(seconds=max(1, policy["login_lock_seconds"]))
-    max_attempts = max(1, policy["login_max_attempts"])
+    window = timedelta(seconds=max(1, policy.login_window_seconds))
+    lock_duration = timedelta(seconds=max(1, policy.login_lock_seconds))
+    max_attempts = max(1, policy.login_max_attempts)
     with transaction.atomic():
         states = [_locked_state(scope, key, now) for scope, key in _two_factor_keys(user_id, client_ip)]
         locked_until = None
