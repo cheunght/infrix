@@ -1454,6 +1454,7 @@ export default {
     noFields: "No custom fields",
     searchPlaceholder: "Search field name or code",
     fieldName: "Field name",
+    fieldsCount: "Fields",
     code: "Code",
     scope: "Applies to",
     allAssets: "All assets",

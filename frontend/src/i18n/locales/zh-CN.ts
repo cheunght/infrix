@@ -1454,6 +1454,7 @@ export default {
     noFields: "暂无自定义字段",
     searchPlaceholder: "搜索字段名称或编码",
     fieldName: "字段名称",
+    fieldsCount: "字段数",
     code: "编码",
     scope: "适用范围",
     allAssets: "全部资产",

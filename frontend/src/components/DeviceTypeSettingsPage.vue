@@ -135,7 +135,7 @@ async function toggle(row: DictionaryItem) {
 }
 
 async function remove(row: DictionaryItem) {
-  if (!canManage.value || actionId.value || (row.assets_count || 0) > 0) return;
+  if (!canManage.value || actionId.value || (row.assets_count || 0) > 0 || (row.custom_fields_count || 0) > 0) return;
   if (!(await c.confirmAction(t("settings.dictionaryDeleteConfirm", { item: t("settings.deviceType"), name: row.name })))) return;
   actionId.value = row.id;
   try {
@@ -166,8 +166,9 @@ onMounted(() => { void loadRows(); });
           <el-table-column :label="t('settings.color')" width="120"><template #default="{ row }"><span class="color-chip" :style="{ background: row.color || '#1677EF' }" />{{ row.color || '#1677EF' }}</template></el-table-column>
           <el-table-column prop="default_fieldset_name" :label="t('settings.defaultFieldset')" min-width="180"><template #default="{ row }">{{ row.default_fieldset_name || t('settings.noDefaultFieldset') }}</template></el-table-column>
           <el-table-column prop="assets_count" :label="t('settings.assetCount')" width="100" />
+          <el-table-column prop="custom_fields_count" :label="t('customField.fieldsCount')" width="100" />
           <el-table-column :label="t('common.status')" width="100"><template #default="{ row }"><StatusTag :tone="row.is_active ? 'success' : 'info'" :label="row.is_active ? t('status.active') : t('status.inactive')" /></template></el-table-column>
-          <el-table-column v-if="canManage" :label="t('common.operation')" width="116" fixed="right"><template #default="{ row }"><div class="ep-table-actions"><el-button-group><TableIconButton :icon="Edit" :label="t('common.edit')" type="primary" :disabled="actionId === row.id" @click="openModal(row)" /><TableIconButton :icon="row.is_active ? CircleClose : CircleCheck" :label="row.is_active ? t('status.inactive') : t('status.active')" :disabled="actionId === row.id" @click="toggle(row)" /><TableIconButton :icon="Delete" :label="t('common.delete')" type="danger" :disabled="actionId === row.id || (row.assets_count || 0) > 0" @click="remove(row)" /></el-button-group></div></template></el-table-column>
+          <el-table-column v-if="canManage" :label="t('common.operation')" width="116" fixed="right"><template #default="{ row }"><div class="ep-table-actions"><el-button-group><TableIconButton :icon="Edit" :label="t('common.edit')" type="primary" :disabled="actionId === row.id" @click="openModal(row)" /><TableIconButton :icon="row.is_active ? CircleClose : CircleCheck" :label="row.is_active ? t('status.inactive') : t('status.active')" :disabled="actionId === row.id" @click="toggle(row)" /><TableIconButton :icon="Delete" :label="t('common.delete')" type="danger" :disabled="actionId === row.id || (row.assets_count || 0) > 0 || (row.custom_fields_count || 0) > 0" @click="remove(row)" /></el-button-group></div></template></el-table-column>
         </el-table>
       </PagedTable>
     </PageContent>

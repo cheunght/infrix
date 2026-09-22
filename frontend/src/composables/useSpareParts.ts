@@ -236,6 +236,40 @@ export function useSpareParts(deps: SparePartsDeps) {
     return params;
   }
 
+  async function loadSpareLocationReferences(
+    requestId: number,
+    controller: AbortController,
+    version: number,
+  ) {
+    // Location selectors are part of the spare-parts workflow, but the
+    // facilities page no longer bootstraps these collections globally. Load
+    // the active options here and keep the spare list request cancellable.
+    if (!deps.can("racks.view")) return;
+    const shouldContinue = () =>
+      requestId === spareListRequestId.value &&
+      deps.isCurrentLoad(version) &&
+      !controller.signal.aborted;
+    const [dataCentersResult, roomsResult] = await Promise.allSettled([
+      loadAllPages<DataCenter>(
+        "/data-centers/?page_size=50&is_active=true",
+        controller.signal,
+        shouldContinue,
+      ),
+      loadAllPages<ServerRoom>(
+        "/server-rooms/?page_size=50&is_active=true",
+        controller.signal,
+        shouldContinue,
+      ),
+    ]);
+    if (!shouldContinue()) return;
+    if (dataCentersResult.status === "fulfilled" && dataCentersResult.value) {
+      deps.dataCenters.value = dataCentersResult.value.rows;
+    }
+    if (roomsResult.status === "fulfilled" && roomsResult.value) {
+      spareRooms.value = roomsResult.value.rows;
+    }
+  }
+
   async function loadSpareData(version = deps.beginLoad()): Promise<boolean> {
     if (!deps.can("spares.view")) return false;
     const requestId = ++spareListRequestId.value;
@@ -247,7 +281,12 @@ export function useSpareParts(deps: SparePartsDeps) {
     spareListError.value = "";
 
     try {
-      const partResult = await deps.request<PageResult<SparePart> | SparePart[]>(`/spare-parts/?${listParams().toString()}`, { signal: controller.signal });
+      const [partResultState] = await Promise.allSettled([
+        deps.request<PageResult<SparePart> | SparePart[]>(`/spare-parts/?${listParams().toString()}`, { signal: controller.signal }),
+        loadSpareLocationReferences(requestId, controller, version),
+      ]);
+      if (partResultState.status === "rejected") throw partResultState.reason;
+      const partResult = partResultState.value;
       if (partResult == null) return false;
       if (requestId !== spareListRequestId.value || !deps.isCurrentLoad(version)) return false;
 
