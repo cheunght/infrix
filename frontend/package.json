@@ -8,8 +8,6 @@
   },
   "scripts": {
     "dev": "vite",
-    "test": "npm run test:private",
-    "test:private": "vitest run --config ${INFRIX_PRIVATE_ROOT:-../../ITAM-private}/frontend/vitest.config.ts",
     "typecheck": "vue-tsc --noEmit",
     "build": "npm run typecheck && vite build",
     "preview": "vite preview"
