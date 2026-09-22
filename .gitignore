@@ -41,6 +41,7 @@ htmlcov/
 /backend/**/tests.py
 /backend/**/test_*.py
 /backend/**/*_tests.py
+/frontend/tests/
 /frontend/scripts/check-*.mjs
 /scripts/check-branding.mjs
 /scripts/check-release.sh
