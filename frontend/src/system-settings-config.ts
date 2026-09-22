@@ -25,7 +25,7 @@ export const SYSTEM_SETTING_DEFINITIONS: SystemSettingDefinition[] = [
     type: "enum",
     section: "general",
     default: "in_stock",
-    options: options(["in_stock", "in_use", "idle", "repair", "retired"], ["在库", "在用", "闲置", "维修中", "已报废"]),
+    options: options(["in_stock", "in_use", "idle", "retired"], ["在库", "在用", "闲置", "已报废"]),
     help_text: "仅影响以后新建或导入且未填写状态的资产，不修改历史资产。",
   },
   {

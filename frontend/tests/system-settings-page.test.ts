@@ -7,6 +7,7 @@ import SystemSettingsPage from "../src/components/SystemSettingsPage.vue";
 import { useSystemSettings } from "../src/composables/useSystemSettings";
 import { ApiError } from "../src/api";
 import { i18n } from "../src/i18n";
+import { SYSTEM_SETTING_DEFINITIONS } from "../src/system-settings-config";
 import type { ActionMessageType } from "../src/error-handling";
 import type { SettingsContext, RequestFn } from "../src/page-context";
 import type { SystemSettingsTab } from "../src/router";
@@ -110,6 +111,18 @@ function saveButton(wrapper: VueWrapper) {
 }
 
 describe("system settings page with the application's plain ref context", () => {
+  it("only offers backend-accepted default asset statuses", () => {
+    const definition = SYSTEM_SETTING_DEFINITIONS.find(
+      (item) => item.key === "default_asset_status",
+    );
+    expect(definition?.options?.map((option) => option.value)).toEqual([
+      "in_stock",
+      "in_use",
+      "idle",
+      "retired",
+    ]);
+  });
+
   it("shows the form after a successful response without an error or busy state", async () => {
     const { wrapper, settings } = createPage();
     await settings.loadSystemSettings();
