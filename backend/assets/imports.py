@@ -616,7 +616,8 @@ def _prepare_payload(row, headers):
             raise DjangoValidationError({"tags": f"停用的标签“{tag_name}”不能用于新资产"})
         tag_values.append(tag.pk)
 
-    return {
+    assignment = _resolve_assigned_person(row)
+    payload = {
         "asset_no": asset_no,
         "name": asset_name,
         "manufacturer": manufacturer.pk if manufacturer and not asset_model else None,
@@ -635,9 +636,11 @@ def _prepare_payload(row, headers):
         "configuration": configuration,
         "tags": tag_values,
         "custom_values": custom_values,
-        "assignment": _resolve_assigned_person(row),
         "warranty_months": warranty_months,
     }
+    if assignment is not None:
+        payload["assignment"] = assignment
+    return payload
 
 
 def _preview_row(line, row, headers, duplicate_counts, *, lock=False):
