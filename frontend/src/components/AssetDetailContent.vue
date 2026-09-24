@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onMounted, ref, toRefs } from "vue";
+import { computed, onMounted, ref, toRefs, watch } from "vue";
 import { useI18n } from "vue-i18n";
 import {
   formatSystemDate,
@@ -37,6 +37,7 @@ import DynamicFieldDisplay from "./fields/DynamicFieldDisplay.vue";
 import DetailSection from "./DetailSection.vue";
 import DescriptionList from "./DescriptionList.vue";
 import AttachmentSection from "./AttachmentSection.vue";
+import PageTabs, { type PageTabItem } from "./page/PageTabs.vue";
 
 const props = withDefaults(
   defineProps<{
@@ -68,6 +69,17 @@ onMounted(() => {
   contentRoot.value?.closest(".el-drawer__body")?.scrollTo({ top: 0 });
 });
 const isDrawer = computed(() => props.variant === "drawer");
+const activeDetailTab = ref("overview");
+const detailTabs = computed<PageTabItem[]>(() => [
+  { label: t("asset.overview"), value: "overview" },
+  { label: t("asset.history"), value: "history" },
+]);
+watch(
+  () => props.asset?.id,
+  () => {
+    activeDetailTab.value = "overview";
+  },
+);
 const descriptionLayout = computed<"compact" | "horizontal">(() =>
   isDrawer.value ? "compact" : "horizontal",
 );
@@ -666,6 +678,17 @@ const systemFields = computed<DetailField[]>(() => [
   ),
 ]);
 
+const disposalFields = computed<DetailField[]>(() => {
+  const disposal = asset.value?.disposal;
+  return [
+    makeField("disposed-on", t("asset.disposedOn"), disposal?.disposed_on, formatDate),
+    makeField("disposal-reason", t("asset.disposalReason"), disposal?.reason),
+    makeField("disposal-method", t("asset.disposalMethod"), disposal?.method),
+    makeField("disposal-operator", t("asset.disposalOperator"), disposal?.operator_name),
+    makeField("disposal-notes", t("asset.disposalNotes"), disposal?.notes),
+  ];
+});
+
 const inventoryRecordCount = computed(
   () => asset.value?.inventory_records_count ?? 0,
 );
@@ -722,6 +745,12 @@ function retryDetail() {
       }}</el-button>
     </div>
     <template v-else-if="asset">
+      <PageTabs
+        v-if="isDrawer"
+        v-model="activeDetailTab"
+        :items="detailTabs"
+      />
+      <template v-if="!isDrawer || activeDetailTab === 'overview'">
       <div v-if="showSummary !== false" class="asset-detail-summary">
         <div>
           <span>{{ t("asset.name") }}</span>
@@ -750,6 +779,23 @@ function retryDetail() {
         <DescriptionList
           class="asset-detail-description-list"
           :items="basicFields"
+          :columns="descriptionColumns"
+          :layout="descriptionLayout"
+        />
+      </DetailSection>
+
+      <DetailSection v-if="asset.status === 'retired'" :title="t('asset.disposalInfo')">
+        <el-alert
+          v-if="asset.disposal_status === 'legacy'"
+          :title="t('asset.legacyRetired')"
+          type="info"
+          :closable="false"
+          show-icon
+        />
+        <DescriptionList
+          v-else
+          class="asset-detail-description-list"
+          :items="disposalFields"
           :columns="descriptionColumns"
           :layout="descriptionLayout"
         />
@@ -1193,11 +1239,16 @@ function retryDetail() {
           </template>
         </DescriptionList>
       </AssetInventoryHistory>
+      </template>
 
       <AssetAuditHistory
-        v-if="auditHistoryContext && showAuditHistory"
+        v-if="
+          auditHistoryContext &&
+          showAuditHistory &&
+          (!isDrawer || activeDetailTab === 'history')
+        "
         :context="auditHistoryContext"
-        :collapsible="isDrawer"
+        :collapsible="false"
       />
 
       <footer v-if="isDrawer" class="asset-detail-footer">

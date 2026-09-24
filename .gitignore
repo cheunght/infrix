@@ -46,6 +46,9 @@ htmlcov/
 /scripts/check-branding.mjs
 /scripts/check-release.sh
 
+# Phase-specific regression tests are source files, not local test output.
+!/backend/assets/tests/test_*.py
+
 # Frontend dependencies and build output
 frontend/node_modules/
 frontend/dist/

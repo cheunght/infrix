@@ -1,11 +1,10 @@
-from io import BytesIO
-
 from django.db import IntegrityError, transaction
 from openpyxl import Workbook, load_workbook
 from openpyxl.styles import Alignment, Font, PatternFill
 from rest_framework.exceptions import ValidationError
 
 from .models import AssetModel, CustomFieldSet, DeviceType, Manufacturer
+from .operation_limits import MAX_ASSET_MODEL_IMPORT_BYTES, MAX_ASSET_MODEL_IMPORT_ROWS
 from .serializers import AssetModelSerializer
 
 
@@ -93,25 +92,46 @@ def _payload(row):
     }
 
 
-def _rows(upload):
+def _validate_file_size(upload):
     if upload is None:
         raise ValidationError({"file": "请选择导入文件"})
     if not upload.name.lower().endswith(".xlsx"):
         raise ValidationError({"file": "资产型号导入仅支持 .xlsx 文件"})
-    workbook = load_workbook(BytesIO(upload.read()), read_only=True, data_only=True)
-    sheet = workbook["资产型号导入"] if "资产型号导入" in workbook.sheetnames else workbook.active
-    rows = sheet.iter_rows(values_only=True)
-    headers = [str(value or "").strip() for value in next(rows, ())]
-    expected = {column[0] for column in ASSET_MODEL_IMPORT_COLUMNS}
-    if not headers or not expected.issubset(set(headers)):
-        raise ValidationError({"file": "模板字段不完整，请重新下载最新模板"})
-    parsed = []
-    for line, values in enumerate(rows, start=2):
-        row = dict(zip(headers, values))
-        if not any(value not in (None, "") for value in row.values()):
-            continue
-        parsed.append((line, row))
-    return parsed
+    size = int(getattr(upload, "size", 0) or 0)
+    if size > MAX_ASSET_MODEL_IMPORT_BYTES:
+        max_megabytes = MAX_ASSET_MODEL_IMPORT_BYTES // (1024 * 1024)
+        raise ValidationError({
+            "file": f"资产型号导入文件不能超过 {max_megabytes} MB",
+        })
+
+
+def _rows(upload):
+    _validate_file_size(upload)
+    upload.seek(0)
+    workbook = load_workbook(upload, read_only=True, data_only=True)
+    try:
+        sheet = workbook["资产型号导入"] if "资产型号导入" in workbook.sheetnames else workbook.active
+        rows = sheet.iter_rows(values_only=True)
+        headers = [str(value or "").strip() for value in next(rows, ())]
+        expected = {column[0] for column in ASSET_MODEL_IMPORT_COLUMNS}
+        if not headers or not expected.issubset(set(headers)):
+            raise ValidationError({"file": "模板字段不完整，请重新下载最新模板"})
+        parsed = []
+        for line, values in enumerate(rows, start=2):
+            row = dict(zip(headers, values))
+            if not any(value not in (None, "") for value in row.values()):
+                continue
+            if len(parsed) >= MAX_ASSET_MODEL_IMPORT_ROWS:
+                raise ValidationError({
+                    "file": (
+                        f"资产型号导入数据行数超过 {MAX_ASSET_MODEL_IMPORT_ROWS} 行，"
+                        "请拆分文件后重试"
+                    ),
+                })
+            parsed.append((line, row))
+        return parsed
+    finally:
+        workbook.close()
 
 
 def preview_asset_model_import(upload):

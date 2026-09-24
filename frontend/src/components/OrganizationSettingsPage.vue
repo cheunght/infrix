@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, reactive, ref, watch } from "vue";
 import { useI18n } from "vue-i18n";
-import { CircleCheck, CircleClose, Delete, Edit, Filter, InfoFilled, Lock, Message, User } from "@element-plus/icons-vue";
+import { CircleCheck, CircleClose, Delete, Edit, Filter, InfoFilled, Lock, Message, Upload, User } from "@element-plus/icons-vue";
 import type { FormInstance } from "element-plus";
 import type { SettingsContext } from "../page-context";
 import type { OrganizationSettingsState } from "../composables/useOrganizationSettings";
@@ -87,6 +87,7 @@ const {
   changeResponsibilityDirectoryPage,
   changeResponsibilityDirectoryPageSize,
   openResponsibilitySubjectModal,
+  openPeopleImport,
   saveResponsibilitySubject,
   toggleResponsibilitySubject,
   deleteResponsibilitySubject,
@@ -303,6 +304,9 @@ function applyPeopleFilters() {
           </template>
           <template v-if="organizationTab === 'people'" #filters>
             <ToolbarIconButton :icon="Filter" :label="t('asset.moreFilters')" :badge="activePeopleFilterCount" @click="openPeopleFilters" />
+          </template>
+          <template v-if="organizationTab === 'people'" #actions>
+            <ToolbarIconButton v-if="can('settings.manage')" :icon="Upload" :label="t('common.import')" @click="openPeopleImport" />
           </template>
           <template v-if="organizationTab === 'people'" #primary>
             <el-button v-if="can('settings.manage')" class="page-primary-action" type="primary" :loading="responsibilityDirectorySaving" :disabled="responsibilityDirectorySaving" @click="openResponsibilitySubjectModal()">{{ t('settings.addPerson') }}</el-button>

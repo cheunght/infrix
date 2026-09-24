@@ -14,7 +14,7 @@ from decimal import Decimal
 from typing import Any
 import json
 import re
-from .models import AssetModel, AuditLog, Asset, AssetAssignmentEvent, AssetCustomValue, AssetNetworkAddress, AssetTag, Attachment, CustomField, CustomFieldOption, CustomFieldSet, CustomFieldSetItem, DataCenter, Department, DeviceType, DirectoryIdentity, FaultEvent, InventoryItem, InventoryTask, MaintenanceContract, Manufacturer, NotificationDelivery, Person, PersonalAccessToken, ProcurementRecord, Rack, RackUnitAllocation, RepairPartUsage, RepairRecord, ServerRoom, SoftwareLicense, SparePart, SparePartCategory, SpareStock, SpareStockTransaction, SystemSetting, Tag, UserSecurityProfile, DEFAULT_ASSET_STATUS_CHOICES, SYSTEM_CURRENCY_CHOICES, SYSTEM_DATE_FORMAT_CHOICES, SYSTEM_LOCALE_CHOICES, SMTP_SECURITY_MODE_CHOICES
+from .models import AssetModel, AuditLog, Asset, AssetAssignmentEvent, AssetCustomValue, AssetDisposal, AssetNetworkAddress, AssetTag, Attachment, CustomField, CustomFieldOption, CustomFieldSet, CustomFieldSetItem, DataCenter, Department, DeviceType, DirectoryIdentity, FaultEvent, InventoryItem, InventoryTask, MaintenanceContract, Manufacturer, NotificationDelivery, Person, PersonalAccessToken, ProcurementRecord, Rack, RackUnitAllocation, RepairPartUsage, RepairRecord, ServerRoom, SoftwareLicense, SparePart, SparePartCategory, SpareStock, SpareStockTransaction, SystemSetting, Tag, UserSecurityProfile, DEFAULT_ASSET_STATUS_CHOICES, SYSTEM_CURRENCY_CHOICES, SYSTEM_DATE_FORMAT_CHOICES, SYSTEM_LOCALE_CHOICES, SMTP_SECURITY_MODE_CHOICES
 from .fieldsets import fieldset_items_queryset, raise_if_fieldset_conflicts, replace_fieldset_items, resolve_fieldset, validate_fieldset_items
 from .depreciation import DepreciationValidationError, calculate_asset_depreciation, validate_depreciation_configuration
 from .enum_contracts import (
@@ -2219,6 +2219,40 @@ class PersonSerializer(PersonSummarySerializer):
         ]
 
 
+class AssetDisposalRequestSerializer(serializers.Serializer):
+    """Write contract for the single irreversible asset disposal action."""
+
+    disposed_on = serializers.DateField(required=True)
+    reason = serializers.CharField(required=True, allow_blank=False, max_length=500)
+    method = serializers.CharField(required=True, allow_blank=False, max_length=100)
+    notes = serializers.CharField(required=False, allow_blank=True, max_length=2000)
+
+    def to_internal_value(self, data):
+        unknown = sorted(set(data or {}) - set(self.fields))
+        if unknown:
+            raise serializers.ValidationError({key: "该报废操作字段不受支持" for key in unknown})
+        return super().to_internal_value(data)
+
+    def validate_disposed_on(self, value):
+        if value > system_localdate():
+            raise serializers.ValidationError("处置日期不能晚于今天")
+        return value
+
+
+class AssetDisposalSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = AssetDisposal
+        fields = [
+            "disposed_on",
+            "reason",
+            "method",
+            "operator_name",
+            "notes",
+            "created_at",
+        ]
+        read_only_fields = fields
+
+
 class AssetAssignmentTargetSerializer(serializers.Serializer):
     REMOVED_FIELDS = frozenset({
         "target_subject", "target_user", "responsible_user", "responsible_user_id",
@@ -2531,6 +2565,8 @@ class AssetDetailSerializer(ResolvedAssetMetadataMixin, serializers.ModelSeriali
     custom_values = serializers.SerializerMethodField()
     depreciation = serializers.SerializerMethodField()
     allowed_statuses = serializers.SerializerMethodField()
+    disposal = AssetDisposalSerializer(read_only=True, allow_null=True)
+    disposal_status = serializers.SerializerMethodField()
 
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
@@ -2574,12 +2610,21 @@ class AssetDetailSerializer(ResolvedAssetMetadataMixin, serializers.ModelSeriali
     def get_allowed_statuses(self, obj) -> list[str]:
         return list(allowed_asset_status_values(obj))
 
+    def get_disposal_status(self, obj) -> str:
+        if obj.status != "retired":
+            return "not_applicable"
+        try:
+            disposal = obj.disposal
+        except AssetDisposal.DoesNotExist:
+            return "legacy"
+        return "recorded" if disposal is not None else "legacy"
+
     class Meta:
         model = Asset
         fields = [
             "id", "created_at", "updated_at", "asset_no", "name", "manufacturer", "manufacturer_name", "device_type", "device_type_name", "asset_data_center", "asset_data_center_name", "asset_model", "model_name", "model_number", "model_text",
             "serial_number", "purpose", "status", "assigned_person", "notes", "warranty_months", "depreciation_start_date", "depreciation_years", "residual_rate", "depreciation_method",
-            "network_addresses", "rack_allocation", "procurement_records", "maintenance_contracts", "inventory_records_count", "latest_inventory_record", "tags", "custom_fields", "custom_values", "allowed_statuses",
+            "network_addresses", "rack_allocation", "procurement_records", "maintenance_contracts", "inventory_records_count", "latest_inventory_record", "tags", "custom_fields", "custom_values", "allowed_statuses", "disposal", "disposal_status",
             "depreciation",
         ]
 
@@ -3028,6 +3073,7 @@ class InventoryScopePreviewSerializer(serializers.Serializer):
     server_room = InventoryScopeLocationSerializer(allow_null=True)
     scope_label = serializers.CharField()
     total = serializers.IntegerField()
+    max_assets = serializers.IntegerField()
     racked = serializers.IntegerField()
     unracked = serializers.IntegerField()
     retired = serializers.IntegerField()
@@ -3480,6 +3526,44 @@ class AuditLogSerializer(serializers.ModelSerializer):
             "resource_type", "resource_id", "payload", "created_at",
         ]
         read_only_fields = fields
+
+
+class AssetTimelineActorSerializer(serializers.Serializer):
+    id = serializers.IntegerField(allow_null=True, read_only=True)
+    username = serializers.CharField(allow_null=True, read_only=True)
+    display_name = serializers.CharField(allow_null=True, read_only=True)
+
+
+class AssetTimelineChangeSerializer(serializers.Serializer):
+    field = serializers.CharField(read_only=True)
+    label = serializers.CharField(allow_null=True, read_only=True)
+    before = serializers.JSONField(allow_null=True, read_only=True)
+    after = serializers.JSONField(allow_null=True, read_only=True)
+
+
+class AssetTimelineSerializer(serializers.Serializer):
+    id = serializers.IntegerField(read_only=True)
+    timestamp = serializers.DateTimeField(read_only=True)
+    event_type = serializers.ChoiceField(
+        choices=[
+            "created",
+            "updated",
+            "lifecycle",
+            "placement",
+            "assignment",
+            "maintenance",
+            "inventory",
+            "attachment",
+            "other",
+        ],
+        read_only=True,
+    )
+    action = serializers.CharField(read_only=True)
+    title = serializers.CharField(read_only=True)
+    summary = serializers.CharField(read_only=True)
+    actor = AssetTimelineActorSerializer(allow_null=True, read_only=True)
+    changes = AssetTimelineChangeSerializer(many=True, read_only=True)
+    metadata = serializers.JSONField(read_only=True)
 
 
 class NotificationDeliverySerializer(serializers.ModelSerializer):

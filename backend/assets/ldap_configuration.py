@@ -13,6 +13,7 @@ import os
 import re
 from typing import Any
 
+from django.conf import settings
 from django.db import transaction
 
 from .configuration_secrets import ConfigurationSecretError, decrypt_secret, encrypt_secret
@@ -34,6 +35,7 @@ SECURITY_MODE_CHOICES = (
     SECURITY_MODE_STARTTLS,
     SECURITY_MODE_NONE,
 )
+LDAP_INSECURE_TRANSPORT_MESSAGE = "生产环境不允许使用明文 LDAP 传输"
 ATTRIBUTE_PATTERN = re.compile(r"^[A-Za-z][A-Za-z0-9-]*$")
 
 DEFAULT_DIRECTORY_VALUES = {
@@ -236,6 +238,23 @@ def merge_configuration(
     return EffectiveLDAPConfiguration(**values)
 
 
+def ldap_transport_policy_violation(
+    config: EffectiveLDAPConfiguration,
+    *,
+    runtime: bool = False,
+) -> bool:
+    """Return whether the current deployment forbids this LDAP transport.
+
+    A disabled development configuration may retain ``none`` for local or
+    internal validation. Any runtime connection in production is stricter:
+    staged diagnostics must not use the mode either, even when the staged
+    configuration is marked disabled.
+    """
+    if not getattr(settings, "IS_PRODUCTION", False):
+        return False
+    return config.security_mode == SECURITY_MODE_NONE and (runtime or config.enabled)
+
+
 def configuration_errors(
     config: EffectiveLDAPConfiguration,
     *,
@@ -271,6 +290,8 @@ def configuration_errors(
         errors["bind_dn"] = "绑定账户不能为空"
     if config.security_mode not in SECURITY_MODE_CHOICES:
         errors["security_mode"] = "安全模式不受支持"
+    elif ldap_transport_policy_violation(config):
+        errors["security_mode"] = LDAP_INSECURE_TRANSPORT_MESSAGE
     if not config.user_login_attribute or not ATTRIBUTE_PATTERN.fullmatch(config.user_login_attribute):
         errors["user_login_attribute"] = "登录属性必须是合法 LDAP 属性名"
     if not config.external_id_attribute or not ATTRIBUTE_PATTERN.fullmatch(config.external_id_attribute):

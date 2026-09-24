@@ -18,6 +18,8 @@ import type {
   Person,
   PersonFormState,
   PersonOption,
+  PeopleImportPreview,
+  PeopleImportResult,
   Role,
   UserBatchStatusResponse,
 } from "../types";
@@ -35,6 +37,7 @@ export interface OrganizationSettingsDeps {
   confirmAction: (message: string) => Promise<boolean>;
   can: CapabilityFn;
   currentUsername: Ref<string>;
+  downloadFile: (path: string, filename?: string) => Promise<void>;
   actionMessage: Ref<string>;
   actionMessageType: Ref<ActionMessageType | null>;
 }
@@ -165,6 +168,14 @@ export function useOrganizationSettings(deps: OrganizationSettingsDeps) {
   const showResponsibilitySubjectModal = ref(false);
   const responsibilityDirectoryRequestId = ref(0);
   let responsibilityDirectoryController: AbortController | null = null;
+  const showPeopleImportModal = ref(false);
+  const peopleImportFile = ref<File | null>(null);
+  const peopleImportPreview = ref<PeopleImportPreview | null>(null);
+  const peopleImportPreviewing = ref(false);
+  const peopleImporting = ref(false);
+  const peopleImportError = ref("");
+  const peopleImportRequestId = ref(0);
+  let peopleImportController: AbortController | null = null;
 
   const ldapStatus = ref<LdapStatus | null>(null);
   const ldapConfiguration = ref<LdapConfiguration | null>(null);
@@ -637,6 +648,146 @@ export function useOrganizationSettings(deps: OrganizationSettingsDeps) {
     responsibilityDirectoryPageSize.value = size;
     responsibilityDirectoryPage.value = 1;
     await loadResponsibilityDirectory();
+  }
+
+  function resetPeopleImportState() {
+    peopleImportController?.abort();
+    peopleImportController = null;
+    peopleImportRequestId.value += 1;
+    peopleImportFile.value = null;
+    peopleImportPreview.value = null;
+    peopleImportPreviewing.value = false;
+    peopleImporting.value = false;
+    peopleImportError.value = "";
+  }
+
+  function openPeopleImport() {
+    if (!deps.can("settings.manage")) return;
+    resetPeopleImportState();
+    showPeopleImportModal.value = true;
+  }
+
+  function closePeopleImport() {
+    if (peopleImporting.value) return;
+    resetPeopleImportState();
+    showPeopleImportModal.value = false;
+  }
+
+  function normalizePeopleImportPreview(preview: PeopleImportPreview): PeopleImportPreview {
+    return {
+      ...preview,
+      ignored_columns: Array.isArray(preview.ignored_columns) ? preview.ignored_columns : [],
+      rows: Array.isArray(preview.rows)
+        ? preview.rows.map((row) => ({
+            ...row,
+            changes: Array.isArray(row.changes) ? row.changes : [],
+            errors: Array.isArray(row.errors) ? row.errors : [],
+          }))
+        : [],
+    };
+  }
+
+  async function previewPeopleImport(file: File | null): Promise<boolean> {
+    if (!deps.can("settings.manage")) return false;
+    peopleImportController?.abort();
+    const controller = new AbortController();
+    peopleImportController = controller;
+    const requestId = ++peopleImportRequestId.value;
+    peopleImportFile.value = file;
+    peopleImportPreview.value = null;
+    peopleImportError.value = "";
+    if (!file) {
+      peopleImportPreviewing.value = false;
+      peopleImportController = null;
+      return false;
+    }
+
+    const form = new FormData();
+    form.append("file", file);
+    peopleImportPreviewing.value = true;
+    try {
+      const preview = await deps.request<PeopleImportPreview>("/people/import/preview/", {
+        method: "POST",
+        body: form,
+        signal: controller.signal,
+      });
+      if (requestId !== peopleImportRequestId.value || controller.signal.aborted) return false;
+      peopleImportPreview.value = normalizePeopleImportPreview(preview);
+      return true;
+    } catch (error) {
+      if (isAbortError(error) || requestId !== peopleImportRequestId.value) return false;
+      peopleImportError.value = errorMessage(error, tr("settings.peopleImportPreviewFailed"));
+      return false;
+    } finally {
+      if (requestId === peopleImportRequestId.value) {
+        peopleImportPreviewing.value = false;
+        if (peopleImportController === controller) peopleImportController = null;
+      }
+    }
+  }
+
+  async function commitPeopleImport(): Promise<boolean> {
+    if (!deps.can("settings.manage")) return false;
+    if (!peopleImportFile.value) {
+      peopleImportError.value = tr("settings.peopleImportNoFile");
+      return false;
+    }
+    if (!peopleImportPreview.value || peopleImportPreview.value.error > 0) {
+      peopleImportError.value = tr("settings.peopleImportNoValidPreview");
+      return false;
+    }
+    peopleImportController?.abort();
+    const controller = new AbortController();
+    peopleImportController = controller;
+    const requestId = ++peopleImportRequestId.value;
+    const form = new FormData();
+    form.append("file", peopleImportFile.value);
+    peopleImporting.value = true;
+    peopleImportError.value = "";
+    try {
+      const result = await deps.request<PeopleImportResult>("/people/import/", {
+        method: "POST",
+        body: form,
+        signal: controller.signal,
+      });
+      if (requestId !== peopleImportRequestId.value || controller.signal.aborted) return false;
+      const refreshed = await loadResponsibilityDirectory();
+      if (requestId !== peopleImportRequestId.value || controller.signal.aborted) return false;
+      closePeopleImport();
+      const message = tr("settings.peopleImportSuccess", {
+        created: result.created,
+        updated: result.updated,
+        unchanged: result.unchanged,
+      });
+      setActionMessage(
+        refreshed ? message : `${message}；${tr("settings.peopleImportSuccessRefreshFailed")}`,
+        refreshed ? "success" : "error",
+      );
+      return true;
+    } catch (error) {
+      if (isAbortError(error) || requestId !== peopleImportRequestId.value) return false;
+      const details = error instanceof ApiError ? error.details : null;
+      if (details && typeof details === "object" && "preview" in details) {
+        const latest = (details as { preview?: PeopleImportPreview }).preview;
+        if (latest) peopleImportPreview.value = normalizePeopleImportPreview(latest);
+      }
+      peopleImportError.value = errorMessage(error, tr("settings.peopleImportFailed"));
+      return false;
+    } finally {
+      if (requestId === peopleImportRequestId.value) {
+        peopleImporting.value = false;
+        if (peopleImportController === controller) peopleImportController = null;
+      }
+    }
+  }
+
+  async function downloadPeopleImportTemplate() {
+    if (!deps.can("settings.manage")) return;
+    try {
+      await deps.downloadFile("/people/import/template/", "infrix-people-import.xlsx");
+    } catch (error) {
+      peopleImportError.value = errorMessage(error, tr("settings.peopleImportTemplateFailed"));
+    }
   }
 
   function openResponsibilitySubjectModal(subject?: Person) {
@@ -1250,6 +1401,12 @@ export function useOrganizationSettings(deps: OrganizationSettingsDeps) {
     responsibilityDirectoryForm,
     editingResponsibilitySubject,
     showResponsibilitySubjectModal,
+    showPeopleImportModal,
+    peopleImportFile,
+    peopleImportPreview,
+    peopleImportPreviewing,
+    peopleImporting,
+    peopleImportError,
     loadResponsibilityDirectory,
     searchResponsibilityDirectory,
     retryResponsibilityDirectory,
@@ -1259,6 +1416,11 @@ export function useOrganizationSettings(deps: OrganizationSettingsDeps) {
     saveResponsibilitySubject,
     toggleResponsibilitySubject,
     deleteResponsibilitySubject,
+    openPeopleImport,
+    closePeopleImport,
+    previewPeopleImport,
+    commitPeopleImport,
+    downloadPeopleImportTemplate,
   };
 }
 

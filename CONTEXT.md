@@ -38,3 +38,11 @@ A physical placement may move atomically between mounted, direct data-center ass
 **Inventory correction**:
 The physical-placement change recorded when an inventory result identifies a location mismatch and an operator updates the asset record.
 _Avoid_: inventory fix
+
+## Asset lifecycle
+
+**Asset disposal**:
+The business fact recorded when a dedicated disposal action causes an asset to enter the retired state; it includes the event date, reason, method, operator snapshot, and optional notes.
+
+**Legacy retired asset**:
+An asset already stored as retired before disposal records were introduced. It may have no disposal fact and must be shown as historical, not as an uncompleted disposal.

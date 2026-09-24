@@ -2,7 +2,7 @@
 <script setup lang="ts">
 import { computed, ref, watch } from "vue";
 import { useI18n } from "vue-i18n";
-import { Edit, Grid } from "@element-plus/icons-vue";
+import { Delete, Edit, Grid } from "@element-plus/icons-vue";
 import AssetDetailContent from "./AssetDetailContent.vue";
 import AssetQrDialog from "./AssetQrDialog.vue";
 import type { AssetDetail } from "../types";
@@ -22,6 +22,7 @@ const props = defineProps<{
   loading: boolean;
   error: string;
   canEdit?: boolean;
+  canDispose?: boolean;
   retry?: () => void | Promise<void>;
   responsibilityContext?: AssetResponsibilityContext | null;
   responsibilityHistoryContext?: AssetResponsibilityHistoryContext | null;
@@ -42,6 +43,7 @@ const emit = defineEmits<{
   "update:modelValue": [value: boolean];
   closed: [];
   edit: [];
+  dispose: [];
 }>();
 
 const assetIdentityMeta = computed(() => {
@@ -94,6 +96,14 @@ const assetIdentityMeta = computed(() => {
             :icon="Edit"
             @click="emit('edit')"
             >{{ t("common.edit") }}</el-button
+          >
+          <el-button
+            v-if="canDispose && asset.status !== 'retired'"
+            text
+            type="danger"
+            :icon="Delete"
+            @click="emit('dispose')"
+            >{{ t("asset.disposeAsset") }}</el-button
           >
           <el-button
             text

@@ -336,6 +336,12 @@ function importErrorText(value: unknown): string {
   return String(value);
 }
 
+function importRequestErrorText(error: unknown, fallback: string): string {
+  const normalized = normalizeApiError(error);
+  const fieldMessage = Object.values(normalized.fieldErrors).flat().join("；");
+  return fieldMessage || normalized.nonFieldErrors.join("；") || normalized.message || fallback;
+}
+
 async function chooseImportFile(event: Event) {
   const selected = (event.target as HTMLInputElement).files?.[0] || null;
   if (!selected) return;
@@ -348,7 +354,7 @@ async function chooseImportFile(event: Event) {
   try {
     importPreview.value = await c.request<ModelImportPreview>("/asset-models/import/preview/", { method: "POST", body });
   } catch (previewError) {
-    importError.value = normalizeApiError(previewError).message || t("assetModel.previewFailed");
+    importError.value = importRequestErrorText(previewError, t("assetModel.previewFailed"));
   } finally {
     importPreviewing.value = false;
     if (importFileInput.value) importFileInput.value.value = "";
@@ -367,7 +373,7 @@ async function confirmImport() {
     ElMessage.success(t("assetModel.importSuccess", { count: result.created }));
     await loadModels();
   } catch (commitError) {
-    importError.value = normalizeApiError(commitError).message || t("assetModel.importFailed");
+    importError.value = importRequestErrorText(commitError, t("assetModel.importFailed"));
   } finally {
     importing.value = false;
   }

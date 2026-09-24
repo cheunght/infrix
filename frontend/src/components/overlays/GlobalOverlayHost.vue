@@ -8,6 +8,7 @@ import type { useFacilities } from "../../composables/useFacilities";
 import type { useLicenses } from "../../composables/useLicenses";
 import type { useRepairs } from "../../composables/useRepairs";
 import AssetDetailDrawer from "../AssetDetailDrawer.vue";
+import AssetDisposalDialog from "../AssetDisposalDialog.vue";
 import AttachmentSection from "../AttachmentSection.vue";
 import AssetFormDialog from "../AssetFormDialog.vue";
 import AccountSecurityPanel from "../AccountSecurityPanel.vue";
@@ -143,6 +144,11 @@ const {
   importErrorText,
   openAssetEditor,
   retryAssetDetail,
+  assetDisposalSaving,
+  assetDisposalError,
+  assetDisposalFieldErrors,
+  disposeAsset,
+  clearAssetDisposalErrors,
 } = props.assets;
 
 const {
@@ -599,6 +605,7 @@ const dataCenterFormRef = ref<FormInstance>();
 const roomFormRef = ref<FormInstance>();
 const passwordFormRef = ref<FormInstance>();
 const profileFormRef = ref<FormInstance>();
+const showAssetDisposalDialog = ref(false);
 
 const dataCenterFormRules = computed<FormRules>(() => ({
   name: [
@@ -684,6 +691,21 @@ async function submitProfile() {
 }
 
 const canEditAsset = computed(() => props.assetContext.can("assets.manage"));
+
+const canDisposeAsset = computed(() => canEditAsset.value && detailAsset.value?.status !== "retired");
+
+function openAssetDisposalDialog() {
+  if (!detailAsset.value || !canDisposeAsset.value) return;
+  clearAssetDisposalErrors();
+  showAssetDisposalDialog.value = true;
+}
+
+async function submitAssetDisposal(payload: import("../../types").AssetDisposalInput) {
+  const assetId = detailAsset.value?.id;
+  if (!assetId) return;
+  const completed = await disposeAsset(assetId, payload);
+  if (completed) showAssetDisposalDialog.value = false;
+}
 
 function editCurrentAsset() {
   const assetId = detailAsset.value?.id;
@@ -1381,6 +1403,7 @@ function mapUnlinkedPerson(item: Record<string, unknown>): SearchableSelectOptio
     :loading="detailLoading"
     :error="detailError"
     :can-edit="canEditAsset"
+    :can-dispose="canDisposeAsset"
     :retry="retryAssetDetail"
     :responsibility-context="assetResponsibilityContext"
     :responsibility-history-context="assetResponsibilityContext"
@@ -1388,6 +1411,15 @@ function mapUnlinkedPerson(item: Record<string, unknown>): SearchableSelectOptio
     :audit-history-context="assets"
     :attachment-context="assetAttachmentContext"
     @edit="editCurrentAsset"
+    @dispose="openAssetDisposalDialog"
     @closed="detailAsset = null"
+  />
+  <AssetDisposalDialog
+    v-model="showAssetDisposalDialog"
+    :asset="detailAsset"
+    :saving="assetDisposalSaving"
+    :error="assetDisposalError"
+    :field-errors="assetDisposalFieldErrors"
+    @submit="submitAssetDisposal"
   />
 </template>

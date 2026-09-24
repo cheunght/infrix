@@ -10,8 +10,9 @@ import type {
   AssetBatchAssignmentResponse,
   AssetBatchDeleteResponse,
   AssetDetail,
+  AssetDisposalInput,
   AssetAssignmentEvent,
-  AuditLog,
+  AssetTimelineEvent,
   PersonOption,
   AssetStatus,
   AssetCustomFieldValue,
@@ -52,6 +53,7 @@ const tr = (key: string, params?: Record<string, unknown>): string =>
   String(params ? i18n.global.t(key, params) : i18n.global.t(key));
 
 const RESPONSIBILITY_ACTION_FIELDS = ["target_person", "reason"] as const;
+const ASSET_DISPOSAL_FIELDS = ["disposed_on", "reason", "method", "notes"] as const;
 
 export type StaticAssetColumnKey =
   | "asset_no"
@@ -379,6 +381,9 @@ function normalizeVisibleColumns(keys: AssetColumnKey[], dynamicKeys?: Set<strin
 }
 
 function emptyAssetForm(defaultStatus = systemSettingsState.defaultAssetStatus): AssetFormState {
+  const safeDefaultStatus = defaultStatus === "retired" || defaultStatus === "repair"
+    ? "in_stock"
+    : defaultStatus;
   return {
     asset_no: "",
     name: "",
@@ -391,7 +396,7 @@ function emptyAssetForm(defaultStatus = systemSettingsState.defaultAssetStatus):
     purpose: "",
     assigned_person: "",
     assignment_reason: "",
-    status: defaultStatus,
+    status: safeDefaultStatus,
     notes: "",
     rack_mounted: false,
     asset_data_center: "",
@@ -581,12 +586,12 @@ export function useAssets(deps: AssetsDeps) {
     );
     const values = (definition?.options || [])
       .map((option) => String(option.value))
-      .filter((value): value is AssetStatus => isAssetStatus(value) && value !== "repair");
+      .filter((value): value is AssetStatus => isAssetStatus(value) && value !== "repair" && value !== "retired");
     return new Set(
       values.length
         ? values
         : ASSET_STATUS_OPTIONS
-            .filter((option) => option.value !== "repair")
+            .filter((option) => option.value !== "repair" && option.value !== "retired")
             .map((option) => option.value),
     );
   });
@@ -717,10 +722,13 @@ export function useAssets(deps: AssetsDeps) {
   const detailRequestId = ref(0);
   let detailController: AbortController | null = null;
   const detailAssetId = ref<number | null>(null);
-  const assetAuditItems = ref<AuditLog[]>([]);
+  const assetAuditItems = ref<AssetTimelineEvent[]>([]);
   const assetAuditLoading = ref(false);
   const assetAuditError = ref("");
   const assetAuditCanView = ref(false);
+  const assetAuditPage = ref(1);
+  const assetAuditPageSize = ref(systemSettingsState.defaultPageSize);
+  const assetAuditTotal = ref(0);
   const assetAuditRequestId = ref(0);
   let assetAuditController: AbortController | null = null;
   const inventoryHistoryItems = ref<InventoryItem[]>([]);
@@ -755,6 +763,9 @@ export function useAssets(deps: AssetsDeps) {
   const responsibilityActionSaving = ref(false);
   const responsibilityActionError = ref("");
   const responsibilityActionFieldErrors = ref<Record<string, string>>({});
+  const assetDisposalSaving = ref(false);
+  const assetDisposalError = ref("");
+  const assetDisposalFieldErrors = ref<Record<string, string>>({});
 
   const assetDynamicColumnOptions = computed<AssetColumnOption[]>(() =>
     assetListCustomFieldSchema.value.map((field) => ({
@@ -1319,13 +1330,18 @@ export function useAssets(deps: AssetsDeps) {
     assetAuditController = null;
     assetAuditRequestId.value += 1;
     assetAuditItems.value = [];
+    assetAuditPage.value = 1;
+    assetAuditTotal.value = 0;
     assetAuditLoading.value = false;
     assetAuditError.value = "";
     assetAuditCanView.value = false;
   }
 
-  async function loadAssetAudit(assetId: number): Promise<boolean> {
-    if (!deps.can("audit.view")) {
+  async function loadAssetAudit(
+    assetId: number,
+    requestedPage = assetAuditPage.value,
+  ): Promise<boolean> {
+    if (!deps.can("assets.view")) {
       assetAuditCanView.value = false;
       return true;
     }
@@ -1335,18 +1351,17 @@ export function useAssets(deps: AssetsDeps) {
     const controller = new AbortController();
     assetAuditController = controller;
     const requestId = ++assetAuditRequestId.value;
+    const pageNumber = Math.max(1, Math.trunc(requestedPage || 1));
     assetAuditLoading.value = true;
     assetAuditError.value = "";
     const params = new URLSearchParams({
-      resource_type: "asset",
-      resource_id: String(assetId),
-      page: "1",
-      page_size: "20",
+      page: String(pageNumber),
+      page_size: String(assetAuditPageSize.value),
     });
 
     try {
-      const payload = await deps.request<PageResult<AuditLog> | AuditLog[]>(
-        `/audit-logs/?${params.toString()}`,
+      const payload = await deps.request<PageResult<AssetTimelineEvent> | AssetTimelineEvent[]>(
+        `/assets/${assetId}/timeline/?${params.toString()}`,
         { signal: controller.signal },
       );
       if (
@@ -1355,6 +1370,8 @@ export function useAssets(deps: AssetsDeps) {
         controller.signal.aborted
       ) return false;
       assetAuditItems.value = pageItems(payload);
+      assetAuditPage.value = pageNumber;
+      assetAuditTotal.value = pageTotal(payload);
       return true;
     } catch (error) {
       if (
@@ -1364,7 +1381,7 @@ export function useAssets(deps: AssetsDeps) {
       ) {
         const normalized = normalizeApiError(error);
         assetAuditError.value = normalized.kind === "unknown"
-          ? tr("asset.auditHistoryLoadFailed")
+          ? tr("asset.timelineLoadFailed")
           : normalized.message;
       }
       return false;
@@ -1670,6 +1687,60 @@ export function useAssets(deps: AssetsDeps) {
     );
   }
 
+  async function disposeAsset(assetId: number, payload: AssetDisposalInput): Promise<boolean> {
+    if (!deps.can("assets.manage") || assetDisposalSaving.value) return false;
+    assetDisposalSaving.value = true;
+    assetDisposalError.value = "";
+    assetDisposalFieldErrors.value = {};
+    try {
+      await deps.request<AssetDetail>(`/assets/${assetId}/dispose/`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+      });
+      const listRefreshed = await loadAssets();
+      let detailRefreshed = true;
+      let historyRefreshed = true;
+      if (deps.showAssetDetail.value && detailAssetId.value === assetId) {
+        await openAssetDetail(assetId);
+        detailRefreshed = !deps.detailError.value;
+        historyRefreshed = !assetAuditError.value;
+      }
+      const refreshFailed = !(listRefreshed && detailRefreshed && historyRefreshed);
+      setActionMessage(
+        refreshFailed
+          ? `${tr("asset.disposalSaved")}；${tr("common.refreshFailed")}，${tr("common.retry")}`
+          : tr("asset.disposalSaved"),
+        refreshFailed ? "error" : "success",
+      );
+      return true;
+    } catch (error) {
+      if (!isAbortError(error)) {
+        const normalized = normalizeApiError(error);
+        assetDisposalFieldErrors.value = fieldErrorsToText(
+          normalized.fieldErrors,
+          ASSET_DISPOSAL_FIELDS,
+        );
+        const hasUnknownField = Object.keys(normalized.fieldErrors).some(
+          (field) => !ASSET_DISPOSAL_FIELDS.includes(field as typeof ASSET_DISPOSAL_FIELDS[number]),
+        );
+        assetDisposalError.value = normalized.kind === "field-validation" && !hasUnknownField
+          ? ""
+          : normalized.kind === "unknown"
+            ? tr("asset.disposalFailed")
+            : normalized.message;
+      }
+      return false;
+    } finally {
+      assetDisposalSaving.value = false;
+    }
+  }
+
+  function clearAssetDisposalErrors() {
+    assetDisposalError.value = "";
+    assetDisposalFieldErrors.value = {};
+  }
+
   async function openAssetDetail(assetId: number) {
     if (!deps.can("assets.view")) return;
     // Asset details can be opened by a QR deep link while the routed page is
@@ -1721,8 +1792,20 @@ export function useAssets(deps: AssetsDeps) {
 
   async function retryAssetAudit() {
     if (detailAssetId.value && assetAuditCanView.value) {
-      await loadAssetAudit(detailAssetId.value);
+      await loadAssetAudit(detailAssetId.value, assetAuditPage.value);
     }
+  }
+
+  async function changeAssetAuditPage(pageNumber: number) {
+    if (!detailAssetId.value || !assetAuditCanView.value) return;
+    await loadAssetAudit(detailAssetId.value, pageNumber);
+  }
+
+  async function changeAssetAuditPageSize(size: number) {
+    if (!detailAssetId.value || !assetAuditCanView.value) return;
+    if (![20, 50, 100].includes(size)) return;
+    assetAuditPageSize.value = size;
+    await loadAssetAudit(detailAssetId.value, 1);
   }
 
   async function retryInventoryHistory() {
@@ -2957,7 +3040,12 @@ export function useAssets(deps: AssetsDeps) {
     assetAuditLoading,
     assetAuditError,
     assetAuditCanView,
+    assetAuditPage,
+    assetAuditPageSize,
+    assetAuditTotal,
     retryAssetAudit,
+    changeAssetAuditPage,
+    changeAssetAuditPageSize,
     inventoryHistoryItems,
     inventoryHistoryLatest,
     inventoryHistoryPage,
@@ -2992,5 +3080,10 @@ export function useAssets(deps: AssetsDeps) {
     assignAsset,
     returnAsset,
     transferAsset,
+    assetDisposalSaving,
+    assetDisposalError,
+    assetDisposalFieldErrors,
+    disposeAsset,
+    clearAssetDisposalErrors,
   };
 }

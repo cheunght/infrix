@@ -284,6 +284,12 @@ const scopePreviewWarnings = computed(() => {
   if (preview.inactive_location > 0) {
     warnings.push(t("inventory.inactiveLocationWarning", { count: preview.inactive_location }));
   }
+  if (preview.total > preview.max_assets) {
+    warnings.push(t("inventory.scopeLimitExceeded", {
+      count: preview.total,
+      limit: preview.max_assets,
+    }));
+  }
   return Array.from(new Set(warnings));
 });
 
@@ -915,6 +921,7 @@ onMounted(async () => {
           <template v-else-if="scopePreview">
             <div class="inventory-scope-preview__scope">{{ scopePreviewLabel(scopePreview) }}</div>
             <div class="inventory-scope-preview__total"><strong>{{ scopePreview.total }}</strong><span>{{ t('inventory.rangeAssets') }}</span></div>
+            <p class="inventory-scope-preview__help">{{ t('inventory.maxAssetsPerTask', { count: scopePreview.max_assets }) }}</p>
             <div class="inventory-scope-preview__stats">
               <span>{{ t('inventory.mounted') }}<strong>{{ scopePreview.racked }}</strong></span>
               <span>{{ t('inventory.unmounted') }}<strong>{{ scopePreview.unracked }}</strong></span>
@@ -940,7 +947,7 @@ onMounted(async () => {
           <el-form-item :label="t('common.notes')" :error="taskFormErrors.notes"><el-input v-model="taskForm.notes" type="textarea" :rows="3" /></el-form-item>
         </div>
       </el-form>
-      <template #footer><el-button :disabled="taskCreating" @click="closeTaskDialog">{{ t('common.cancel') }}</el-button><el-button type="primary" :loading="taskCreating" :disabled="taskCreating || scopePreviewLoading || Boolean(scopePreviewError) || !scopePreview || scopePreview.total <= 0" @click="submitTask">{{ t('common.create') }}</el-button></template>
+      <template #footer><el-button :disabled="taskCreating" @click="closeTaskDialog">{{ t('common.cancel') }}</el-button><el-button type="primary" :loading="taskCreating" :disabled="taskCreating || scopePreviewLoading || Boolean(scopePreviewError) || !scopePreview || scopePreview.total <= 0 || scopePreview.total > scopePreview.max_assets" @click="submitTask">{{ t('common.create') }}</el-button></template>
     </FormDialogShell>
 
     <ActionDialogShell

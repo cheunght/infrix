@@ -12,6 +12,7 @@ from django.utils import timezone
 
 from .models import (
     Asset,
+    AssetDisposal,
     AssetCustomValue,
     AssetNetworkAddress,
     AssetAssignmentEvent,
@@ -59,9 +60,11 @@ class CustomFieldConflictError(Exception):
 from .lifecycle import (
     ASSET_REPAIR_RESTORE_STATUS_VALUES,
     transition_asset_status,
+    transition_asset_to_retired,
 )
 from .physical_location import lock_asset_location, place_asset, unrack_asset
 from .organization_access import can
+from .runtime_clock import system_localdate
 
 
 def _value(data, key):
@@ -687,6 +690,102 @@ def transfer_asset(*, asset_id, target_person_id, actor, request, reason="", bat
         batch_operation_id=batch_operation_id,
     )
 
+
+def _disposal_error(code, message):
+    raise DRFValidationError({"code": code, "detail": message})
+
+
+def _validation_message(exc):
+    message_dict = getattr(exc, "message_dict", None)
+    return "；".join(
+        str(value)
+        for values in (message_dict or {"status": exc.messages}).values()
+        for value in (values if isinstance(values, (list, tuple)) else [values])
+    ) or "资产当前不能执行报废操作"
+
+
+@transaction.atomic
+def dispose_asset(
+    *,
+    asset_id,
+    disposed_on,
+    reason,
+    method,
+    notes="",
+    actor=None,
+    request=None,
+):
+    """Retire one asset and record the immutable disposal fact atomically."""
+
+    from .audit import asset_audit_snapshot, write_audit_log
+
+    if disposed_on is None or disposed_on > system_localdate():
+        _disposal_error("invalid_disposed_on", "处置日期不能晚于今天")
+    reason = str(reason or "").strip()
+    method = str(method or "").strip()
+    notes = str(notes or "").strip()
+    if not reason:
+        _disposal_error("disposal_reason_required", "报废原因不能为空")
+    if not method:
+        _disposal_error("disposal_method_required", "处置方式不能为空")
+
+    lock_asset_location(asset_id=asset_id)
+    try:
+        asset = Asset.objects.select_for_update().select_related("assigned_person").get(pk=asset_id)
+    except Asset.DoesNotExist as exc:
+        raise DRFValidationError({"code": "asset_not_found", "detail": "资产不存在"}) from exc
+
+    if asset.status == "retired":
+        _disposal_error("asset_already_disposed", "资产已报废，不能重复执行报废操作")
+    if AssetDisposal.objects.filter(asset_id=asset.pk).exists():
+        _disposal_error("asset_already_disposed", "资产已有报废记录，不能重复执行报废操作")
+
+    before = asset_audit_snapshot(asset.pk)
+    try:
+        changed = transition_asset_to_retired(asset)
+    except ValidationError as exc:
+        raise DRFValidationError({
+            "code": "asset_retirement_precondition_failed",
+            "detail": _validation_message(exc),
+        }) from exc
+    if not changed:
+        _disposal_error("asset_already_disposed", "资产已报废，不能重复执行报废操作")
+
+    asset.save(update_fields=["status", "updated_at"])
+    operator_name = _user_display_name(actor) or "系统"
+    disposal = AssetDisposal.objects.create(
+        asset=asset,
+        disposed_on=disposed_on,
+        reason=reason,
+        method=method,
+        operator=actor if getattr(actor, "is_authenticated", bool(actor)) else None,
+        operator_name=operator_name,
+        notes=notes,
+    )
+    after = asset_audit_snapshot(asset.pk)
+    disposal_snapshot = {
+        "disposed_on": disposal.disposed_on,
+        "reason": disposal.reason,
+        "method": disposal.method,
+        "operator_name": disposal.operator_name,
+        "notes": disposal.notes,
+    }
+    write_audit_log(
+        request,
+        action="dispose",
+        resource_type="asset",
+        resource_id=asset.pk,
+        before=before,
+        after=after,
+        extra={
+            "source": "asset_disposal",
+            "asset_disposal_id": disposal.pk,
+            "disposal": disposal_snapshot,
+        },
+    )
+    return asset, disposal
+
+
 @transaction.atomic
 def configure_asset(asset: Asset, data):
     """Apply rack, IP, procurement and maintenance details for an asset.
@@ -1282,6 +1381,7 @@ def create_repair_part_usage(*, fault_id, validated_data, operator, request):
             after=spare_stock_transaction_audit_snapshot(stock_transaction),
             extra={
                 "source": "repair_part_usage",
+                "asset_id": asset.pk,
                 "fault_id": fault.pk,
                 "repair_part_usage_id": usage.pk,
             },
@@ -1294,6 +1394,7 @@ def create_repair_part_usage(*, fault_id, validated_data, operator, request):
         after=repair_part_usage_audit_snapshot(usage),
         extra={
             "source": "repair_part_usage",
+            "asset_id": asset.pk,
             "fault_id": fault.pk,
             "stock_before_quantity": before_quantity,
             "stock_after_quantity": after_quantity,

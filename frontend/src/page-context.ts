@@ -20,6 +20,7 @@ import type {
   AssetSortOrder,
   AssetDetail,
   AssetAssignmentEvent,
+  AssetTimelineEvent,
   Person,
   CustomField,
   CustomFieldForm,
@@ -429,11 +430,16 @@ export interface AssetInventoryHistoryContext {
 }
 
 export interface AssetAuditHistoryContext {
-  assetAuditItems: Ref<import("./types").AuditLog[]>;
+  assetAuditItems: Ref<AssetTimelineEvent[]>;
   assetAuditLoading: Ref<boolean>;
   assetAuditError: Ref<string>;
   assetAuditCanView: Ref<boolean>;
+  assetAuditPage: Ref<number>;
+  assetAuditPageSize: Ref<number>;
+  assetAuditTotal: Ref<number>;
   retryAssetAudit: () => void | Promise<void>;
+  changeAssetAuditPage: (page: number) => void | Promise<void>;
+  changeAssetAuditPageSize: (size: number) => void | Promise<void>;
 }
 
 export interface RackInspectorContext extends AssetInventoryHistoryContext, AssetResponsibilityHistoryContext, AssetAuditHistoryContext {

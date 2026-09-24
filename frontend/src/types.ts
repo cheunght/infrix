@@ -378,6 +378,20 @@ export type CustomFieldForm = {
 };
 export type Tag = { id: number; name: string; is_active: boolean; assets_count?: number; created_at?: string; updated_at?: string };
 export type AssetCustomFieldValue = CustomFieldSchema & { value: string | number | boolean | string[] | null };
+export type AssetDisposal = {
+  disposed_on: string;
+  reason: string;
+  method: string;
+  operator_name: string;
+  notes: string;
+  created_at: string;
+};
+export type AssetDisposalInput = {
+  disposed_on: string;
+  reason: string;
+  method: string;
+  notes?: string;
+};
 export type DataCenter = {
   id: number;
   name: string;
@@ -596,6 +610,40 @@ export type PersonOption = Pick<
   Person,
   "id" | "name" | "display_name" | "employee_no" | "department" | "department_name" | "email" | "account_email" | "notification_email" | "is_active"
 >;
+export type PeopleImportRowError = {
+  field: string;
+  label: string;
+  message: string;
+};
+export type PeopleImportRow = {
+  line: number;
+  employee_no: string;
+  name: string;
+  department: string;
+  operation: "create" | "update" | "unchanged" | "error" | string;
+  valid: boolean;
+  changes: string[];
+  errors: PeopleImportRowError[];
+};
+export type PeopleImportPreview = {
+  filename: string;
+  total: number;
+  create: number;
+  update: number;
+  unchanged: number;
+  error: number;
+  valid: number;
+  invalid: number;
+  ignored_columns: string[];
+  rows: PeopleImportRow[];
+};
+export type PeopleImportResult = {
+  created: number;
+  updated: number;
+  unchanged: number;
+  total: number;
+  errors: unknown[];
+};
 export type PersonFormState = {
   name: string;
   employee_no: string;
@@ -674,6 +722,8 @@ export type Asset = {
   tags?: Array<{ id: number; name: string; is_active: boolean }>;
   custom_values?: Record<string, unknown>;
   custom_fields?: AssetCustomFieldValue[];
+  disposal?: AssetDisposal | null;
+  disposal_status?: "not_applicable" | "recorded" | "legacy";
 };
 export type AssetDetail = Asset & {
   allowed_statuses: AssetStatus[];
@@ -690,6 +740,8 @@ export type AssetDetail = Asset & {
   custom_fields: AssetCustomFieldValue[];
   custom_values: Record<string, unknown>;
   depreciation: DepreciationInfo;
+  disposal: AssetDisposal | null;
+  disposal_status: "not_applicable" | "recorded" | "legacy";
 };
 export type AssetBatchDeleteResult = {
   id: number;
@@ -882,6 +934,7 @@ export type InventoryScopePreview = {
   server_room: InventoryScopeLocation | null;
   scope_label: string;
   total: number;
+  max_assets: number;
   racked: number;
   unracked: number;
   retired: number;
@@ -1105,6 +1158,29 @@ export type LdapDiagnosticResult = {
   message?: string;
 };
 export type AuditLog = { id: number; actor_username: string | null; actor_display_name: string; action: string; resource_type: string; resource_id: string; payload: Record<string, unknown>; created_at: string };
+export type AssetTimelineEventType = "created" | "updated" | "lifecycle" | "placement" | "assignment" | "maintenance" | "inventory" | "attachment" | "other";
+export type AssetTimelineActor = {
+  id: number;
+  username: string | null;
+  display_name: string | null;
+} | null;
+export type AssetTimelineChange = {
+  field: string;
+  label: string | null;
+  before: unknown;
+  after: unknown;
+};
+export type AssetTimelineEvent = {
+  id: number;
+  timestamp: string;
+  event_type: AssetTimelineEventType;
+  action: string;
+  title: string;
+  summary: string;
+  actor: AssetTimelineActor;
+  changes: AssetTimelineChange[];
+  metadata: Record<string, unknown>;
+};
 export type SoftwareLicense = { id: number; name: string; manufacturer: Manufacturer | null; license_type: string; authorized_count: number; used_count: number; utilization: number; remaining_count: number; expiry_date: string | null; status: LicenseStatus; status_label: string; days_remaining: number | null; notes: string };
 export type SparePart = {
   id: number;

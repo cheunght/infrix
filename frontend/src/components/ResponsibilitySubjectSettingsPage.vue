@@ -3,6 +3,7 @@ import { computed } from "vue";
 import { useI18n } from "vue-i18n";
 import { CircleCheck, CircleClose, Delete, Edit } from "@element-plus/icons-vue";
 import PagedTable from "./PagedTable.vue";
+import PeopleImportDialog from "./PeopleImportDialog.vue";
 import StatusTag from "./StatusTag.vue";
 import TableIconButton from "./TableIconButton.vue";
 import SearchableSelect, { type SearchableSelectOption } from "./SearchableSelect.vue";
@@ -28,6 +29,12 @@ const {
   responsibilityDirectoryForm: form,
   editingResponsibilitySubject: editingSubject,
   showResponsibilitySubjectModal: showModal,
+  showPeopleImportModal: showPeopleImport,
+  peopleImportFile: importFile,
+  peopleImportPreview: importPreview,
+  peopleImportPreviewing: importPreviewing,
+  peopleImporting: importing,
+  peopleImportError: importError,
   searchResponsibilityDirectory: searchDirectory,
   retryResponsibilityDirectory: retryDirectory,
   changeResponsibilityDirectoryPage: changePage,
@@ -36,6 +43,11 @@ const {
   saveResponsibilitySubject: saveSubject,
   toggleResponsibilitySubject: toggleSubject,
   deleteResponsibilitySubject: deleteSubject,
+  openPeopleImport,
+  closePeopleImport,
+  previewPeopleImport,
+  commitPeopleImport,
+  downloadPeopleImportTemplate,
   departmentOptions,
 } = props.organization;
 
@@ -200,6 +212,19 @@ function clearFilters() {
         </div>
       </el-form>
     </el-dialog>
+
+    <PeopleImportDialog
+      v-model="showPeopleImport"
+      :file="importFile"
+      :preview="importPreview"
+      :previewing="importPreviewing"
+      :importing="importing"
+      :error="importError"
+      @close="closePeopleImport"
+      @select="previewPeopleImport"
+      @commit="commitPeopleImport"
+      @download-template="downloadPeopleImportTemplate"
+    />
   </div>
 </template>
 

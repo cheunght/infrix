@@ -66,6 +66,8 @@ export type ElementPlusComponentName =
   | "ElTableColumn"
   | "ElTabs"
   | "ElTag"
+  | "ElTimeline"
+  | "ElTimelineItem"
   | "ElText"
   | "ElTooltip"
   | "ElUpload";
@@ -125,6 +127,8 @@ const componentLoaders: Partial<Record<ElementPlusComponentName, () => Promise<C
   ElTableColumn: () => import("element-plus/es/components/table/index.mjs").then((module) => module.ElTableColumn),
   ElTabs: () => import("element-plus/es/components/tabs/index.mjs").then((module) => module.ElTabs),
   ElTag: () => import("element-plus/es/components/tag/index.mjs").then((module) => module.ElTag),
+  ElTimeline: () => import("element-plus/es/components/timeline/index.mjs").then((module) => module.ElTimeline),
+  ElTimelineItem: () => import("element-plus/es/components/timeline/index.mjs").then((module) => module.ElTimelineItem),
   ElText: () => import("element-plus/es/components/text/index.mjs").then((module) => module.ElText),
   ElUpload: () => import("element-plus/es/components/upload/index.mjs").then((module) => module.ElUpload),
 };

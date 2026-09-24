@@ -19,7 +19,12 @@ from django.utils import timezone as django_timezone
 
 from .audit import write_audit_log
 from .configuration_secrets import encrypt_secret
-from .models import DirectoryIdentity, SystemSetting, UserSecurityProfile
+from .models import (
+    DEFAULT_ASSET_STATUS_CHOICES,
+    DirectoryIdentity,
+    SystemSetting,
+    UserSecurityProfile,
+)
 from .runtime_clock import system_timezone_name
 
 
@@ -393,6 +398,12 @@ def _values(setting, keys: tuple[str, ...]) -> dict[str, Any]:
 def get_runtime_preferences(setting: SystemSettingsData | SystemSetting | None = None) -> RuntimePreferences:
     setting = setting or read_system_settings()
     values = _values(setting, GENERAL_SETTING_KEYS)
+    # ``retired`` was historically a selectable default.  Keep the stored
+    # value visible to administrators so it is not silently rewritten, but do
+    # not let it create a new asset through a legacy runtime setting.
+    allowed_default_statuses = {value for value, _label in DEFAULT_ASSET_STATUS_CHOICES}
+    if values["default_asset_status"] not in allowed_default_statuses:
+        values["default_asset_status"] = "in_stock"
     return RuntimePreferences(**values)
 
 
@@ -477,7 +488,16 @@ def _validate_candidate_values(
     *,
     smtp_password: str,
     current: SystemSetting,
+    submitted: Mapping[str, Any] | None = None,
 ) -> None:
+    if submitted and "default_asset_status" in submitted:
+        allowed_default_statuses = {value for value, _label in DEFAULT_ASSET_STATUS_CHOICES}
+        if submitted["default_asset_status"] not in allowed_default_statuses:
+            raise SystemSettingsValidationError({
+                "general": {
+                    "default_asset_status": ["新资产默认状态不能设置为已报废"],
+                },
+            })
     people = values.get("email_digest_people") or []
     recipients = values.get("email_digest_recipients") or []
     if len(people) + len(recipients) > 20:
@@ -537,7 +557,12 @@ def apply_system_settings_patch(
         values, smtp_password = _flatten_system_settings_patch(patch)
         candidate = {key: getattr(setting, key) for key in PUBLIC_SETTING_KEYS}
         candidate.update(values)
-        _validate_candidate_values(candidate, smtp_password=smtp_password, current=setting)
+        _validate_candidate_values(
+            candidate,
+            smtp_password=smtp_password,
+            current=setting,
+            submitted=values,
+        )
         changed_fields = [
             key for key in values
             if getattr(setting, key) != values[key]

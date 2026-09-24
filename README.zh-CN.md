@@ -20,6 +20,17 @@ sudo bash deploy/install.sh
 
 首次安装时，安装器会询问访问地址、数据库方式和 HTTPS 方式，自动保存生产配置，并在终端引导创建首个管理员。已有部署再次执行同一命令时，会复用原配置并执行原地升级。
 
+## 后端回归测试
+
+在 repository 根目录执行：
+
+```bash
+bash backend/test.sh
+```
+
+该入口会先进入 `backend/`，再调用 Django 原生测试发现；如果 runner 报告
+`0 tests`，命令会失败，不会把它当作测试通过。
+
 使用包含预构建前端的发布包：
 
 ```bash

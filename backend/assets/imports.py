@@ -45,7 +45,7 @@ IMPORT_COLUMNS = (
     ("model_text", "历史型号文本", False, "未填写标准型号时可选；用于无法匹配型号目录的历史资产。"),
     ("serial_number", "序列号", False, "留空表示没有序列号；序列号不能与其他资产重复。"),
     ("purpose", "用途", False, "资产用途。"),
-    ("status", "状态", False, "可填 in_stock、in_use、idle、retired，或对应显示值在库、在用、闲置、已报废；维修中由故障流程维护。"),
+    ("status", "状态", False, "可填 in_stock、in_use、idle，或对应显示值在库、在用、闲置；已报废必须通过资产报废操作，维修中由故障流程维护。"),
     ("assigned_person_employee_no", "使用人员工编号", False, "优先按员工编号匹配启用人员；不能自动创建人员。"),
     ("assigned_person_name", "使用人姓名", False, "没有员工编号时必填，并结合使用人所属部门匹配；没有部门时姓名必须唯一。"),
     ("assigned_person_department", "使用人部门", False, "用于匹配人员资料，不代表资产归属部门；填写时必须与人员所属部门一致。"),
@@ -806,7 +806,7 @@ def build_import_template():
             custom_description += f" 在以下字段集中必填：{required_scope}。"
         guide.append([f"custom__{field.key}", field.name, "按字段集", custom_description])
     guide.append([])
-    guide.append(["状态合法值", "可填 in_stock、in_use、idle、retired，或对应显示值：在库、在用、闲置、已报废；维修中仍只能由故障流程设置。"])
+    guide.append(["状态合法值", "可填 in_stock、in_use、idle，或对应显示值：在库、在用、闲置；已报废必须通过资产报废操作，维修中仍只能由故障流程设置。"])
     guide.append(["日期格式", "Excel 日期单元格或 YYYY-MM-DD；不接受模糊日期。"])
     guide.append(["机柜位置", "数据中心 + 机房 + 机柜编号 + 起始 U + 结束 U 必须同时填写；位置按真实层级匹配并复用现有 U 位冲突校验。"])
     guide.append(["标签", "多个标签用英文分号、中文分号或逗号分隔；不存在或停用标签会阻止整批导入。"])

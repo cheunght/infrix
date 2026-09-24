@@ -21,6 +21,7 @@ from .ldap_configuration import (
     EffectiveLDAPConfiguration,
     configuration_errors,
     get_effective_ldap_configuration,
+    ldap_transport_policy_violation,
 )
 from .models import DirectoryIdentity, UserSecurityProfile
 
@@ -35,6 +36,7 @@ LDAP_MODEL_BACKEND = "django.contrib.auth.backends.ModelBackend"
 LDAP_DIAGNOSTIC_CODES = frozenset({
     "disabled",
     "configuration_error",
+    "insecure_transport",
     "connection_error",
     "timeout",
     "tls_error",
@@ -45,6 +47,7 @@ LDAP_DIAGNOSTIC_CODES = frozenset({
 LDAP_DIAGNOSTIC_MESSAGES = {
     "disabled": "LDAP 集成未启用",
     "configuration_error": "LDAP 配置不完整或不一致",
+    "insecure_transport": "生产环境不允许使用明文 LDAP 传输",
     "connection_error": "无法连接 LDAP 服务",
     "timeout": "LDAP 服务响应超时",
     "tls_error": "LDAP TLS 校验失败",
@@ -329,6 +332,8 @@ class LDAPDirectoryClient:
         config = configuration or self.configuration
         endpoint = endpoint or config.endpoints[0]
         _name, hostname, port = endpoint
+        if ldap_transport_policy_violation(config, runtime=True):
+            raise LDAPInfrastructureFailure("ldap_insecure_transport", retryable=False)
         if not hostname or port is None:
             raise LDAPInfrastructureFailure("ldap_connection_failure", retryable=True)
         if config.security_mode not in {"ldaps", "starttls", "none"}:
@@ -396,6 +401,8 @@ class LDAPDirectoryClient:
         config = configuration or self.configuration
         if not allow_disabled and not config.enabled:
             return "disabled"
+        if ldap_transport_policy_violation(config, runtime=True):
+            return "insecure_transport"
         return "configuration_error" if configuration_errors(config, require_password=True) else None
 
     def _diagnose_endpoint(
@@ -448,7 +455,10 @@ class LDAPDirectoryClient:
         except ssl.SSLError:
             return self._diagnostic_failure(stage, checks, "tls_error")
         except LDAPInfrastructureFailure as exc:
-            code = "tls_error" if exc.reason == "ldap_tls_failure" else "connection_error"
+            if exc.reason == "ldap_insecure_transport":
+                code = "insecure_transport"
+            else:
+                code = "tls_error" if exc.reason == "ldap_tls_failure" else "connection_error"
             return self._diagnostic_failure(stage, checks, code)
         except (LDAPException, OSError, ValueError):
             code_by_stage = {
@@ -637,6 +647,8 @@ class LDAPDirectoryClient:
             raise LDAPInfrastructureFailure("ldap_disabled")
         if not password:
             raise LDAPCredentialFailure()
+        if ldap_transport_policy_violation(configuration, runtime=True):
+            raise LDAPInfrastructureFailure("ldap_insecure_transport", retryable=False)
         if configuration_errors(configuration, require_password=True):
             raise LDAPInfrastructureFailure("ldap_configuration_error")
         attempts = configuration.endpoints

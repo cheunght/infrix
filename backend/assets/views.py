@@ -48,7 +48,7 @@ from .enum_contracts import (
     STOCK_OPERATION_TYPE_LABELS,
     STOCK_OPERATION_TYPE_VALUES,
 )
-from .serializers import AdminPasswordResetSerializer, ApiTokenCreateSerializer, ApiTokenSerializer, AssetAssignmentEventSerializer, AssetAssignmentReturnSerializer, AssetAssignmentTargetSerializer, AssetBatchAssignmentResponseSerializer, AssetBatchAssignmentSerializer, AssetBatchDeleteResponseSerializer, AssetBatchDeleteSerializer, AssetBulkEditResponseSerializer, AssetBulkEditSerializer, AssetDetailSerializer, AssetListSerializer, AssetModelOptionSerializer, AssetModelSerializer, AssetSerializer, AssetWriteSerializer, AttachmentSerializer, AuditLogSerializer, BackupConfirmationSerializer, CurrentUserProfileSerializer, CustomFieldOptionSerializer, CustomFieldRuntimeSchemaSerializer, CustomFieldSerializer, CustomFieldSetItemsWriteSerializer, CustomFieldSetOptionSerializer, CustomFieldSetSerializer, DataCenterOptionSerializer, DataCenterSerializer, DepartmentOptionSerializer, DepartmentSerializer, DeviceTypeOptionSerializer, DeviceTypeSerializer, DictionaryOptionSerializer, FaultEventSerializer, InventoryBulkNormalResponseSerializer, InventoryBulkNormalSerializer, InventoryBulkResolutionResponseSerializer, InventoryBulkResolutionSerializer, InventoryInspectorSerializer, InventoryItemPageSerializer, InventoryItemSerializer, InventoryResolutionSerializer, InventoryScopePreviewQuerySerializer, InventoryScopePreviewSerializer, InventoryTaskSerializer, LdapConfigurationUpdateSerializer, NotificationDeliverySerializer, PersonOptionSerializer, PersonSerializer, RackOptionSerializer, RackSerializer, RepairPartUsageCreateSerializer, RepairPartUsageSerializer, RepairRecordSerializer, ServerRoomOptionSerializer, ServerRoomSerializer, SoftwareLicenseSerializer, SparePartDetailSerializer, SparePartOptionSerializer, SparePartSerializer, SpareStockOptionSerializer, SpareStockSerializer, SpareStockTransactionSerializer, SmtpTestEmailSerializer, SystemResetSerializer, SystemSettingsPatchSerializer, SystemSettingsSnapshotSerializer, TagOptionSerializer, TagSerializer, TwoFactorCodeSerializer, UserBatchStatusResponseSerializer, UserBatchStatusSerializer, UserSerializer, _default_references_option
+from .serializers import AdminPasswordResetSerializer, ApiTokenCreateSerializer, ApiTokenSerializer, AssetAssignmentEventSerializer, AssetAssignmentReturnSerializer, AssetAssignmentTargetSerializer, AssetBatchAssignmentResponseSerializer, AssetBatchAssignmentSerializer, AssetBatchDeleteResponseSerializer, AssetBatchDeleteSerializer, AssetBulkEditResponseSerializer, AssetBulkEditSerializer, AssetDetailSerializer, AssetDisposalRequestSerializer, AssetListSerializer, AssetModelOptionSerializer, AssetModelSerializer, AssetSerializer, AssetTimelineSerializer, AssetWriteSerializer, AttachmentSerializer, AuditLogSerializer, BackupConfirmationSerializer, CurrentUserProfileSerializer, CustomFieldOptionSerializer, CustomFieldRuntimeSchemaSerializer, CustomFieldSerializer, CustomFieldSetItemsWriteSerializer, CustomFieldSetOptionSerializer, CustomFieldSetSerializer, DataCenterOptionSerializer, DataCenterSerializer, DepartmentOptionSerializer, DepartmentSerializer, DeviceTypeOptionSerializer, DeviceTypeSerializer, DictionaryOptionSerializer, FaultEventSerializer, InventoryBulkNormalResponseSerializer, InventoryBulkNormalSerializer, InventoryBulkResolutionResponseSerializer, InventoryBulkResolutionSerializer, InventoryInspectorSerializer, InventoryItemPageSerializer, InventoryItemSerializer, InventoryResolutionSerializer, InventoryScopePreviewQuerySerializer, InventoryScopePreviewSerializer, InventoryTaskSerializer, LdapConfigurationUpdateSerializer, NotificationDeliverySerializer, PersonOptionSerializer, PersonSerializer, RackOptionSerializer, RackSerializer, RepairPartUsageCreateSerializer, RepairPartUsageSerializer, RepairRecordSerializer, ServerRoomOptionSerializer, ServerRoomSerializer, SoftwareLicenseSerializer, SparePartDetailSerializer, SparePartOptionSerializer, SparePartSerializer, SpareStockOptionSerializer, SpareStockSerializer, SpareStockTransactionSerializer, SmtpTestEmailSerializer, SystemResetSerializer, SystemSettingsPatchSerializer, SystemSettingsSnapshotSerializer, TagOptionSerializer, TagSerializer, TwoFactorCodeSerializer, UserBatchStatusResponseSerializer, UserBatchStatusSerializer, UserSerializer, _default_references_option
 from .fieldsets import fieldset_items_queryset, replace_fieldset_items, resolve_fieldset
 from .services import (
     apply_spare_stock_transaction,
@@ -62,6 +62,7 @@ from .services import (
     sync_fault_completion,
     sync_repair_completion,
     assign_asset,
+    dispose_asset,
     return_asset,
     transfer_asset,
 )
@@ -76,8 +77,10 @@ from .inventory import get_inventory_scope_assets
 from .depreciation import calculate_asset_depreciation
 from .license_status import LICENSE_STATUS_KEYS, LICENSE_STATUS_LABELS, filter_licenses_by_status, license_status_counts, license_status_value
 from .audit import asset_audit_snapshot, asset_custom_value_changes, json_value, model_snapshot, software_license_audit_snapshot, spare_part_audit_snapshot, spare_stock_transaction_audit_snapshot, write_audit_log
+from .timeline import asset_timeline_queryset, serialize_timeline
 from .imports import AssetImportService, ImportFileError, ImportValidationError, build_import_template
 from .asset_model_imports import build_asset_model_import_template, commit_asset_model_import, preview_asset_model_import
+from .people_imports import build_people_import_template, commit_people_import, preview_people_import
 from .system_maintenance import (
     MaintenanceError,
     create_backup,
@@ -123,6 +126,7 @@ from .auth_throttle import (
     trusted_client_ip,
     two_factor_lock_status,
 )
+from .operation_limits import MAX_INVENTORY_TASK_ASSETS
 from .smtp import SmtpConfigurationError, send_smtp_test_email
 from .permissions import BusinessRolePermission, CanExportAssets, CanExportFaults, CanExportInventory, CanExportLicenses, CanExportRacks, CanExportSpares, CanImportAssets, CanManageInventory, CanManageSystemSettings, CanResetSystem, CanViewAssetCustomFieldSchema, CanViewAssetTagsRuntime, CanViewAuditLog, CanViewDashboard, CanViewDepartmentRuntime, CanViewInventory, CanViewLicenses, CanViewManufacturerRuntime, CanViewPeopleRuntime, CanViewSparePartCategoryRuntime, IsSystemAdministrator
 from .organization_access import (
@@ -374,6 +378,7 @@ class AuditedModelViewSetMixin:
     @transaction.atomic
     def perform_destroy(self, instance):
         before = self.audit_snapshot(instance)
+        extra = self.audit_extra(before, None, action="delete")
         resource_id = instance.pk
         instance.delete()
         write_audit_log(
@@ -382,6 +387,7 @@ class AuditedModelViewSetMixin:
             resource_type=self.audit_resource,
             resource_id=resource_id,
             before=before,
+            extra=extra,
         )
 
 
@@ -611,6 +617,7 @@ class AssetViewSet(AuditedModelViewSetMixin, viewsets.ModelViewSet):
         "network_addresses", "procurement_records", "maintenance_contracts", "asset_tags__tag",
         "custom_values__field__options", "asset_model__fieldset__items",
         "asset_model__device_type__default_fieldset__items", "standalone_device_type__default_fieldset__items",
+        "disposal",
     ).order_by("asset_no", "id")
     serializer_class = AssetSerializer
     permission_classes = [BusinessRolePermission]
@@ -965,6 +972,21 @@ class AssetViewSet(AuditedModelViewSetMixin, viewsets.ModelViewSet):
         return Response(serializer.data)
 
     @extend_schema(
+        responses=AssetTimelineSerializer(many=True),
+        description="按时间倒序分页返回单个资产的生命周期时间线。数据来自资产范围内的安全审计投影。",
+    )
+    @action(detail=True, methods=["get"], url_path="timeline")
+    def timeline(self, request, pk=None):
+        asset = self.get_object()
+        queryset = asset_timeline_queryset(asset.pk)
+        page = self.paginate_queryset(queryset)
+        rows = page if page is not None else queryset
+        serializer = AssetTimelineSerializer(serialize_timeline(rows), many=True)
+        if page is not None:
+            return self.get_paginated_response(serializer.data)
+        return Response(serializer.data)
+
+    @extend_schema(
         request=AssetAssignmentTargetSerializer,
         responses=AssetDetailSerializer,
         description="将当前未分配使用人的资产指定给一个启用人员。",
@@ -1016,6 +1038,28 @@ class AssetViewSet(AuditedModelViewSetMixin, viewsets.ModelViewSet):
             reason=serializer.validated_data.get("reason", ""),
         )
         return Response(AssetDetailSerializer(asset, context=self.get_serializer_context()).data)
+
+    @extend_schema(
+        request=AssetDisposalRequestSerializer,
+        responses=AssetDetailSerializer,
+        description="通过专用报废动作原子地记录处置事实并将资产置为已报废。",
+    )
+    @action(detail=True, methods=["post"], url_path="dispose")
+    def dispose(self, request, pk=None):
+        self.get_object()
+        serializer = AssetDisposalRequestSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        dispose_asset(
+            asset_id=pk,
+            disposed_on=serializer.validated_data["disposed_on"],
+            reason=serializer.validated_data["reason"],
+            method=serializer.validated_data["method"],
+            notes=serializer.validated_data.get("notes", ""),
+            actor=request.user,
+            request=request,
+        )
+        refreshed = self.get_queryset().get(pk=pk)
+        return Response(AssetDetailSerializer(refreshed, context=self.get_serializer_context()).data)
 
     def audit_snapshot(self, instance):
         return asset_audit_snapshot(instance.pk)
@@ -1496,6 +1540,7 @@ class AttachmentViewSet(viewsets.ModelViewSet):
                 resource_id=instance.pk,
                 before=before,
                 after=AttachmentSerializer(instance).data,
+                extra={"asset_id": instance.asset_id, "repair_id": instance.repair_id},
             )
         except Exception:
             if instance is not None and instance.file:
@@ -1517,6 +1562,7 @@ class AttachmentViewSet(viewsets.ModelViewSet):
             resource_type="attachment",
             resource_id=resource_id,
             before=before,
+            extra={"asset_id": instance.asset_id, "repair_id": instance.repair_id},
         )
 
 
@@ -2766,6 +2812,10 @@ class FaultEventViewSet(AuditedModelViewSetMixin, viewsets.ModelViewSet):
     permission_resource = "faults"
     audit_resource = "fault_event"
 
+    def audit_extra(self, before, after, *, action):
+        asset_id = (after or {}).get("asset") or (before or {}).get("asset")
+        return {"asset_id": asset_id, "source": "fault_event"} if asset_id else None
+
     def get_queryset(self):
         queryset = super().get_queryset()
         start = self.request.query_params.get("start")
@@ -2860,6 +2910,19 @@ class RepairRecordViewSet(AuditedModelViewSetMixin, viewsets.ModelViewSet):
     permission_resource = "faults"
     audit_resource = "repair_record"
 
+    def audit_extra(self, before, after, *, action):
+        fault_id = (after or {}).get("fault") or (before or {}).get("fault")
+        asset_id = (
+            FaultEvent.objects.filter(pk=fault_id).values_list("asset_id", flat=True).first()
+            if fault_id
+            else None
+        )
+        return {
+            "asset_id": asset_id,
+            "fault_id": fault_id,
+            "source": "repair_record",
+        } if asset_id else None
+
     @transaction.atomic
     def perform_create(self, serializer):
         super().perform_create(serializer)
@@ -2951,6 +3014,32 @@ def _inventory_snapshot(asset):
     }
 
 
+def _inventory_scope_limit_error(asset_count):
+    return DRFValidationError({
+        "detail": (
+            f"当前盘点范围包含 {asset_count} 台资产，"
+            f"单次盘点任务最多支持 {MAX_INVENTORY_TASK_ASSETS} 台，"
+            "请缩小盘点范围后重试。"
+        ),
+        "code": "inventory_scope_too_large",
+        "count": asset_count,
+        "max_assets": MAX_INVENTORY_TASK_ASSETS,
+    })
+
+
+def _materialize_inventory_assets_with_limit(data_center, server_room, scope):
+    """Count first, then materialize only a bounded candidate set."""
+    queryset = get_inventory_scope_assets(data_center, server_room, scope=scope)
+    asset_count = queryset.count()
+    if asset_count > MAX_INVENTORY_TASK_ASSETS:
+        raise _inventory_scope_limit_error(asset_count)
+
+    assets = list(queryset[:MAX_INVENTORY_TASK_ASSETS + 1])
+    if len(assets) > MAX_INVENTORY_TASK_ASSETS:
+        raise _inventory_scope_limit_error(max(asset_count, len(assets)))
+    return assets
+
+
 def _inventory_items_queryset(task, request):
     queryset = InventoryItem.objects.filter(task=task).select_related(
         "asset",
@@ -3002,12 +3091,19 @@ class InventoryTaskViewSet(AuditedModelViewSetMixin, viewsets.ModelViewSet):
 
     @transaction.atomic
     def perform_create(self, serializer):
+        assets = _materialize_inventory_assets_with_limit(
+            serializer.validated_data.get("data_center"),
+            serializer.validated_data.get("server_room"),
+            serializer.validated_data["scope"],
+        )
         task = serializer.save(inspector=serializer.validated_data.get("inspector") or self.request.user)
-        assets = get_inventory_scope_assets(task.data_center, task.server_room, scope=task.scope)
-        InventoryItem.objects.bulk_create([
-            InventoryItem(task=task, asset=asset, system_snapshot=_inventory_snapshot(asset))
-            for asset in assets
-        ])
+        InventoryItem.objects.bulk_create(
+            [
+                InventoryItem(task=task, asset=asset, system_snapshot=_inventory_snapshot(asset))
+                for asset in assets
+            ],
+            batch_size=500,
+        )
         write_audit_log(
             self.request,
             action="create",
@@ -3110,6 +3206,7 @@ class InventoryTaskViewSet(AuditedModelViewSetMixin, viewsets.ModelViewSet):
                 else f"{data_center.name} / 整个数据中心"
             ),
             "total": total,
+            "max_assets": MAX_INVENTORY_TASK_ASSETS,
             "racked": racked,
             "unracked": unracked,
             "retired": retired,
@@ -3347,6 +3444,7 @@ class InventoryItemViewSet(viewsets.ModelViewSet):
             resource_id=updated.pk,
             before=before,
             after=InventoryItemSerializer(updated).data,
+            extra={"asset_id": updated.asset_id},
         )
         serializer.instance = updated
 
@@ -3997,6 +4095,28 @@ def _two_factor_status_payload(profile):
     }
 
 
+def _register_two_factor_management_failure(request, operation, client_ip):
+    """Apply the login 2FA throttle to account-security code entry."""
+    is_locked, retry_after = register_two_factor_failure(request.user.pk, client_ip)
+    try:
+        write_audit_log(
+            request,
+            action="two_factor_management_failure",
+            resource_type="user_security",
+            resource_id=request.user.pk,
+            actor=request.user,
+            extra=_auth_audit_extra(
+                request,
+                request.user.username,
+                operation=operation,
+                retry_after=retry_after,
+            ),
+        )
+    except Exception:
+        logger.exception("Unable to record 2FA management failure audit")
+    return is_locked, retry_after
+
+
 def _two_factor_secret(profile):
     try:
         return decrypt_secret(profile.two_factor_secret_encrypted)
@@ -4060,6 +4180,14 @@ def auth_2fa_setup(request):
 def auth_2fa_confirm(request):
     _security_change_requires_session(request)
     code = str(request.data.get("code", "")).strip()
+    client_ip = _login_ip(request)
+    locked, retry_after = two_factor_lock_status(request.user.pk, client_ip)
+    if locked:
+        return Response(
+            {"detail": "双重验证失败次数过多，请稍后再试", "code": "two_factor_locked", "retry_after": retry_after},
+            status=429,
+            headers={"Retry-After": str(retry_after)},
+        )
     with transaction.atomic():
         profile = _locked_security_profile(request.user)
         if profile.two_factor_enabled:
@@ -4078,6 +4206,17 @@ def auth_2fa_confirm(request):
             )
         step = totp_step_for_code(secret, code)
         if step is None:
+            is_locked, retry_after = _register_two_factor_management_failure(
+                request,
+                "confirm",
+                client_ip,
+            )
+            if is_locked:
+                return Response(
+                    {"detail": "双重验证失败次数过多，请稍后再试", "code": "two_factor_locked", "retry_after": retry_after},
+                    status=429,
+                    headers={"Retry-After": str(retry_after)},
+                )
             return Response(
                 {"detail": "验证码不正确或已过期", "code": "invalid_two_factor_code"},
                 status=400,
@@ -4091,6 +4230,7 @@ def auth_2fa_confirm(request):
             "two_factor_last_used_step",
             "updated_at",
         ])
+        clear_two_factor_throttle(request.user.pk, client_ip)
         write_audit_log(
             request,
             action="two_factor_enabled",
@@ -4107,6 +4247,14 @@ def auth_2fa_confirm(request):
 def auth_2fa_disable(request):
     _security_change_requires_session(request)
     code = str(request.data.get("code", "")).strip()
+    client_ip = _login_ip(request)
+    locked, retry_after = two_factor_lock_status(request.user.pk, client_ip)
+    if locked:
+        return Response(
+            {"detail": "双重验证失败次数过多，请稍后再试", "code": "two_factor_locked", "retry_after": retry_after},
+            status=429,
+            headers={"Retry-After": str(retry_after)},
+        )
     with transaction.atomic():
         profile = _locked_security_profile(request.user)
         if not profile.two_factor_enabled:
@@ -4124,6 +4272,17 @@ def auth_2fa_disable(request):
                 status=503,
             )
         if totp_step_for_code(secret, code) is None:
+            is_locked, retry_after = _register_two_factor_management_failure(
+                request,
+                "disable",
+                client_ip,
+            )
+            if is_locked:
+                return Response(
+                    {"detail": "双重验证失败次数过多，请稍后再试", "code": "two_factor_locked", "retry_after": retry_after},
+                    status=429,
+                    headers={"Retry-After": str(retry_after)},
+                )
             return Response(
                 {"detail": "验证码不正确或已过期", "code": "invalid_two_factor_code"},
                 status=400,
@@ -4139,6 +4298,7 @@ def auth_2fa_disable(request):
             "two_factor_last_used_step",
             "updated_at",
         ])
+        clear_two_factor_throttle(request.user.pk, client_ip)
         write_audit_log(
             request,
             action="two_factor_disabled",
@@ -4261,29 +4421,30 @@ def auth_api_tokens(request):
     serializer = ApiTokenCreateSerializer(data=request.data)
     serializer.is_valid(raise_exception=True)
     raw_token, token_hash, token_prefix = generate_api_token()
-    token = PersonalAccessToken.objects.create(
-        user=request.user,
-        name=serializer.validated_data["name"],
-        token_prefix=token_prefix,
-        token_hash=token_hash,
-        expires_at=(
-            serializer.validated_data["expires_at"]
-            if "expires_at" in serializer.validated_data
-            else default_api_token_expiry()
-        ),
-    )
-    write_audit_log(
-        request,
-        action="api_token_created",
-        resource_type="api_token",
-        resource_id=token.pk,
-        actor=request.user,
-        extra={
-            "name": token.name,
-            "token_prefix": token.token_prefix,
-            "expires_at": token.expires_at.isoformat() if token.expires_at else None,
-        },
-    )
+    with transaction.atomic():
+        token = PersonalAccessToken.objects.create(
+            user=request.user,
+            name=serializer.validated_data["name"],
+            token_prefix=token_prefix,
+            token_hash=token_hash,
+            expires_at=(
+                serializer.validated_data["expires_at"]
+                if "expires_at" in serializer.validated_data
+                else default_api_token_expiry()
+            ),
+        )
+        write_audit_log(
+            request,
+            action="api_token_created",
+            resource_type="api_token",
+            resource_id=token.pk,
+            actor=request.user,
+            extra={
+                "name": token.name,
+                "token_prefix": token.token_prefix,
+                "expires_at": token.expires_at.isoformat() if token.expires_at else None,
+            },
+        )
     return Response({**ApiTokenSerializer(token).data, "token": raw_token}, status=201)
 
 
@@ -4294,16 +4455,17 @@ def auth_api_token_revoke(request, token_id):
     _security_change_requires_session(request)
     token = get_object_or_404(PersonalAccessToken, pk=token_id, user=request.user)
     if token.revoked_at is None:
-        token.revoked_at = timezone.now()
-        token.save(update_fields=["revoked_at", "updated_at"])
-        write_audit_log(
-            request,
-            action="api_token_revoked",
-            resource_type="api_token",
-            resource_id=token.pk,
-            actor=request.user,
-            extra={"name": token.name, "token_prefix": token.token_prefix},
-        )
+        with transaction.atomic():
+            token.revoked_at = timezone.now()
+            token.save(update_fields=["revoked_at", "updated_at"])
+            write_audit_log(
+                request,
+                action="api_token_revoked",
+                resource_type="api_token",
+                resource_id=token.pk,
+                actor=request.user,
+                extra={"name": token.name, "token_prefix": token.token_prefix},
+            )
     return Response(status=204)
 
 
@@ -4383,49 +4545,50 @@ def auth_ldap_config(request):
         return Response(errors, status=400)
 
     try:
-        save_configuration(
-            candidate,
-            password_submitted=password_submitted,
-            password_value=password_value,
-        )
+        with transaction.atomic():
+            save_configuration(
+                candidate,
+                password_submitted=password_submitted,
+                password_value=password_value,
+            )
+
+            updated = get_effective_ldap_configuration()
+            before_public = public_configuration(current)
+            after_public = public_configuration(updated)
+            changed_fields = [
+                field
+                for field in serializer.validated_data
+                if field != "bind_password" and before_public.get(field) != after_public.get(field)
+            ]
+            if password_submitted:
+                changed_fields.append("bind_password")
+            write_audit_log(
+                request,
+                action="ldap_configuration_updated",
+                resource_type="ldap",
+                resource_id="configuration",
+                extra={"changed_fields": sorted(set(changed_fields))},
+            )
+            if current.enabled != updated.enabled:
+                write_audit_log(
+                    request,
+                    action="ldap_enabled" if updated.enabled else "ldap_disabled",
+                    resource_type="ldap",
+                    resource_id="configuration",
+                    extra={"enabled": updated.enabled},
+                )
+            if password_submitted:
+                write_audit_log(
+                    request,
+                    action="ldap_bind_password_updated",
+                    resource_type="ldap",
+                    resource_id="configuration",
+                    extra={"configured": True},
+                )
     except ConfigurationIdentityError as exc:
         return Response(exc.errors, status=400)
     except ConfigurationSecretError as exc:
         return Response({"bind_password": str(exc)}, status=400)
-
-    updated = get_effective_ldap_configuration()
-    before_public = public_configuration(current)
-    after_public = public_configuration(updated)
-    changed_fields = [
-        field
-        for field in serializer.validated_data
-        if field != "bind_password" and before_public.get(field) != after_public.get(field)
-    ]
-    if password_submitted:
-        changed_fields.append("bind_password")
-    write_audit_log(
-        request,
-        action="ldap_configuration_updated",
-        resource_type="ldap",
-        resource_id="configuration",
-        extra={"changed_fields": sorted(set(changed_fields))},
-    )
-    if current.enabled != updated.enabled:
-        write_audit_log(
-            request,
-            action="ldap_enabled" if updated.enabled else "ldap_disabled",
-            resource_type="ldap",
-            resource_id="configuration",
-            extra={"enabled": updated.enabled},
-        )
-    if password_submitted:
-        write_audit_log(
-            request,
-            action="ldap_bind_password_updated",
-            resource_type="ldap",
-            resource_id="configuration",
-            extra={"configured": True},
-        )
     return Response({
         **public_configuration(updated),
         **_ldap_last_diagnostic_payload(),
@@ -4866,17 +5029,51 @@ def asset_model_import_preview(request):
 @permission_classes([CanManageSystemSettings])
 @parser_classes([MultiPartParser, FormParser])
 def asset_model_import(request):
-    created = commit_asset_model_import(request.FILES.get("file"))
-    for model in created:
-        write_audit_log(
-            request,
-            action="create",
-            resource_type="asset_model",
-            resource_id=model.pk,
-            after=model_snapshot(model),
-            extra={"source": "asset_model_import"},
-        )
+    with transaction.atomic():
+        created = commit_asset_model_import(request.FILES.get("file"))
+        for model in created:
+            write_audit_log(
+                request,
+                action="create",
+                resource_type="asset_model",
+                resource_id=model.pk,
+                after=model_snapshot(model),
+                extra={"source": "asset_model_import"},
+            )
     return Response({"created": len(created), "total": len(created), "errors": []})
+
+
+@extend_schema(responses=OpenApiTypes.BINARY, description="下载人员新增与更新导入模板。")
+@api_view(["GET"])
+@permission_classes([CanManageSystemSettings])
+def people_import_template(request):
+    return _xlsx_response(build_people_import_template(), "infrix-people-import.xlsx")
+
+
+@extend_schema(request=OpenApiTypes.OBJECT, responses=OpenApiTypes.OBJECT, description="预览并校验人员导入文件。")
+@api_view(["POST"])
+@permission_classes([CanManageSystemSettings])
+@parser_classes([MultiPartParser, FormParser])
+def people_import_preview(request):
+    try:
+        return Response(preview_people_import(request.FILES.get("file")))
+    except ImportFileError as exc:
+        return Response({"detail": str(exc)}, status=400)
+
+
+@extend_schema(request=OpenApiTypes.OBJECT, responses=OpenApiTypes.OBJECT, description="确认导入校验通过的人员文件。")
+@api_view(["POST"])
+@permission_classes([CanManageSystemSettings])
+@parser_classes([MultiPartParser, FormParser])
+def people_import(request):
+    try:
+        return Response(commit_people_import(request.FILES.get("file"), request))
+    except ImportFileError as exc:
+        return Response({"detail": str(exc)}, status=400)
+    except ImportValidationError as exc:
+        status = 409 if exc.concurrent else 400
+        message = "确认导入前人员或部门数据已发生变化，请查看最新校验结果" if exc.concurrent else "导入文件存在异常，请先修正后再确认"
+        return Response({"detail": message, "preview": exc.preview}, status=status)
 
 
 @extend_schema(

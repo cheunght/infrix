@@ -597,6 +597,51 @@ class Asset(Timestamped):
         return f"{self.asset_no} {self.name}"
 
 
+class AssetDisposal(models.Model):
+    """The immutable business fact that caused an asset to become retired."""
+
+    asset = models.OneToOneField(
+        Asset,
+        on_delete=models.CASCADE,
+        related_name="disposal",
+    )
+    disposed_on = models.DateField()
+    reason = models.CharField(max_length=500)
+    method = models.CharField(max_length=100)
+    operator = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+        related_name="asset_disposals",
+    )
+    operator_name = models.CharField(max_length=150)
+    notes = models.TextField(max_length=2000, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ["-created_at", "-id"]
+        indexes = [
+            models.Index(fields=["disposed_on", "-created_at", "-id"], name="assets_disposal_date_idx"),
+        ]
+
+    def clean(self):
+        super().clean()
+        from .runtime_clock import system_localdate
+
+        if self.disposed_on and self.disposed_on > system_localdate():
+            raise ValidationError({"disposed_on": "处置日期不能晚于今天"})
+        if not (self.reason or "").strip():
+            raise ValidationError({"reason": "报废原因不能为空"})
+        if not (self.method or "").strip():
+            raise ValidationError({"method": "处置方式不能为空"})
+        if not (self.operator_name or "").strip():
+            raise ValidationError({"operator_name": "操作人快照不能为空"})
+
+    def __str__(self):
+        return f"{self.asset_id} / {self.disposed_on}"
+
+
 class AssetAssignmentEvent(models.Model):
     ACTIONS = [
         ("assign", "领用"),
@@ -651,7 +696,7 @@ class AssetAssignmentEvent(models.Model):
 
 
 DEFAULT_ASSET_STATUS_CHOICES = tuple(
-    choice for choice in Asset.STATUS if choice[0] != "repair"
+    choice for choice in Asset.STATUS if choice[0] not in {"repair", "retired"}
 )
 
 

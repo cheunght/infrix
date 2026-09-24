@@ -14,16 +14,18 @@ from .models import FaultEvent, RackUnitAllocation, RepairRecord
 ASSET_REPAIR_STATUS = "repair"
 ASSET_TERMINAL_STATUS_VALUES = frozenset({"retired"})
 ASSET_INITIAL_STATUS_VALUES = tuple(
-    status for status in ASSET_STATUS_VALUES if status != ASSET_REPAIR_STATUS
+    status
+    for status in ASSET_STATUS_VALUES
+    if status not in {ASSET_REPAIR_STATUS, *ASSET_TERMINAL_STATUS_VALUES}
 )
 ASSET_REPAIR_RESTORE_STATUS_VALUES = frozenset(
     status for status in ASSET_INITIAL_STATUS_VALUES
     if status not in ASSET_TERMINAL_STATUS_VALUES
 )
 
-# Normal asset editing can move between the ordinary operational statuses and
-# into the terminal retired status.  Repair is owned by the fault/repair
-# service, and retired has no ordinary reverse transition.
+# Normal asset editing can move between the ordinary operational statuses.
+# Repair is owned by the fault/repair service, and retired is owned by the
+# dedicated disposal service with no ordinary reverse transition.
 ASSET_STATUS_TRANSITIONS = {
     status: frozenset(ASSET_INITIAL_STATUS_VALUES)
     for status in ASSET_REPAIR_RESTORE_STATUS_VALUES
@@ -86,7 +88,7 @@ def allowed_asset_status_values(asset=None, *, has_open_fault=None):
         allowed = set(ASSET_STATUS_TRANSITIONS.get(current_status, {current_status}))
         if current_status in ASSET_REPAIR_RESTORE_STATUS_VALUES and _has_open_fault(asset, has_open_fault):
             allowed = {current_status}
-        elif "retired" in allowed:
+        elif current_status not in ASSET_TERMINAL_STATUS_VALUES and "retired" in allowed:
             try:
                 validate_asset_retirement(asset, has_open_fault=has_open_fault)
             except ValidationError:
@@ -113,10 +115,15 @@ def validate_asset_status_transition(
 
     if asset is None:
         if target_status not in ASSET_INITIAL_STATUS_VALUES:
+            reason = (
+                "已报废状态只能通过专用资产报废操作设置"
+                if target_status in ASSET_TERMINAL_STATUS_VALUES
+                else "维修中状态由故障维修流程维护，不能手工设置"
+            )
             raise _transition_error(
                 None,
                 target_status,
-                "维修中状态由故障维修流程维护，不能手工设置",
+                reason,
             )
         return
 
@@ -125,7 +132,11 @@ def validate_asset_status_transition(
         return
 
     if target_status == "retired":
-        validate_asset_retirement(asset, has_open_fault=has_open_fault)
+        raise _transition_error(
+            current_status,
+            target_status,
+            "已报废状态只能通过专用资产报废操作设置",
+        )
 
     if source == "fault":
         if (
@@ -192,4 +203,16 @@ def transition_asset_status(
     if asset.status == target_status:
         return False
     asset.status = target_status
+    return True
+
+
+def transition_asset_to_retired(asset, *, has_open_fault=None):
+    """Apply the only lifecycle transition that creates a new retired asset."""
+
+    if asset is None or not asset.pk:
+        raise ValidationError({"status": "只有已保存的资产才能执行报废操作"})
+    if asset.status == "retired":
+        return False
+    validate_asset_retirement(asset, has_open_fault=has_open_fault)
+    asset.status = "retired"
     return True

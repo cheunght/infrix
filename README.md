@@ -26,6 +26,17 @@ mode, then saves the production configuration and guides you through the first
 administrator. On an existing host, the same command reuses its configuration
 and performs an in-place upgrade.
 
+## Backend regression tests
+
+From the repository root, run:
+
+```bash
+bash backend/test.sh
+```
+
+The entrypoint runs Django's native test discovery from `backend/` and fails if
+the runner reports zero tests.
+
 For a release package with prebuilt frontend assets:
 
 ```bash

@@ -969,6 +969,13 @@ export function useInventory(context: InventoryContext) {
       taskDialogError.value = i18n.global.t("inventory.noInventoryAssetsCreate");
       return false;
     }
+    if (scopePreview.value.total > scopePreview.value.max_assets) {
+      taskDialogError.value = i18n.global.t("inventory.scopeLimitExceeded", {
+        count: scopePreview.value.total,
+        limit: scopePreview.value.max_assets,
+      });
+      return false;
+    }
     taskCreating.value = true;
     try {
       const scope = taskForm.value.data_center === "all_assets"

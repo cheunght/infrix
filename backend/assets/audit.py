@@ -124,6 +124,7 @@ def asset_audit_snapshot(asset_id):
         "asset_model__fieldset",
         "asset_data_center",
         "rack_allocation__rack__room__data_center",
+        "disposal",
     ).prefetch_related(
         "network_addresses",
         "procurement_records",
