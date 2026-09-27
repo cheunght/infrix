@@ -14,6 +14,7 @@ import PagedTable from "./PagedTable.vue";
 import StatusTag from "./StatusTag.vue";
 import LdapConfigurationPage from "./LdapConfigurationPage.vue";
 import PeopleSettingsPage from "./ResponsibilitySubjectSettingsPage.vue";
+import DepartmentImportDialog from "./DepartmentImportDialog.vue";
 import ActionDialogShell from "./ActionDialogShell.vue";
 import FormDialogShell from "./FormDialogShell.vue";
 import FieldHelp from "./FieldHelp.vue";
@@ -67,6 +68,17 @@ const {
   openDepartmentModal,
   saveDepartment,
   deleteDepartment,
+  showDepartmentImportModal,
+  departmentImportFile,
+  departmentImportPreview,
+  departmentImportPreviewing,
+  departmentImporting,
+  departmentImportError,
+  openDepartmentImport,
+  closeDepartmentImport,
+  previewDepartmentImport,
+  commitDepartmentImport,
+  downloadDepartmentImportTemplate,
   responsibilityDirectorySubjects,
   responsibilityDirectoryTotal,
   responsibilityDirectoryPage,
@@ -299,6 +311,9 @@ function applyPeopleFilters() {
           <template v-if="organizationTab === 'departments'" #primary>
             <el-button class="page-primary-action" type="primary" :loading="departmentSaving" :disabled="departmentSaving" @click="openDepartmentModal()">{{ t('settings.addDepartment') }}</el-button>
           </template>
+          <template v-if="organizationTab === 'departments'" #actions>
+            <ToolbarIconButton v-if="can('settings.manage')" :icon="Upload" :label="t('settings.departmentImport')" @click="openDepartmentImport" />
+          </template>
           <template v-if="organizationTab === 'people'" #search>
             <SearchField v-model="responsibilityDirectorySearch" :loading="responsibilityDirectoryLoading" :disabled="responsibilityDirectoryLoading" :placeholder="t('settings.personSearchPlaceholder')" :aria-label="t('settings.peopleTab')" @search="searchResponsibilityDirectory" />
           </template>
@@ -366,6 +381,19 @@ function applyPeopleFilters() {
       <el-form :model="departmentForm" label-position="top" @submit.prevent="saveDepartment"><el-form-item :label="t('settings.departmentName')" :error="departmentFormErrors.name" required><el-input v-model="departmentForm.name" :disabled="departmentSaving" maxlength="100" /></el-form-item><el-form-item :label="t('settings.code')" :error="departmentFormErrors.code" required><el-input v-model="departmentForm.code" :disabled="departmentSaving" maxlength="50" /></el-form-item><el-form-item :label="t('settings.parentDepartment')" :error="departmentFormErrors.parent"><SearchableSelect v-model="departmentForm.parent" :request="context.request" endpoint="/departments/" :map-option="mapDepartment" :base-query="{ is_active: true }" :selected-option="selectedDepartmentParentOption" clearable :disabled="departmentSaving" :placeholder="t('settings.parentDepartment')" /></el-form-item></el-form>
       <template #footer><el-button :disabled="departmentSaving" @click="showDepartmentModal = false">{{ t('common.cancel') }}</el-button><el-button type="primary" :loading="departmentSaving" :disabled="departmentSaving" @click="saveDepartment">{{ editingDepartment ? t('common.save') : t('common.create') }}</el-button></template>
     </el-dialog>
+
+    <DepartmentImportDialog
+      v-model="showDepartmentImportModal"
+      :file="departmentImportFile"
+      :preview="departmentImportPreview"
+      :previewing="departmentImportPreviewing"
+      :importing="departmentImporting"
+      :error="departmentImportError"
+      @close="closeDepartmentImport"
+      @select="previewDepartmentImport"
+      @commit="commitDepartmentImport"
+      @download-template="downloadDepartmentImportTemplate"
+    />
 
     <FormDialogShell v-model="showUserModal" :title="editingUser ? t('settings.editUser') : t('settings.addUser')" :description="t('overlay.userDialogDescription')" size="medium" :saving="userSaving" :show-close="!userSaving" :close-on-click-modal="!userSaving" :close-on-press-escape="!userSaving" :close-disabled="userSaving">
       <el-form ref="userFormRef" :model="userForm" :rules="userFormRules" :validate-on-rule-change="false" label-position="right" class="horizontal-form user-account-form" @submit.prevent="saveUser">

@@ -613,6 +613,7 @@ export type PersonOption = Pick<
 export type PeopleImportRowError = {
   field: string;
   label: string;
+  code?: string;
   message: string;
 };
 export type PeopleImportRow = {
@@ -638,6 +639,36 @@ export type PeopleImportPreview = {
   rows: PeopleImportRow[];
 };
 export type PeopleImportResult = {
+  created: number;
+  updated: number;
+  unchanged: number;
+  total: number;
+  errors: unknown[];
+};
+export type DepartmentImportRow = {
+  line: number;
+  code: string;
+  name: string;
+  parent_code: string;
+  parent: string;
+  operation: "create" | "update" | "unchanged" | "error" | string;
+  valid: boolean;
+  changes: string[];
+  errors: PeopleImportRowError[];
+};
+export type DepartmentImportPreview = {
+  filename: string;
+  total: number;
+  create: number;
+  update: number;
+  unchanged: number;
+  error: number;
+  valid: number;
+  invalid: number;
+  ignored_columns: string[];
+  rows: DepartmentImportRow[];
+};
+export type DepartmentImportResult = {
   created: number;
   updated: number;
   unchanged: number;

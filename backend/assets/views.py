@@ -80,6 +80,7 @@ from .audit import asset_audit_snapshot, asset_custom_value_changes, json_value,
 from .timeline import asset_timeline_queryset, serialize_timeline
 from .imports import AssetImportService, ImportFileError, ImportValidationError, build_import_template
 from .asset_model_imports import build_asset_model_import_template, commit_asset_model_import, preview_asset_model_import
+from .department_imports import build_department_import_template, commit_department_import, preview_department_import
 from .people_imports import build_people_import_template, commit_people_import, preview_people_import
 from .system_maintenance import (
     MaintenanceError,
@@ -5074,6 +5075,43 @@ def people_import(request):
         status = 409 if exc.concurrent else 400
         message = "确认导入前人员或部门数据已发生变化，请查看最新校验结果" if exc.concurrent else "导入文件存在异常，请先修正后再确认"
         return Response({"detail": message, "preview": exc.preview}, status=status)
+
+
+@extend_schema(responses=OpenApiTypes.BINARY, description="下载部门新增与更新导入模板。")
+@api_view(["GET"])
+@permission_classes([CanManageSystemSettings])
+def department_import_template(request):
+    return _xlsx_response(build_department_import_template(), "infrix-department-import.xlsx")
+
+
+@extend_schema(request=OpenApiTypes.OBJECT, responses=OpenApiTypes.OBJECT, description="预览并校验部门导入文件。")
+@api_view(["POST"])
+@permission_classes([CanManageSystemSettings])
+@parser_classes([MultiPartParser, FormParser])
+def department_import_preview(request):
+    try:
+        return Response(preview_department_import(request.FILES.get("file")))
+    except ImportFileError as exc:
+        return Response({"detail": str(exc), "code": "file_error"}, status=400)
+
+
+@extend_schema(request=OpenApiTypes.OBJECT, responses=OpenApiTypes.OBJECT, description="确认导入校验通过的部门文件。")
+@api_view(["POST"])
+@permission_classes([CanManageSystemSettings])
+@parser_classes([MultiPartParser, FormParser])
+def department_import(request):
+    try:
+        return Response(commit_department_import(request.FILES.get("file"), request))
+    except ImportFileError as exc:
+        return Response({"detail": str(exc), "code": "file_error"}, status=400)
+    except ImportValidationError as exc:
+        status = 409 if exc.concurrent else 400
+        message = "确认导入前部门层级或数据已发生变化，请查看最新校验结果" if exc.concurrent else "导入文件存在异常，请先修正后再确认"
+        return Response({
+            "detail": message,
+            "code": "concurrent" if exc.concurrent else "validation_error",
+            "preview": exc.preview,
+        }, status=status)
 
 
 @extend_schema(

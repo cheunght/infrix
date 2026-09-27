@@ -9,6 +9,8 @@ import {
 } from "../error-handling";
 import type {
   Department,
+  DepartmentImportPreview,
+  DepartmentImportResult,
   LdapDiagnosticCheck,
   LdapDiagnosticResult,
   LdapConfiguration,
@@ -176,6 +178,14 @@ export function useOrganizationSettings(deps: OrganizationSettingsDeps) {
   const peopleImportError = ref("");
   const peopleImportRequestId = ref(0);
   let peopleImportController: AbortController | null = null;
+  const showDepartmentImportModal = ref(false);
+  const departmentImportFile = ref<File | null>(null);
+  const departmentImportPreview = ref<DepartmentImportPreview | null>(null);
+  const departmentImportPreviewing = ref(false);
+  const departmentImporting = ref(false);
+  const departmentImportError = ref("");
+  const departmentImportRequestId = ref(0);
+  let departmentImportController: AbortController | null = null;
 
   const ldapStatus = ref<LdapStatus | null>(null);
   const ldapConfiguration = ref<LdapConfiguration | null>(null);
@@ -787,6 +797,152 @@ export function useOrganizationSettings(deps: OrganizationSettingsDeps) {
       await deps.downloadFile("/people/import/template/", "infrix-people-import.xlsx");
     } catch (error) {
       peopleImportError.value = errorMessage(error, tr("settings.peopleImportTemplateFailed"));
+    }
+  }
+
+  function resetDepartmentImportState() {
+    departmentImportController?.abort();
+    departmentImportController = null;
+    departmentImportRequestId.value += 1;
+    departmentImportFile.value = null;
+    departmentImportPreview.value = null;
+    departmentImportPreviewing.value = false;
+    departmentImporting.value = false;
+    departmentImportError.value = "";
+  }
+
+  function openDepartmentImport() {
+    if (!deps.can("settings.manage")) return;
+    resetDepartmentImportState();
+    showDepartmentImportModal.value = true;
+  }
+
+  function closeDepartmentImport() {
+    if (departmentImporting.value) return;
+    resetDepartmentImportState();
+    showDepartmentImportModal.value = false;
+  }
+
+  function normalizeDepartmentImportPreview(preview: DepartmentImportPreview): DepartmentImportPreview {
+    return {
+      ...preview,
+      ignored_columns: Array.isArray(preview.ignored_columns) ? preview.ignored_columns : [],
+      rows: Array.isArray(preview.rows)
+        ? preview.rows.map((row) => ({
+            ...row,
+            changes: Array.isArray(row.changes) ? row.changes : [],
+            errors: Array.isArray(row.errors) ? row.errors : [],
+          }))
+        : [],
+    };
+  }
+
+  async function previewDepartmentImport(file: File | null): Promise<boolean> {
+    if (!deps.can("settings.manage")) return false;
+    departmentImportController?.abort();
+    const controller = new AbortController();
+    departmentImportController = controller;
+    const requestId = ++departmentImportRequestId.value;
+    departmentImportFile.value = file;
+    departmentImportPreview.value = null;
+    departmentImportError.value = "";
+    if (!file) {
+      departmentImportPreviewing.value = false;
+      departmentImportController = null;
+      return false;
+    }
+
+    const form = new FormData();
+    form.append("file", file);
+    departmentImportPreviewing.value = true;
+    try {
+      const preview = await deps.request<DepartmentImportPreview>("/departments/import/preview/", {
+        method: "POST",
+        body: form,
+        signal: controller.signal,
+      });
+      if (requestId !== departmentImportRequestId.value || controller.signal.aborted) return false;
+      departmentImportPreview.value = normalizeDepartmentImportPreview(preview);
+      return true;
+    } catch (error) {
+      if (isAbortError(error) || requestId !== departmentImportRequestId.value) return false;
+      departmentImportError.value = errorMessage(error, tr("settings.departmentImportPreviewFailed"));
+      return false;
+    } finally {
+      if (requestId === departmentImportRequestId.value) {
+        departmentImportPreviewing.value = false;
+        if (departmentImportController === controller) departmentImportController = null;
+      }
+    }
+  }
+
+  async function commitDepartmentImport(): Promise<boolean> {
+    if (!deps.can("settings.manage")) return false;
+    if (!departmentImportFile.value) {
+      departmentImportError.value = tr("settings.departmentImportNoFile");
+      return false;
+    }
+    if (!departmentImportPreview.value || departmentImportPreview.value.error > 0) {
+      departmentImportError.value = tr("settings.departmentImportNoValidPreview");
+      return false;
+    }
+    departmentImportController?.abort();
+    const controller = new AbortController();
+    departmentImportController = controller;
+    const requestId = ++departmentImportRequestId.value;
+    const form = new FormData();
+    form.append("file", departmentImportFile.value);
+    departmentImporting.value = true;
+    departmentImportError.value = "";
+    try {
+      const result = await deps.request<DepartmentImportResult>("/departments/import/", {
+        method: "POST",
+        body: form,
+        signal: controller.signal,
+      });
+      if (requestId !== departmentImportRequestId.value || controller.signal.aborted) return false;
+      const refreshVersion = deps.beginLoad();
+      const [departmentsRefreshed, peopleRefreshed] = await Promise.all([
+        loadDepartments(refreshVersion),
+        loadResponsibilityDirectory(refreshVersion),
+      ]);
+      if (requestId !== departmentImportRequestId.value || controller.signal.aborted) return false;
+      departmentImporting.value = false;
+      closeDepartmentImport();
+      const message = tr("settings.departmentImportSuccess", {
+        created: result.created,
+        updated: result.updated,
+        unchanged: result.unchanged,
+      });
+      const refreshed = departmentsRefreshed && peopleRefreshed;
+      setActionMessage(
+        refreshed ? message : `${message}; ${tr("settings.departmentImportSuccessRefreshFailed")}`,
+        refreshed ? "success" : "error",
+      );
+      return true;
+    } catch (error) {
+      if (isAbortError(error) || requestId !== departmentImportRequestId.value) return false;
+      const details = error instanceof ApiError ? error.details : null;
+      if (details && typeof details === "object" && "preview" in details) {
+        const latest = (details as { preview?: DepartmentImportPreview }).preview;
+        if (latest) departmentImportPreview.value = normalizeDepartmentImportPreview(latest);
+      }
+      departmentImportError.value = errorMessage(error, tr("settings.departmentImportFailed"));
+      return false;
+    } finally {
+      if (requestId === departmentImportRequestId.value) {
+        departmentImporting.value = false;
+        if (departmentImportController === controller) departmentImportController = null;
+      }
+    }
+  }
+
+  async function downloadDepartmentImportTemplate() {
+    if (!deps.can("settings.manage")) return;
+    try {
+      await deps.downloadFile("/departments/import/template/", "infrix-department-import.xlsx");
+    } catch (error) {
+      departmentImportError.value = errorMessage(error, tr("settings.departmentImportTemplateFailed"));
     }
   }
 
@@ -1407,6 +1563,12 @@ export function useOrganizationSettings(deps: OrganizationSettingsDeps) {
     peopleImportPreviewing,
     peopleImporting,
     peopleImportError,
+    showDepartmentImportModal,
+    departmentImportFile,
+    departmentImportPreview,
+    departmentImportPreviewing,
+    departmentImporting,
+    departmentImportError,
     loadResponsibilityDirectory,
     searchResponsibilityDirectory,
     retryResponsibilityDirectory,
@@ -1421,6 +1583,11 @@ export function useOrganizationSettings(deps: OrganizationSettingsDeps) {
     previewPeopleImport,
     commitPeopleImport,
     downloadPeopleImportTemplate,
+    openDepartmentImport,
+    closeDepartmentImport,
+    previewDepartmentImport,
+    commitDepartmentImport,
+    downloadDepartmentImportTemplate,
   };
 }
 
