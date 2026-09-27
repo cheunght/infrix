@@ -81,6 +81,8 @@ sudo env INSTALL_MODE=upgrade bash deploy/install.sh
 
 升级会保留环境文件和业务数据，先确认已有迁移文件与新源码兼容，在 `/var/backups/infrix` 创建受限数据库备份，然后在停止现有应用前准备 Python wheel 和前端产物。准备失败时旧应用保持可用。应用文件或数据库已经修改后，恢复应按备份执行；安装器不会自动回滚数据库迁移。
 
+应用源码同步会保护默认或通过 `INFRIX_MEDIA_ROOT` 配置的媒体目录；若媒体目录与发布包源码或会重建的目录重叠，安装器会在停服务前拒绝升级。环境文件、备份和 TLS 密钥仍应放在应用源码目录之外。
+
 替换 Nginx 配置前，原配置会复制到 `/var/backups/infrix`。如果 `nginx -t` 失败，会恢复原文件且不会 reload Nginx。失败的 `/var/tmp/infrix-prepare.*` 准备目录会保留用于排障，问题处理完后可由管理员清理。
 
 ## 发布安装包

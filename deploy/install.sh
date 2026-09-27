@@ -134,6 +134,90 @@ validate_backup_directory_scope() {
   done
 }
 
+configure_media_sync_filter() {
+  local media_root media_relative
+  media_exclude=()
+  media_root="${INFRIX_MEDIA_ROOT:-$APP_DIR/backend/media}"
+  # Django resolves a relative MEDIA_ROOT from the backend working directory.
+  # Keep the path lexical: rsync must protect an in-tree symlink itself too.
+  media_relative="$("$PYTHON_BIN" - "$APP_DIR" "$media_root" <<'PY'
+import os
+import sys
+
+app = os.path.abspath(os.path.expanduser(sys.argv[1]))
+media = os.path.expanduser(sys.argv[2])
+if not os.path.isabs(media):
+    media = os.path.join(app, 'backend', media)
+media = os.path.normpath(media)
+
+def inside(path, root):
+    try:
+        return os.path.commonpath((path, root)) == root
+    except ValueError:
+        return False
+
+real_app = os.path.realpath(app)
+real_media = os.path.realpath(media)
+if not inside(media, app):
+    # An external-looking alias may still point into the deletion boundary.
+    print('!unsafe-alias' if inside(real_media, real_app) else '')
+else:
+    relative = os.path.relpath(media, app)
+    parent = app
+    for part in relative.split(os.sep)[:-1]:
+        parent = os.path.join(parent, part)
+        if os.path.islink(parent):
+            print('!unsafe-alias')
+            break
+    else:
+        # A final symlink to external media is safe when the link is excluded;
+        # a link back into the app would leave its real target unprotected.
+        print('!unsafe-alias' if os.path.islink(media) and inside(real_media, real_app) else relative)
+PY
+)"
+  if [[ "$media_relative" == '!unsafe-alias' ]]; then
+    fail 'MEDIA_ROOT 经符号链接指向应用同步边界内，无法安全排除。'
+  fi
+  if [[ "$media_relative" == . ]]; then
+    fail "MEDIA_ROOT 不能等于应用目录：$APP_DIR"
+  fi
+  if [[ -n "$media_relative" ]]; then
+    if [[ "$media_relative" == *'*'* || "$media_relative" == *'?'* ||
+      "$media_relative" == *'['* || "$media_relative" == *']'* ||
+      "$media_relative" == *$'\\'* || "$media_relative" == *$'\n'* ||
+      "$media_relative" == *$'\r'* ]]; then
+      fail 'MEDIA_ROOT 包含不支持的 rsync 过滤字符。'
+    fi
+    case "$media_relative" in
+      backend/.venv|backend/.venv/*|backend/staticfiles|backend/staticfiles/*|frontend/dist|frontend/dist/*)
+        fail 'MEDIA_ROOT 位于安装器会重建的目录内。' ;;
+    esac
+    if [[ "$SOURCE_DIR" != "$APP_DIR" && -e "$SOURCE_DIR/$media_relative" ]]; then
+      fail "MEDIA_ROOT 与发布包内容重叠：$media_relative"
+    fi
+    # No trailing slash: exclude the path whether it is a directory or a
+    # symlink to external media, while leaving sibling source paths syncable.
+    media_exclude=(--exclude="/$media_relative")
+    log "保护应用目录内的 MEDIA_ROOT：$media_relative"
+  fi
+}
+
+sync_application_source() {
+  rsync -a --delete \
+    --exclude '.git/' \
+    --exclude '.venv/' \
+    --exclude 'backend/.venv/' \
+    --exclude 'backend/db.sqlite3' \
+    --exclude 'backend/staticfiles/' \
+    --exclude 'frontend/node_modules/' \
+    --exclude 'frontend/dist/' \
+    --exclude '*.pyc' \
+    --exclude '__pycache__/' \
+    --exclude '.pytest_cache/' \
+    "${media_exclude[@]}" \
+    "$SOURCE_DIR/" "$APP_DIR/"
+}
+
 discover_environment_file_from_unit() {
   # A previous deployment may have used a custom environment-file path.  When
   # the caller did not explicitly select a path, preserve that path instead of
@@ -666,6 +750,7 @@ set +a
 
 [[ "$INFRIX_BACKUP_DIR" = /* ]] || fail "${ENV_FILE} 中 INFRIX_BACKUP_DIR 必须是绝对路径。"
 validate_backup_directory_scope
+configure_media_sync_filter
 
 if [[ "$DB_ENGINE" == "mysql" ]]; then
   [[ -n "$DB_PASSWORD" ]] || fail "${ENV_FILE} 中 DB_PASSWORD 不能为空。"
@@ -770,18 +855,7 @@ if [[ "$INSTALL_MODE" == "upgrade" || "$resume_phase" == database-ready ]]; then
 fi
 if [[ "$SOURCE_DIR" != "$APP_DIR" ]]; then
   log "复制项目到 $APP_DIR"
-  rsync -a --delete \
-    --exclude '.git/' \
-    --exclude '.venv/' \
-    --exclude 'backend/.venv/' \
-    --exclude 'backend/db.sqlite3' \
-    --exclude 'backend/staticfiles/' \
-    --exclude 'frontend/node_modules/' \
-    --exclude 'frontend/dist/' \
-    --exclude '*.pyc' \
-    --exclude '__pycache__/' \
-    --exclude '.pytest_cache/' \
-    "$SOURCE_DIR/" "$APP_DIR/"
+  sync_application_source
 fi
 
 if [[ "$INSTALL_MODE" == "upgrade" ]]; then

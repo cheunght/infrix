@@ -127,6 +127,11 @@ old application remains available. After the live files or database have been
 changed, recovery is a normal backup-based operational task; the installer does
 not automatically roll back a database migration.
 
+The application source sync protects the default or `INFRIX_MEDIA_ROOT` media
+directory. An overlap with release-owned source or rebuilt directories is
+rejected before the service is stopped. Keep environment files, backups, and
+TLS keys outside the application source directory.
+
 The current Nginx site configuration is copied to `/var/backups/infrix` before
 replacement. If `nginx -t` rejects the new configuration, the previous file is
 restored and Nginx is not reloaded. Failed preparation directories under
