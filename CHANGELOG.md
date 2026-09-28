@@ -1,6 +1,17 @@
 # Changelog
 
+## 0.3.1 — 2026-09-28
+
+Installer hotfix for the 0.3.0 release. Always run `dnf install` for the Rocky 9
+system dependencies, even when RPM reports them already installed. When no
+Python interpreter is specified, also run the Python dependency installation.
+Installer regression checks cover both paths.
+
 ## 0.3.0 — 2026-09-28
+
+Superseded by 0.3.1: its installer can skip system-package installation on
+machines where RPM reports the packages already installed. Do not use 0.3.0
+for formal deployment.
 
 Core asset workflow and deployment-safety release.
 

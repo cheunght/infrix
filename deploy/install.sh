@@ -423,26 +423,18 @@ check_machine_readiness
 log "安装 Rocky 9 系统依赖"
 system_packages=(ca-certificates openssl curl git rsync nginx mariadb-server mariadb
   gcc gcc-c++ make iproute policycoreutils)
-if rpm -q "${system_packages[@]}" >/dev/null 2>&1; then
-  log "系统依赖已安装，跳过软件仓库。"
-else
-  dnf install -y "${system_packages[@]}"
-fi
+dnf install -y "${system_packages[@]}"
 
 # Rocky 9 的 Python 3.11 包在不同小版本中可能来自 AppStream 或模块流，
 # 先尝试直接安装，失败后再启用模块；最终仍会检查实际解释器版本。
 if [[ -z "$PYTHON_BIN" ]]; then
-  if rpm -q python3.11 python3.11-pip python3.11-devel >/dev/null 2>&1; then
+  if ! dnf install -y python3.11 python3.11-pip python3.11-devel; then
+    dnf module enable -y python:3.11 || true
+    dnf install -y python3.11 python3.11-pip python3.11-devel || true
+  fi
+  if command -v python3.11 >/dev/null 2>&1; then
     PYTHON_BIN="python3.11"
   else
-    if ! dnf install -y python3.11 python3.11-pip python3.11-devel; then
-      dnf module enable -y python:3.11 || true
-      dnf install -y python3.11 python3.11-pip python3.11-devel || true
-    fi
-  fi
-  if [[ -z "$PYTHON_BIN" ]] && command -v python3.11 >/dev/null 2>&1; then
-    PYTHON_BIN="python3.11"
-  elif [[ -z "$PYTHON_BIN" ]]; then
     dnf install -y python3 python3-pip python3-devel
     PYTHON_BIN="python3"
   fi
