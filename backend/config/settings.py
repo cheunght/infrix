@@ -208,7 +208,7 @@ DJANGO_ENV = os.getenv("DJANGO_ENV", "development").strip().lower()
 if DJANGO_ENV not in {"development", "production"}:
     raise ImproperlyConfigured("DJANGO_ENV must be either 'development' or 'production'.")
 IS_PRODUCTION = DJANGO_ENV == "production"
-PRODUCT_VERSION = "0.2.0"
+PRODUCT_VERSION = "0.3.0"
 
 SECRET_KEY = os.getenv(
     "DJANGO_SECRET_KEY",

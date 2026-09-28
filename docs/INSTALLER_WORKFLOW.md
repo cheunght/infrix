@@ -81,9 +81,10 @@ sudo bash deploy/install.sh \
   --preflight
 ```
 
-`--preflight` validates the environment file only. It does not install
-packages, change services, write the database, or change Nginx. The broader
-machine readiness checks run automatically as part of a normal installation.
+`--preflight` validates the environment file and the configured media and backup
+paths against the deployment deletion boundary. It does not install packages,
+change services, write the database, or change Nginx. The broader machine
+readiness checks run automatically as part of a normal installation.
 
 ## Remote deployment
 

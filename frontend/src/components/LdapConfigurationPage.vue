@@ -225,7 +225,7 @@ function formatLdapDiagnosticAt(value?: string | null) {
                 <div class="settings-ldap-panel__host-port">
                   <el-input v-model="ldapConfigurationForm.primary_host" :placeholder="t('settings.ldapHostPlaceholder')" :disabled="ldapConfigurationSaving" />
                   <el-form-item :error="ldapConfigurationFormErrors.primary_port">
-                    <el-input-number v-model="ldapConfigurationForm.primary_port" :min="1" :max="65535" controls-position="right" :disabled="ldapConfigurationSaving" @change="ldapPrimaryPortTouched = true" />
+                    <el-input-number v-model="ldapConfigurationForm.primary_port" :min="1" :max="65535" :controls="false" :disabled="ldapConfigurationSaving" @change="ldapPrimaryPortTouched = true" />
                   </el-form-item>
                 </div>
               </el-form-item>
@@ -233,7 +233,7 @@ function formatLdapDiagnosticAt(value?: string | null) {
                 <div class="settings-ldap-panel__host-port">
                   <el-input v-model="ldapConfigurationForm.secondary_host" :placeholder="t('settings.ldapOptional')" :disabled="ldapConfigurationSaving" />
                   <el-form-item :error="ldapConfigurationFormErrors.secondary_port">
-                    <el-input-number v-model="ldapConfigurationForm.secondary_port" :min="1" :max="65535" controls-position="right" :disabled="ldapConfigurationSaving" @change="ldapSecondaryPortTouched = true" />
+                    <el-input-number v-model="ldapConfigurationForm.secondary_port" :min="1" :max="65535" :controls="false" :disabled="ldapConfigurationSaving" @change="ldapSecondaryPortTouched = true" />
                   </el-form-item>
                 </div>
               </el-form-item>
