@@ -73,7 +73,19 @@ class InstallerRegression(unittest.TestCase):
         invocation = '\nconfigure_media_sync_filter\n'
         self.assertEqual(source.count(invocation), 1)
         self.assertLess(source.index(invocation), source.index('if [[ "$PREFLIGHT_ONLY" -eq 1 ]]; then'))
-        self.assertLess(source.index(invocation), source.index('dnf install -y ca-certificates'))
+        self.assertLess(source.index(invocation), source.index('dnf install -y "${system_packages[@]}"'))
+
+    def test_installed_system_packages_do_not_require_repository_access(self):
+        source = INSTALLER.read_text()
+        start = source.index('log "安装 Rocky 9 系统依赖"')
+        end = source.index('\ncommand -v "$PYTHON_BIN"', start)
+        block = source[start:end]
+        result = subprocess.run(
+            ['bash', '-c', 'log() { :; }; rpm() { return 0; }; dnf() { echo unexpected-dnf >&2; return 1; };\n' + block],
+            env=dict(self.environment, PYTHON_BIN=sys.executable), text=True, capture_output=True,
+        )
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertNotIn('unexpected-dnf', result.stderr)
 
     def test_completed_install_is_upgrade(self):
         Path(self.environment['SYSTEMD_UNIT_FILE']).touch()
