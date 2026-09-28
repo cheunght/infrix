@@ -119,28 +119,33 @@ esac
 [[ "$DIGEST_TIMER_UNIT_FILE" = /* ]] || fail "DIGEST_TIMER_UNIT_FILE 必须是绝对路径。"
 
 validate_backup_directory_scope() {
-  local app_root backup_root media_root protected_root
-  command -v realpath >/dev/null 2>&1 || fail "未找到 realpath，无法验证备份目录范围。"
-  app_root="$(realpath -m -- "$APP_DIR")"
-  backup_root="$(realpath -m -- "$INFRIX_BACKUP_DIR")"
-  media_root="$(realpath -m -- "${INFRIX_MEDIA_ROOT:-$APP_DIR/backend/media}")"
-  for protected_root in "$app_root" "$media_root" \
-    "$(realpath -m -- "$APP_DIR/backend/staticfiles")" \
-    "$(realpath -m -- "$APP_DIR/frontend/dist")"; do
-    if [[ "$backup_root" == "$protected_root" || "$backup_root" == "$protected_root/"* ||
-      "$protected_root" == "$backup_root/"* ]]; then
-      fail "INFRIX_BACKUP_DIR 不能与应用、静态文件或媒体目录重叠：$INFRIX_BACKUP_DIR"
-    fi
-  done
+  local media_root
+  media_root="${INFRIX_MEDIA_ROOT:-$APP_DIR/backend/media}"
+  if [[ "$media_root" != /* ]]; then
+    media_root="$APP_DIR/backend/$media_root"
+  fi
+  "$safety_python_bin" - "$APP_DIR" "$INFRIX_BACKUP_DIR" "$media_root" <<'PY' || \
+    fail "INFRIX_BACKUP_DIR 不能与应用、静态文件或媒体目录重叠：$INFRIX_BACKUP_DIR"
+import os
+import sys
+
+app, backup, media = map(os.path.realpath, sys.argv[1:])
+protected = (app, media, os.path.realpath(os.path.join(app, 'backend/staticfiles')),
+             os.path.realpath(os.path.join(app, 'frontend/dist')))
+for root in protected:
+    if os.path.commonpath((backup, root)) in (backup, root):
+        raise SystemExit(1)
+PY
 }
 
 configure_media_sync_filter() {
-  local media_root media_relative
+  local media_root media_relative media_python_bin
+  media_python_bin="${safety_python_bin:-${PYTHON_BIN:-python3}}"
   media_exclude=()
   media_root="${INFRIX_MEDIA_ROOT:-$APP_DIR/backend/media}"
   # Django resolves a relative MEDIA_ROOT from the backend working directory.
   # Keep the path lexical: rsync must protect an in-tree symlink itself too.
-  media_relative="$("$PYTHON_BIN" - "$APP_DIR" "$media_root" <<'PY'
+  media_relative="$("$media_python_bin" - "$APP_DIR" "$media_root" <<'PY'
 import os
 import sys
 
@@ -395,6 +400,12 @@ if [[ "$existing_installation" -eq 1 && "$DJANGO_ENV" == "production" &&
   -z "${DJANGO_SECRET_KEY//[[:space:]]/}" ]]; then
   fail "已有生产安装缺少 DJANGO_SECRET_KEY；已停止，不能自动生成新密钥。"
 fi
+
+safety_python_bin="${PYTHON_BIN:-python3}"
+command -v "$safety_python_bin" >/dev/null 2>&1 || fail "未找到 Python 解释器：$safety_python_bin"
+[[ "$INFRIX_BACKUP_DIR" = /* ]] || fail "INFRIX_BACKUP_DIR 必须是绝对路径：$INFRIX_BACKUP_DIR"
+validate_backup_directory_scope
+configure_media_sync_filter
 
 if [[ "$PREFLIGHT_ONLY" -eq 1 ]]; then
   [[ -f "$ENV_FILE" ]] || fail "Production environment file not found: $ENV_FILE"
@@ -747,10 +758,6 @@ set -a
 # shellcheck disable=SC1090
 . "$ENV_FILE"
 set +a
-
-[[ "$INFRIX_BACKUP_DIR" = /* ]] || fail "${ENV_FILE} 中 INFRIX_BACKUP_DIR 必须是绝对路径。"
-validate_backup_directory_scope
-configure_media_sync_filter
 
 if [[ "$DB_ENGINE" == "mysql" ]]; then
   [[ -n "$DB_PASSWORD" ]] || fail "${ENV_FILE} 中 DB_PASSWORD 不能为空。"

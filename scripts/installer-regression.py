@@ -43,6 +43,38 @@ class InstallerRegression(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertIn('全新安装', result.stdout)
 
+    def test_preflight_rejects_media_overlapping_release_source(self):
+        # The release source must already contain the target relative path.
+        self.environment['INFRIX_MEDIA_ROOT'] = str(self.directory / 'app/backend')
+        result = self.run_preflight()
+        self.assertNotEqual(result.returncode, 0, result.stdout)
+        self.assertIn('MEDIA_ROOT', result.stderr)
+        self.assertFalse((self.directory / 'app').exists())
+
+    def test_preflight_uses_media_root_from_environment_file(self):
+        self.environment['INFRIX_MEDIA_ROOT'] = str(self.directory / 'safe-external-media')
+        with self.config.open('a') as stream:
+            stream.write(f'\nINFRIX_MEDIA_ROOT={self.directory / "app/backend"}\n')
+        result = self.run_preflight()
+        self.assertNotEqual(result.returncode, 0, result.stdout)
+        self.assertIn('MEDIA_ROOT', result.stderr)
+        self.assertFalse((self.directory / 'app').exists())
+
+    def test_preflight_rejects_backup_inside_application(self):
+        with self.config.open('a') as stream:
+            stream.write(f'\nINFRIX_BACKUP_DIR={self.directory / "app/backend/backups"}\n')
+        result = self.run_preflight()
+        self.assertNotEqual(result.returncode, 0, result.stdout)
+        self.assertIn('INFRIX_BACKUP_DIR', result.stderr)
+        self.assertFalse((self.directory / 'app').exists())
+
+    def test_media_gate_precedes_mutating_installer_steps(self):
+        source = INSTALLER.read_text()
+        invocation = '\nconfigure_media_sync_filter\n'
+        self.assertEqual(source.count(invocation), 1)
+        self.assertLess(source.index(invocation), source.index('if [[ "$PREFLIGHT_ONLY" -eq 1 ]]; then'))
+        self.assertLess(source.index(invocation), source.index('dnf install -y ca-certificates'))
+
     def test_completed_install_is_upgrade(self):
         Path(self.environment['SYSTEMD_UNIT_FILE']).touch()
         self.phase('complete')
