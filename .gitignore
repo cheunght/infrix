@@ -47,8 +47,16 @@ htmlcov/
 /scripts/check-branding.mjs
 /scripts/check-release.sh
 
-# Phase-specific regression tests are source files, not local test output.
-!/backend/assets/tests/test_*.py
+# Tests and acceptance materials live in the sibling ITAM-private directory.
+/ITAM-private/
+/backend/**/tests/
+/backend/test.sh
+/deploy/test-*.sh
+/scripts/*regression*.py
+/scripts/*acceptance*.py
+/frontend/**/*.test.*
+/frontend/**/*.spec.*
+/docs/*ACCEPTANCE*.md
 
 # Frontend dependencies and build output
 frontend/node_modules/
