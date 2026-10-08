@@ -2767,12 +2767,15 @@ class UserViewSet(viewsets.ModelViewSet):
         profile.must_change_password = True
         profile.password_changed_at = None
         profile.save(update_fields=["must_change_password", "password_changed_at", "updated_at"])
+        revoked_token_count = PersonalAccessToken.objects.filter(
+            user=instance, revoked_at__isnull=True,
+        ).update(revoked_at=timezone.now())
         write_audit_log(
             request,
             action="update",
             resource_type="user",
             resource_id=instance.pk,
-            extra={"password_reset": True, "target_username": instance.username},
+            extra={"password_reset": True, "target_username": instance.username, "revoked_token_count": revoked_token_count},
         )
         return Response({"ok": True})
 

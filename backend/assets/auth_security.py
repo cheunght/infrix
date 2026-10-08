@@ -14,12 +14,13 @@ from urllib.parse import urlencode, quote
 
 from django.conf import settings
 from django.utils import timezone
-from rest_framework.authentication import BaseAuthentication, get_authorization_header
+from rest_framework.authentication import BaseAuthentication, SessionAuthentication, get_authorization_header
 from rest_framework.exceptions import AuthenticationFailed
 from drf_spectacular.extensions import OpenApiAuthenticationExtension
 from drf_spectacular.plumbing import build_bearer_security_scheme_object
 
 from .models import PersonalAccessToken
+from .account_policy import enforce_api_password_policy
 
 
 TOTP_PERIOD = 30
@@ -121,6 +122,8 @@ class PersonalAccessTokenAuthentication(BaseAuthentication):
         if not token.user.is_active:
             raise AuthenticationFailed("The account associated with this API token is disabled")
 
+        enforce_api_password_policy(request, token.user)
+
         now = timezone.now()
         if token.last_used_at is None or token.last_used_at <= now - timedelta(minutes=5):
             PersonalAccessToken.objects.filter(pk=token.pk).update(last_used_at=now)
@@ -131,6 +134,14 @@ class PersonalAccessTokenAuthentication(BaseAuthentication):
         # authentication challenge), while invalid bearer credentials receive
         # a useful 401 challenge.
         return self.keyword if get_authorization_header(request) else None
+
+
+class PolicySessionAuthentication(SessionAuthentication):
+    def authenticate(self, request):
+        result = super().authenticate(request)
+        if result is not None:
+            enforce_api_password_policy(request, result[0])
+        return result
 
 
 class PersonalAccessTokenScheme(OpenApiAuthenticationExtension):

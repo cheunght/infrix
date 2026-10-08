@@ -33,6 +33,7 @@ from .ldap_auth import (
     authenticate_with_source_routing,
 )
 from .models import UserSecurityProfile
+from .account_policy import requires_password_change
 
 
 ADMIN_PENDING_USER_KEY = "infrix.admin_pending_2fa_user_id"
@@ -119,6 +120,8 @@ class SecureAdminSite(admin.AdminSite):
         user = getattr(request, "user", None)
         if not user or not user.is_active or not user.is_staff:
             return False
+        if requires_password_change(user):
+            return False
         enabled = UserSecurityProfile.objects.filter(user_id=user.pk).values_list(
             "two_factor_enabled", flat=True
         ).first()
@@ -136,6 +139,8 @@ class SecureAdminSite(admin.AdminSite):
     @method_decorator(csrf_protect)
     @method_decorator(sensitive_post_parameters())
     def login(self, request, extra_context=None):
+        if request.method == "GET" and request.user.is_authenticated and requires_password_change(request.user):
+            return HttpResponseRedirect("/")
         if request.method == "GET" and self.has_permission(request):
             return HttpResponseRedirect(reverse("admin:index", current_app=self.name))
 
@@ -158,7 +163,7 @@ class SecureAdminSite(admin.AdminSite):
             user = form.get_user()
             _clear_login_throttle(username, client_ip)
             profile = UserSecurityProfile.objects.filter(user_id=user.pk).first()
-            target = _admin_redirect(request, self.name)
+            target = "/" if requires_password_change(user) else _admin_redirect(request, self.name)
             if profile and profile.two_factor_enabled:
                 request.session[ADMIN_PENDING_USER_KEY] = user.pk
                 request.session[ADMIN_PENDING_SOURCE_KEY] = form.auth_source or AUTH_SOURCE_LOCAL
@@ -243,8 +248,10 @@ class SecureAdminSite(admin.AdminSite):
                     target = request.session.get(ADMIN_PENDING_NEXT_KEY) or reverse(
                         "admin:index", current_app=self.name
                     )
+                    if requires_password_change(user):
+                        target = "/"
                     _clear_admin_pending(request)
-                    return HttpResponseRedirect(target)
+            return HttpResponseRedirect(target)
 
             if not form.errors:
                 is_locked, retry_after = register_two_factor_failure(user.pk, client_ip)
