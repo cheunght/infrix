@@ -26,9 +26,6 @@ mode, then saves the production configuration and guides you through the first
 administrator. On an existing host, the same command reuses its configuration
 and performs an in-place upgrade.
 
-Tests, regression scripts, and acceptance records are maintained in the
-sibling `ITAM-private` directory and are not tracked by this repository.
-
 For a release package with prebuilt frontend assets:
 
 ```bash
