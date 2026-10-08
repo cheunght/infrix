@@ -15,7 +15,11 @@ from collections.abc import Mapping
 from django.core.exceptions import ValidationError
 from django.db import transaction
 
-from .models import Asset, DataCenter, Rack, RackUnitAllocation, ServerRoom
+from .models import Asset, DataCenter, InventoryTask, Rack, RackUnitAllocation, ServerRoom
+
+
+class RoomReparentBlocked(ValueError):
+    """A room's current operational associations prevent changing its parent."""
 
 
 def _ids(values):
@@ -338,6 +342,11 @@ def _validate_rack_target_room(target_room, locked_rack):
 
 
 def _validate_server_room_target_data_center(target_data_center, locked_room):
+    if target_data_center.pk != locked_room.data_center_id:
+        if locked_room.spare_stocks.exists():
+            raise RoomReparentBlocked("机房存在备件库存记录（包括零余额），不能直接更换数据中心")
+        if InventoryTask.objects.filter(server_room=locked_room, status="in_progress").exists():
+            raise RoomReparentBlocked("机房存在进行中的盘点任务，不能直接更换数据中心")
     if (
         not target_data_center.is_active
         and target_data_center.pk != locked_room.data_center_id
@@ -345,6 +354,15 @@ def _validate_server_room_target_data_center(target_data_center, locked_room):
         raise ValidationError({
             "data_center": "停用的数据中心不能新增或接收机房",
         })
+
+
+def lock_inventory_scope(data_center_id, room_id):
+    """Serialize scoped task creation/reopening with room reparenting."""
+    center = DataCenter.objects.select_for_update().get(pk=data_center_id) if data_center_id else None
+    room = ServerRoom.objects.select_for_update().get(pk=room_id) if room_id else None
+    if room and (not center or room.data_center_id != center.pk):
+        raise ValidationError({"server_room": "机房已更换数据中心，请刷新盘点范围"})
+    return center, room
 
 
 @transaction.atomic

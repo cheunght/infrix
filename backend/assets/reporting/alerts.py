@@ -137,7 +137,11 @@ def _fault_alerts(limit=None):
     if limit is not None:
         faults = faults[:limit]
     for fault in faults:
-        reason = (fault.reason or fault.description or "").splitlines()[0][:160]
+        reason = next(
+            (line.strip() for text in (fault.reason, fault.description)
+             for line in (text or "").splitlines() if line.strip()),
+            "未填写故障说明",
+        )[:160]
         alerts.append(
             {
                 "id": f"fault:{fault.id}",

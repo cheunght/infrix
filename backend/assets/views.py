@@ -71,6 +71,7 @@ from .physical_location import (
     lock_asset_location,
     lock_rack_location,
     lock_server_room_location,
+    lock_inventory_scope,
     place_asset,
 )
 from .inventory import get_inventory_scope_assets
@@ -2405,12 +2406,13 @@ class SparePartViewSet(AuditedModelViewSetMixin, viewsets.ModelViewSet):
         # locations.
         data_center = self.request.query_params.get("data_center", "").strip()
         server_room = self.request.query_params.get("server_room", "").strip()
-        if data_center:
-            queryset = queryset.filter(stocks__data_center_id=data_center)
-        if server_room:
-            queryset = queryset.filter(stocks__server_room_id=server_room)
         if data_center or server_room:
-            queryset = queryset.distinct()
+            matching_stock = SpareStock.objects.filter(part_id=OuterRef("pk"))
+            if data_center:
+                matching_stock = matching_stock.filter(data_center_id=data_center)
+            if server_room:
+                matching_stock = matching_stock.filter(server_room_id=server_room)
+            queryset = queryset.filter(Exists(matching_stock))
         return queryset
 
     @transaction.atomic
@@ -3265,7 +3267,12 @@ class InventoryTaskViewSet(AuditedModelViewSetMixin, viewsets.ModelViewSet):
     @action(detail=True, methods=["post"], url_path="reopen")
     @transaction.atomic
     def reopen(self, request, pk=None):
-        task = InventoryTask.objects.select_for_update().get(pk=self.get_object().pk)
+        current_task = self.get_object()
+        try:
+            lock_inventory_scope(current_task.data_center_id, current_task.server_room_id)
+        except DjangoValidationError as exc:
+            raise DRFValidationError(exc.message_dict) from exc
+        task = InventoryTask.objects.select_for_update().get(pk=current_task.pk)
         if task.status != "completed":
             raise DRFValidationError({
                 "code": "inventory_task_not_completed",

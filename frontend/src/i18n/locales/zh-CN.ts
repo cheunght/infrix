@@ -1447,6 +1447,7 @@ export default {
     listName: "名称",
     storageLocation: "存放位置",
     stockQuantity: "库存数量",
+    globalStockQuantity: "全局库存数量",
     outbound: "出库",
     lowStock: "低库存",
     stockLocation: "库存地点",

@@ -34,7 +34,7 @@ from .enum_contracts import (
 from .license_status import LICENSE_STATUS_LABELS, license_status_value
 from .reporting.capacity import rack_effective_used_u
 from .services import CustomFieldConflictError, apply_asset_custom_values, apply_asset_tags, apply_spare_stock_transaction, assign_asset, configure_asset, inventory_snapshot_location, inventory_task_can_delete, return_asset, transfer_asset, validate_inventory_resolution_request
-from .physical_location import lock_asset_location, update_rack, update_server_room
+from .physical_location import RoomReparentBlocked, lock_inventory_scope, lock_asset_location, update_rack, update_server_room
 from .custom_fields import validate_custom_field_value
 from .custom_fields import normalize_validation_config as _normalize_validation_config
 from .attachment_security import validate_attachment_file
@@ -2000,6 +2000,10 @@ class ServerRoomSerializer(serializers.ModelSerializer):
                         room_id=instance.pk,
                         changes=validated_data,
                     )
+                except RoomReparentBlocked as exc:
+                    conflict = APIException({"detail": str(exc), "code": "room_reparent_blocked"})
+                    conflict.status_code = 409
+                    raise conflict from exc
                 except DjangoValidationError as exc:
                     detail = exc.message_dict if hasattr(exc, "message_dict") else {"detail": exc.messages}
                     raise serializers.ValidationError(detail) from exc
@@ -3303,6 +3307,21 @@ class InventoryItemPageSerializer(serializers.Serializer):
 
 
 class InventoryTaskSerializer(serializers.ModelSerializer):
+    @transaction.atomic
+    def create(self, validated_data):
+        try:
+            center, room = lock_inventory_scope(
+                getattr(validated_data.get("data_center"), "pk", None),
+                getattr(validated_data.get("server_room"), "pk", None),
+            )
+        except DjangoValidationError as exc:
+            raise serializers.ValidationError(exc.message_dict) from exc
+        if center:
+            validated_data["data_center"] = center
+        if room:
+            validated_data["server_room"] = room
+        return super().create(validated_data)
+
     start_at = SystemDateTimeInputField()
     end_at = SystemDateTimeInputField()
     inspector = serializers.PrimaryKeyRelatedField(queryset=User.objects.filter(is_active=True), required=False)

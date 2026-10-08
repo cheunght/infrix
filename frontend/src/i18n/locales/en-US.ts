@@ -1447,6 +1447,7 @@ export default {
     listName: "Name",
     storageLocation: "Storage location",
     stockQuantity: "Quantity",
+    globalStockQuantity: "Global stock",
     outbound: "Outbound",
     lowStock: "Low stock",
     stockLocation: "Stock location",

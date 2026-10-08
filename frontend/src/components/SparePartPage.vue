@@ -399,7 +399,7 @@ watch(showSpareOperationModal, (open, wasOpen) => { if (!open && wasOpen) refres
             <el-table-column :label="t('spare.storageLocation')" min-width="210">
               <template #default="{ row }">{{ row.storage_location || t('common.notAvailable') }}</template>
             </el-table-column>
-            <el-table-column :label="t('spare.stockQuantity')" width="126" align="center">
+            <el-table-column :label="t('spare.globalStockQuantity')" width="126" align="center">
               <template #default="{ row }">
                 <div class="spare-stock-cell">
                   <span>{{ row.total_quantity ?? 0 }} {{ spareUnitLabel(row.unit) }}</span>
