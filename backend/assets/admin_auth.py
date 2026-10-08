@@ -251,7 +251,7 @@ class SecureAdminSite(admin.AdminSite):
                     if requires_password_change(user):
                         target = "/"
                     _clear_admin_pending(request)
-            return HttpResponseRedirect(target)
+                    return HttpResponseRedirect(target)
 
             if not form.errors:
                 is_locked, retry_after = register_two_factor_failure(user.pk, client_ip)

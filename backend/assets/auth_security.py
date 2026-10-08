@@ -17,6 +17,7 @@ from django.utils import timezone
 from rest_framework.authentication import BaseAuthentication, SessionAuthentication, get_authorization_header
 from rest_framework.exceptions import AuthenticationFailed
 from drf_spectacular.extensions import OpenApiAuthenticationExtension
+from drf_spectacular.authentication import SessionScheme
 from drf_spectacular.plumbing import build_bearer_security_scheme_object
 
 from .models import PersonalAccessToken
@@ -142,6 +143,11 @@ class PolicySessionAuthentication(SessionAuthentication):
         if result is not None:
             enforce_api_password_policy(request, result[0])
         return result
+
+
+class PolicySessionScheme(SessionScheme):
+    target_class = "assets.auth_security.PolicySessionAuthentication"
+    priority = 1
 
 
 class PersonalAccessTokenScheme(OpenApiAuthenticationExtension):

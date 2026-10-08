@@ -1,11 +1,15 @@
 from datetime import timedelta
+import time
 
+from cryptography.fernet import Fernet
 from django.contrib.auth.models import User
+from django.test import override_settings
 from django.utils import timezone
 from rest_framework.test import APITestCase, APIClient
 
-from assets.auth_security import generate_api_token
-from assets.models import AuditLog, PersonalAccessToken, UserSecurityProfile, SystemSetting
+from assets.auth_security import generate_api_token, generate_totp_secret, _totp_digest
+from assets.configuration_secrets import encrypt_secret
+from assets.models import AuditLog, DirectoryIdentity, PersonalAccessToken, UserSecurityProfile, SystemSetting
 
 
 class AccountPolicyTests(APITestCase):
@@ -63,6 +67,37 @@ class AccountPolicyTests(APITestCase):
         response = self.client.post("/admin/login/", {"username": self.target.username, "password": self.password})
         self.assertEqual(response.status_code, 302)
         self.assertEqual(response["Location"], "/")
+
+    @override_settings(INFRIX_CONFIG_ENCRYPTION_KEY=Fernet.generate_key().decode())
+    def test_admin_two_factor_invalid_code_then_required_password_redirect(self):
+        secret = generate_totp_secret()
+        UserSecurityProfile.objects.filter(user=self.target).update(
+            must_change_password=True, two_factor_enabled=True,
+            two_factor_secret_encrypted=encrypt_secret(secret),
+        )
+        response = self.client.post("/admin/login/", {"username": self.target.username, "password": self.password})
+        self.assertEqual(response.status_code, 302)
+        verification_url = response["Location"]
+        self.assertNotIn("_auth_user_id", self.client.session)
+        invalid = self.client.post(verification_url, {"code": "abcdef"})
+        self.assertEqual(invalid.status_code, 200)
+        self.assertTrue(invalid.context_data["form"].errors)
+        self.assertNotIn("_auth_user_id", self.client.session)
+        code = _totp_digest(secret, int(time.time()) // 30)
+        response = self.client.post(verification_url, {"code": code})
+        self.assertEqual(response.status_code, 302)
+        self.assertEqual(response["Location"], "/")
+        self.assertEqual(self.client.get("/api/v1/assets/").status_code, 403)
+
+    def test_directory_password_is_not_expired_by_local_policy(self):
+        DirectoryIdentity.objects.create(user=self.target, external_id="policy-directory-id", current_login_identifier=self.target.username)
+        SystemSetting.objects.update_or_create(pk=1, defaults={"password_expiry_days": 1})
+        UserSecurityProfile.objects.filter(user=self.target).update(password_changed_at=timezone.now() - timedelta(days=2))
+        self.client.force_login(self.target)
+        bearer, _ = self.token_client()
+        self.assertEqual(self.client.get("/api/v1/assets/").status_code, 200)
+        self.assertEqual(bearer.get("/api/v1/assets/").status_code, 200)
+        self.assertEqual(self.client.get("/admin/").status_code, 200)
 
     def test_api_failures_lock_actual_admin_http_entry(self):
         for _ in range(5):
