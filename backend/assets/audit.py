@@ -114,7 +114,7 @@ def asset_audit_snapshot(asset_id):
     """Build the same rich asset snapshot used by asset write audits."""
     from .serializers import AssetDetailSerializer
 
-    asset = Asset.objects.select_related(
+    asset = Asset.all_objects.select_related(
         "assigned_person__department",
         "assigned_person__account",
         "standalone_manufacturer",
@@ -133,6 +133,7 @@ def asset_audit_snapshot(asset_id):
         "custom_values__field__options",
     ).get(pk=asset_id)
     snapshot = AssetDetailSerializer(asset).data
+    snapshot.pop("archive_snapshot", None)
     snapshot.pop("allowed_statuses", None)
     # Depreciation values are derived from today's date and must not create
     # date-dependent audit diffs.  The four configuration fields remain in the

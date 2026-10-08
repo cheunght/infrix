@@ -74,6 +74,7 @@ const assetIdentityMeta = computed(() => {
             >
               {{ asset?.name || t("asset.assetDetail") }}
             </h2>
+            <el-tag v-if="asset?.archived_at" type="info">{{ t("asset.archivedAssets") }}</el-tag>
             <StatusTag
               v-if="asset"
               :tone="statusTone(asset.status)"
@@ -90,7 +91,7 @@ const assetIdentityMeta = computed(() => {
         </div>
         <div v-if="asset" class="asset-drawer-actions">
           <el-button
-            v-if="canEdit"
+            v-if="canEdit && !asset?.archived_at"
             text
             type="primary"
             :icon="Edit"
@@ -98,7 +99,7 @@ const assetIdentityMeta = computed(() => {
             >{{ t("common.edit") }}</el-button
           >
           <el-button
-            v-if="canDispose && asset.status !== 'retired'"
+            v-if="canDispose && !asset.archived_at && asset.status !== 'retired'"
             text
             type="danger"
             :icon="Delete"

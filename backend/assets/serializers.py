@@ -14,6 +14,7 @@ from decimal import Decimal
 from typing import Any
 import json
 import re
+from .asset_retention import active_asset_for_update
 from .models import AssetModel, AuditLog, Asset, AssetAssignmentEvent, AssetCustomValue, AssetDisposal, AssetNetworkAddress, AssetTag, Attachment, CustomField, CustomFieldOption, CustomFieldSet, CustomFieldSetItem, DataCenter, Department, DeviceType, DirectoryIdentity, FaultEvent, InventoryItem, InventoryTask, MaintenanceContract, Manufacturer, NotificationDelivery, Person, PersonalAccessToken, ProcurementRecord, Rack, RackUnitAllocation, RepairPartUsage, RepairRecord, ServerRoom, SoftwareLicense, SparePart, SparePartCategory, SpareStock, SpareStockTransaction, SystemSetting, Tag, UserSecurityProfile, DEFAULT_ASSET_STATUS_CHOICES, SYSTEM_CURRENCY_CHOICES, SYSTEM_DATE_FORMAT_CHOICES, SYSTEM_LOCALE_CHOICES, SMTP_SECURITY_MODE_CHOICES
 from .fieldsets import fieldset_items_queryset, raise_if_fieldset_conflicts, replace_fieldset_items, resolve_fieldset, validate_fieldset_items
 from .depreciation import DepreciationValidationError, calculate_asset_depreciation, validate_depreciation_configuration
@@ -33,6 +34,7 @@ from .enum_contracts import (
 )
 from .license_status import LICENSE_STATUS_LABELS, license_status_value
 from .fault_timeline import validate_fault_times, validate_repair_times
+from .asset_revision import check_asset_revision
 from .reporting.capacity import rack_effective_used_u
 from .services import CustomFieldConflictError, apply_asset_custom_values, apply_asset_tags, apply_spare_stock_transaction, assign_asset, configure_asset, inventory_snapshot_location, inventory_task_can_delete, return_asset, transfer_asset, validate_inventory_resolution_request
 from .physical_location import RoomReparentBlocked, lock_inventory_scope, lock_asset_location, update_rack, update_server_room
@@ -813,6 +815,9 @@ class AttachmentSerializer(serializers.ModelSerializer):
             raise serializers.ValidationError({"asset": "必须指定资产或维修记录"})
         elif attrs.get("category", getattr(self.instance, "category", Attachment.OTHER)) == Attachment.MAINTENANCE_REPORT:
             raise serializers.ValidationError({"repair": "维修报告必须关联维修记录"})
+        parent_asset = repair.fault.asset if repair is not None else asset
+        if parent_asset.archived_at is not None:
+            raise serializers.ValidationError({"code": "asset_archived", "detail": "已归档资产的附件只允许查看和下载"})
         if self.instance and "file" not in attrs and "category" not in attrs and "note" not in attrs:
             raise serializers.ValidationError("至少修改一个附件字段")
         return attrs
@@ -2356,7 +2361,38 @@ class ResolvedAssetMetadataMixin(serializers.Serializer):
         return device_type.name if device_type is not None else None
 
 
+def _archive_representation(instance, data, *, custom_columns=None):
+    snapshot = instance.archive_snapshot if instance.archived_at else {}
+    if not snapshot:
+        return data
+    for key in data.keys() & snapshot.keys():
+        if key not in {"revision", "archived_at", "archive_snapshot"}:
+            data[key] = snapshot[key]
+    if "custom_values" in data and custom_columns is not None:
+        data["custom_values"] = {key: value for key, value in snapshot.get("custom_values", {}).items() if key in custom_columns}
+    if "allowed_statuses" in data:
+        data["allowed_statuses"] = []
+    networks = {item["role"]: item["address"] for item in snapshot.get("network_addresses", [])}
+    location = snapshot.get("rack_allocation") or {}
+    procurement = next(iter(snapshot.get("procurement_records", [])), {})
+    maintenance = next(iter(snapshot.get("maintenance_contracts", [])), {})
+    flat = {
+        "tag_names": [item["name"] for item in snapshot.get("tags", [])],
+        "business_ip": networks.get("business", ""), "management_ip": networks.get("management", ""),
+        "oob_ip": networks.get("oob", ""),
+        "data_center": location.get("data_center") or snapshot.get("asset_data_center_name") or "",
+        "server_room": location.get("server_room") or "", "rack_code": location.get("rack_code") or "",
+        "purchase_date": procurement.get("purchase_date"), "supplier": procurement.get("supplier", ""),
+        "purchase_order_no": procurement.get("order_no", ""),
+        "maintenance_provider": maintenance.get("provider", ""), "maintenance_expiry_date": maintenance.get("expiry_date"),
+    }
+    for key in data.keys() & flat.keys():
+        data[key] = flat[key]
+    return data
+
+
 class AssetSerializer(ResolvedAssetMetadataMixin, serializers.ModelSerializer):
+    revision = serializers.IntegerField(read_only=True)
     asset_data_center_name = serializers.CharField(source="asset_data_center.name", read_only=True, allow_null=True)
     asset_model = AssetModelReferenceSerializer(read_only=True, allow_null=True)
     assigned_person = PersonSummarySerializer(read_only=True, allow_null=True)
@@ -2369,10 +2405,13 @@ class AssetSerializer(ResolvedAssetMetadataMixin, serializers.ModelSerializer):
     def get_tag_names(self, obj) -> list[str]:
         return [item.tag.name for item in _asset_tags_for_serialization(obj)]
 
+    def to_representation(self, instance):
+        return _archive_representation(instance, super().to_representation(instance))
+
     class Meta:
         model = Asset
         fields = [
-            "id", "created_at", "updated_at", "asset_no", "name", "manufacturer", "manufacturer_name",
+            "id", "archived_at", "revision", "created_at", "updated_at", "asset_no", "name", "manufacturer", "manufacturer_name",
             "device_type", "device_type_name", "asset_data_center", "asset_data_center_name", "asset_model",
             "model_name", "model_number", "model_text", "warranty_months", "serial_number", "purpose", "status",
             "assigned_person", "notes", "depreciation_start_date", "depreciation_years", "residual_rate",
@@ -2522,10 +2561,14 @@ class AssetListSerializer(ResolvedAssetMetadataMixin, serializers.ModelSerialize
             values[field.key] = _raw_custom_value(item)
         return values
 
+    def to_representation(self, instance):
+        return _archive_representation(instance, super().to_representation(instance),
+                                       custom_columns=set(self.context.get("requested_custom_columns", ())))
+
     class Meta:
         model = Asset
         fields = [
-            "id", "created_at", "updated_at", "asset_no", "name",
+            "id", "archived_at", "created_at", "updated_at", "asset_no", "name",
             "manufacturer", "manufacturer_name", "device_type",
             "device_type_name", "asset_data_center", "asset_data_center_name", "asset_model", "model_name", "model_number", "model_text",
             "serial_number", "purpose", "status", "assigned_person", "notes", "warranty_months",
@@ -2556,6 +2599,7 @@ class DepreciationResponseSerializer(serializers.Serializer):
 
 
 class AssetDetailSerializer(ResolvedAssetMetadataMixin, serializers.ModelSerializer):
+    revision = serializers.IntegerField(read_only=True)
     asset_data_center_name = serializers.CharField(source="asset_data_center.name", read_only=True, allow_null=True)
     asset_model = AssetModelReferenceSerializer(read_only=True, allow_null=True)
     assigned_person = PersonSummarySerializer(read_only=True, allow_null=True)
@@ -2624,10 +2668,13 @@ class AssetDetailSerializer(ResolvedAssetMetadataMixin, serializers.ModelSeriali
             return "legacy"
         return "recorded" if disposal is not None else "legacy"
 
+    def to_representation(self, instance):
+        return _archive_representation(instance, super().to_representation(instance))
+
     class Meta:
         model = Asset
         fields = [
-            "id", "created_at", "updated_at", "asset_no", "name", "manufacturer", "manufacturer_name", "device_type", "device_type_name", "asset_data_center", "asset_data_center_name", "asset_model", "model_name", "model_number", "model_text",
+            "id", "archived_at", "archive_snapshot", "revision", "created_at", "updated_at", "asset_no", "name", "manufacturer", "manufacturer_name", "device_type", "device_type_name", "asset_data_center", "asset_data_center_name", "asset_model", "model_name", "model_number", "model_text",
             "serial_number", "purpose", "status", "assigned_person", "notes", "warranty_months", "depreciation_start_date", "depreciation_years", "residual_rate", "depreciation_method",
             "network_addresses", "rack_allocation", "procurement_records", "maintenance_contracts", "inventory_records_count", "latest_inventory_record", "tags", "custom_fields", "custom_values", "allowed_statuses", "disposal", "disposal_status",
             "depreciation",
@@ -2658,6 +2705,7 @@ class AssetWriteSerializer(serializers.ModelSerializer):
     id = serializers.IntegerField(read_only=True)
     created_at = serializers.DateTimeField(read_only=True)
     updated_at = serializers.DateTimeField(read_only=True)
+    revision = serializers.IntegerField(read_only=True)
     configuration = serializers.JSONField(write_only=True, required=False)
     assignment = AssetAssignmentSerializer(write_only=True, required=False)
     tags = serializers.PrimaryKeyRelatedField(many=True, queryset=Tag.objects.all(), required=False, write_only=True)
@@ -2683,8 +2731,22 @@ class AssetWriteSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = Asset
-        fields = ["id", "created_at", "updated_at", "asset_no", "name", "manufacturer", "device_type", "asset_data_center", "asset_model", "model_text", "warranty_months", "serial_number", "purpose", "status", "notes", "depreciation_start_date", "depreciation_years", "residual_rate", "depreciation_method", "configuration", "assignment", "tags", "custom_values", "discard_incompatible_custom_values"]
-        read_only_fields = ["id", "created_at", "updated_at"]
+        fields = ["id", "revision", "created_at", "updated_at", "asset_no", "name", "manufacturer", "device_type", "asset_data_center", "asset_model", "model_text", "warranty_months", "serial_number", "purpose", "status", "notes", "depreciation_start_date", "depreciation_years", "residual_rate", "depreciation_method", "configuration", "assignment", "tags", "custom_values", "discard_incompatible_custom_values"]
+        read_only_fields = ["id", "revision", "created_at", "updated_at"]
+
+    def get_fields(self):
+        fields = super().get_fields()
+        # Identifiers remain reserved by archived assets.
+        from rest_framework.validators import UniqueValidator
+        for key in ("asset_no", "serial_number"):
+            for validator in fields[key].validators:
+                if isinstance(validator, UniqueValidator):
+                    validator.queryset = Asset.all_objects.all()
+        return fields
+
+    def to_representation(self, instance):
+        instance.refresh_from_db()
+        return super().to_representation(instance)
 
     def _stored_procurement_amount(self):
         if not self.instance:
@@ -2989,7 +3051,8 @@ class AssetWriteSerializer(serializers.ModelSerializer):
                             else None
                         ),
                     )
-                instance = Asset.objects.select_for_update().get(pk=instance.pk)
+                instance = active_asset_for_update(instance.pk)
+                check_asset_revision(instance, self.context.get("request"))
                 if (
                     requested_asset_data_center is not missing
                     and not self._configuration_includes_placement(configuration)
@@ -3166,10 +3229,10 @@ class InventoryBulkNormalResponseSerializer(serializers.Serializer):
 
 class InventoryItemSerializer(serializers.ModelSerializer):
     task_name = serializers.CharField(source="task.name", read_only=True)
-    asset_no = serializers.CharField(source="asset.asset_no", read_only=True)
-    asset_name = serializers.CharField(source="asset.name", read_only=True)
-    device_type_name = serializers.CharField(source="asset.device_type.name", read_only=True, allow_null=True)
-    serial_number = serializers.CharField(source="asset.serial_number", read_only=True, allow_null=True)
+    asset_no = serializers.SerializerMethodField()
+    asset_name = serializers.SerializerMethodField()
+    device_type_name = serializers.SerializerMethodField()
+    serial_number = serializers.SerializerMethodField()
     status_label = serializers.SerializerMethodField()
     checked_by_name = serializers.SerializerMethodField()
     system_data_center = serializers.SerializerMethodField()
@@ -3177,12 +3240,33 @@ class InventoryItemSerializer(serializers.ModelSerializer):
     system_rack_code = serializers.SerializerMethodField()
     system_start_u = serializers.SerializerMethodField()
     system_end_u = serializers.SerializerMethodField()
-    actual_data_center = serializers.CharField(source="actual_rack.room.data_center.name", read_only=True, allow_null=True)
-    actual_server_room = serializers.CharField(source="actual_rack.room.name", read_only=True, allow_null=True)
-    actual_rack_code = serializers.CharField(source="actual_rack.code", read_only=True, allow_null=True)
+    actual_data_center = serializers.SerializerMethodField()
+    actual_server_room = serializers.SerializerMethodField()
+    actual_rack_code = serializers.SerializerMethodField()
     resolution_status_label = serializers.SerializerMethodField()
     resolution_action_label = serializers.SerializerMethodField()
     resolved_by_name = serializers.SerializerMethodField()
+
+    def get_asset_no(self, obj) -> str:
+        return self._snapshot(obj).get("asset_no", obj.asset.asset_no)
+
+    def get_asset_name(self, obj) -> str:
+        return self._snapshot(obj).get("name", obj.asset.name)
+
+    def get_device_type_name(self, obj) -> str:
+        return self._snapshot(obj).get("device_type_name", obj.asset.device_type.name if obj.asset.device_type else "")
+
+    def get_serial_number(self, obj) -> str | None:
+        return self._snapshot(obj).get("serial_number", obj.asset.serial_number)
+
+    def get_actual_data_center(self, obj) -> str:
+        return (obj.actual_location_snapshot or {}).get("data_center") or ""
+
+    def get_actual_server_room(self, obj) -> str:
+        return (obj.actual_location_snapshot or {}).get("server_room") or ""
+
+    def get_actual_rack_code(self, obj) -> str:
+        return (obj.actual_location_snapshot or {}).get("rack_code") or ""
 
     def get_status_label(self, obj) -> str:
         return INVENTORY_ITEM_STATUS_LABELS.get(obj.status, obj.status)
@@ -3285,7 +3369,7 @@ class InventoryItemSerializer(serializers.ModelSerializer):
             "system_data_center", "system_server_room", "system_rack_code", "system_start_u", "system_end_u",
             "status", "status_label", "checked_at", "checked_by", "checked_by_name",
             "actual_rack", "actual_data_center", "actual_server_room", "actual_rack_code",
-            "actual_start_u", "actual_end_u", "notes",
+            "actual_start_u", "actual_end_u", "actual_location_snapshot", "notes",
             "resolution_status", "resolution_status_label", "resolution_action", "resolution_action_label",
             "resolution_note", "resolved_by", "resolved_by_name", "resolved_at",
             "created_at", "updated_at",
@@ -3294,7 +3378,7 @@ class InventoryItemSerializer(serializers.ModelSerializer):
             "id", "task", "task_name", "asset", "asset_no", "asset_name", "device_type_name", "serial_number",
             "system_data_center", "system_server_room", "system_rack_code", "system_start_u", "system_end_u",
             "status_label", "checked_at", "checked_by", "checked_by_name", "actual_data_center",
-            "actual_server_room", "actual_rack_code", "resolution_status", "resolution_status_label",
+            "actual_server_room", "actual_rack_code", "actual_location_snapshot", "resolution_status", "resolution_status_label",
             "resolution_action", "resolution_action_label", "resolution_note", "resolved_by",
             "resolved_by_name", "resolved_at", "created_at", "updated_at",
         ]
@@ -3663,6 +3747,8 @@ class RepairRecordSerializer(serializers.ModelSerializer):
         started_at = attrs.get("started_at", self.instance.started_at if self.instance else None)
         finished_at = attrs.get("finished_at", self.instance.finished_at if self.instance else None)
         fault = attrs.get("fault", self.instance.fault if self.instance else None)
+        if fault.asset.archived_at is not None:
+            raise serializers.ValidationError({"code": "asset_archived", "detail": "已归档资产的历史维修不能修改"})
         validate_repair_times(
             occurred_at=fault.occurred_at,
             started_at=started_at,

@@ -1,13 +1,29 @@
 from django.contrib.auth.models import Group, User
-from django.db.models.signals import post_save, pre_delete, pre_save
+from django.db.models.signals import post_delete, post_save, pre_delete, pre_save
 from django.dispatch import receiver
 
-from .models import Person, UserSecurityProfile
+from .models import Asset, AssetCustomValue, AssetNetworkAddress, AssetTag, MaintenanceContract, Person, ProcurementRecord, RackUnitAllocation, UserSecurityProfile
 from .organization_access import (
     protect_preset_role_delete as enforce_preset_role_delete,
     protect_preset_role_rename as enforce_preset_role_rename,
 )
 from .system_settings import get_runtime_preferences
+
+
+def advance_asset_revision(sender, instance, **kwargs):
+    # Related configuration is part of the same editable asset, even when
+    # written by imports, inventory correction or a dedicated action.
+    if kwargs.get("raw"):
+        return
+    Asset.objects.filter(pk=instance.asset_id).update()
+
+
+for _asset_configuration_model in (
+    AssetCustomValue, AssetNetworkAddress, AssetTag, MaintenanceContract,
+    ProcurementRecord, RackUnitAllocation,
+):
+    post_save.connect(advance_asset_revision, sender=_asset_configuration_model)
+    post_delete.connect(advance_asset_revision, sender=_asset_configuration_model)
 
 
 @receiver(pre_save, sender=Group)

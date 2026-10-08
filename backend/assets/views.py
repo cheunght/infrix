@@ -34,6 +34,7 @@ from openpyxl import Workbook
 from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
 from openpyxl.utils import get_column_letter
 from urllib.parse import quote
+from .asset_retention import active_asset_for_update, visible_assets
 from .models import AuthThrottleState, AuditLog, Asset, AssetAssignmentEvent, AssetCustomValue, AssetModel, AssetNetworkAddress, AssetTag, Attachment, CustomField, CustomFieldOption, CustomFieldSet, CustomFieldSetItem, DataCenter, Department, DeviceType, DirectoryIdentity, FaultEvent, InventoryItem, InventoryTask, MaintenanceContract, NotificationDelivery, Person, PersonalAccessToken, ProcurementRecord, Rack, RackUnitAllocation, RepairPartUsage, RepairRecord, ServerRoom, SoftwareLicense, SparePart, SpareStock, SpareStockTransaction, Tag, UserSecurityProfile
 from .enum_contracts import (
     ASSET_STATUS_LABELS,
@@ -488,28 +489,36 @@ def _batch_error_code(error, fallback):
     return fallback
 
 
-def _delete_asset_with_audit(instance, request, *, batch_operation_id=None):
+def _archive_asset_with_audit(instance, request, *, batch_operation_id=None):
+    """Archive under the caller's asset/location locks; retain business facts."""
+    from .audit import json_value
+
+    reasons = []
+    if instance.assigned_person_id:
+        reasons.append("仍有当前使用人，请先归还")
+    if RackUnitAllocation.objects.filter(asset=instance).exists():
+        reasons.append("仍占用机柜 U 位，请先下架")
+    if FaultEvent.objects.filter(asset=instance, is_closed=False).exists():
+        reasons.append("存在未关闭故障")
+    if RepairRecord.objects.filter(fault__asset=instance, finished_at__isnull=True).exists():
+        reasons.append("存在未完成维修")
+    if InventoryItem.objects.filter(asset=instance, task__status="in_progress").exists():
+        reasons.append("存在进行中的盘点任务")
+    if reasons:
+        raise DRFValidationError({"code": "asset_archive_blocked", "detail": "；".join(reasons)})
     before = asset_audit_snapshot(instance.pk)
-    resource_id = instance.pk
-    try:
-        instance.delete()
-    except ProtectedError as exc:
-        protected = list(exc.protected_objects)
-        if any(isinstance(item, InventoryItem) for item in protected):
-            raise DRFValidationError("资产存在历史盘点记录，不能删除") from exc
-        if any(isinstance(item, FaultEvent) for item in protected):
-            raise DRFValidationError("资产存在关联故障记录，不能删除") from exc
-        if any(isinstance(item, AssetAssignmentEvent) for item in protected):
-            raise DRFValidationError("资产存在使用人变化历史，不能删除") from exc
-        raise DRFValidationError("资产存在关联数据，不能删除") from exc
+    instance.archived_at = timezone.now()
+    instance.archive_snapshot = json_value({
+        **before,
+        "archived_at": instance.archived_at,
+        "archived_by": request.user.pk,
+        "archived_by_name": request.user.get_full_name() or request.user.username,
+    })
+    instance.save(update_fields=["archived_at", "archive_snapshot", "updated_at"])
     extra = {"batch_operation_id": str(batch_operation_id)} if batch_operation_id else None
     write_audit_log(
-        request,
-        action="delete",
-        resource_type="asset",
-        resource_id=resource_id,
-        before=before,
-        extra=extra,
+        request, action="archive", resource_type="asset", resource_id=instance.pk,
+        before=before, after=asset_audit_snapshot(instance.pk), extra=extra,
     )
 
 
@@ -610,7 +619,7 @@ class PersonViewSet(AuditedModelViewSetMixin, viewsets.ModelViewSet):
 
 class AssetViewSet(AuditedModelViewSetMixin, viewsets.ModelViewSet):
     max_custom_columns = 12
-    queryset = Asset.objects.select_related(
+    queryset = Asset.all_objects.select_related(
         "assigned_person__department", "assigned_person__account", "standalone_manufacturer",
         "standalone_device_type__default_fieldset", "asset_model__manufacturer",
         "asset_model__device_type__default_fieldset", "asset_model__fieldset", "asset_data_center",
@@ -646,6 +655,7 @@ class AssetViewSet(AuditedModelViewSetMixin, viewsets.ModelViewSet):
 
     @extend_schema(
         parameters=[
+            OpenApiParameter("archived", OpenApiTypes.BOOL, description="true 查看已归档资产；默认仅当前台账。"),
             OpenApiParameter(
                 name="custom_columns",
                 type=OpenApiTypes.STR,
@@ -699,8 +709,17 @@ class AssetViewSet(AuditedModelViewSetMixin, viewsets.ModelViewSet):
     def list(self, request, *args, **kwargs):
         return super().list(request, *args, **kwargs)
 
+    @extend_schema(parameters=[OpenApiParameter("If-Match", OpenApiTypes.STR, location=OpenApiParameter.HEADER, required=True, description="资产详情返回的 revision，例如 \"12\"；缺失 428，过期 409。")])
+    def update(self, request, *args, **kwargs):
+        return super().update(request, *args, **kwargs)
+
+    @extend_schema(parameters=[OpenApiParameter("If-Match", OpenApiTypes.STR, location=OpenApiParameter.HEADER, required=True, description="资产详情返回的 revision；缺失 428，过期 409。")])
+    def partial_update(self, request, *args, **kwargs):
+        return super().partial_update(request, *args, **kwargs)
+
     def get_queryset(self):
         queryset = super().get_queryset()
+        queryset = visible_assets(self.request, queryset)
         manufacturer = self.request.query_params.get("manufacturer", "").strip()
         if manufacturer.isdigit():
             queryset = queryset.filter(
@@ -995,6 +1014,7 @@ class AssetViewSet(AuditedModelViewSetMixin, viewsets.ModelViewSet):
     )
     @action(detail=True, methods=["post"], url_path="assign")
     def assign(self, request, pk=None):
+        self.get_object()
         serializer = AssetAssignmentTargetSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
         asset, _event = assign_asset(
@@ -1013,6 +1033,7 @@ class AssetViewSet(AuditedModelViewSetMixin, viewsets.ModelViewSet):
     )
     @action(detail=True, methods=["post"], url_path="return")
     def return_asset(self, request, pk=None):
+        self.get_object()
         serializer = AssetAssignmentReturnSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
         asset, _event = return_asset(
@@ -1030,6 +1051,7 @@ class AssetViewSet(AuditedModelViewSetMixin, viewsets.ModelViewSet):
     )
     @action(detail=True, methods=["post"], url_path="transfer")
     def transfer(self, request, pk=None):
+        self.get_object()
         serializer = AssetAssignmentTargetSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
         asset, _event = transfer_asset(
@@ -1075,6 +1097,19 @@ class AssetViewSet(AuditedModelViewSetMixin, viewsets.ModelViewSet):
         )
         return {"custom_changes": changes} if changes else None
 
+    @extend_schema(request=None, responses=AssetDetailSerializer, description="恢复归档资产；原资产编号和业务状态保持不变。")
+    @action(detail=True, methods=["post"], url_path="restore")
+    @transaction.atomic
+    def restore(self, request, pk=None):
+        asset = get_object_or_404(Asset.all_objects.select_for_update(), pk=pk)
+        if asset.archived_at is not None:
+            before = asset_audit_snapshot(asset.pk)
+            asset.archived_at = None
+            asset.save(update_fields=["archived_at", "updated_at"])
+            write_audit_log(request, action="restore", resource_type="asset", resource_id=asset.pk,
+                            before=before, after=asset_audit_snapshot(asset.pk))
+        return Response(AssetDetailSerializer(asset, context=self.get_serializer_context()).data)
+
     def perform_destroy(self, instance):
         try:
             # Serialize the single-delete path with history writers that lock
@@ -1088,14 +1123,14 @@ class AssetViewSet(AuditedModelViewSetMixin, viewsets.ModelViewSet):
                     Asset.objects.select_for_update(),
                     pk=instance.pk,
                 )
-                _delete_asset_with_audit(locked_instance, self.request)
+                _archive_asset_with_audit(locked_instance, self.request)
         except IntegrityError as exc:
             raise DRFValidationError("资产存在关联数据，不能删除") from exc
 
     @extend_schema(
         request=AssetBatchDeleteSerializer,
         responses=AssetBatchDeleteResponseSerializer,
-        description="批量删除资产；每条记录会重新执行单条删除保护并返回逐条结果。",
+        description="批量归档资产；保留历史与附件，每条记录重新检查归档约束。",
     )
     @action(detail=False, methods=["post"], url_path="batch-delete")
     def batch_delete(self, request):
@@ -1112,7 +1147,7 @@ class AssetViewSet(AuditedModelViewSetMixin, viewsets.ModelViewSet):
                     lock_asset_location(asset_id=asset_id)
                     instance = Asset.objects.select_for_update().get(pk=asset_id)
                     asset_no = instance.asset_no
-                    _delete_asset_with_audit(
+                    _archive_asset_with_audit(
                         instance,
                         request,
                         batch_operation_id=batch_operation_id,
@@ -1123,7 +1158,7 @@ class AssetViewSet(AuditedModelViewSetMixin, viewsets.ModelViewSet):
                     "asset_no": f"ID {asset_id}",
                     "success": False,
                     "code": "NOT_FOUND",
-                    "reason": "资产不存在或已被删除",
+                    "reason": "资产不存在或已被归档",
                 })
             except DRFValidationError as exc:
                 results.append({
@@ -1131,7 +1166,7 @@ class AssetViewSet(AuditedModelViewSetMixin, viewsets.ModelViewSet):
                     "asset_no": asset_no,
                     "success": False,
                     "code": "PROTECTED",
-                    "reason": _batch_error_message(exc, "资产当前不能删除"),
+                    "reason": _batch_error_message(exc, "资产当前不能归档"),
                 })
             except DatabaseError:
                 results.append({
@@ -1139,7 +1174,7 @@ class AssetViewSet(AuditedModelViewSetMixin, viewsets.ModelViewSet):
                     "asset_no": asset_no,
                     "success": False,
                     "code": "CONFLICT",
-                    "reason": "资产当前存在关联数据，未删除",
+                    "reason": "资产当前存在关联数据，未归档",
                 })
             else:
                 succeeded += 1
@@ -1207,7 +1242,7 @@ class AssetViewSet(AuditedModelViewSetMixin, viewsets.ModelViewSet):
                     "asset_no": asset_no,
                     "success": False,
                     "code": "NOT_FOUND",
-                    "reason": "资产不存在或已被删除",
+                    "reason": "资产不存在或已被归档",
                 })
             except DRFValidationError as exc:
                 results.append({
@@ -1378,7 +1413,7 @@ class AssetViewSet(AuditedModelViewSetMixin, viewsets.ModelViewSet):
                     "asset_no": asset_no,
                     "success": False,
                     "code": "NOT_FOUND",
-                    "reason": "资产不存在或已被删除",
+                    "reason": "资产不存在或已被归档",
                 })
             except (DRFValidationError, APIException) as exc:
                 results.append({
@@ -1455,6 +1490,8 @@ class AttachmentViewSet(viewsets.ModelViewSet):
 
     def get_queryset(self):
         queryset = super().get_queryset()
+        if self.request.method not in {"GET", "HEAD", "OPTIONS"}:
+            queryset = queryset.filter(asset__archived_at__isnull=True)
         asset_id = self._parse_query_id(self.request.query_params.get("asset"), "asset")
         repair_id = self._parse_query_id(self.request.query_params.get("repair"), "repair")
         if self.action == "list" and asset_id is None and repair_id is None:
@@ -1512,6 +1549,7 @@ class AttachmentViewSet(viewsets.ModelViewSet):
 
     @transaction.atomic
     def perform_create(self, serializer):
+        active_asset_for_update(serializer.validated_data["asset"].pk)
         instance = None
         try:
             instance = serializer.save(uploaded_by=self.request.user)
@@ -1530,6 +1568,12 @@ class AttachmentViewSet(viewsets.ModelViewSet):
 
     @transaction.atomic
     def perform_update(self, serializer):
+        active_asset_for_update(serializer.instance.asset_id)
+        # Validation can precede another file replacement. Refresh after
+        # parent admission so a note edit preserves the current file reference.
+        serializer.instance = get_object_or_404(
+            Attachment.objects.select_for_update(), pk=serializer.instance.pk,
+        )
         before = AttachmentSerializer(serializer.instance).data
         old_name = serializer.instance.file.name
         instance = None
@@ -1555,6 +1599,8 @@ class AttachmentViewSet(viewsets.ModelViewSet):
 
     @transaction.atomic
     def perform_destroy(self, instance):
+        active_asset_for_update(instance.asset_id)
+        instance = get_object_or_404(Attachment.objects.select_for_update(), pk=instance.pk)
         before = AttachmentSerializer(instance).data
         resource_id = instance.pk
         instance.delete()
@@ -1817,10 +1863,10 @@ class ServerRoomViewSet(AuditedModelViewSetMixin, viewsets.ModelViewSet):
 class DataCenterViewSet(AuditedModelViewSetMixin, viewsets.ModelViewSet):
     queryset = DataCenter.objects.annotate(
         assets_count=(
-            Count("rooms__racks__allocations__asset", distinct=True)
+            Count("rooms__racks__allocations__asset", filter=Q(rooms__racks__allocations__asset__archived_at__isnull=True), distinct=True)
             + Count(
                 "unmounted_assets",
-                filter=Q(unmounted_assets__rack_allocation__isnull=True),
+                filter=Q(unmounted_assets__rack_allocation__isnull=True, unmounted_assets__archived_at__isnull=True),
                 distinct=True,
             )
         ),
@@ -1874,8 +1920,8 @@ class DataCenterViewSet(AuditedModelViewSetMixin, viewsets.ModelViewSet):
             from django.db.models.deletion import ProtectedError
             from rest_framework.exceptions import ValidationError as DRFValidationError
             if isinstance(exc, ProtectedError):
-                if instance.unmounted_assets.exists():
-                    raise DRFValidationError("数据中心仍有未上架资产归属，不能删除，请先调整资产所属数据中心") from exc
+                if Asset.all_objects.filter(asset_data_center=instance).exists():
+                    raise DRFValidationError("数据中心仍被当前或归档资产引用，不能删除，请先停用") from exc
                 if instance.inventory_tasks.exists():
                     raise DRFValidationError("数据中心仍有历史盘点任务，不能删除") from exc
                 if instance.spare_stocks.exists():
@@ -1920,7 +1966,7 @@ class DictionaryViewSet(AuditedModelViewSetMixin, viewsets.ModelViewSet):
                 "id", "name", "is_active"
             )
         else:
-            queryset = self.queryset.annotate(assets_count=Count("assets"))
+            queryset = self.queryset.annotate(assets_count=Count("assets", filter=Q(assets__archived_at__isnull=True)))
         if self.action in {"retrieve", "update", "partial_update", "destroy"}:
             return queryset
         active = self.request.query_params.get("is_active", "true").strip().lower()
@@ -1944,7 +1990,10 @@ class DictionaryViewSet(AuditedModelViewSetMixin, viewsets.ModelViewSet):
         if instance.assets.exists():
             from rest_framework.exceptions import ValidationError as DRFValidationError
             raise DRFValidationError("字典项正在被资产使用，不能删除，请先停用")
-        AuditedModelViewSetMixin.perform_destroy(self, instance)
+        try:
+            AuditedModelViewSetMixin.perform_destroy(self, instance)
+        except ProtectedError as exc:
+            raise DRFValidationError("字典项仍被当前或归档业务记录引用，不能删除，请先停用") from exc
 
 
 class DepartmentViewSet(AuditedModelViewSetMixin, viewsets.ModelViewSet):
@@ -2017,7 +2066,7 @@ class DeviceTypeViewSet(DictionaryViewSet):
             )
         else:
             queryset = self.queryset.annotate(
-                assets_count=Count("standalone_assets", distinct=True) + Count("asset_models__assets", distinct=True),
+                assets_count=Count("standalone_assets", filter=Q(standalone_assets__archived_at__isnull=True), distinct=True) + Count("asset_models__assets", filter=Q(asset_models__assets__archived_at__isnull=True), distinct=True),
                 custom_fields_count=Count("default_fieldset__items__field", distinct=True),
             )
         if self.action in {"retrieve", "update", "partial_update", "destroy"}:
@@ -2174,7 +2223,7 @@ class CustomFieldSetViewSet(AuditedModelViewSetMixin, viewsets.ModelViewSet):
 
 class CustomFieldViewSet(AuditedModelViewSetMixin, viewsets.ModelViewSet):
     queryset = CustomField.objects.prefetch_related("options").annotate(
-        assets_count=Count("asset_values__asset", distinct=True),
+        assets_count=Count("asset_values__asset", filter=Q(asset_values__asset__archived_at__isnull=True), distinct=True),
         fieldsets_count=Count("fieldset_items__fieldset", distinct=True),
     ).order_by("name", "id")
     serializer_class = CustomFieldSerializer
@@ -2315,7 +2364,7 @@ class CustomFieldOptionViewSet(AuditedModelViewSetMixin, viewsets.ModelViewSet):
 
 
 class TagViewSet(AuditedModelViewSetMixin, viewsets.ModelViewSet):
-    queryset = Tag.objects.annotate(assets_count=Count("asset_tags__asset", distinct=True)).order_by("name", "id")
+    queryset = Tag.objects.annotate(assets_count=Count("asset_tags__asset", filter=Q(asset_tags__asset__archived_at__isnull=True), distinct=True)).order_by("name", "id")
     serializer_class = TagSerializer
     permission_classes = [BusinessRolePermission]
     permission_resource = "tags"
@@ -2520,6 +2569,11 @@ class SpareStockViewSet(viewsets.ReadOnlyModelViewSet):
 
 
 class SpareStockTransactionViewSet(viewsets.ModelViewSet):
+    @extend_schema(parameters=[OpenApiParameter("Idempotency-Key", OpenApiTypes.STR, location=OpenApiParameter.HEADER, required=True, description="每次逻辑操作的唯一键；重试必须复用。")])
+    def create(self, request, *args, **kwargs):
+        from .idempotency import execute_once
+        return execute_once(request, lambda: super(SpareStockTransactionViewSet, self).create(request, *args, **kwargs))
+
     queryset = SpareStockTransaction.objects.select_related(
         "part", "part__category", "part__manufacturer", "operator", "source_data_center", "source_server_room",
         "target_data_center", "target_server_room",
@@ -2824,6 +2878,8 @@ class FaultEventViewSet(AuditedModelViewSetMixin, viewsets.ModelViewSet):
 
     def get_queryset(self):
         queryset = super().get_queryset()
+        if self.request.method not in {"GET", "HEAD", "OPTIONS"}:
+            queryset = queryset.filter(asset__archived_at__isnull=True)
         start = self.request.query_params.get("start")
         end = self.request.query_params.get("end")
         return _filter_system_date_range(queryset, "occurred_at", start, end)
@@ -2836,6 +2892,7 @@ class FaultEventViewSet(AuditedModelViewSetMixin, viewsets.ModelViewSet):
 
     @extend_schema(
         request=RepairPartUsageCreateSerializer,
+        parameters=[OpenApiParameter("Idempotency-Key", OpenApiTypes.STR, location=OpenApiParameter.HEADER, required=False, description="POST 必填，GET 不需要；重试复用同一键。")],
         responses=RepairPartUsageSerializer,
         description="读取或记录一条故障维修用件；用件记录只允许创建和读取。",
     )
@@ -2854,6 +2911,10 @@ class FaultEventViewSet(AuditedModelViewSetMixin, viewsets.ModelViewSet):
                 return self.get_paginated_response(RepairPartUsageSerializer(page, many=True).data)
             return Response(RepairPartUsageSerializer(queryset, many=True).data)
 
+        from .idempotency import execute_once
+        return execute_once(request, lambda: self._record_part_usage(request, fault))
+
+    def _record_part_usage(self, request, fault):
         input_serializer = RepairPartUsageCreateSerializer(data=request.data)
         input_serializer.is_valid(raise_exception=True)
         usage = create_repair_part_usage(
@@ -2866,6 +2927,7 @@ class FaultEventViewSet(AuditedModelViewSetMixin, viewsets.ModelViewSet):
 
     @transaction.atomic
     def perform_create(self, serializer):
+        get_object_or_404(Asset.objects.select_for_update(), pk=serializer.validated_data["asset"].pk)
         super().perform_create(serializer)
         fault = serializer.instance
         sync_asset_fault_status(fault.asset_id, request=self.request, fault_id=fault.pk)
@@ -2915,6 +2977,12 @@ class RepairRecordViewSet(AuditedModelViewSetMixin, viewsets.ModelViewSet):
     permission_classes = [BusinessRolePermission]
     permission_resource = "faults"
     audit_resource = "repair_record"
+
+    def get_queryset(self):
+        queryset = super().get_queryset()
+        if self.request.method not in {"GET", "HEAD", "OPTIONS"}:
+            queryset = queryset.filter(fault__asset__archived_at__isnull=True)
+        return queryset
 
     def audit_extra(self, before, after, *, action):
         fault_id = (after or {}).get("fault") or (before or {}).get("fault")
@@ -3105,11 +3173,23 @@ class InventoryTaskViewSet(AuditedModelViewSetMixin, viewsets.ModelViewSet):
 
     @transaction.atomic
     def perform_create(self, serializer):
+        try:
+            lock_inventory_scope(
+                getattr(serializer.validated_data.get("data_center"), "pk", None),
+                getattr(serializer.validated_data.get("server_room"), "pk", None),
+            )
+        except DjangoValidationError as exc:
+            raise DRFValidationError(exc.message_dict) from exc
         assets = _materialize_inventory_assets_with_limit(
             serializer.validated_data.get("data_center"),
             serializer.validated_data.get("server_room"),
             serializer.validated_data["scope"],
         )
+        active_ids = set(Asset.objects.select_for_update().filter(pk__in=[asset.pk for asset in assets]).order_by("pk").values_list("pk", flat=True))
+        assets = list(get_inventory_scope_assets(
+            serializer.validated_data.get("data_center"), serializer.validated_data.get("server_room"),
+            scope=serializer.validated_data["scope"],
+        ).filter(pk__in=active_ids))
         task = serializer.save(inspector=serializer.validated_data.get("inspector") or self.request.user)
         InventoryItem.objects.bulk_create(
             [
@@ -3280,6 +3360,10 @@ class InventoryTaskViewSet(AuditedModelViewSetMixin, viewsets.ModelViewSet):
             lock_inventory_scope(current_task.data_center_id, current_task.server_room_id)
         except DjangoValidationError as exc:
             raise DRFValidationError(exc.message_dict) from exc
+        asset_ids = list(InventoryItem.objects.filter(task=current_task).values_list("asset_id", flat=True))
+        archived_assets = list(Asset.all_objects.select_for_update().filter(pk__in=asset_ids).order_by("pk").values_list("archived_at", flat=True))
+        if any(value is not None for value in archived_assets):
+            return Response({"code": "asset_archived", "detail": "盘点包含已归档资产，请先恢复资产再重新打开任务"}, status=409)
         task = InventoryTask.objects.select_for_update().get(pk=current_task.pk)
         if task.status != "completed":
             raise DRFValidationError({
@@ -3328,6 +3412,7 @@ class InventoryTaskViewSet(AuditedModelViewSetMixin, viewsets.ModelViewSet):
         _append_excel_row(sheet, headers)
         for item in items:
             snapshot = item.system_snapshot or {}
+            actual = item.actual_location_snapshot or {}
             system_u = ""
             if snapshot.get("start_u") is not None:
                 system_u = f"U{snapshot.get('start_u')}–U{snapshot.get('end_u')}"
@@ -3338,14 +3423,14 @@ class InventoryTaskViewSet(AuditedModelViewSetMixin, viewsets.ModelViewSet):
             task_server_room = snapshot.get("server_room", "") if task.scope == "all_assets" else (task.server_room.name if task.server_room_id else "整个数据中心")
             _append_excel_row(sheet, [
                 task.name, task_data_center, task_server_room,
-                task.inspector.get_full_name() or task.inspector.username, item.asset.asset_no, item.asset.name,
-                item.asset.serial_number or "", snapshot.get("device_type_name", ""),
+                task.inspector.get_full_name() or task.inspector.username, snapshot.get("asset_no", item.asset.asset_no), snapshot.get("name", item.asset.name),
+                snapshot.get("serial_number", item.asset.serial_number) or "", snapshot.get("device_type_name", ""),
                 snapshot.get("business_ip", ""), snapshot.get("management_ip", ""), snapshot.get("oob_ip", ""),
                 snapshot.get("rack_code", ""), system_u,
                 INVENTORY_ITEM_STATUS_LABELS.get(item.status, item.status),
-                item.actual_rack.room.data_center.name if item.actual_rack_id else "",
-                item.actual_rack.room.name if item.actual_rack_id else "",
-                item.actual_rack.code if item.actual_rack_id else "", actual_u,
+                actual.get("data_center") or "",
+                actual.get("server_room") or "",
+                actual.get("rack_code") or "", actual_u,
                 system_localtime(item.checked_at).replace(tzinfo=None) if item.checked_at else "",
                 item.checked_by.get_full_name() or item.checked_by.username if item.checked_by_id else "",
                 item.notes,
@@ -3625,6 +3710,7 @@ class InventoryItemViewSet(viewsets.ModelViewSet):
 
 @extend_schema(
     parameters=[
+        OpenApiParameter(name="archived", type=OpenApiTypes.BOOL, required=False, description="查询归档资产的盘点历史，默认 false。"),
         OpenApiParameter(name="page", type=OpenApiTypes.INT, required=False),
         OpenApiParameter(name="page_size", type=OpenApiTypes.INT, required=False, description="每页数量，最大 100。"),
     ],
@@ -3633,7 +3719,7 @@ class InventoryItemViewSet(viewsets.ModelViewSet):
 @api_view(["GET"])
 @permission_classes([CanViewInventory])
 def asset_inventory_records(request, pk):
-    if not Asset.objects.filter(pk=pk).exists():
+    if not visible_assets(request, Asset.all_objects.all()).filter(pk=pk).exists():
         from rest_framework.exceptions import NotFound
         raise NotFound("资产不存在")
     records = InventoryItem.objects.filter(asset_id=pk).select_related(
@@ -5289,6 +5375,29 @@ def asset_export(request):
             maintenance.provider if maintenance else "", maintenance.contract_no if maintenance else "", maintenance.start_date if maintenance else "", maintenance.expiry_date if maintenance else "", maintenance.notes if maintenance else "", asset.notes,
             tag_text,
         ]
+        if asset.archived_at and asset.archive_snapshot:
+            snapshot = asset.archive_snapshot
+            model = snapshot.get("asset_model") or {}
+            for index, key in ((0, "asset_no"), (1, "name"), (3, "model_name"), (4, "model_number"),
+                               (5, "model_text"), (6, "manufacturer_name"), (7, "device_type_name")):
+                row_values[index] = snapshot.get(key) or ""
+            row_values[9] = model.get("expected_life_months") or ""
+            location = snapshot.get("rack_allocation") or {}
+            row_values[18] = location.get("data_center") or snapshot.get("asset_data_center_name") or ""
+            row_values[-1] = ", ".join(item.get("name", "") for item in snapshot.get("tags", []))
+            fields = {item["key"]: item for item in snapshot.get("custom_fields", [])}
+            for key, raw_value in snapshot.get("custom_values", {}).items():
+                field = fields.get(key, {})
+                labels = {option["value"]: option["label"] for option in field.get("options", [])}
+                if field.get("field_type") == "boolean":
+                    value = "" if raw_value is None else boolean_labels[raw_value]
+                elif field.get("field_type") == "select":
+                    value = labels.get(raw_value, raw_value)
+                elif field.get("field_type") == "multiselect":
+                    value = "; ".join(labels.get(str(raw), str(raw)) for raw in (raw_value or []))
+                else:
+                    value = raw_value
+                custom_by_key[key] = value
         row_values.extend(custom_by_key.get(field.key, "") for field in custom_fields)
         _append_excel_row(sheet, row_values)
     _style_export_sheet(sheet, max_width=36)

@@ -13,6 +13,7 @@ from .branding import reset_branding_settings
 from .bootstrap import initialize_system_data
 from .models import (
     Asset,
+    AssetDisposal,
     AssetModel,
     AssetCustomValue,
     AssetNetworkAddress,
@@ -31,6 +32,7 @@ from .models import (
     FaultEvent,
     InventoryItem,
     InventoryTask,
+    IdempotentMutation,
     MaintenanceContract,
     Manufacturer,
     NotificationDelivery,
@@ -39,6 +41,7 @@ from .models import (
     Rack,
     RackUnitAllocation,
     RepairRecord,
+    RepairPartUsage,
     ServerRoom,
     SoftwareLicense,
     SparePart,
@@ -99,10 +102,12 @@ def _clear_mutable_data(preserved_user_ids):
     # Operational history and authentication state must be removed before
     # their actors or referenced business objects disappear.
     _delete_queryset(counts, "notification_deliveries", NotificationDelivery.objects.all())
+    _delete_queryset(counts, "idempotent_mutations", IdempotentMutation.objects.all())
     _delete_queryset(counts, "audit_logs", AuditLog.objects.all())
     _delete_queryset(counts, "admin_log_entries", LogEntry.objects.all())
     _delete_queryset(counts, "inventory_items", InventoryItem.objects.all())
     _delete_queryset(counts, "inventory_tasks", InventoryTask.objects.all())
+    _delete_queryset(counts, "repair_part_usages", RepairPartUsage.objects.all())
     _delete_queryset(counts, "repair_records", RepairRecord.objects.all())
     _delete_queryset(counts, "fault_events", FaultEvent.objects.all())
     _delete_queryset(counts, "asset_assignment_events", AssetAssignmentEvent.objects.all())
@@ -112,7 +117,8 @@ def _clear_mutable_data(preserved_user_ids):
     _delete_queryset(counts, "asset_tags", AssetTag.objects.all())
     _delete_queryset(counts, "procurement_records", ProcurementRecord.objects.all())
     _delete_queryset(counts, "maintenance_contracts", MaintenanceContract.objects.all())
-    _delete_queryset(counts, "assets", Asset.objects.all())
+    _delete_queryset(counts, "asset_disposals", AssetDisposal.objects.all())
+    _delete_queryset(counts, "assets", Asset.all_objects.all())
     # AssetModel and the fieldset links are protected references.  Remove
     # models before their manufacturer/device-type/fieldset parents, then
     # remove fieldset memberships before the protected CustomField rows.

@@ -248,6 +248,7 @@ def _asset_field_value(snapshot: Mapping[str, Any], field: str) -> Any:
 
 
 _ASSET_FIELDS = (
+    "archived_at",
     "asset_no",
     "name",
     "status",
@@ -401,7 +402,7 @@ def _event_type(log: AuditLog, payload: Mapping[str, Any]) -> str:
         return "other"
     if log.action == "create":
         return "created"
-    if log.action == "dispose" or extra.get("source") == "asset_disposal":
+    if log.action in {"dispose", "archive", "restore"} or extra.get("source") == "asset_disposal":
         return "lifecycle"
     if log.action in {"assign", "return", "transfer"} or extra.get("source") == "asset_assignment":
         return "assignment"

@@ -37,6 +37,11 @@ class ReadOnlyInspectionAdmin(admin.ModelAdmin):
         return super().changeform_view(request, object_id, form_url, extra_context)
 
 
+class AssetInspectionAdmin(ReadOnlyInspectionAdmin):
+    def get_queryset(self, request):
+        return Asset.all_objects.all()
+
+
 for model in [
     Department,
     DataCenter,
@@ -66,7 +71,7 @@ for model in [
     InventoryTask,
     InventoryItem,
 ]:
-    secure_admin_site.register(model, ReadOnlyInspectionAdmin)
+    secure_admin_site.register(model, AssetInspectionAdmin if model is Asset else ReadOnlyInspectionAdmin)
 
 
 class SpareStockAdmin(ReadOnlyInspectionAdmin):

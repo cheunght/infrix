@@ -661,7 +661,7 @@ def _preview_row(line, row, headers, duplicate_counts, *, lock=False):
         base["errors"] = [{"field": "asset_no", "label": "资产编号", "message": "文件内重复的资产编号"}]
         return base
     if asset_no:
-        existing_query = Asset.objects.select_for_update() if lock else Asset.objects
+        existing_query = Asset.all_objects.select_for_update() if lock else Asset.all_objects
         if existing_query.filter(asset_no=asset_no).exists():
             base["errors"] = [{"field": "asset_no", "label": "资产编号", "message": "资产编号已存在，资产导入仅支持新增"}]
             return base

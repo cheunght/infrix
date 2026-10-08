@@ -18,7 +18,7 @@ def get_inventory_scope_assets(
 ) -> QuerySet:
     """Return assets included in an inventory task for the requested scope.
 
-    ``all_assets`` includes every asset in the ledger.  A whole-data-center
+    ``all_assets`` includes every unarchived asset in the ledger.  A whole-data-center
     inventory contains active-rack assets in active rooms plus unracked assets
     assigned directly to the data center.  Selecting a specific room
     intentionally narrows the scope to assets mounted in active racks in that

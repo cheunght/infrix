@@ -89,6 +89,7 @@ const {
   openAssetClone,
   openAssetEditor,
   deleteAsset,
+  restoreAsset,
   assetPage,
   assetPageSize,
   assetCount,
@@ -289,6 +290,7 @@ const selectedDataCenterOption = computed<SearchableSelectOption | null>(() => {
 });
 const hasAssetFilters = computed(() => Boolean(
   assetSearch.value.trim() ||
+  assetFilters.archived ||
   assetFilters.status ||
   assetFilters.deviceType ||
   assetFilters.tag.length ||
@@ -517,6 +519,10 @@ async function openAllQrDialog() {
           </template>
           <template #filters>
             <div class="page-toolbar__filter-group">
+              <el-select v-model="assetFilters.archived" :aria-label="t('asset.recordScope')" style="width: 140px" @change="searchLedger">
+                <el-option :value="false" :label="t('asset.currentAssets')" />
+                <el-option :value="true" :label="t('asset.archivedAssets')" />
+              </el-select>
               <ToolbarIconButton
                 :icon="Filter"
                 :label="t('asset.moreFilters')"
@@ -585,12 +591,12 @@ async function openAllQrDialog() {
             <span>{{ t('asset.currentPageSelection') }}</span>
           </div>
           <div class="asset-selection-bar__actions">
-            <el-button v-if="can('assets.manage')" type="primary" plain :disabled="assetBatchDeleteSaving || assetBatchAssignmentSaving || selectedAssetIds.length > 100" @click="openBatchAssignment('assign')">{{ t('asset.batchAssignPerson') }}</el-button>
-            <el-button v-if="can('assets.manage')" type="primary" plain :disabled="assetBatchDeleteSaving || assetBatchAssignmentSaving || selectedAssetIds.length > 100" @click="openBatchAssignment('transfer')">{{ t('asset.batchTransferPerson') }}</el-button>
-            <el-button v-if="can('assets.manage')" type="primary" plain :disabled="assetBatchDeleteSaving || assetBatchAssignmentSaving || selectedAssetIds.length > 100" @click="openBulkEdit">{{ t('asset.bulkEdit') }}</el-button>
+            <el-button v-if="can('assets.manage') && !assetFilters.archived" type="primary" plain :disabled="assetBatchDeleteSaving || assetBatchAssignmentSaving || selectedAssetIds.length > 100" @click="openBatchAssignment('assign')">{{ t('asset.batchAssignPerson') }}</el-button>
+            <el-button v-if="can('assets.manage') && !assetFilters.archived" type="primary" plain :disabled="assetBatchDeleteSaving || assetBatchAssignmentSaving || selectedAssetIds.length > 100" @click="openBatchAssignment('transfer')">{{ t('asset.batchTransferPerson') }}</el-button>
+            <el-button v-if="can('assets.manage') && !assetFilters.archived" type="primary" plain :disabled="assetBatchDeleteSaving || assetBatchAssignmentSaving || selectedAssetIds.length > 100" @click="openBulkEdit">{{ t('asset.bulkEdit') }}</el-button>
             <el-button :disabled="assetBatchDeleteSaving || assetBatchAssignmentSaving || !selectedQrAssets.length" @click="openSelectedQrDialog">{{ t('asset.printLabels') }}</el-button>
-            <el-button v-if="can('faults.manage') && selectedAssetIds.length === 1" :disabled="assetBatchDeleteSaving || assetBatchAssignmentSaving" @click="registerFaultFromSelection">{{ t('asset.registerFault') }}</el-button>
-            <el-button v-if="can('assets.manage')" type="danger" plain :loading="assetBatchDeleteSaving" :disabled="assetBatchAssignmentSaving" @click="deleteSelectedAssets">{{ t('common.delete') }}</el-button>
+            <el-button v-if="can('faults.manage') && !assetFilters.archived && selectedAssetIds.length === 1" :disabled="assetBatchDeleteSaving || assetBatchAssignmentSaving" @click="registerFaultFromSelection">{{ t('asset.registerFault') }}</el-button>
+            <el-button v-if="can('assets.manage') && !assetFilters.archived" type="danger" plain :loading="assetBatchDeleteSaving" :disabled="assetBatchAssignmentSaving" @click="deleteSelectedAssets">{{ t('asset.deleteAsset') }}</el-button>
             <el-button link :disabled="assetBatchDeleteSaving || assetBatchAssignmentSaving" @click="clearAssetSelection">{{ t('common.cancel') }}</el-button>
           </div>
         </div>
@@ -648,7 +654,8 @@ async function openAllQrDialog() {
             <el-table-column v-if="can('assets.manage')" :label="t('common.operation')" fixed="right" width="116">
               <template #default="{ row }">
                 <div class="ep-table-actions">
-                  <el-button-group>
+                  <el-button v-if="row.archived_at" link type="primary" @click="restoreAsset(row)">{{ t("asset.restoreAsset") }}</el-button>
+                  <el-button-group v-else>
                   <TableIconButton :icon="Edit" :label="t('common.edit')" type="primary" @click="openAssetEditor(row.id)" />
                   <TableIconButton :icon="CopyDocument" :label="t('asset.cloneAsset')" @click="openAssetClone(row.id)" />
                   <TableIconButton :icon="Delete" :label="t('asset.deleteAsset')" type="danger" @click="deleteAsset(row)" />

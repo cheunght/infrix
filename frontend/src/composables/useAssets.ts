@@ -540,6 +540,7 @@ export function useAssets(deps: AssetsDeps) {
   const assetSearch = ref("");
   const assetLookup = ref("");
   const assetFilters = reactive<AssetFilters>({
+    archived: false,
     status: "",
     deviceType: "",
     tag: [],
@@ -974,6 +975,7 @@ export function useAssets(deps: AssetsDeps) {
   function assetRouteQueryUpdates(): Record<string, string | undefined> {
     const updates: Record<string, string | undefined> = {
       search: assetSearch.value.trim() || undefined,
+      archived: assetFilters.archived ? "true" : undefined,
       status: assetFilters.status || undefined,
       device_type: assetFilters.deviceType || undefined,
       tags: assetFilters.tag.length ? assetFilters.tag.join(",") : undefined,
@@ -1018,6 +1020,7 @@ export function useAssets(deps: AssetsDeps) {
       params.set("compact", "1");
     }
     if (assetSearch.value.trim()) params.set("search", assetSearch.value.trim());
+    if (assetFilters.archived) params.set("archived", "true");
     if (assetFilters.status) params.set("status", assetFilters.status);
     if (assetFilters.deviceType) params.set("device_type", assetFilters.deviceType);
     if (assetFilters.tag.length) params.set("tags", assetFilters.tag.join(","));
@@ -1361,7 +1364,7 @@ export function useAssets(deps: AssetsDeps) {
 
     try {
       const payload = await deps.request<PageResult<AssetTimelineEvent> | AssetTimelineEvent[]>(
-        `/assets/${assetId}/timeline/?${params.toString()}`,
+        `/assets/${assetId}/timeline/?${params.toString()}${deps.detailAsset.value?.archived_at ? "&archived=true" : ""}`,
         { signal: controller.signal },
       );
       if (
@@ -1415,7 +1418,7 @@ export function useAssets(deps: AssetsDeps) {
 
     try {
       const payload = await deps.request<PageResult<InventoryItem>>(
-        `/assets/${assetId}/inventory-records/?${params.toString()}`,
+        `/assets/${assetId}/inventory-records/?${params.toString()}${deps.detailAsset.value?.archived_at ? "&archived=true" : ""}`,
         { signal: controller.signal },
       );
       if (
@@ -1480,7 +1483,7 @@ export function useAssets(deps: AssetsDeps) {
 
     try {
       const payload = await deps.request<PageResult<AssetAssignmentEvent>>(
-        `/assets/${assetId}/assignment-history/?${params.toString()}`,
+        `/assets/${assetId}/assignment-history/?${params.toString()}${deps.detailAsset.value?.archived_at ? "&archived=true" : ""}`,
         { signal: controller.signal },
       );
       if (
@@ -1760,7 +1763,13 @@ export function useAssets(deps: AssetsDeps) {
     deps.detailAsset.value = null;
     let detailLoaded = false;
     try {
-      const asset = await deps.request<AssetDetail>(`/assets/${assetId}/`, { signal: controller.signal });
+      let asset: AssetDetail;
+      try {
+        asset = await deps.request<AssetDetail>(`/assets/${assetId}/`, { signal: controller.signal });
+      } catch (error) {
+        if (!(error instanceof ApiError) || error.status !== 404) throw error;
+        asset = await deps.request<AssetDetail>(`/assets/${assetId}/?archived=true`, { signal: controller.signal });
+      }
       if (requestId === detailRequestId.value) {
         deps.detailAsset.value = asset;
         inventoryHistoryTotal.value = asset.inventory_records_count || 0;
@@ -2195,7 +2204,10 @@ export function useAssets(deps: AssetsDeps) {
       const path = editingAsset.value ? `/assets/${editingAsset.value.id}/` : "/assets/";
       await deps.request(path, {
         method,
-        headers: { "Content-Type": "application/json" },
+        headers: {
+          "Content-Type": "application/json",
+          ...(editingAsset.value ? { "If-Match": `"${editingAsset.value.revision}"` } : {}),
+        },
         body: JSON.stringify({
           ...asset,
           ...depreciation,
@@ -2260,6 +2272,10 @@ export function useAssets(deps: AssetsDeps) {
       const conflictDetails = error instanceof ApiError && error.status === 409 && error.details && typeof error.details === "object"
         ? error.details as { code?: string; fields?: Array<{ name?: string }> }
         : null;
+      if (conflictDetails?.code === "asset_revision_conflict") {
+        assetFormLoadError.value = tr("asset.revisionConflict");
+        return;
+      }
       if (!discardIncompatibleCustomValues && conflictDetails?.code === "custom_field_conflict") {
         const fields = (conflictDetails.fields || []).map((field) => field.name).filter(Boolean).join("、");
         const confirmed = await deps.confirmAction(
@@ -2299,6 +2315,19 @@ export function useAssets(deps: AssetsDeps) {
 
   function clearAssetSelection() {
     selectedAssetIds.value = [];
+  }
+
+  async function restoreAsset(asset: Asset) {
+    if (!deps.can("assets.manage") || !asset.archived_at) return;
+    if (!(await deps.confirmAction(tr("asset.restoreConfirm", { asset: asset.asset_no })))) return;
+    try {
+      await deps.request(`/assets/${asset.id}/restore/`, { method: "POST" });
+      setActionMessage(tr("asset.restored"));
+      if (!(await loadAssets())) setActionMessage(tr("asset.restoredRefreshFailed"), "error");
+      if (detailAssetId.value === asset.id) await openAssetDetail(asset.id);
+    } catch (error) {
+      setActionError(error, tr("asset.restoreFailed"));
+    }
   }
 
   async function deleteAsset(asset: Asset) {
@@ -2784,6 +2813,7 @@ export function useAssets(deps: AssetsDeps) {
     const tagIds = queryList(query, "tags");
     const validWarranties = new Set(["within_30_days", "expired"]);
 
+    assetFilters.archived = query.archived === "true";
     assetFilters.status = isAssetStatus(status) ? status : "";
     assetFilters.deviceType = /^\d+$/.test(deviceType) && Number(deviceType) > 0 ? deviceType : "";
     assetFilters.manufacturer = /^\d+$/.test(manufacturer) && Number(manufacturer) > 0 ? manufacturer : "";
@@ -2815,6 +2845,7 @@ export function useAssets(deps: AssetsDeps) {
   async function resetAssetFilters(): Promise<void> {
     clearAssetSelection();
     assetSearch.value = "";
+    assetFilters.archived = false;
     assetFilters.status = "";
     assetFilters.deviceType = "";
     assetFilters.tag = [];
@@ -2989,6 +3020,7 @@ export function useAssets(deps: AssetsDeps) {
     handleElementAssetSelection,
     clearAssetSelection,
     deleteAsset,
+    restoreAsset,
     deleteSelectedAssets,
     closeAssetBatchDeleteResult,
     batchAssignAssets,

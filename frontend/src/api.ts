@@ -1,4 +1,5 @@
 import { i18n } from "./i18n";
+import { prepareIdempotency } from "./idempotency";
 
 export const apiBase = import.meta.env.VITE_API_BASE || "/api/v1";
 
@@ -201,6 +202,7 @@ export async function apiRequest<T>(
   const csrfToken = getCsrfToken();
   if (options.method && options.method !== "GET" && csrfToken)
     headers.set("X-CSRFToken", csrfToken);
+  const completeMutation = await prepareIdempotency(path, options, headers);
   const response = await fetch(`${apiBase}${path}`, {
     ...options,
     headers,
@@ -231,8 +233,14 @@ export async function apiRequest<T>(
     } else if (details && typeof details === "object") {
       message = flattenError("detail" in details ? details.detail : details) || message;
     }
+    if (response.status >= 400 && response.status < 500) completeMutation();
     throw new ApiError(response.status, message, details);
   }
-  if (response.status === 204) return undefined as T;
-  return response.json();
+  if (response.status === 204) {
+    completeMutation();
+    return undefined as T;
+  }
+  const result = await response.json() as T;
+  completeMutation();
+  return result;
 }

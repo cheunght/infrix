@@ -35,11 +35,17 @@ A physical placement may move atomically between mounted, direct data-center ass
 
 ## Inventory
 
+**Observed inventory placement**:
+The physical location recorded when an operator checks an inventory item. Its location names and U range describe that observation, even if the facility is later renamed or moved. A normal result confirms the task's original placement snapshot.
+
 **Inventory correction**:
 The physical-placement change recorded when an inventory result identifies a location mismatch and an operator updates the asset record.
 _Avoid_: inventory fix
 
 ## Asset lifecycle
+
+**Archived asset**:
+An asset removed from the current operating ledger while retaining its identity, archival snapshot, attachments, and business history. Archival preserves the business status; restoring the archive returns the same asset to the current ledger. Assigned, mounted, or operationally unresolved assets must finish their active responsibilities before archival.
 
 **Asset disposal**:
 The business fact recorded when a dedicated disposal action causes an asset to enter the retired state; it includes the event date, reason, method, operator snapshot, and optional notes.

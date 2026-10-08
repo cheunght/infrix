@@ -84,7 +84,7 @@ const descriptionLayout = computed<"compact" | "horizontal">(() =>
   isDrawer.value ? "compact" : "horizontal",
 );
 const responsibilityActionContext = computed<AssetResponsibilityContext | null>(
-  () => props.responsibilityContext || null,
+  () => props.asset?.archived_at ? null : props.responsibilityContext || null,
 );
 const responsibilityHistoryContext =
   computed<AssetResponsibilityHistoryContext | null>(
@@ -905,7 +905,7 @@ function retryDetail() {
           :download="attachmentContext.download"
           :confirm-action="attachmentContext.confirmAction"
           :can-view="attachmentContext.canView"
-          :can-manage="attachmentContext.canManage"
+          :can-manage="attachmentContext.canManage && !asset?.archived_at"
           :show-heading="false"
         />
       </DetailSection>

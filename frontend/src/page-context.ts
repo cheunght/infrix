@@ -123,6 +123,7 @@ export interface DashboardContext {
 }
 
 export interface AssetFilters {
+  archived?: boolean;
   status: AssetStatus | "";
   deviceType: string;
   tag: string[];
@@ -222,6 +223,7 @@ export interface AssetLedgerContext {
   openAssetClone: (assetId: number) => void | Promise<void>;
   openAssetEditor: (assetId: number) => void | Promise<void>;
   deleteAsset: (asset: Asset) => void | Promise<void>;
+  restoreAsset: (asset: Asset) => void | Promise<void>;
   assetPage: Ref<number>;
   assetPageSize: Ref<number>;
   assetCount: Ref<number>;

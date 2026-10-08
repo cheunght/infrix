@@ -10,6 +10,7 @@ from django.contrib.auth.models import User
 from rest_framework.exceptions import PermissionDenied, ValidationError as DRFValidationError
 from django.utils import timezone
 
+from .asset_retention import active_asset_for_update
 from .models import (
     Asset,
     AssetDisposal,
@@ -419,7 +420,7 @@ def resolve_inventory_item(*, item_id, action, note, actor, request):
             target_rack_id=item.actual_rack_id,
         )
 
-    asset = Asset.objects.select_for_update().get(pk=item.asset_id)
+    asset = active_asset_for_update(item.asset_id)
 
     before_item = InventoryItemSerializer(item).data
     asset_changed = False
@@ -567,7 +568,7 @@ def _change_asset_assignment(
 ):
     from .audit import asset_audit_snapshot, write_audit_log
 
-    asset = Asset.objects.select_for_update().select_related("assigned_person__department").get(pk=asset_id)
+    asset = active_asset_for_update(asset_id)
     if asset.status == "retired" and action in {"assign", "transfer"}:
         _assignment_error("asset_retired", "已报废资产不能指定或转交使用人")
     if asset.status == "repair":
@@ -731,7 +732,7 @@ def dispose_asset(
 
     lock_asset_location(asset_id=asset_id)
     try:
-        asset = Asset.objects.select_for_update().select_related("assigned_person").get(pk=asset_id)
+        asset = active_asset_for_update(asset_id)
     except Asset.DoesNotExist as exc:
         raise DRFValidationError({"code": "asset_not_found", "detail": "资产不存在"}) from exc
 
@@ -1110,7 +1111,7 @@ def _write_fault_status_audit(
 @transaction.atomic
 def sync_asset_fault_status(asset_id: int, *, request=None, fault_id=None, repair_id=None, transition=None):
     """Synchronize one asset's repair lifecycle and restore snapshot."""
-    asset = Asset.objects.select_for_update().get(pk=asset_id)
+    asset = active_asset_for_update(asset_id)
     open_faults = FaultEvent.objects.filter(asset_id=asset_id, is_closed=False)
     has_open_fault = open_faults.exists()
     other_open_fault = open_faults.exclude(pk=fault_id).exists() if fault_id is not None else has_open_fault
@@ -1268,7 +1269,7 @@ def create_repair_part_usage(*, fault_id, validated_data, operator, request):
     repair = RepairRecord.objects.select_for_update().filter(fault_id=fault_id).first()
     if (repair is not None and repair.finished_at is not None) or fault.is_closed:
         raise DRFValidationError({"detail": "已完成的故障不能新增维修用件"})
-    asset = Asset.objects.select_for_update().get(pk=fault.asset_id)
+    asset = active_asset_for_update(fault.asset_id)
     if asset.status == "retired":
         raise DRFValidationError({"detail": "已报废资产不能新增维修用件"})
 

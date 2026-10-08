@@ -707,6 +707,9 @@ export type AssetAssignmentEvent = {
   created_at: string;
 };
 export type Asset = {
+  revision?: number;
+  archived_at?: string | null;
+  archive_snapshot?: Record<string, unknown>;
   id: number;
   created_at?: string;
   updated_at?: string;
@@ -758,6 +761,7 @@ export type Asset = {
   disposal_status?: "not_applicable" | "recorded" | "legacy";
 };
 export type AssetDetail = Asset & {
+  revision: number;
   allowed_statuses: AssetStatus[];
   created_at: string;
   updated_at: string;
@@ -911,6 +915,7 @@ export type InventoryItem = {
   actual_data_center: string | null;
   actual_server_room: string | null;
   actual_rack_code: string | null;
+  actual_location_snapshot?: Record<string, unknown> & { source?: string };
   actual_start_u: number | null;
   actual_end_u: number | null;
   notes: string;

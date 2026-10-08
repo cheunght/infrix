@@ -458,7 +458,23 @@ class Person(Timestamped):
         return self.display_name() or f"人员 #{self.pk}"
 
 
+class AssetQuerySet(models.QuerySet):
+    def update(self, **kwargs):
+        kwargs.setdefault("revision", models.F("revision") + 1)
+        return super().update(**kwargs)
+
+
+class ActiveAssetManager(models.Manager.from_queryset(AssetQuerySet)):
+    def get_queryset(self):
+        return super().get_queryset().filter(archived_at__isnull=True)
+
+
 class Asset(Timestamped):
+    objects = ActiveAssetManager()
+    all_objects = AssetQuerySet.as_manager()
+    revision = models.PositiveBigIntegerField(default=1, editable=False)
+    archived_at = models.DateTimeField(null=True, blank=True, db_index=True, editable=False)
+    archive_snapshot = models.JSONField(default=dict, editable=False)
     STATUS = [("in_stock", "在库"), ("in_use", "在用"), ("idle", "闲置"), ("repair", "维修中"), ("retired", "已报废")]
     asset_no = models.CharField(max_length=80, unique=True)
     name = models.CharField(max_length=160)
@@ -532,7 +548,18 @@ class Asset(Timestamped):
     )
     notes = models.TextField(blank=True)
 
+    def save(self, *args, **kwargs):
+        update_fields = kwargs.get("update_fields")
+        if not self._state.adding and (update_fields is None or update_fields):
+            self.revision = models.F("revision") + 1
+            if update_fields is not None:
+                kwargs["update_fields"] = set(update_fields) | {"revision"}
+        super().save(*args, **kwargs)
+        self.refresh_from_db(fields=["revision"])
+
     class Meta:
+        base_manager_name = "all_objects"
+        default_manager_name = "objects"
         constraints = [
             models.CheckConstraint(
                 condition=(
@@ -602,7 +629,7 @@ class AssetDisposal(models.Model):
 
     asset = models.OneToOneField(
         Asset,
-        on_delete=models.CASCADE,
+        on_delete=models.PROTECT,
         related_name="disposal",
     )
     disposed_on = models.DateField()
@@ -1283,6 +1310,7 @@ class InventoryItem(Timestamped):
     )
     actual_start_u = models.PositiveSmallIntegerField(null=True, blank=True)
     actual_end_u = models.PositiveSmallIntegerField(null=True, blank=True)
+    actual_location_snapshot = models.JSONField(default=dict, editable=False)
     notes = models.TextField(blank=True)
     resolution_status = models.CharField(
         max_length=20,
@@ -1304,6 +1332,34 @@ class InventoryItem(Timestamped):
         related_name="resolved_inventory_items",
     )
     resolved_at = models.DateTimeField(null=True, blank=True)
+
+    def save(self, *args, **kwargs):
+        fields = ("status", "actual_rack_id", "actual_start_u", "actual_end_u")
+        previous = type(self).objects.filter(pk=self.pk).values(*fields).first() if self.pk else None
+        changed = previous is None or any(previous[field] != getattr(self, field) for field in fields)
+        if changed:
+            if self.status == "pending":
+                self.actual_location_snapshot = {}
+            elif self.status == "normal":
+                self.actual_location_snapshot = {
+                    key: (self.system_snapshot or {}).get(key)
+                    for key in ("data_center_id", "data_center", "server_room_id", "server_room", "rack_id", "rack_code", "start_u", "end_u")
+                }
+                self.actual_location_snapshot["source"] = "task_snapshot"
+            else:
+                rack = self.actual_rack if self.actual_rack_id else None
+                self.actual_location_snapshot = {
+                    "source": "recorded", "rack_id": self.actual_rack_id,
+                    "rack_code": rack.code if rack else "",
+                    "server_room_id": rack.room_id if rack else None,
+                    "server_room": rack.room.name if rack else "",
+                    "data_center_id": rack.room.data_center_id if rack else None,
+                    "data_center": rack.room.data_center.name if rack else "",
+                    "start_u": self.actual_start_u, "end_u": self.actual_end_u,
+                }
+            if kwargs.get("update_fields"):
+                kwargs["update_fields"] = set(kwargs["update_fields"]) | {"actual_location_snapshot"}
+        super().save(*args, **kwargs)
 
     class Meta:
         ordering = ["asset__asset_no", "id"]
@@ -1327,6 +1383,19 @@ class AuditLog(Timestamped):
             models.Index(fields=["-created_at", "-id"], name="assets_audit_recent_idx"),
             models.Index(fields=["resource_type", "resource_id", "-created_at", "-id"], name="assets_audit_resource_idx"),
         ]
+
+
+class IdempotentMutation(models.Model):
+    actor = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE)
+    scope = models.CharField(max_length=160)
+    key_hash = models.CharField(max_length=64)
+    payload_hash = models.CharField(max_length=64)
+    response = models.JSONField()
+    status_code = models.PositiveSmallIntegerField()
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        constraints = [models.UniqueConstraint(fields=["actor", "scope", "key_hash"], name="unique_idempotent_mutation")]
 
 
 class UserSecurityProfile(Timestamped):

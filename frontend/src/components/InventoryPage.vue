@@ -1007,6 +1007,7 @@ onMounted(async () => {
             <div v-if="resolutionItem.status !== 'not_found'">
               <span>{{ t('inventory.actualLocation') }}</span>
               <strong>{{ locationText(resolutionItem, true) }}</strong>
+              <el-tooltip v-if="resolutionItem.actual_location_snapshot?.source === 'legacy_backfill'" :content="t('inventory.legacyLocationExplanation')"><el-tag size="small" type="info">{{ t('inventory.legacyLocationSnapshot') }}</el-tag></el-tooltip>
             </div>
             <div class="inventory-resolution-summary__note">
               <span>{{ t('inventory.inventoryNote') }}</span>

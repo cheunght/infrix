@@ -28,6 +28,7 @@ const FIELD_LABEL_KEYS: Record<string, string> = {
   asset_no: "asset.code",
   name: "asset.name",
   status: "asset.status",
+  archived_at: "asset.archivedAt",
   assigned_person: "asset.assignedPerson",
   rack_allocation: "asset.rack",
   asset_data_center: "common.dataCenter",
@@ -189,6 +190,7 @@ function formatValue(value: unknown, field: string): string {
     if (key) return t(key);
   }
   if (field === "status") return statusLabel(String(value));
+  if (field === "archived_at") return formatSystemDateTime(String(value)) || String(value);
   if (typeof value === "boolean") return value ? t("common.yes") : t("common.no");
   if (Array.isArray(value)) return value.map((item) => formatValue(item, field)).join("、");
   if (typeof value === "object") {
