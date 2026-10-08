@@ -118,6 +118,7 @@ may use equivalent paths when every service reference is updated consistently.
 | Environment file | `/etc/infrix/infrix.env` | Owned by `root:infrix`, mode `640`. |
 | Installer upgrade artifacts | `/var/backups/infrix` | Restricted temporary database and Nginx backups created by the installer. |
 | Application backup archives | `/var/lib/infrix/backups/*.tar.gz` | `INFRIX_BACKUP_DIR`; owned by the service account, directory `700`, archives `600`. |
+| Maintenance state and locks | `/var/lib/infrix/maintenance` | `INFRIX_MAINTENANCE_DIR`; stable independent directory, service account owner, mode `700`. |
 | Frontend build | `/opt/infrix/frontend/dist` | Readable by the reverse-proxy account. |
 | Django static files | `/opt/infrix/backend/staticfiles` | Collected before service startup. |
 
@@ -175,6 +176,8 @@ Create the environment directory and restrict the file:
 ```bash
 install -d -m 750 /etc/infrix
 chown root:infrix /etc/infrix
+# Use the configured absolute path instead if INFRIX_MAINTENANCE_DIR is customized.
+install -d -m 700 -o infrix -g infrix /var/lib/infrix/maintenance
 chmod 750 /etc/infrix
 touch /etc/infrix/infrix.env
 chmod 640 /etc/infrix/infrix.env

@@ -97,6 +97,7 @@ MYSQL_PWD='<database-password>' mariadb \
 | 环境文件 | `/etc/infrix/infrix.env` | `root:infrix` 所有者，权限 `640`。 |
 | 安装器升级文件 | `/var/backups/infrix` | 安装器生成的受限临时数据库和 Nginx 备份。 |
 | 应用备份归档 | `/var/lib/infrix/backups/*.tar.gz` | 由 `INFRIX_BACKUP_DIR` 指定；目录 `700`，归档 `600`，归服务账号所有。 |
+| 维护状态和锁 | `/var/lib/infrix/maintenance` | 由 `INFRIX_MAINTENANCE_DIR` 指定；稳定独立目录，权限 `700`，归服务账号所有。 |
 | 前端构建产物 | `/opt/infrix/frontend/dist` | 反向代理账号可读取。 |
 | Django 静态文件 | `/opt/infrix/backend/staticfiles` | 服务启动前完成收集。 |
 
@@ -125,6 +126,8 @@ MYSQL_PWD='<database-password>' mariadb \
 ```bash
 install -d -m 750 /etc/infrix
 chown root:infrix /etc/infrix
+# 自定义 INFRIX_MAINTENANCE_DIR 时改用该配置中的绝对路径。
+install -d -m 700 -o infrix -g infrix /var/lib/infrix/maintenance
 touch /etc/infrix/infrix.env
 chmod 640 /etc/infrix/infrix.env
 chown root:infrix /etc/infrix/infrix.env
