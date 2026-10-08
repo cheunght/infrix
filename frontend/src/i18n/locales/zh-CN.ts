@@ -1690,6 +1690,8 @@ export default {
     title: "系统设置",
     backupRestoreTab: "备份与恢复",
     backupRestoreTitle: "备份与恢复",
+    backupCliNotice: '备份和恢复请在服务器命令行执行，期间 API 和管理后台暂停访问；网页提供查看、下载和删除。',
+    backupLegacyUnverified: '旧格式：无媒体引用清单',
     backupRestoreDescription: "仅支持生产环境 MariaDB。备份包含数据库和服务器端媒体文件，并保存在受保护的本机目录。",
     backupSafetyNotice: "恢复前会自动创建一份安全备份。恢复会替换当前数据库内容、按备份替换媒体文件，并使现有登录会话失效。",
     backupRestoreHelp: "备份文件不会暴露真实服务器路径。建议定期下载一份副本并在恢复前确认迁移状态一致。系统不会自动执行数据库迁移。",
@@ -2644,6 +2646,7 @@ export default {
     saveRoom: "保存机房",
   },
   api: {
+    maintenanceInProgress: '系统正在维护，请稍后重试。',
     invalidRequest: "请求数据不完整或格式不正确",
     validationFailed: "提交失败，请检查标红字段。",
     nonFieldValidationFailed: "提交内容不符合要求，请检查后重试。",

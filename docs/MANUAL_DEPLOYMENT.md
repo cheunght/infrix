@@ -488,10 +488,11 @@ mode-`600` temporary defaults file and never puts the database password in a
 command argument or log. Treat archives and the environment file, including
 the Fernet key, as sensitive data.
 
-The web page is **System Settings → Maintenance → Backup & Restore** and is
+The web listing page is **System Settings → Maintenance → Backup & Restore** and is
 restricted to the existing `system.reset` capability. It accepts only archives
 already present in the configured directory; arbitrary uploads are not
-supported. Restore requires the exact confirmation `RESTORE INFRIX`, validates
+supported. Creation and restoration use server commands only.
+CLI restore requires the exact confirmation `RESTORE INFRIX`, validates
 the manifest, migration state, gzip dump, and archive paths, creates a
 pre-restore safety backup first, and never runs migrations automatically. A
 successful restore invalidates existing sessions. A partial failure reports the
@@ -588,3 +589,19 @@ The deployment administrator remains responsible for:
 
 The supplied automatic installer does not configure unrelated infrastructure
 such as cloud firewalls, certificate authorities, or custom orchestration systems.
+
+### CLI maintenance window / 命令行维护窗口
+
+Backup and restore now run only through server commands. The web page retains listing, validation, download and deletion; legacy create/restore HTTP routes return `405 maintenance_cli_required`.
+
+Set `INFRIX_MAINTENANCE_DIR=/var/lib/infrix/maintenance`, owned by the service account with mode `700`, outside application, media, backup and static trees. Manual deployments must create this directory. All API/admin requests receive `503 maintenance_in_progress` and `Retry-After: 30` while maintenance drains admitted requests, streams and commit-time file callbacks (60 seconds maximum), then takes the snapshot. Static pages remain available.
+
+Format 2 includes paths, sizes and SHA-256 hashes for database-referenced media. Missing files or invalid content fail backup creation. Format 1 remains readable and is labeled as lacking a reference manifest; restored migration state and referenced files are verified before reopening.
+
+If restore fails after modifying data, or its process is killed, access stays closed. Do not delete `state.json` to reopen access. Wait for the CLI and its MariaDB client to exit, read `safety_backup` from the maintenance directory's `state.json`, load the same environment and run as the service account:
+
+```bash
+.venv/bin/python manage.py restore_backup <recorded-safety-backup> --confirm-restore "RESTORE INFRIX" --recover
+```
+
+Recovery accepts only the recorded original safety backup, skips creating a new backup of partially restored data, and reopens only after verification, session invalidation and audit succeed. Direct SQL, migrations and external file writers do not participate in admission: do not run them during maintenance. This protocol supports one host only; all workers and CLI processes must share the same configuration and maintenance directory.

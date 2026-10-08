@@ -24,6 +24,7 @@ backend/.env
 *.log
 backups/
 backend/backups/
+backend/.maintenance/
 
 # Python environments, caches and test output
 .venv/

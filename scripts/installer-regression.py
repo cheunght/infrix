@@ -68,6 +68,24 @@ class InstallerRegression(unittest.TestCase):
         self.assertIn('INFRIX_BACKUP_DIR', result.stderr)
         self.assertFalse((self.directory / 'app').exists())
 
+    def test_preflight_rejects_maintenance_overlapping_persistent_directories(self):
+        for name, path in (
+            ('application', self.directory / 'app/backend/maintenance'),
+            ('media', self.directory / 'media/maintenance'),
+            ('backup', self.directory / 'backups/maintenance'),
+        ):
+            with self.subTest(name=name):
+                original = self.config.read_text()
+                self.config.write_text(original + f'\nINFRIX_MEDIA_ROOT={self.directory / "media"}\n'
+                    + f'INFRIX_BACKUP_DIR={self.directory / "backups"}\nINFRIX_MAINTENANCE_DIR={path}\n')
+                result = self.run_preflight()
+                self.assertNotEqual(result.returncode, 0, result.stdout)
+                self.assertIn('维护目录必须独立', result.stderr)
+                self.assertFalse((self.directory / 'app').exists())
+                self.assertFalse((self.directory / 'media').exists())
+                self.assertFalse((self.directory / 'backups').exists())
+                self.config.write_text(original)
+
     def test_media_gate_precedes_mutating_installer_steps(self):
         source = INSTALLER.read_text()
         invocation = '\nconfigure_media_sync_filter\n'

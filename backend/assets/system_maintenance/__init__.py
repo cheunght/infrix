@@ -91,12 +91,14 @@ def restore_backup(
     confirmation: str,
     *,
     actor=None,
+    recover=False,
     request=None,
 ) -> RestoreResult:
     return _restore_backup(
         backup_id,
         confirmation=confirmation,
         actor=actor,
+        recover=recover,
         request=request,
     )
 

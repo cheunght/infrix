@@ -271,6 +271,7 @@ INSTALLED_APPS = [
 ]
 MIDDLEWARE = [
     "django.middleware.security.SecurityMiddleware",
+    "assets.middleware.MaintenanceAdmissionMiddleware",
     "django.contrib.sessions.middleware.SessionMiddleware",
     "django.middleware.common.CommonMiddleware",
     "django.middleware.csrf.CsrfViewMiddleware",
@@ -386,6 +387,11 @@ INFRIX_BACKUP_DIR = Path(
     )
 ).expanduser()
 DEFAULT_AUTO_FIELD = "django.db.models.BigAutoField"
+INFRIX_MAINTENANCE_DIR = Path(os.getenv(
+    "INFRIX_MAINTENANCE_DIR",
+    "/var/lib/infrix/maintenance" if IS_PRODUCTION else str(BASE_DIR / ".maintenance"),
+)).expanduser()
+INFRIX_MAINTENANCE_DRAIN_SECONDS = _env_int("INFRIX_MAINTENANCE_DRAIN_SECONDS", "60", minimum=1)
 
 REST_FRAMEWORK = {
     "DEFAULT_SCHEMA_CLASS": "drf_spectacular.openapi.AutoSchema",

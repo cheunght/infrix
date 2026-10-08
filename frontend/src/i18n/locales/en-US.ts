@@ -1690,6 +1690,8 @@ export default {
     title: "System Settings",
     backupRestoreTab: "Backup & Restore",
     backupRestoreTitle: "Backup & Restore",
+    backupCliNotice: 'Run backup and restore on the server CLI. API and admin access pause during maintenance; this page provides listing, download and deletion.',
+    backupLegacyUnverified: 'Legacy: no media reference manifest',
     backupRestoreDescription: "MariaDB production databases only. Backups include the database and server-side media files and stay in a protected local directory.",
     backupSafetyNotice: "A safety backup is created before every restore. Restore replaces the current database, replaces media when included, and invalidates existing sessions.",
     backupRestoreHelp: "Real server paths are never exposed in the list. Keep an offline copy and confirm the migration state before restoring. The system never runs database migrations automatically.",
@@ -2644,6 +2646,7 @@ export default {
     saveRoom: "Save room",
   },
   api: {
+    maintenanceInProgress: 'The system is under maintenance. Please try again later.',
     invalidRequest: "The request data is incomplete or invalid",
     validationFailed: "The submission could not be saved. Check the highlighted fields.",
     nonFieldValidationFailed: "The submitted data is not valid. Check it and try again.",

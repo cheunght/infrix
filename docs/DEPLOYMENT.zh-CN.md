@@ -257,7 +257,7 @@ Infrix 内置备份功能仅支持生产环境 MariaDB。安装器默认将
 Nginx 直接提供访问。
 
 在“系统维护 → 备份与恢复”中，拥有现有 `system.reset` 权限的系统管理员可以
-创建、下载、校验、恢复和删除本机备份。每个归档包含 `manifest.json`、压缩的
+查看、下载、校验和删除本机备份；创建和恢复通过下述服务器命令执行。每个归档包含 `manifest.json`、压缩的
 MariaDB 数据库导出，以及存在时的完整 `MEDIA_ROOT` 目录。备份可能包含敏感
 业务数据，应按数据库和环境文件同等级别保护。
 
@@ -317,3 +317,19 @@ sudo bash deploy/install.sh \
 - 保持 SELinux 启用，仅允许 Nginx 到 Gunicorn 所需策略。
 - 限制数据库、证书、私钥、日志和备份的访问权限。
 - 定期维护并验证数据库和环境文件备份。
+
+### CLI maintenance window / 命令行维护窗口
+
+备份和恢复仅通过服务器命令执行。网页保留查看、校验、下载和删除；旧的创建/恢复 HTTP 接口返回 `405 maintenance_cli_required`。
+
+`INFRIX_MAINTENANCE_DIR` 默认 `/var/lib/infrix/maintenance`，由服务账号所有、权限 `700`，必须独立于应用、媒体、备份和静态目录。手工部署需先创建该目录。维护开始后 API 与 Admin 返回 `503 maintenance_in_progress` 和 `Retry-After: 30`，静态页面仍可访问。在途请求、流式下载及文件删除提交回调结束后才开始快照；默认最多等待 60 秒，超时则停止操作。
+
+新版格式 2 包含数据库引用媒体的路径、大小和 SHA-256；缺文件、复制后内容不符或归档校验失败不会返回备份成功。旧格式 1 标为“无媒体引用清单”，仍可识别；恢复后必须通过迁移状态和数据库引用文件验收。
+
+恢复修改数据后失败或进程被终止，系统保留维护状态。不要删除 `state.json` 来强行开放业务。确认原 CLI 与 MariaDB 客户端已经结束，读取维护目录 `state.json` 的 `safety_backup` 文件名，再加载原环境，以服务账号执行：
+
+```bash
+.venv/bin/python manage.py restore_backup <state.json中记录的安全备份文件名> --confirm-restore "RESTORE INFRIX" --recover
+```
+
+该恢复流程不为部分恢复库重新创建安全备份，只接受状态中记录的原安全备份；再次失败继续保持维护，验收、会话失效及审计全部完成后才开放。网页请求不会自动重试写操作。直接 SQL、其他脚本、迁移和人工文件修改不参与请求屏障，维护期间不得执行；单机所有 worker 和运维命令必须使用同一环境与维护目录。多节点部署不支持此锁协议。

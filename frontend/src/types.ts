@@ -211,6 +211,7 @@ export type BackupEntry = {
   checksum: string;
   valid: boolean;
   validation_error: string;
+  media_reference_validation?: "verified" | "legacy_unverified" | "failed";
 };
 
 export type BackupListResponse = { results: BackupEntry[] };

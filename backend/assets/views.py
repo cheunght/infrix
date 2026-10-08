@@ -4825,7 +4825,7 @@ def operational_status(request):
     return Response(read_status())
 
 
-@extend_schema(request=OpenApiTypes.NONE, responses=OpenApiTypes.OBJECT, methods=["POST"])
+@extend_schema(request=OpenApiTypes.NONE, responses={405: OpenApiTypes.OBJECT}, methods=["POST"], description="备份通过服务器 create_backup 命令执行；网页仅查看、下载和删除。")
 @extend_schema(request=OpenApiTypes.NONE, responses=OpenApiTypes.OBJECT, methods=["GET"])
 @api_view(["GET", "POST"])
 @permission_classes([CanResetSystem])
@@ -4835,10 +4835,10 @@ def system_backups(request):
             return Response({"results": list_backups()})
         except MaintenanceError as exc:
             return _backup_error_response(exc)
-    try:
-        return Response(create_backup(request=request, actor=request.user), status=201)
-    except MaintenanceError as exc:
-        return _backup_error_response(exc)
+    return Response({
+        "detail": "请在服务器执行 manage.py create_backup；备份期间系统进入维护窗口。",
+        "code": "maintenance_cli_required", "command": "python manage.py create_backup",
+    }, status=405, headers={"Allow": "GET, HEAD, OPTIONS"})
 
 
 @extend_schema(request=OpenApiTypes.NONE, responses=OpenApiTypes.BINARY)
@@ -4875,22 +4875,15 @@ def system_backup_delete(request, backup_id):
         return _backup_error_response(exc)
 
 
-@extend_schema(request=BackupConfirmationSerializer, responses=OpenApiTypes.OBJECT)
+@extend_schema(request=BackupConfirmationSerializer, responses={405: OpenApiTypes.OBJECT}, description="恢复通过服务器 restore_backup 命令执行，包含维护窗口和验收。")
 @api_view(["POST"])
 @permission_classes([CanResetSystem])
 def system_backup_restore(request, backup_id):
-    confirmation = request.data.get("confirmation", "")
-    try:
-        return Response(
-            restore_backup(
-                backup_id,
-                confirmation=confirmation,
-                request=request,
-                actor=request.user,
-            )
-        )
-    except MaintenanceError as exc:
-        return _backup_error_response(exc)
+    return Response({
+        "detail": "请在服务器执行 manage.py restore_backup；恢复期间系统暂停业务访问。",
+        "code": "maintenance_cli_required",
+        "command": 'python manage.py restore_backup <backup-file> --confirm-restore "RESTORE INFRIX"',
+    }, status=405, headers={"Allow": "OPTIONS"})
 
 
 @extend_schema(request=SystemResetSerializer, responses=OpenApiTypes.OBJECT)

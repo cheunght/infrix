@@ -88,6 +88,7 @@ TLS_CERT_FILE="${TLS_CERT_FILE:-/etc/pki/tls/certs/infrix.crt}"
 TLS_KEY_FILE="${TLS_KEY_FILE:-/etc/pki/tls/private/infrix.key}"
 BACKUP_DIR="${BACKUP_DIR:-/var/backups/infrix}"
 INFRIX_BACKUP_DIR="${INFRIX_BACKUP_DIR:-/var/lib/infrix/backups}"
+INFRIX_MAINTENANCE_DIR="${INFRIX_MAINTENANCE_DIR:-/var/lib/infrix/maintenance}"
 SYSTEMD_UNIT_FILE="${SYSTEMD_UNIT_FILE:-/etc/systemd/system/infrix.service}"
 DIGEST_SERVICE_UNIT_FILE="${DIGEST_SERVICE_UNIT_FILE:-/etc/systemd/system/infrix-notification-digest.service}"
 DIGEST_TIMER_UNIT_FILE="${DIGEST_TIMER_UNIT_FILE:-/etc/systemd/system/infrix-notification-digest.timer}"
@@ -405,6 +406,14 @@ safety_python_bin="${PYTHON_BIN:-python3}"
 command -v "$safety_python_bin" >/dev/null 2>&1 || fail "未找到 Python 解释器：$safety_python_bin"
 [[ "$INFRIX_BACKUP_DIR" = /* ]] || fail "INFRIX_BACKUP_DIR 必须是绝对路径：$INFRIX_BACKUP_DIR"
 validate_backup_directory_scope
+[[ "$INFRIX_MAINTENANCE_DIR" = /* ]] || fail "INFRIX_MAINTENANCE_DIR 必须是绝对路径。"
+"$safety_python_bin" - "$INFRIX_MAINTENANCE_DIR" "$APP_DIR" "$INFRIX_BACKUP_DIR" "${INFRIX_MEDIA_ROOT:-$APP_DIR/backend/media}" <<'PY' || fail "维护目录必须独立于应用、备份和媒体目录。"
+import os, sys
+maintenance, *protected = map(os.path.realpath, sys.argv[1:])
+for root in protected:
+    if os.path.commonpath((maintenance, root)) in (maintenance, root):
+        raise SystemExit(1)
+PY
 configure_media_sync_filter
 
 if [[ "$PREFLIGHT_ONLY" -eq 1 ]]; then
@@ -730,6 +739,7 @@ DB_HOST=$DB_HOST
 DB_PORT=$DB_PORT
 INFRIX_CONFIG_ENCRYPTION_KEY=$INFRIX_CONFIG_ENCRYPTION_KEY
 INFRIX_BACKUP_DIR=$INFRIX_BACKUP_DIR
+INFRIX_MAINTENANCE_DIR=$INFRIX_MAINTENANCE_DIR
 SERVER_NAME=$SERVER_NAME
 TLS_MODE=${TLS_MODE:-auto}
 TLS_CERT_FILE=$TLS_CERT_FILE
@@ -751,6 +761,9 @@ else
 fi
 if ! grep -q '^INFRIX_BACKUP_DIR=' "$ENV_FILE"; then
   printf '\nINFRIX_BACKUP_DIR=%s\n' "$INFRIX_BACKUP_DIR" >> "$ENV_FILE"
+fi
+if ! grep -q '^INFRIX_MAINTENANCE_DIR=' "$ENV_FILE"; then
+  printf '\nINFRIX_MAINTENANCE_DIR=%s\n' "$INFRIX_MAINTENANCE_DIR" >> "$ENV_FILE"
 fi
 chmod 640 "$ENV_FILE"
 chown root:"$APP_GROUP" "$ENV_FILE"
@@ -930,6 +943,7 @@ find "$frontend_dist" -type d -exec chmod 755 {} +
 find "$frontend_dist" -type f -exec chmod 644 {} +
 chown -R "$APP_USER":"$APP_GROUP" "$APP_DIR"
 install -d -m 700 -o "$APP_USER" -g "$APP_GROUP" "$INFRIX_BACKUP_DIR"
+install -d -m 700 -o "$APP_USER" -g "$APP_GROUP" "$INFRIX_MAINTENANCE_DIR"
 chmod 640 "$ENV_FILE"
 chown root:"$APP_GROUP" "$ENV_FILE"
 

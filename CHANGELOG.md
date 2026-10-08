@@ -1,5 +1,13 @@
 # Changelog
 
+## Unreleased — Phase 1 correctness repairs
+
+- Share authenticated password-change policy across Session, PAT and Admin; password resets revoke old PATs and audit the revocation count.
+- Verify API/Admin cross-entry login lockouts; withdraw the earlier form-only audit conclusion.
+- Tolerate empty fault descriptions, protect room reparenting with operational stock/inventory associations, and keep filtered spare totals global without JOIN multiplication.
+- Run backup/restore through server CLI under a process-safe admission barrier; dirty failed restores remain closed until verified safety-backup recovery.
+- Add format 2 media-reference manifests with hashes while retaining labeled format 1 compatibility. Web create/restore routes return 405; web listing/download/delete remain available.
+
 ## 0.3.1 — 2026-09-28
 
 Installer hotfix for the 0.3.0 release. Always run `dnf install` for the Rocky 9

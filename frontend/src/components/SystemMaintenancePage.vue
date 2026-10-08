@@ -31,15 +31,8 @@ const {
   backupError,
   backupNotice,
   pendingFilename,
-  backupCreating,
-  backupRestoring,
   backupDeleting,
   hasNonTransactionalTables,
-  restoreDialogVisible,
-  restoreConfirmation,
-  restoreTarget,
-  restoreResult,
-  restoreConfirmationValid,
   resetDialogVisible,
   resetConfirmation,
   resetError,
@@ -49,16 +42,11 @@ const {
   uncertainOperation,
   loadStatus,
   loadBackups,
-  createBackup,
   downloadBackup,
-  openRestore,
-  closeRestore,
-  restore,
   deleteBackup,
   openSystemResetDialog,
   closeSystemResetDialog,
   resetSystem,
-  relogin,
 } = maintenance;
 
 const maintenanceTab = ref<MaintenanceTab>("operations");
@@ -132,9 +120,6 @@ function changeMaintenanceTab(value: string) {
           />
           <template v-else-if="maintenanceTab === 'backup' && context.can('system.reset')">
             <ToolbarIconButton :icon="Refresh" :label="t('common.refresh')" :loading="backupLoading" :disabled="backupLoading || maintenanceBusy" @click="loadBackups" />
-            <el-button type="primary" :loading="backupCreating" :disabled="backupLoading || maintenanceBusy" @click="createBackup">
-              {{ t('settings.createBackup') }}
-            </el-button>
           </template>
         </template>
       </PageToolbar>
@@ -152,25 +137,13 @@ function changeMaintenanceTab(value: string) {
           :context="context"
           :backups="backups"
           :loading="backupLoading"
-          :creating="backupCreating"
-          :restoring="backupRestoring"
           :deleting="backupDeleting"
           :pending-filename="pendingFilename"
           :error="backupError"
           :notice="backupNotice"
           :has-non-transactional-tables="hasNonTransactionalTables"
-          :restore-dialog-visible="restoreDialogVisible"
-          :restore-confirmation="restoreConfirmation"
-          :restore-target="restoreTarget"
-          :restore-confirmation-valid="restoreConfirmationValid"
-          @update:restore-dialog-visible="restoreDialogVisible = $event"
-          @update:restore-confirmation="restoreConfirmation = $event"
           @load="loadBackups"
-          @create="createBackup"
           @download="downloadBackup"
-          @open-restore="openRestore"
-          @close-restore="closeRestore"
-          @restore="restore"
           @delete="deleteBackup"
         />
 
@@ -207,10 +180,7 @@ function changeMaintenanceTab(value: string) {
         show-icon
         :closable="false"
       />
-      <el-alert v-if="restoreResult" class="settings-maintenance__result-alert" type="warning" show-icon :closable="false">
-        <template #title>{{ t('settings.backupRestoreSessionInvalidated') }}</template>
-        <el-button size="small" type="primary" @click="relogin">{{ t('auth.login') }}</el-button>
-      </el-alert>
+
     </PageContent>
   </PageContainer>
 

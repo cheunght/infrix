@@ -7,6 +7,7 @@ class Command(BaseCommand):
     help = "Restore an Infrix MariaDB backup after an explicit confirmation."
 
     def add_arguments(self, parser):
+        parser.add_argument("--recover", action="store_true", help="Recover a failed restore using the safety backup recorded in maintenance/state.json.")
         parser.add_argument("backup_id_or_filename")
         parser.add_argument(
             "--confirm-restore",
@@ -19,6 +20,7 @@ class Command(BaseCommand):
             result = restore_backup(
                 options["backup_id_or_filename"],
                 options["confirm_restore"],
+                recover=options["recover"],
             )
         except MaintenanceError as exc:
             raise CommandError(exc.message) from exc

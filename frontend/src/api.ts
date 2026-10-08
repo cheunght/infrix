@@ -111,6 +111,7 @@ export async function downloadFile(path: string, options: DownloadOptions = {}):
     try {
       const payload = JSON.parse(text);
       details = payload;
+      if (response.status === 503 && payload.code === "maintenance_in_progress") message = tr("api.maintenanceInProgress");
     } catch {
       // Never expose raw HTML error pages to users.
     }
@@ -209,7 +210,9 @@ export async function apiRequest<T>(
     try {
       const payload = JSON.parse(text);
       details = payload;
-      message = flattenError(payload.detail ?? payload) || message;
+      message = response.status === 503 && payload.code === "maintenance_in_progress"
+        ? tr("api.maintenanceInProgress")
+        : flattenError(payload.detail ?? payload) || message;
     } catch {
       // HTML error pages and empty responses are deliberately not shown to users.
     }

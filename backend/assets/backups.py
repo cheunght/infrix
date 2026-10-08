@@ -31,16 +31,18 @@ from django.conf import settings
 from django.contrib.auth import get_user_model
 from django.contrib.sessions.models import Session
 from django.core.cache import cache
-from django.db import connection
+from django.db import DatabaseError, connection
 from django.db.migrations.recorder import MigrationRecorder
 from django.utils import timezone
 
 from .audit import write_audit_log
+from .models import Attachment
+from .maintenance_gate import MaintenanceUnavailable, maintenance_window, maintenance_subprocess_options
 
 
 logger = logging.getLogger(__name__)
 
-BACKUP_FORMAT_VERSION = 1
+BACKUP_FORMAT_VERSION = 2
 BACKUP_CONFIRMATION = "RESTORE INFRIX"
 BACKUP_FILENAME_RE = re.compile(
     r"^infrix-(?:backup|pre-restore)-[0-9]{8}-[0-9]{6}(?:-[0-9]+)?\.tar\.gz$"
@@ -369,6 +371,7 @@ def _run_dump(workdir: Path, output_path: Path) -> None:
                     env=_subprocess_environment(),
                     shell=False,
                     check=False,
+                    **maintenance_subprocess_options(),
                 )
     except OSError as exc:
         logger.exception("MariaDB dump process could not be started")
@@ -505,6 +508,7 @@ def _create_backup_locked(
     started = timezone.now()
     media_root = _configured_media_root()
     media_included = media_root.exists()
+    media_references = _referenced_media(media_root)
 
     with tempfile.TemporaryDirectory(prefix=".infrix-backup-", dir=str(root)) as temporary_directory:
         workdir = Path(temporary_directory)
@@ -535,6 +539,8 @@ def _create_backup_locked(
                     status_code=502,
                 ) from exc
 
+        _verify_media_tree(media_directory, media_references)
+
         manifest: dict[str, object] = {
             "backup_format_version": BACKUP_FORMAT_VERSION,
             "application_name": "infrix",
@@ -547,6 +553,7 @@ def _create_backup_locked(
             "media_included": media_included,
             "media_path": "media/",
             "migration_state": _migration_state(),
+            "media_references": media_references,
         }
         revision = _git_revision()
         if revision:
@@ -652,8 +659,66 @@ def _create_backup_locked(
 
 def create_backup(*, request=None, actor=None) -> dict[str, object]:
     _require_mariadb()
-    with backup_operation_lock():
-        return _create_backup_locked(request=request, actor=actor, kind="backup")
+    try:
+        with backup_operation_lock(), maintenance_window("backup") as operation:
+            operation.stage("creating_backup")
+            return _create_backup_locked(request=request, actor=actor, kind="backup")
+    except (MaintenanceUnavailable, OSError) as exc:
+        raise BackupServiceError("无法进入维护窗口，未开始备份。", code="maintenance_in_progress", status_code=503) from exc
+    except DatabaseError as exc:
+        raise BackupServiceError("备份期间无法读取数据库。", code="database_dump_failed", status_code=502) from exc
+
+
+def _media_path(name):
+    path = PurePosixPath(str(name))
+    if not name or path.is_absolute() or ".." in path.parts or "\\" in str(name) or "\x00" in str(name):
+        raise BackupServiceError("数据库引用的媒体路径无效。", code="media_reference_invalid")
+    return str(path)
+
+
+def _verify_media_tree(root, references):
+    for reference in references:
+        path = root / _media_path(reference["path"])
+        if path.is_symlink() or not path.resolve().is_relative_to(root.resolve()) or not path.is_file():
+            raise BackupServiceError("数据库引用的媒体文件缺失或不安全。", code="media_reference_missing", status_code=502)
+        if path.stat().st_size != reference["size"] or _sha256(path) != reference["sha256"]:
+            raise BackupServiceError("数据库引用的媒体内容校验失败。", code="media_reference_mismatch", status_code=502)
+
+
+def _referenced_media(root):
+    references = []
+    for name in sorted(set(Attachment.objects.exclude(file="").values_list("file", flat=True))):
+        name = _media_path(name)
+        path = root / name
+        if path.is_symlink() or not path.resolve().is_relative_to(root.resolve()) or not path.is_file():
+            raise BackupServiceError("数据库引用的媒体文件缺失或不安全。", code="media_reference_missing", status_code=502)
+        references.append({"path": name, "size": path.stat().st_size, "sha256": _sha256(path)})
+    return references
+
+
+def _validate_media_manifest(archive, manifest, members):
+    references = manifest.get("media_references")
+    if not isinstance(references, list):
+        raise BackupServiceError("备份缺少媒体引用清单。", code="manifest_invalid")
+    by_name = {member.name: member for member in members}
+    seen = set()
+    for reference in references:
+        if not isinstance(reference, dict) or not isinstance(reference.get("path"), str):
+            raise BackupServiceError("媒体引用清单无效。", code="manifest_invalid")
+        name = _media_path(reference["path"])
+        size, expected = reference.get("size"), reference.get("sha256")
+        if name in seen or not isinstance(size, int) or isinstance(size, bool) or size < 0 or not isinstance(expected, str) or not re.fullmatch(r"[0-9a-f]{64}", expected):
+            raise BackupServiceError("媒体引用清单无效。", code="manifest_invalid")
+        seen.add(name)
+        member = by_name.get(f"media/{name}")
+        if member is None or not member.isreg() or member.size != size:
+            raise BackupServiceError("备份缺少数据库引用的媒体文件。", code="media_reference_missing")
+        digest = hashlib.sha256()
+        with archive.extractfile(member) as handle:
+            for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+                digest.update(chunk)
+        if digest.hexdigest() != expected:
+            raise BackupServiceError("媒体引用内容校验失败。", code="media_reference_mismatch")
 
 
 def _safe_archive_member_name(name: str) -> str:
@@ -745,7 +810,7 @@ def _validate_manifest(
     *,
     check_migrations: bool,
 ) -> None:
-    if manifest.get("backup_format_version") != BACKUP_FORMAT_VERSION:
+    if manifest.get("backup_format_version") not in {1, BACKUP_FORMAT_VERSION}:
         raise BackupServiceError(
             "备份格式版本不受当前版本支持。",
             code="backup_format_unsupported",
@@ -928,6 +993,8 @@ def validate_backup(identifier: str, *, check_migrations: bool = True) -> Valida
             _validate_manifest(manifest, members, check_migrations=check_migrations)
             dump_member = next(member for member in members if member.name == DATABASE_DUMP_NAME)
             _validate_gzip_member(archive, dump_member)
+            if manifest["backup_format_version"] >= 2:
+                _validate_media_manifest(archive, manifest, members)
             member_names = tuple(_safe_archive_member_name(member.name) for member in members)
     except BackupServiceError:
         raise
@@ -1023,6 +1090,9 @@ def inspect_backup(path: Path, *, require_valid: bool = False) -> dict[str, obje
         "checksum": checksum,
         "valid": valid,
         "validation_error": validation_error,
+        "media_reference_validation": (
+            "failed" if not valid else "verified" if manifest.get("backup_format_version") == 2 else "legacy_unverified"
+        ),
     }
 
 
@@ -1147,6 +1217,7 @@ def _restore_database(extracted_root: Path) -> None:
                     env=_subprocess_environment(),
                     shell=False,
                     check=False,
+                    **maintenance_subprocess_options(),
                 )
         if result.returncode != 0:
             logger.error("MariaDB restore failed with exit code %s", result.returncode)
@@ -1293,7 +1364,7 @@ def _post_restore() -> tuple[int, list[str]]:
         invalidated_sessions, _ = Session.objects.all().delete()
     except Exception:
         logger.exception("Unable to invalidate sessions after restore")
-        warnings.append("恢复完成，但未能清理现有登录会话。")
+        raise BackupServiceError("恢复后的会话失效未完成。", code="post_restore_validation_failed", status_code=502) from None
     try:
         cache.clear()
     except Exception:
@@ -1302,12 +1373,32 @@ def _post_restore() -> tuple[int, list[str]]:
     return invalidated_sessions, warnings
 
 
-def restore_backup(
+def restore_backup(identifier, *, confirmation, request=None, actor=None, recover=False):
+    if confirmation != BACKUP_CONFIRMATION:
+        raise BackupServiceError("请输入准确的恢复确认文本：RESTORE INFRIX。", code="restore_confirmation_required")
+    _require_mariadb()
+    try:
+        with backup_operation_lock(), maintenance_window("restore", recover=recover) as operation:
+            if operation.recovering and identifier != operation.state.get("safety_backup"):
+                raise BackupServiceError("失败恢复必须使用维护状态中记录的安全备份。", code="recovery_backup_required", status_code=409)
+            result = _restore_backup_locked(identifier, confirmation=confirmation, request=request, actor=actor, operation=operation)
+            if not result["audit_recorded"]:
+                raise BackupServiceError("恢复审计未完成，系统保留维护状态。", code="post_restore_validation_failed", status_code=502)
+            operation.complete()
+            return result
+    except (MaintenanceUnavailable, OSError) as exc:
+        raise BackupServiceError("无法完成维护窗口；失败恢复请使用 restore_backup --recover。", code="maintenance_in_progress", status_code=503) from exc
+    except DatabaseError as exc:
+        raise BackupServiceError("恢复后的数据库不可读取，系统保留维护状态。", code="post_restore_validation_failed", status_code=502) from exc
+
+
+def _restore_backup_locked(
     identifier: str,
     *,
     confirmation: str,
     request=None,
     actor=None,
+    operation,
 ) -> dict[str, object]:
     if confirmation != BACKUP_CONFIRMATION:
         raise BackupServiceError(
@@ -1316,9 +1407,9 @@ def restore_backup(
             status_code=400,
         )
     _require_mariadb()
-    with backup_operation_lock():
-        validated = validate_backup(identifier, check_migrations=True)
-        safety_filename = ""
+    validated = validate_backup(identifier, check_migrations=not operation.recovering)
+    safety_filename = str(operation.state.get("safety_backup", ""))
+    if not operation.recovering:
         try:
             safety = _create_backup_locked(
                 kind="pre-restore",
@@ -1335,96 +1426,108 @@ def restore_backup(
                 details={"database_status": "not_started", "media_status": "not_started"},
             ) from exc
 
-        database_status = "not_started"
-        media_status = "not_started"
-        rollback_path: Path | None = None
-        media_root = _configured_media_root()
-        staged_media: Path | None = None
-        try:
-            with tempfile.TemporaryDirectory(prefix=".infrix-restore-", dir=str(ensure_backup_root(create=True))) as temp_directory:
-                extracted_root = Path(temp_directory) / "archive"
-                _extract_archive(validated, extracted_root)
-                if bool(validated.manifest.get("media_included")):
-                    # Complete the cross-filesystem copy before importing the
-                    # database. A failed media stage therefore cannot leave a
-                    # restored database paired with old media.
-                    staged_media = _stage_media_tree(
-                        extracted_root / MEDIA_DIRECTORY_NAME,
-                        media_root,
-                    )
-                    # Swap only after the complete copy is ready. If the
-                    # same-filesystem rename fails, the database is untouched.
-                    rollback_path = _replace_media_tree(staged_media, media_root)
-                    staged_media = None
-                    media_status = "restored"
-                # The manifest database name is informational only.  The
-                # client is given the current Django database name above, and
-                # the dump is created without --databases/USE wrappers so a
-                # backup from another environment cannot redirect the import.
-                database_status = "restoring"
-                _restore_database(extracted_root)
-                database_status = "restored"
-                if not bool(validated.manifest.get("media_included")):
-                    media_status = "unchanged"
-                sessions_invalidated, warnings = _post_restore()
-        except BackupServiceError as exc:
-            if staged_media is not None:
-                try:
-                    _remove_tree(staged_media)
-                except OSError:
-                    logger.exception("Unable to remove staged media after restore failure")
-            if rollback_path is not None:
-                media_status = "rollback_succeeded" if _rollback_media(media_root, rollback_path) else "rollback_failed"
-            raise BackupServiceError(
-                "恢复未能完整完成，请根据安全备份文件处理当前状态。",
-                code="restore_failed",
-                status_code=502,
-                details={
-                    "stage": exc.code,
-                    "safety_backup": safety_filename,
-                    "database_status": database_status,
-                    "media_status": media_status,
-                },
-            ) from exc
-        finally:
-            if staged_media is not None:
-                try:
-                    _remove_tree(staged_media)
-                except OSError:
-                    logger.exception("Unable to remove staged media after restore")
-            if rollback_path is not None and media_status == "restored":
-                _finalize_media_rollback(rollback_path)
+    operation.stage("backup_validated", safety_backup=safety_filename)
 
-        audit_recorded = True
-        try:
-            user_model = get_user_model()
-            audit_actor = user_model.objects.filter(pk=getattr(actor, "pk", None)).first() if actor else None
-            write_audit_log(
-                None,
-                actor=audit_actor,
-                action="restore",
-                resource_type="backup",
-                resource_id=identifier,
-                extra={
-                    "safety_backup": safety_filename,
-                    "database_status": database_status,
-                    "media_status": media_status,
-                    "sessions_invalidated": sessions_invalidated,
-                },
-            )
-        except Exception:
-            audit_recorded = False
-            logger.exception("Unable to record backup restore audit")
-        return {
-            "ok": True,
-            "filename": identifier,
-            "safety_backup": safety_filename,
-            "database_status": database_status,
-            "media_status": media_status,
-            "sessions_invalidated": sessions_invalidated,
-            "audit_recorded": audit_recorded,
-            "warnings": warnings,
-        }
+    database_status = "not_started"
+    media_status = "not_started"
+    rollback_path: Path | None = None
+    media_root = _configured_media_root()
+    staged_media: Path | None = None
+    try:
+        with tempfile.TemporaryDirectory(prefix=".infrix-restore-", dir=str(ensure_backup_root(create=True))) as temp_directory:
+            extracted_root = Path(temp_directory) / "archive"
+            _extract_archive(validated, extracted_root)
+            if bool(validated.manifest.get("media_included")):
+                # Complete the cross-filesystem copy before importing the
+                # database. A failed media stage therefore cannot leave a
+                # restored database paired with old media.
+                staged_media = _stage_media_tree(
+                    extracted_root / MEDIA_DIRECTORY_NAME,
+                    media_root,
+                )
+                # Swap only after the complete copy is ready. If the
+                # same-filesystem rename fails, the database is untouched.
+                operation.mark_dirty("restoring_media")
+                rollback_path = _replace_media_tree(staged_media, media_root)
+                staged_media = None
+                media_status = "restored"
+            # The manifest database name is informational only.  The
+            # client is given the current Django database name above, and
+            # the dump is created without --databases/USE wrappers so a
+            # backup from another environment cannot redirect the import.
+            operation.mark_dirty("restoring_database")
+            database_status = "restoring"
+            _restore_database(extracted_root)
+            database_status = "restored"
+            if not bool(validated.manifest.get("media_included")):
+                media_status = "unchanged"
+            operation.stage("verifying_restored_media")
+            if _migration_state() != sorted(validated.manifest["migration_state"]):
+                raise BackupServiceError("恢复后的迁移状态校验失败。", code="post_restore_validation_failed", status_code=502)
+            restored_references = _referenced_media(media_root)
+            if validated.manifest.get("backup_format_version") == 2 and restored_references != validated.manifest["media_references"]:
+                raise BackupServiceError("恢复后的数据库媒体引用与备份不一致。", code="media_reference_mismatch", status_code=502)
+            sessions_invalidated, warnings = _post_restore()
+            if validated.manifest.get("backup_format_version") == 1:
+                warnings.append("旧格式备份没有媒体引用清单；已检查恢复后的引用文件存在。")
+    except BackupServiceError as exc:
+        if staged_media is not None:
+            try:
+                _remove_tree(staged_media)
+            except OSError:
+                logger.exception("Unable to remove staged media after restore failure")
+        if rollback_path is not None:
+            media_status = "rollback_succeeded" if _rollback_media(media_root, rollback_path) else "rollback_failed"
+        raise BackupServiceError(
+            "恢复未能完整完成，请根据安全备份文件处理当前状态。",
+            code="restore_failed",
+            status_code=502,
+            details={
+                "stage": exc.code,
+                "safety_backup": safety_filename,
+                "database_status": database_status,
+                "media_status": media_status,
+            },
+        ) from exc
+    finally:
+        if staged_media is not None:
+            try:
+                _remove_tree(staged_media)
+            except OSError:
+                logger.exception("Unable to remove staged media after restore")
+        if rollback_path is not None and media_status == "restored":
+            _finalize_media_rollback(rollback_path)
+
+    audit_recorded = True
+    try:
+        user_model = get_user_model()
+        audit_actor = user_model.objects.filter(pk=getattr(actor, "pk", None)).first() if actor else None
+        write_audit_log(
+            None,
+            actor=audit_actor,
+            action="restore",
+            resource_type="backup",
+            resource_id=identifier,
+            extra={
+                "safety_backup": safety_filename,
+                "database_status": database_status,
+                "media_status": media_status,
+                "sessions_invalidated": sessions_invalidated,
+            },
+        )
+    except Exception:
+        audit_recorded = False
+        logger.exception("Unable to record backup restore audit")
+    return {
+        "ok": True,
+        "filename": identifier,
+        "safety_backup": safety_filename,
+        "database_status": database_status,
+        "media_status": media_status,
+        "sessions_invalidated": sessions_invalidated,
+        "audit_recorded": audit_recorded,
+        "warnings": warnings,
+    }
 
 
 def backup_preflight() -> dict[str, object]:

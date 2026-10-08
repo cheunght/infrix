@@ -1,34 +1,51 @@
 from django.http import JsonResponse
 
-from .models import UserSecurityProfile
+from .maintenance_gate import MaintenanceUnavailable, business_access
 
 
-class PasswordChangeRequiredMiddleware:
-    """Block business API access until a newly provisioned password is changed."""
-
-    allowed_paths = {
-        "/api/v1/auth/csrf/",
-        "/api/v1/auth/me/",
-        "/api/v1/auth/change-password/",
-        "/api/v1/auth/logout/",
-        "/api/v1/auth/login/",
-    }
+class MaintenanceAdmissionMiddleware:
+    """Hold admission through authentication, commit callbacks and streaming."""
 
     def __init__(self, get_response):
         self.get_response = get_response
 
     def __call__(self, request):
-        path = request.path_info
-        if (
-            path.startswith("/api/v1/")
-            and path not in self.allowed_paths
-            and getattr(request, "user", None)
-            and request.user.is_authenticated
-        ):
-            profile = UserSecurityProfile.objects.filter(user=request.user).first()
-            if profile and profile.must_change_password:
-                return JsonResponse(
-                    {"detail": "首次登录必须修改密码", "code": "password_change_required"},
-                    status=403,
-                )
-        return self.get_response(request)
+        if not request.path_info.startswith(("/api/", "/admin/")):
+            return self.get_response(request)
+        access = business_access()
+        try:
+            access.__enter__()
+        except (MaintenanceUnavailable, OSError):
+            response = JsonResponse({
+                "detail": "系统正在维护，请稍后重试；恢复未完成时需在服务器处理。",
+                "code": "maintenance_in_progress",
+            }, status=503)
+            response["Retry-After"] = "30"
+            return response
+        released = False
+
+        def release():
+            nonlocal released
+            if not released:
+                released = True
+                access.__exit__(None, None, None)
+
+        try:
+            response = self.get_response(request)
+            if response.streaming:
+                content = response.streaming_content
+
+                def stream():
+                    try:
+                        yield from content
+                    finally:
+                        release()
+
+                response.streaming_content = stream()
+                response._resource_closers.append(release)
+            else:
+                release()
+            return response
+        except BaseException:
+            release()
+            raise
