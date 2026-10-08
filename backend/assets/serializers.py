@@ -32,6 +32,7 @@ from .enum_contracts import (
     STOCK_OPERATION_TYPE_VALUES,
 )
 from .license_status import LICENSE_STATUS_LABELS, license_status_value
+from .fault_timeline import validate_fault_times, validate_repair_times
 from .reporting.capacity import rack_effective_used_u
 from .services import CustomFieldConflictError, apply_asset_custom_values, apply_asset_tags, apply_spare_stock_transaction, assign_asset, configure_asset, inventory_snapshot_location, inventory_task_can_delete, return_asset, transfer_asset, validate_inventory_resolution_request
 from .physical_location import RoomReparentBlocked, lock_inventory_scope, lock_asset_location, update_rack, update_server_room
@@ -3628,6 +3629,11 @@ class FaultEventSerializer(serializers.ModelSerializer):
             and attrs["asset"].pk != self.instance.asset_id
         ):
             raise serializers.ValidationError({"asset": "故障关联资产创建后不能修改"})
+        validate_fault_times(
+            occurred_at=attrs.get("occurred_at", self.instance.occurred_at if self.instance else None),
+            reported_at=attrs.get("reported_at", self.instance.reported_at if self.instance else None),
+            repair=getattr(self.instance, "repair", None) if self.instance else None,
+        )
         return attrs
 
     class Meta:
@@ -3656,11 +3662,12 @@ class RepairRecordSerializer(serializers.ModelSerializer):
 
         started_at = attrs.get("started_at", self.instance.started_at if self.instance else None)
         finished_at = attrs.get("finished_at", self.instance.finished_at if self.instance else None)
-        if started_at and finished_at and started_at > finished_at:
-            raise serializers.ValidationError({
-                "started_at": "维修开始时间不能晚于维修完成时间",
-                "finished_at": "维修完成时间不能早于维修开始时间",
-            })
+        fault = attrs.get("fault", self.instance.fault if self.instance else None)
+        validate_repair_times(
+            occurred_at=fault.occurred_at,
+            started_at=started_at,
+            finished_at=finished_at,
+        )
         return attrs
 
     cost = serializers.DecimalField(

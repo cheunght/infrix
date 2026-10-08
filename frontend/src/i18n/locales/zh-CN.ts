@@ -1353,6 +1353,7 @@ export default {
     closed: "已关闭",
     open: "未关闭",
     occurredAt: "发生时间",
+    reportedAt: "报障时间",
     startedAt: "开始时间",
     finishedAt: "完成时间",
     resolvedAt: "解决时间",

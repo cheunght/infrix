@@ -1,12 +1,16 @@
 # Changelog
 
-## Unreleased — Phase 1 correctness repairs
+## Unreleased — Correctness repairs
 
 - Share authenticated password-change policy across Session, PAT and Admin; password resets revoke old PATs and audit the revocation count.
 - Verify API/Admin cross-entry login lockouts; withdraw the earlier form-only audit conclusion.
 - Tolerate empty fault descriptions, protect room reparenting with operational stock/inventory associations, and keep filtered spare totals global without JOIN multiplication.
 - Run backup/restore through server CLI under a process-safe admission barrier; dirty failed restores remain closed until verified safety-backup recovery.
 - Add format 2 media-reference manifests with hashes while retaining labeled format 1 compatibility. Web create/restore routes return 405; web listing/download/delete remain available.
+- Identify expired session authentication separately from permission and CSRF failures; regular requests and downloads clear the signed-in state only on authentication failure.
+- Calculate inventory rack coverage according to all-assets, data-center or room scope within currently active facilities.
+- Reuse prefetched fieldset items once per fieldset during asset export, preserving column order without per-asset queries.
+- Validate fault/report/repair event times on creation and partial edits; historical backfills and repairs before late reports remain allowed. Serialize fault and repair timeline writes under a shared fault lock.
 
 ## 0.3.1 — 2026-09-28
 

@@ -1210,6 +1210,8 @@ def reopen_repair(*, repair_id: int, request=None):
     """Reopen one finished repair without deleting its historical record."""
     from .audit import model_snapshot, write_audit_log
 
+    fault_id = RepairRecord.objects.values_list("fault_id", flat=True).get(pk=repair_id)
+    FaultEvent.objects.select_for_update().get(pk=fault_id)
     repair = RepairRecord.objects.select_for_update().get(pk=repair_id)
     if repair.finished_at is None:
         raise DRFValidationError({
@@ -1262,8 +1264,8 @@ def create_repair_part_usage(*, fault_id, validated_data, operator, request):
     if quantity <= 0:
         raise DRFValidationError({"quantity": "数量必须大于 0"})
 
-    repair = RepairRecord.objects.select_for_update().filter(fault_id=fault_id).first()
     fault = FaultEvent.objects.select_for_update().get(pk=fault_id)
+    repair = RepairRecord.objects.select_for_update().filter(fault_id=fault_id).first()
     if (repair is not None and repair.finished_at is not None) or fault.is_closed:
         raise DRFValidationError({"detail": "已完成的故障不能新增维修用件"})
     asset = Asset.objects.select_for_update().get(pk=fault.asset_id)

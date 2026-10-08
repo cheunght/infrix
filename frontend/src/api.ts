@@ -29,6 +29,8 @@ const FIELD_LABEL_KEYS: Record<string, string> = {
   room: "common.room",
   rack: "rack.rackCode",
   occurred_at: "repair.occurredAt",
+  reported_at: "repair.reportedAt",
+  started_at: "overlay.repairStartedAt",
   finished_at: "overlay.repairFinishedAt",
   source: "repair.partUsageSource",
   spare_part_id: "repair.partUsagePart",
@@ -49,6 +51,25 @@ const FIELD_LABEL_KEYS: Record<string, string> = {
 };
 
 const tr = (key: string): string => String(i18n.global.t(key));
+
+function parseErrorDetails(text: string): unknown {
+  try {
+    return JSON.parse(text);
+  } catch {
+    return text;
+  }
+}
+
+function errorCode(details: unknown): string | undefined {
+  if (details && typeof details === "object" && "code" in details && typeof details.code === "string") {
+    return details.code;
+  }
+  return undefined;
+}
+
+function authenticationExpired(status: number, details: unknown): boolean {
+  return status === 401 || (status === 403 && ["not_authenticated", "authentication_failed"].includes(errorCode(details) || ""));
+}
 
 export function flattenError(value: unknown): string {
   if (Array.isArray(value))
@@ -104,16 +125,14 @@ export async function downloadFile(path: string, options: DownloadOptions = {}):
     credentials: "include",
   });
   if (!response.ok) {
-    if (response.status === 401) onUnauthorized?.();
     const text = await response.text();
-    let details: unknown = text;
+    const details = parseErrorDetails(text);
     let message = statusMessage(response.status);
-    try {
-      const payload = JSON.parse(text);
-      details = payload;
-      if (response.status === 503 && payload.code === "maintenance_in_progress") message = tr("api.maintenanceInProgress");
-    } catch {
-      // Never expose raw HTML error pages to users.
+    if (authenticationExpired(response.status, details)) {
+      onUnauthorized?.();
+      message = tr("api.sessionExpired");
+    } else if (response.status === 503 && errorCode(details) === "maintenance_in_progress") {
+      message = tr("api.maintenanceInProgress");
     }
     throw new ApiError(response.status, message, details);
   }
@@ -187,9 +206,12 @@ export async function apiRequest<T>(
     headers,
     credentials: "include",
   });
-  if (response.status === 403 && retryCsrf) {
+  if (!response.ok) {
     const text = await response.text();
-    if (text.includes("CSRF")) {
+    const details = parseErrorDetails(text);
+    const code = errorCode(details);
+    if (response.status === 403 && retryCsrf &&
+      (code === "csrf_failed" || (!code && text.includes("CSRF")))) {
       await refreshCsrf();
       return apiRequest(
         path,
@@ -200,21 +222,14 @@ export async function apiRequest<T>(
         false,
       );
     }
-    throw new ApiError(403, statusMessage(403), text);
-  }
-  if (!response.ok) {
-    if (response.status === 401) onUnauthorized();
-    const text = await response.text();
-    let details: unknown = text;
     let message = statusMessage(response.status);
-    try {
-      const payload = JSON.parse(text);
-      details = payload;
-      message = response.status === 503 && payload.code === "maintenance_in_progress"
-        ? tr("api.maintenanceInProgress")
-        : flattenError(payload.detail ?? payload) || message;
-    } catch {
-      // HTML error pages and empty responses are deliberately not shown to users.
+    if (authenticationExpired(response.status, details)) {
+      onUnauthorized();
+      message = tr("api.sessionExpired");
+    } else if (response.status === 503 && code === "maintenance_in_progress") {
+      message = tr("api.maintenanceInProgress");
+    } else if (details && typeof details === "object") {
+      message = flattenError("detail" in details ? details.detail : details) || message;
     }
     throw new ApiError(response.status, message, details);
   }

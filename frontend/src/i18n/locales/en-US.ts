@@ -1353,6 +1353,7 @@ export default {
     closed: "Closed",
     open: "Open",
     occurredAt: "Occurred at",
+    reportedAt: "Reported at",
     startedAt: "Started at",
     finishedAt: "Finished at",
     resolvedAt: "Resolved at",

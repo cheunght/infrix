@@ -207,9 +207,14 @@ def _build_inventory_summary(scope):
         is_active=True,
         room__is_active=True,
         room__data_center__is_active=True,
-        room__data_center_id=latest_inventory.data_center_id,
     )
-    if latest_inventory.server_room_id:
+    # Coverage follows the task scope within the currently active facilities.
+    # An all-assets task has no data center, rather than a null-center scope.
+    if latest_inventory.scope != "all_assets":
+        inventory_rack_queryset = inventory_rack_queryset.filter(
+            room__data_center_id=latest_inventory.data_center_id,
+        )
+    if latest_inventory.scope == "server_room":
         inventory_rack_queryset = inventory_rack_queryset.filter(
             room_id=latest_inventory.server_room_id
         )

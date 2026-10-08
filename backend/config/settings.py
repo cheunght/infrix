@@ -394,6 +394,7 @@ INFRIX_MAINTENANCE_DIR = Path(os.getenv(
 INFRIX_MAINTENANCE_DRAIN_SECONDS = _env_int("INFRIX_MAINTENANCE_DRAIN_SECONDS", "60", minimum=1)
 
 REST_FRAMEWORK = {
+    "EXCEPTION_HANDLER": "assets.api_errors.exception_handler",
     "DEFAULT_SCHEMA_CLASS": "drf_spectacular.openapi.AutoSchema",
     "DEFAULT_FILTER_BACKENDS": [
         "django_filters.rest_framework.DjangoFilterBackend",

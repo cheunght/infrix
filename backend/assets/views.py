@@ -2931,14 +2931,21 @@ class RepairRecordViewSet(AuditedModelViewSetMixin, viewsets.ModelViewSet):
 
     @transaction.atomic
     def perform_create(self, serializer):
-        super().perform_create(serializer)
-        repair = serializer.instance
+        # The fault is the shared timeline lock, including concurrent edits to
+        # its occurrence time. Validate once more under that lock.
+        FaultEvent.objects.select_for_update().get(pk=serializer.validated_data["fault"].pk)
+        locked_serializer = self.get_serializer(data=self.request.data)
+        locked_serializer.is_valid(raise_exception=True)
+        super().perform_create(locked_serializer)
+        serializer.instance = locked_serializer.instance
+        repair = locked_serializer.instance
         sync_repair_completion(repair, request=self.request)
 
     @transaction.atomic
     def perform_update(self, serializer):
         # Revalidate after locking so a concurrent finish cannot be followed
         # by an ordinary update to completed historical facts.
+        FaultEvent.objects.select_for_update().get(pk=serializer.instance.fault_id)
         locked_repair = RepairRecord.objects.select_for_update().get(pk=serializer.instance.pk)
         locked_serializer = self.get_serializer(
             locked_repair,
@@ -2953,6 +2960,7 @@ class RepairRecordViewSet(AuditedModelViewSetMixin, viewsets.ModelViewSet):
 
     @transaction.atomic
     def perform_destroy(self, instance):
+        FaultEvent.objects.select_for_update().get(pk=instance.fault_id)
         locked_repair = RepairRecord.objects.select_for_update().get(pk=instance.pk)
         if locked_repair.finished_at is not None:
             raise DRFValidationError({
@@ -5203,13 +5211,19 @@ def asset_export(request):
         return limit_response
     assets = list(queryset)
     custom_field_ids = []
+    seen_fieldset_ids = set()
+    seen_field_ids = set()
     for asset in assets:
         fieldset = asset.resolved_fieldset
-        if fieldset is None:
+        if fieldset is None or fieldset.pk in seen_fieldset_ids:
             continue
-        for field_id in fieldset.items.order_by("sort_order", "id").values_list("field_id", flat=True):
-            if field_id not in custom_field_ids:
-                custom_field_ids.append(field_id)
+        seen_fieldset_ids.add(fieldset.pk)
+        # The queryset prefetches items in their model's sort_order/id order.
+        # Chaining order_by/values_list would bypass that cache for each asset.
+        for item in fieldset.items.all():
+            if item.field_id not in seen_field_ids:
+                seen_field_ids.add(item.field_id)
+                custom_field_ids.append(item.field_id)
     fields_by_id = {
         field.pk: field
         for field in CustomField.objects.filter(pk__in=custom_field_ids, is_active=True).prefetch_related("options")
