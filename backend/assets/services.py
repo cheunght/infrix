@@ -7,7 +7,7 @@ from django.core.validators import DecimalValidator
 from django.db import IntegrityError, transaction
 from django.db.models import Q
 from django.contrib.auth.models import User
-from rest_framework.exceptions import PermissionDenied, ValidationError as DRFValidationError
+from rest_framework.exceptions import APIException, PermissionDenied, ValidationError as DRFValidationError
 from django.utils import timezone
 
 from .asset_retention import active_asset_for_update
@@ -63,7 +63,7 @@ from .lifecycle import (
     transition_asset_status,
     transition_asset_to_retired,
 )
-from .physical_location import lock_asset_location, place_asset, unrack_asset
+from .physical_location import lock_asset_location, place_asset, set_direct_asset_placement, unrack_asset
 from .organization_access import can
 from .runtime_clock import system_localdate
 
@@ -194,6 +194,10 @@ def _optional_date(data, key):
 INVENTORY_EXCEPTION_STATUSES = frozenset(INVENTORY_EXCEPTION_STATUS_VALUES)
 
 
+class InventoryObservationConflict(APIException):
+    status_code = 409
+
+
 def reset_inventory_resolution(item):
     """Reset the resolution lifecycle after a盘点结果 changes."""
     if item.status in {"pending", "normal"}:
@@ -255,18 +259,14 @@ def confirm_inventory_item_normal(
     from .audit import write_audit_log
     from .serializers import InventoryItemSerializer
 
-    task_id = InventoryItem.objects.filter(pk=item_id).values_list("task_id", flat=True).first()
-    if task_id is None:
+    admission = InventoryItem.objects.filter(pk=item_id).values("task_id", "asset_id", "system_snapshot").first()
+    if admission is None:
         raise InventoryItem.DoesNotExist
-    task = InventoryTask.objects.select_for_update().get(pk=task_id)
-    item = InventoryItem.objects.select_for_update().select_related(
-        "asset",
-        "asset__asset_model__device_type",
-        "asset__standalone_device_type",
-        "checked_by",
-        "resolved_by",
-        "actual_rack__room__data_center",
-    ).get(pk=item_id)
+    snapshot = admission["system_snapshot"] or {}
+    lock_asset_location(asset_id=admission["asset_id"], target_rack_id=snapshot.get("rack_id"), target_data_center_id=snapshot.get("data_center_id"))
+    active_asset_for_update(admission["asset_id"])
+    task = InventoryTask.objects.select_for_update().get(pk=admission["task_id"])
+    item = InventoryItem.objects.select_for_update().get(pk=item_id)
     if task.status != "in_progress":
         raise DRFValidationError({"detail": "已完成的盘点任务不能批量标记为正常"})
     if require_pending and item.status != "pending":
@@ -278,6 +278,9 @@ def confirm_inventory_item_normal(
     item.actual_rack = rack
     item.actual_start_u = start_u
     item.actual_end_u = end_u
+    center_id = (item.system_snapshot or {}).get("data_center_id")
+    item.actual_data_center_ref_id = center_id if DataCenter.objects.filter(pk=center_id).exists() else None
+    item.actual_placement = "mounted" if rack else ("data_center" if center_id else "unlocated")
     item.checked_by = actor
     item.checked_at = timezone.now()
     if notes is not None:
@@ -288,6 +291,8 @@ def confirm_inventory_item_normal(
         "actual_rack",
         "actual_start_u",
         "actual_end_u",
+        "actual_data_center_ref",
+        "actual_placement",
         "checked_by",
         "checked_at",
         "notes",
@@ -381,18 +386,17 @@ def resolve_inventory_item(*, item_id, action, note, actor, request):
     from .audit import asset_audit_snapshot, write_audit_log
     from .serializers import InventoryItemSerializer
 
-    task_id = InventoryItem.objects.filter(pk=item_id).values_list("task_id", flat=True).first()
-    if task_id is None:
+    observation_fields = ("actual_placement", "actual_rack_id", "actual_data_center_ref_id", "actual_start_u", "actual_end_u")
+    admission = InventoryItem.objects.filter(pk=item_id).values("task_id", "asset_id", *observation_fields).first()
+    if admission is None:
         raise InventoryItem.DoesNotExist
-    task = InventoryTask.objects.select_for_update().get(pk=task_id)
-    item = InventoryItem.objects.select_for_update().select_related(
-        "asset",
-        "asset__asset_model__device_type",
-        "asset__standalone_device_type",
-        "checked_by",
-        "resolved_by",
-        "actual_rack__room__data_center",
-    ).get(pk=item_id)
+    lock_asset_location(asset_id=admission["asset_id"], target_rack_id=admission["actual_rack_id"] if action == "update_asset" else None,
+                        target_data_center_id=admission["actual_data_center_ref_id"] if action == "update_asset" else None)
+    asset = active_asset_for_update(admission["asset_id"])
+    task = InventoryTask.objects.select_for_update().get(pk=admission["task_id"])
+    item = InventoryItem.objects.select_for_update().get(pk=item_id)
+    if any(admission[field] != getattr(item, field) for field in observation_fields):
+        raise InventoryObservationConflict({"code": "inventory_observation_changed", "detail": "现场位置已被修改，请重新读取盘点结果后处理"})
     if item.status not in INVENTORY_EXCEPTION_STATUSES:
         raise DRFValidationError({"detail": "只有异常盘点项可以处理"})
     if item.resolution_status != "pending":
@@ -406,33 +410,32 @@ def resolve_inventory_item(*, item_id, action, note, actor, request):
         raise DRFValidationError({"action": "更新资产台账目前只适用于位置不符"})
 
     if action == "update_asset":
-        if (
-            item.actual_rack_id is None
-            or item.actual_start_u is None
-            or item.actual_end_u is None
-        ):
-            raise DRFValidationError({"action": "位置不符必须包含完整的实际机柜和起止 U 位"})
-        # Asset placement uses data center -> room -> rack -> allocation ->
-        # asset. Acquire that graph before the asset row so inventory
-        # correction cannot invert the lock order used by rack edits.
-        lock_asset_location(
-            asset_id=item.asset_id,
-            target_rack_id=item.actual_rack_id,
-        )
-
-    asset = active_asset_for_update(item.asset_id)
+        placement = item.actual_placement or ("mounted" if item.actual_rack_id else "")
+        if placement not in {"mounted", "data_center", "unlocated"}:
+            raise DRFValidationError({"action": "请先明确实际位置类型，再更新资产台账"})
+        if placement == "mounted" and (item.actual_rack_id is None or item.actual_start_u is None or item.actual_end_u is None):
+            raise DRFValidationError({"action": "已上架位置必须包含完整的实际机柜和起止 U 位"})
+        if placement == "data_center" and item.actual_data_center_ref_id is None:
+            raise DRFValidationError({"action": "实际数据中心缺失，请重新记录现场位置"})
+        if placement == "mounted":
+            rack = Rack.objects.select_related("room").get(pk=item.actual_rack_id)
+            snapshot = item.actual_location_snapshot or {}
+            if (rack.room_id != snapshot.get("server_room_id")
+                    or rack.room.data_center_id != snapshot.get("data_center_id")):
+                raise InventoryObservationConflict({"code": "inventory_observation_stale",
+                    "detail": "实际机柜的机房或数据中心归属已改变，请重新记录现场位置后再纠正台账"})
 
     before_item = InventoryItemSerializer(item).data
     asset_changed = False
     if action == "update_asset":
         before_asset = asset_audit_snapshot(asset.pk)
         try:
-            asset_changed = place_asset(
-                asset_id=asset.pk,
-                rack_id=item.actual_rack_id,
-                start_u=item.actual_start_u,
-                end_u=item.actual_end_u,
-            )
+            if placement == "mounted":
+                asset_changed = place_asset(asset_id=asset.pk, rack_id=item.actual_rack_id,
+                                            start_u=item.actual_start_u, end_u=item.actual_end_u)
+            else:
+                asset_changed = set_direct_asset_placement(asset_id=asset.pk,
+                    data_center_id=item.actual_data_center_ref_id if placement == "data_center" else None)
         except ValidationError as exc:
             detail = exc.message_dict if hasattr(exc, "message_dict") else {"detail": exc.messages}
             raise DRFValidationError(detail) from exc

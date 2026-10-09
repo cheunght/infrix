@@ -33,7 +33,30 @@ class Timestamped(models.Model):
         abstract = True
 
 
-class Department(Timestamped):
+class RevisionQuerySet(models.QuerySet):
+    def update(self, **kwargs):
+        kwargs.setdefault("revision", models.F("revision") + 1)
+        return super().update(**kwargs)
+
+
+class RevisionedTimestamped(Timestamped):
+    revision = models.PositiveBigIntegerField(default=1, editable=False)
+    objects = RevisionQuerySet.as_manager()
+
+    def save(self, *args, **kwargs):
+        update_fields = kwargs.get("update_fields")
+        if not self._state.adding and (update_fields is None or update_fields):
+            self.revision = models.F("revision") + 1
+            if update_fields is not None:
+                kwargs["update_fields"] = set(update_fields) | {"revision"}
+        super().save(*args, **kwargs)
+        self.refresh_from_db(fields=["revision"])
+
+    class Meta:
+        abstract = True
+
+
+class Department(RevisionedTimestamped):
     name = models.CharField(max_length=100, unique=True)
     code = models.CharField(max_length=50, unique=True)
     parent = models.ForeignKey("self", null=True, blank=True, on_delete=models.PROTECT)
@@ -42,7 +65,7 @@ class Department(Timestamped):
         return self.name
 
 
-class DataCenter(Timestamped):
+class DataCenter(RevisionedTimestamped):
     name = models.CharField(max_length=120, unique=True)
     address = models.CharField(max_length=255, blank=True)
     is_active = models.BooleanField(default=True)
@@ -51,7 +74,7 @@ class DataCenter(Timestamped):
         return self.name
 
 
-class ServerRoom(Timestamped):
+class ServerRoom(RevisionedTimestamped):
     data_center = models.ForeignKey(DataCenter, on_delete=models.PROTECT, related_name="rooms")
     name = models.CharField(max_length=120)
     is_active = models.BooleanField(default=True)
@@ -66,7 +89,7 @@ class ServerRoom(Timestamped):
         return f"{self.data_center} / {self.name}"
 
 
-class Rack(Timestamped):
+class Rack(RevisionedTimestamped):
     room = models.ForeignKey(ServerRoom, on_delete=models.PROTECT, related_name="racks")
     code = models.CharField(max_length=50)
     name = models.CharField(max_length=120, blank=True)
@@ -85,7 +108,7 @@ class Rack(Timestamped):
         return self.code
 
 
-class Manufacturer(Timestamped):
+class Manufacturer(RevisionedTimestamped):
     name = models.CharField(max_length=120, unique=True)
     code = models.CharField(max_length=80, unique=True, null=True, blank=True)
     is_active = models.BooleanField(default=True)
@@ -94,7 +117,7 @@ class Manufacturer(Timestamped):
         return self.name
 
 
-class DeviceType(Timestamped):
+class DeviceType(RevisionedTimestamped):
     name = models.CharField(max_length=80, unique=True)
     color = models.CharField(max_length=7, default="#1677EF")
     is_active = models.BooleanField(default=True)
@@ -110,7 +133,7 @@ class DeviceType(Timestamped):
         return self.name
 
 
-class AssetModel(Timestamped):
+class AssetModel(RevisionedTimestamped):
     """Canonical model metadata shared by every linked asset."""
 
     name = models.CharField(max_length=160)
@@ -156,7 +179,7 @@ class AssetModel(Timestamped):
         return self.name
 
 
-class CustomField(Timestamped):
+class CustomField(RevisionedTimestamped):
     FIELD_TYPES = [
         ("text", "单行文本"),
         ("textarea", "多行文本"),
@@ -187,7 +210,7 @@ class CustomField(Timestamped):
         return self.name
 
 
-class CustomFieldSet(Timestamped):
+class CustomFieldSet(RevisionedTimestamped):
     name = models.CharField(max_length=120, unique=True)
     description = models.TextField(blank=True)
     is_active = models.BooleanField(default=True)
@@ -213,7 +236,7 @@ class CustomFieldSetItem(Timestamped):
         ]
 
 
-class CustomFieldOption(Timestamped):
+class CustomFieldOption(RevisionedTimestamped):
     field = models.ForeignKey(CustomField, on_delete=models.CASCADE, related_name="options")
     value = models.CharField(max_length=120)
     label = models.CharField(max_length=120)
@@ -227,7 +250,7 @@ class CustomFieldOption(Timestamped):
         ]
 
 
-class Tag(Timestamped):
+class Tag(RevisionedTimestamped):
     name = models.CharField(max_length=80, unique=True)
     is_active = models.BooleanField(default=True)
 
@@ -238,7 +261,7 @@ class Tag(Timestamped):
         return self.name
 
 
-class SparePartCategory(Timestamped):
+class SparePartCategory(RevisionedTimestamped):
     name = models.CharField(max_length=120, unique=True)
     code = models.CharField(max_length=80, unique=True)
     is_active = models.BooleanField(default=True)
@@ -250,7 +273,7 @@ class SparePartCategory(Timestamped):
         return self.name
 
 
-class SparePart(Timestamped):
+class SparePart(RevisionedTimestamped):
     class Unit(models.TextChoices):
         PIECE = "piece", "个"
         BLOCK = "block", "块"
@@ -384,7 +407,7 @@ class SpareStockTransaction(Timestamped):
         ]
 
 
-class SoftwareLicense(Timestamped):
+class SoftwareLicense(RevisionedTimestamped):
     name = models.CharField(max_length=160)
     manufacturer = models.ForeignKey(
         Manufacturer,
@@ -404,18 +427,12 @@ class SoftwareLicense(Timestamped):
         indexes = [
             models.Index(fields=["expiry_date", "name", "id"], name="assets_license_expiry_idx"),
         ]
-        constraints = [
-            models.CheckConstraint(
-                condition=models.Q(used_count__lte=models.F("authorized_count")),
-                name="license_used_lte_authorized",
-            )
-        ]
 
     def __str__(self):
         return self.name
 
 
-class Person(Timestamped):
+class Person(RevisionedTimestamped):
     """A person who may use an asset, with an optional login account."""
 
     account = models.OneToOneField(
@@ -458,10 +475,8 @@ class Person(Timestamped):
         return self.display_name() or f"人员 #{self.pk}"
 
 
-class AssetQuerySet(models.QuerySet):
-    def update(self, **kwargs):
-        kwargs.setdefault("revision", models.F("revision") + 1)
-        return super().update(**kwargs)
+class AssetQuerySet(RevisionQuerySet):
+    pass
 
 
 class ActiveAssetManager(models.Manager.from_queryset(AssetQuerySet)):
@@ -1310,6 +1325,10 @@ class InventoryItem(Timestamped):
     )
     actual_start_u = models.PositiveSmallIntegerField(null=True, blank=True)
     actual_end_u = models.PositiveSmallIntegerField(null=True, blank=True)
+    actual_placement = models.CharField(max_length=20, blank=True, default="", choices=[
+        ("", "未明确位置"), ("mounted", "已上架"), ("data_center", "仅归属数据中心"), ("unlocated", "位置未指定"),
+    ])
+    actual_data_center_ref = models.ForeignKey(DataCenter, null=True, blank=True, on_delete=models.PROTECT, related_name="observed_inventory_items")
     actual_location_snapshot = models.JSONField(default=dict, editable=False)
     notes = models.TextField(blank=True)
     resolution_status = models.CharField(
@@ -1334,7 +1353,7 @@ class InventoryItem(Timestamped):
     resolved_at = models.DateTimeField(null=True, blank=True)
 
     def save(self, *args, **kwargs):
-        fields = ("status", "actual_rack_id", "actual_start_u", "actual_end_u")
+        fields = ("status", "actual_rack_id", "actual_start_u", "actual_end_u", "actual_placement", "actual_data_center_ref_id")
         previous = type(self).objects.filter(pk=self.pk).values(*fields).first() if self.pk else None
         changed = previous is None or any(previous[field] != getattr(self, field) for field in fields)
         if changed:
@@ -1346,6 +1365,7 @@ class InventoryItem(Timestamped):
                     for key in ("data_center_id", "data_center", "server_room_id", "server_room", "rack_id", "rack_code", "start_u", "end_u")
                 }
                 self.actual_location_snapshot["source"] = "task_snapshot"
+                self.actual_location_snapshot["placement"] = self.actual_placement
             else:
                 rack = self.actual_rack if self.actual_rack_id else None
                 self.actual_location_snapshot = {
@@ -1353,8 +1373,9 @@ class InventoryItem(Timestamped):
                     "rack_code": rack.code if rack else "",
                     "server_room_id": rack.room_id if rack else None,
                     "server_room": rack.room.name if rack else "",
-                    "data_center_id": rack.room.data_center_id if rack else None,
-                    "data_center": rack.room.data_center.name if rack else "",
+                    "data_center_id": rack.room.data_center_id if rack else self.actual_data_center_ref_id,
+                    "data_center": rack.room.data_center.name if rack else (self.actual_data_center_ref.name if self.actual_data_center_ref_id else ""),
+                    "placement": self.actual_placement,
                     "start_u": self.actual_start_u, "end_u": self.actual_end_u,
                 }
             if kwargs.get("update_fields"):

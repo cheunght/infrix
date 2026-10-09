@@ -2,7 +2,7 @@
 
 from datetime import timedelta
 
-from django.db.models import Case, CharField, Count, F, Q, Value, When
+from django.db.models import Case, CharField, Count, Q, Value, When
 from .models import SoftwareLicense
 from .runtime_clock import system_localdate
 
@@ -44,28 +44,25 @@ def filter_licenses_by_status(queryset, status, today=None):
     """Apply the same status semantics as the serialized license status."""
     today = today or system_localdate()
     expiry_limit = today + timedelta(days=90)
-    within_limit = Q(used_count__lte=F("authorized_count"))
     if status and status not in LICENSE_STATUS_KEYS:
         return queryset.none()
     if status == "expired":
-        return queryset.filter(within_limit, expiry_date__lt=today)
+        return queryset.filter(expiry_date__lt=today)
     if status == "expiring":
         return queryset.filter(
-            within_limit,
             expiry_date__gte=today,
             expiry_date__lte=expiry_limit,
         )
     if status == "normal":
-        return queryset.filter(within_limit).filter(
+        return queryset.filter(
             Q(expiry_date__isnull=True) | Q(expiry_date__gt=expiry_limit)
         )
-    return queryset.filter(within_limit)
+    return queryset
 
 
 def license_status_counts(queryset=None, today=None):
     """Return one mutually-exclusive count for every license status."""
     queryset = queryset if queryset is not None else SoftwareLicense.objects.all()
-    queryset = queryset.filter(used_count__lte=F("authorized_count"))
     rows = (
         queryset.annotate(_license_status=license_status_expression(today))
         .values("_license_status")

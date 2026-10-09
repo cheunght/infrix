@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { revisionHeaders } from "../revision";
 import { computed, onMounted, proxyRefs, reactive, ref } from "vue";
 import { useI18n } from "vue-i18n";
 import { CircleCheck, CircleClose, Delete, Edit, Filter } from "@element-plus/icons-vue";
@@ -105,7 +106,7 @@ async function save() {
   try {
     await c.request(editing.value ? `/device-types/${editing.value.id}/` : "/device-types/", {
       method: editing.value ? "PATCH" : "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: revisionHeaders(editing.value),
       body: JSON.stringify({
         name: form.value.name.trim(),
         color: form.value.color.trim().toUpperCase(),
@@ -128,7 +129,7 @@ async function toggle(row: DictionaryItem) {
   if (!canManage.value || actionId.value) return;
   actionId.value = row.id;
   try {
-    await c.request(`/device-types/${row.id}/`, { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ is_active: !row.is_active }) });
+    await c.request(`/device-types/${row.id}/`, { method: "PATCH", headers: revisionHeaders(row), body: JSON.stringify({ is_active: !row.is_active }) });
     await loadRows();
   } catch (actionError) { error.value = normalizeApiError(actionError).message; }
   finally { actionId.value = null; }

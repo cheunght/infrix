@@ -1,3 +1,4 @@
+import { revisionHeaders } from "../revision";
 import { computed, getCurrentInstance, onBeforeUnmount, ref, watch, type Ref } from "vue";
 import { isAbortError, pageItems, pageTotal, type PageResult } from "../api";
 import {
@@ -230,7 +231,7 @@ export function useDataDictionary(deps: DataDictionaryDependencies) {
     try {
       await deps.request(path, {
         method,
-        headers: { "Content-Type": "application/json" },
+        headers: revisionHeaders(editingDictionary.value),
         body: JSON.stringify(payload),
       });
       showDictionaryModal.value = false;
@@ -251,7 +252,7 @@ export function useDataDictionary(deps: DataDictionaryDependencies) {
     try {
       await deps.request(`/${dictionaryPath()}/${item.id}/`, {
         method: "PATCH",
-        headers: { "Content-Type": "application/json" },
+        headers: revisionHeaders(item),
         body: JSON.stringify({ is_active: !item.is_active }),
       });
       setActionMessage(item.is_active

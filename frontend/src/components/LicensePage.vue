@@ -178,15 +178,16 @@ function formatLicenseExpiry(value: string | null | undefined): string {
               <div class="license-capacity-cell">
                 <div class="license-capacity-values">
                   <strong>{{ row.used_count }} / {{ row.authorized_count }}</strong>
-                  <span>{{ t('license.remaining', { count: row.remaining_count }) }}</span>
+                  <span>{{ row.remaining_count < 0 ? t('license.overLimit', { count: -row.remaining_count }) : t('license.remaining', { count: row.remaining_count }) }}</span>
                 </div>
-                <div class="license-capacity-progress">
+                <div v-if="row.utilization != null" class="license-capacity-progress">
                   <el-progress
                     :percentage="Math.min(Math.max(row.utilization, 0), 100)"
                     :show-text="false"
                   />
                   <span>{{ Number(row.utilization || 0).toFixed(1) }}%</span>
                 </div>
+                <span v-else>{{ t('license.noLicensedCapacity') }}</span>
               </div>
             </template>
           </el-table-column>

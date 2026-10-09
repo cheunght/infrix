@@ -100,7 +100,7 @@ def _lock_physical_location_graph(
     return allocations
 
 
-def lock_asset_location(*, asset_id: int, target_rack_id: int | None = None) -> None:
+def lock_asset_location(*, asset_id: int, target_rack_id: int | None = None, target_data_center_id: int | None = None) -> None:
     """Lock the current and requested rack ancestry before an asset write."""
 
     current_rack_id = (
@@ -115,6 +115,7 @@ def lock_asset_location(*, asset_id: int, target_rack_id: int | None = None) -> 
         if value is not None
     }
     data_center_ids, room_ids = _rack_location_ids(affected_rack_ids)
+    data_center_ids.update(_ids((target_data_center_id, Asset.all_objects.filter(pk=asset_id).values_list("asset_data_center_id", flat=True).first())))
     _lock_physical_location_graph(
         data_center_ids=data_center_ids,
         room_ids=room_ids,
@@ -250,6 +251,23 @@ def place_asset(*, asset_id: int, rack_id: int, start_u: int, end_u: int) -> boo
         locked_asset.asset_data_center_id = rack.room.data_center_id
         locked_asset.save(update_fields=["asset_data_center", "updated_at"])
         changed = True
+    return changed
+
+
+@transaction.atomic
+def set_direct_asset_placement(*, asset_id: int, data_center_id: int | None) -> bool:
+    """Remove rack occupancy and set a direct center or an unlocated state."""
+    lock_asset_location(asset_id=asset_id, target_data_center_id=data_center_id)
+    from .asset_retention import active_asset_for_update
+    asset = active_asset_for_update(asset_id)
+    center = DataCenter.objects.select_for_update().get(pk=data_center_id) if data_center_id else None
+    if center and not center.is_active:
+        raise ValidationError({"actual_data_center_id": "停用的数据中心不能用于位置纠正"})
+    changed = RackUnitAllocation.objects.filter(asset=asset).exists() or asset.asset_data_center_id != data_center_id
+    RackUnitAllocation.objects.filter(asset=asset).delete()
+    if asset.asset_data_center_id != data_center_id:
+        asset.asset_data_center_id = data_center_id
+        asset.save(update_fields=["asset_data_center", "updated_at"])
     return changed
 
 

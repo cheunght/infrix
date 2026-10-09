@@ -1,3 +1,4 @@
+import { revisionHeaders } from "../revision";
 import { computed, ref, watch, type Ref } from "vue";
 import { isAbortError } from "../api";
 import {
@@ -442,7 +443,7 @@ export function useFacilities(deps: FacilitiesDeps) {
         : "/data-centers/";
       await deps.request(path, {
         method: editingDataCenter.value ? "PATCH" : "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: revisionHeaders(editingDataCenter.value),
         body: JSON.stringify(dataCenterForm.value),
       });
       showDataCenterModal.value = false;
@@ -472,7 +473,7 @@ export function useFacilities(deps: FacilitiesDeps) {
       try {
         await deps.request(`/data-centers/${dataCenter.id}/`, {
           method: "PATCH",
-          headers: { "Content-Type": "application/json" },
+          headers: revisionHeaders(dataCenter),
           body: JSON.stringify({ is_active: isActive }),
         });
       } catch (error) {
@@ -559,7 +560,7 @@ export function useFacilities(deps: FacilitiesDeps) {
         : "/server-rooms/";
       await deps.request(path, {
         method: editingRoom.value ? "PATCH" : "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: revisionHeaders(editingRoom.value),
         body: JSON.stringify(roomForm.value),
       });
       showRoomModal.value = false;
@@ -591,7 +592,7 @@ export function useFacilities(deps: FacilitiesDeps) {
     try {
       await deps.request(`/server-rooms/${room.id}/`, {
         method: "PATCH",
-        headers: { "Content-Type": "application/json" },
+        headers: revisionHeaders(room),
         body: JSON.stringify({ is_active: isActive }),
       });
       const successMessage = isActive ? tr("facility.roomEnabled") : tr("facility.roomDisabled");
@@ -718,7 +719,7 @@ export function useFacilities(deps: FacilitiesDeps) {
       const path = editingRack.value ? `/racks/${editingRack.value.id}/` : "/racks/";
       await deps.request(path, {
         method: editingRack.value ? "PATCH" : "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: revisionHeaders(editingRack.value),
         body: JSON.stringify(payload),
       });
       showRackModal.value = false;
@@ -749,7 +750,7 @@ export function useFacilities(deps: FacilitiesDeps) {
     try {
       await deps.request(`/racks/${rack.id}/`, {
         method: "PATCH",
-        headers: { "Content-Type": "application/json" },
+        headers: revisionHeaders(rack),
         body: JSON.stringify({ status }),
       });
       setActionMessage(tr("facility.rackStatusUpdated"));

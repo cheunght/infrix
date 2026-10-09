@@ -126,7 +126,7 @@ const {
   taskScope, scopePreviewLabel, loadInitialData, loadTasks, loadItems, retryActiveTask, openTask, closeTask,
   openNewTask, changeTaskDataCenter, saveTask, deleteTask, completeTask, reopenTask, exportTask, exportingTaskId,
   changeTaskServerRoom, retryScopePreview, closeTaskDialog,
-  openItem, changeItemStatus, saveItem, saveItemAndNext, changeTaskPage, changeTaskPageSize,
+  openItem, changeItemStatus, changeItemPlacement, saveItem, saveItemAndNext, changeTaskPage, changeTaskPageSize,
   changeItemPage, changeItemPageSize, resetTaskFilters, resetItemFilters,
   locateScannedAsset, clearScannedAsset: clearScannedAssetState, confirmItemNormal,
   retryTaskAuxData, retryRackAuxData, openResolution, closeResolutionDialog, saveResolution,
@@ -969,9 +969,13 @@ onMounted(async () => {
           <el-form-item :label="t('inventory.result')" prop="status" :error="itemFormErrors.status"><el-select v-model="itemForm.status" :placeholder="t('inventory.selectInventoryResult')" @change="changeItemStatus"><el-option v-for="item in itemResultOptions" :key="item.value" :label="item.label" :value="item.value" /></el-select></el-form-item>
           <el-alert v-if="itemForm.status === 'normal'" :title="t('inventory.resultNormalHint')" type="success" :closable="false" show-icon />
           <div v-if="itemForm.status && itemForm.status !== 'not_found'" class="form-grid">
+          <el-form-item :label="t('inventory.placementType')" :error="itemFormErrors.actual_placement"><el-select v-model="itemForm.actual_placement" :disabled="itemForm.status === 'normal'" @change="changeItemPlacement"><el-option value="" :label="t('inventory.placementUnknown')" /><el-option value="mounted" :label="t('inventory.placementMounted')" /><el-option value="data_center" :label="t('inventory.placementDataCenter')" /><el-option value="unlocated" :label="t('inventory.placementUnlocated')" /></el-select><FieldHelp v-if="itemForm.actual_placement === 'unlocated'" :text="t('inventory.unlocatedCorrectionHelp')" /><FieldHelp v-else-if="itemForm.actual_placement === 'data_center'" :text="t('inventory.directCenterCorrectionHelp')" /></el-form-item>
+          <el-form-item v-if="itemForm.actual_placement === 'data_center'" :label="t('inventory.actualDataCenter')" :error="itemFormErrors.actual_data_center_id"><SearchableSelect v-model="itemForm.actual_data_center_id" :request="context.request" endpoint="/data-centers/" :map-option="mapDataCenter" :base-query="{ is_active: true }" :selected-option="itemForm.actual_data_center_id ? { value: itemForm.actual_data_center_id, label: editingItem?.actual_data_center || editingItem?.system_data_center || '' } : null" :disabled="itemForm.status === 'normal'" /></el-form-item>
+          <template v-if="itemForm.actual_placement === 'mounted'">
           <el-form-item :label="t('inventory.actualRack')" :error="itemFormErrors.actual_rack"><SearchableSelect v-model="itemForm.actual_rack" :request="context.request" endpoint="/racks/" :map-option="mapRack" :selected-option="selectedActualRackOption" :base-query="{ is_active: true, status: 'in_use' }" clearable :disabled="Boolean(itemAuxError) || itemForm.status === 'normal'" :placeholder="t('inventory.notMountedPlaceholder')" :aria-label="t('inventory.actualRack')" /></el-form-item>
           <el-form-item :label="t('inventory.actualStartU')" :error="itemFormErrors.actual_start_u"><el-input-number v-model="actualStartUValue" :min="1" :step="1" :precision="0" :value-on-clear="null" :aria-label="t('inventory.actualStartU')" :disabled="itemForm.status === 'normal'"><template #suffix>U</template></el-input-number></el-form-item>
           <el-form-item :label="t('inventory.actualEndU')" :error="itemFormErrors.actual_end_u"><el-input-number v-model="actualEndUValue" :min="1" :step="1" :precision="0" :value-on-clear="null" :aria-label="t('inventory.actualEndU')" :disabled="itemForm.status === 'normal'"><template #suffix>U</template></el-input-number></el-form-item>
+          </template>
           </div>
         <el-form-item :label="t('common.notes')" :error="itemFormErrors.notes"><el-input v-model="itemForm.notes" type="textarea" :rows="3" :placeholder="t('inventory.mismatchNotePlaceholder')" /></el-form-item>
       </el-form>

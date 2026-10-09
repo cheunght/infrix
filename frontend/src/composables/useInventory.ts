@@ -45,7 +45,7 @@ const INVENTORY_TASK_FORM_FIELDS = [
   "name", "data_center", "server_room", "inspector", "start_at", "end_at", "notes",
 ] as const;
 const INVENTORY_ITEM_FORM_FIELDS = [
-  "status", "actual_rack", "actual_start_u", "actual_end_u", "notes",
+  "status", "actual_placement", "actual_data_center_id", "actual_rack", "actual_start_u", "actual_end_u", "notes",
 ] as const;
 const INVENTORY_RESOLUTION_FORM_FIELDS = ["action", "note"] as const;
 const INVENTORY_BULK_FORM_FIELDS = ["note"] as const;
@@ -123,12 +123,16 @@ export function useInventory(context: InventoryContext) {
   const itemForm = ref<{
     status: InventoryStatus | "";
     actual_rack: string;
+    actual_placement: "" | "mounted" | "data_center" | "unlocated";
+    actual_data_center_id: string;
     actual_start_u: string;
     actual_end_u: string;
     notes: string;
   }>({
     status: "",
     actual_rack: "",
+    actual_placement: "",
+    actual_data_center_id: "",
     actual_start_u: "",
     actual_end_u: "",
     notes: "",
@@ -257,6 +261,8 @@ export function useInventory(context: InventoryContext) {
     return value ? formatSystemDateTime(value) || "—" : "—";
   }
   function locationText(item: InventoryItem, actual = false) {
+    if (actual && item.actual_placement === "unlocated") return i18n.global.t("inventory.placementUnlocated");
+    if (actual && !item.actual_placement && !item.actual_rack) return i18n.global.t("inventory.placementUnknown");
     const dc = actual ? item.actual_data_center : item.system_data_center;
     const room = actual ? item.actual_server_room : item.system_server_room;
     const rack = actual ? item.actual_rack_code : item.system_rack_code;
@@ -355,6 +361,8 @@ export function useInventory(context: InventoryContext) {
     return options;
   }
   function hasCompleteActualLocation(item: InventoryItem | null | undefined) {
+    if (item?.status === "location_mismatch" && item.actual_placement === "unlocated") return true;
+    if (item?.status === "location_mismatch" && item.actual_placement === "data_center") return Boolean(item.actual_data_center_id);
     return Boolean(
       item &&
       item.status === "location_mismatch" &&
@@ -1147,7 +1155,7 @@ export function useInventory(context: InventoryContext) {
   }
 
   function emptyItemLocation() {
-    return { actual_rack: "", actual_start_u: "", actual_end_u: "" };
+    return { actual_rack: "", actual_start_u: "", actual_end_u: "", actual_placement: "" as const, actual_data_center_id: "" };
   }
 
   function systemLocationFor(item: InventoryItem | null | undefined) {
@@ -1156,7 +1164,9 @@ export function useInventory(context: InventoryContext) {
       item.system_start_u == null ||
       item.system_end_u == null
     ) {
-      return emptyItemLocation();
+      const center = activeDataCenters.value.find((row) => row.name === item?.system_data_center);
+      const centerId = item?.system_data_center_id ?? center?.id;
+      return { ...emptyItemLocation(), actual_placement: (item?.system_data_center ? "data_center" : "unlocated") as "data_center" | "unlocated", actual_data_center_id: centerId ? String(centerId) : "" };
     }
 
     const candidates = activeRacks.value.filter((rack) => rack.code === item.system_rack_code);
@@ -1168,6 +1178,8 @@ export function useInventory(context: InventoryContext) {
     if (!rack) return emptyItemLocation();
 
     return {
+      actual_placement: "mounted" as const,
+      actual_data_center_id: "",
       actual_rack: String(rack.id),
       actual_start_u: String(item.system_start_u),
       actual_end_u: String(item.system_end_u),
@@ -1195,6 +1207,8 @@ export function useInventory(context: InventoryContext) {
         : item.status === "pending" || item.status === "not_found"
           ? emptyItemLocation()
           : {
+              actual_placement: item.actual_placement || (item.actual_rack ? "mounted" as const : "" as const),
+              actual_data_center_id: item.actual_data_center_id ? String(item.actual_data_center_id) : "",
               actual_rack: item.actual_rack ? String(item.actual_rack) : "",
               actual_start_u: item.actual_start_u == null ? "" : String(item.actual_start_u),
               actual_end_u: item.actual_end_u == null ? "" : String(item.actual_end_u),
@@ -1542,6 +1556,13 @@ export function useInventory(context: InventoryContext) {
     }
   }
 
+  function changeItemPlacement() {
+    itemForm.value.actual_rack = "";
+    itemForm.value.actual_start_u = "";
+    itemForm.value.actual_end_u = "";
+    itemForm.value.actual_data_center_id = "";
+  }
+
   type ItemSaveContext = {
     taskId: number;
     itemId: number;
@@ -1590,6 +1611,8 @@ export function useInventory(context: InventoryContext) {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
         status: itemForm.value.status,
+        actual_placement: location.actual_placement,
+        actual_data_center_id: location.actual_data_center_id ? Number(location.actual_data_center_id) : null,
         actual_rack: location.actual_rack
           ? Number(location.actual_rack)
           : null,
@@ -1902,6 +1925,7 @@ export function useInventory(context: InventoryContext) {
     closeBulkNormalDialog,
     saveBulkNormal,
     changeItemStatus,
+    changeItemPlacement,
     saveItem,
     saveItemAndNext,
     changeTaskPage,

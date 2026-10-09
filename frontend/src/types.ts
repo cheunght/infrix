@@ -227,7 +227,7 @@ export type BackupRestoreResult = {
   warnings: string[];
 };
 
-export type DictionaryItem = {
+export type DictionaryItem = { revision?: number;
   id: number;
   name: string;
   code?: string | null;
@@ -242,7 +242,7 @@ export type DictionaryItem = {
   created_at?: string;
   updated_at?: string;
 };
-export type Department = {
+export type Department = { revision?: number;
   id: number;
   name: string;
   code: string;
@@ -253,8 +253,8 @@ export type Department = {
   updated_at?: string;
 };
 export type SparePartCategory = DictionaryItem & { code: string; spare_parts_count: number };
-export type Manufacturer = { id: number; name: string; code: string | null; is_active: boolean };
-export type AssetModel = {
+export type Manufacturer = { revision?: number; id: number; name: string; code: string | null; is_active: boolean };
+export type AssetModel = { revision?: number;
   id: number;
   name: string;
   manufacturer: number;
@@ -289,7 +289,7 @@ export type SparePartFormState = {
   storage_location: string;
   notes: string;
 };
-export type CustomFieldOption = { id: number; field?: number; value: string; label: string; sort_order: number; is_active: boolean };
+export type CustomFieldOption = { revision?: number; id: number; field?: number; value: string; label: string; sort_order: number; is_active: boolean };
 export type CustomFieldFormat =
   | "any"
   | "alpha"
@@ -312,7 +312,7 @@ export type CustomFieldValidationConfig = {
   min_items?: number;
   max_items?: number;
 };
-export type CustomField = {
+export type CustomField = { revision?: number;
   id: number;
   key: string;
   name: string;
@@ -343,7 +343,7 @@ export type CustomFieldSetItem = {
   group: string;
   sort_order: number;
 };
-export type CustomFieldSet = {
+export type CustomFieldSet = { revision?: number;
   id: number;
   name: string;
   description: string;
@@ -377,7 +377,7 @@ export type CustomFieldForm = {
   filterable: boolean;
   validation_config: CustomFieldValidationConfig;
 };
-export type Tag = { id: number; name: string; is_active: boolean; assets_count?: number; created_at?: string; updated_at?: string };
+export type Tag = { revision?: number; id: number; name: string; is_active: boolean; assets_count?: number; created_at?: string; updated_at?: string };
 export type AssetCustomFieldValue = CustomFieldSchema & { value: string | number | boolean | string[] | null };
 export type AssetDisposal = {
   disposed_on: string;
@@ -393,7 +393,7 @@ export type AssetDisposalInput = {
   method: string;
   notes?: string;
 };
-export type DataCenter = {
+export type DataCenter = { revision?: number;
   id: number;
   name: string;
   address?: string;
@@ -588,7 +588,7 @@ export type DashboardOverview = {
 export type AssetNetwork = { id: number; address: string; role: string; is_primary: boolean; status?: string; notes?: string };
 export type AssetProcurement = { id: number; purchase_date: string; supplier: string; order_no: string; amount: string | null; notes: string };
 export type AssetMaintenance = { id: number; provider: string; contract_no: string; start_date: string | null; expiry_date: string | null; notes: string };
-export type Person = {
+export type Person = { revision?: number;
   id: number;
   account: number | null;
   display_name: string;
@@ -902,6 +902,7 @@ export type InventoryItem = {
   device_type_name: string | null;
   serial_number: string | null;
   system_data_center: string;
+  system_data_center_id?: number | null;
   system_server_room: string;
   system_rack_code: string;
   system_start_u: number | null;
@@ -912,6 +913,8 @@ export type InventoryItem = {
   checked_by: number | null;
   checked_by_name: string;
   actual_rack: number | null;
+  actual_placement?: "" | "mounted" | "data_center" | "unlocated";
+  actual_data_center_id?: number | null;
   actual_data_center: string | null;
   actual_server_room: string | null;
   actual_rack_code: string | null;
@@ -990,7 +993,7 @@ export type RackFormState = {
   total_u: number;
   status: RackStatus;
 };
-export type Rack = {
+export type Rack = { revision?: number;
   id: number;
   code: string;
   room: number;
@@ -1011,7 +1014,7 @@ export type Rack = {
   free_u?: number;
   allocations: Array<{ asset: number; start_u: number; end_u: number; units: number; asset_no: string; asset_name: string; device_type_name?: string | null; device_type_color?: string | null; manufacturer_name?: string | null; model_name?: string | null; serial_number?: string | null; status: string }>;
 };
-export type ServerRoom = { id: number; data_center: number; data_center_name: string; name: string; is_active: boolean; owner_name?: string; contact_phone?: string; notes?: string; racks_count: number; assets_count: number; created_at?: string; updated_at?: string };
+export type ServerRoom = { revision?: number; id: number; data_center: number; data_center_name: string; name: string; is_active: boolean; owner_name?: string; contact_phone?: string; notes?: string; racks_count: number; assets_count: number; created_at?: string; updated_at?: string };
 export type FacilitySummary = {
   rooms_total: number;
   rooms_in_use: number;
@@ -1218,8 +1221,8 @@ export type AssetTimelineEvent = {
   changes: AssetTimelineChange[];
   metadata: Record<string, unknown>;
 };
-export type SoftwareLicense = { id: number; name: string; manufacturer: Manufacturer | null; license_type: string; authorized_count: number; used_count: number; utilization: number; remaining_count: number; expiry_date: string | null; status: LicenseStatus; status_label: string; days_remaining: number | null; notes: string };
-export type SparePart = {
+export type SoftwareLicense = { revision?: number; id: number; name: string; manufacturer: Manufacturer | null; license_type: string; authorized_count: number; used_count: number; utilization: number | null; remaining_count: number; expiry_date: string | null; status: LicenseStatus; status_label: string; days_remaining: number | null; notes: string };
+export type SparePart = { revision?: number;
   id: number;
   code: string;
   name: string;

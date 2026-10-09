@@ -1,3 +1,4 @@
+import { revisionHeaders } from "../revision";
 import { computed, nextTick, ref, watch, type Ref } from "vue";
 import { type FormInstance, type FormRules } from "element-plus";
 import { ApiError, isAbortError, pageItems, pageTotal, type PageResult } from "../api";
@@ -980,7 +981,7 @@ export function useOrganizationSettings(deps: OrganizationSettingsDeps) {
     try {
       await deps.request(editingId ? `/people/${editingId}/` : "/people/", {
         method: editingId ? "PATCH" : "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: revisionHeaders(editingResponsibilitySubject.value),
         body: JSON.stringify({
           name,
           employee_no: responsibilityDirectoryForm.value.employee_no.trim() || null,
@@ -1009,7 +1010,7 @@ export function useOrganizationSettings(deps: OrganizationSettingsDeps) {
     try {
       await deps.request(`/people/${subject.id}/`, {
         method: "PATCH",
-        headers: { "Content-Type": "application/json" },
+        headers: revisionHeaders(subject),
         body: JSON.stringify({ is_active: !subject.is_active }),
       });
       setActionMessage(subject.is_active ? tr("settings.personDisabled") : tr("settings.personEnabled"));
@@ -1067,7 +1068,7 @@ export function useOrganizationSettings(deps: OrganizationSettingsDeps) {
       };
       await deps.request(editingId ? `/departments/${editingId}/` : "/departments/", {
         method: editingId ? "PATCH" : "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: revisionHeaders(editingDepartment.value),
         body: JSON.stringify(payload),
       });
       showDepartmentModal.value = false;

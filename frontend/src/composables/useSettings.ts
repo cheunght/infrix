@@ -1,3 +1,4 @@
+import { revisionHeaders } from "../revision";
 import { computed, ref, watch, type Ref } from "vue";
 import { isAbortError, pageItems, pageTotal, type PageResult } from "../api";
 import {
@@ -456,7 +457,7 @@ export function useSettings(deps: SettingsDeps) {
       customFieldForm.value.placeholder = customFieldForm.value.placeholder.trim();
       await deps.request(path, {
         method: editingCustomField.value ? "PATCH" : "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: revisionHeaders(editingCustomField.value),
         body: JSON.stringify({
           ...customFieldForm.value,
           validation_config: normalizedCustomFieldValidationConfig(),
@@ -495,7 +496,7 @@ export function useSettings(deps: SettingsDeps) {
     try {
       await deps.request(`/custom-fields/${field.id}/`, {
         method: "PATCH",
-        headers: { "Content-Type": "application/json" },
+        headers: revisionHeaders(field),
         body: JSON.stringify({ is_active: !field.is_active }),
       });
       markCustomFieldSchemaChanged();
@@ -562,7 +563,7 @@ export function useSettings(deps: SettingsDeps) {
       customFieldOptionForm.value.label = customFieldOptionForm.value.label.trim();
       await deps.request(path, {
         method: editingCustomFieldOption.value ? "PATCH" : "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: revisionHeaders(editingCustomFieldOption.value),
         body: JSON.stringify({ ...customFieldOptionForm.value, field: editingCustomField.value.id }),
       });
       saved = true;
@@ -625,7 +626,7 @@ export function useSettings(deps: SettingsDeps) {
       tagForm.value.name = tagForm.value.name.trim();
       await deps.request(path, {
         method: editingTag.value ? "PATCH" : "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: revisionHeaders(editingTag.value),
         body: JSON.stringify(tagForm.value),
       });
       saved = true;
@@ -649,7 +650,7 @@ export function useSettings(deps: SettingsDeps) {
     try {
       await deps.request(`/tags/${tag.id}/`, {
         method: "PATCH",
-        headers: { "Content-Type": "application/json" },
+        headers: revisionHeaders(tag),
         body: JSON.stringify({ is_active: !tag.is_active }),
       });
       setActionMessage(tag.is_active ? tr("tag.disabled") : tr("tag.enabled"));

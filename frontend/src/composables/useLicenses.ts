@@ -1,3 +1,4 @@
+import { revisionHeaders } from "../revision";
 import { computed, ref, watch, type Ref } from "vue";
 import type { LocationQuery } from "vue-router";
 import { buildExportQuery, isAbortError, pageItems, pageTotal, type PageResult } from "../api";
@@ -262,7 +263,7 @@ export function useLicenses(deps: LicensesDeps) {
       const path = editingLicense.value ? `/licenses/${editingLicense.value.id}/` : "/licenses/";
       await deps.request(path, {
         method,
-        headers: { "Content-Type": "application/json" },
+        headers: revisionHeaders(editingLicense.value),
         body: JSON.stringify({
           ...licenseForm.value,
           manufacturer_id: licenseForm.value.manufacturer_id ? Number(licenseForm.value.manufacturer_id) : null,

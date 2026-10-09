@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { revisionHeaders } from "../revision";
 import { computed, onMounted, proxyRefs, reactive, ref } from "vue";
 import { useI18n } from "vue-i18n";
 import { ArrowDown, ArrowUp, CircleCheck, CircleClose, Delete, Edit, Filter, Rank } from "@element-plus/icons-vue";
@@ -177,7 +178,7 @@ async function save() {
     };
     await c.request<CustomFieldSet>(editing.value ? `/custom-fieldsets/${editing.value.id}/` : "/custom-fieldsets/", {
       method: editing.value ? "PATCH" : "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: revisionHeaders(editing.value),
       body: JSON.stringify(body),
     });
     showModal.value = false;
@@ -194,7 +195,7 @@ async function save() {
 async function toggleStatus(fieldset: CustomFieldSet) {
   if (!canManage.value) return;
   try {
-    await c.request(`/custom-fieldsets/${fieldset.id}/`, { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ is_active: !fieldset.is_active }) });
+    await c.request(`/custom-fieldsets/${fieldset.id}/`, { method: "PATCH", headers: revisionHeaders(fieldset), body: JSON.stringify({ is_active: !fieldset.is_active }) });
     await loadFieldsets();
   } catch (actionError) { error.value = normalizeApiError(actionError).message; }
 }

@@ -145,4 +145,5 @@ def replace_fieldset_items(fieldset: CustomFieldSet, items):
     CustomFieldSetItem.objects.bulk_create([
         CustomFieldSetItem(fieldset=fieldset, **item) for item in items
     ])
+    fieldset.save(update_fields=["updated_at"])
     return fieldset

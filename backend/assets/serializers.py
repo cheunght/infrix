@@ -35,6 +35,7 @@ from .enum_contracts import (
 from .license_status import LICENSE_STATUS_LABELS, license_status_value
 from .fault_timeline import validate_fault_times, validate_repair_times
 from .asset_revision import check_asset_revision
+from .resource_revision import ResourceRevisionSerializerMixin
 from .reporting.capacity import rack_effective_used_u
 from .services import CustomFieldConflictError, apply_asset_custom_values, apply_asset_tags, apply_spare_stock_transaction, assign_asset, configure_asset, inventory_snapshot_location, inventory_task_can_delete, return_asset, transfer_asset, validate_inventory_resolution_request
 from .physical_location import RoomReparentBlocked, lock_inventory_scope, lock_asset_location, update_rack, update_server_room
@@ -938,7 +939,7 @@ class AssetNetworkAddressSerializer(serializers.ModelSerializer):
         fields = "__all__"
 
 
-class BaseDictionarySerializer(serializers.ModelSerializer):
+class BaseDictionarySerializer(ResourceRevisionSerializerMixin, serializers.ModelSerializer):
     assets_count = serializers.IntegerField(read_only=True)
 
     def validate_name(self, value):
@@ -957,7 +958,7 @@ class BaseDictionarySerializer(serializers.ModelSerializer):
         read_only_fields = ["id", "assets_count", "created_at", "updated_at"]
 
 
-class DepartmentSerializer(serializers.ModelSerializer):
+class DepartmentSerializer(ResourceRevisionSerializerMixin, serializers.ModelSerializer):
     parent_name = serializers.CharField(source="parent.name", read_only=True, allow_null=True)
     people_count = serializers.IntegerField(read_only=True, default=0)
 
@@ -1113,7 +1114,7 @@ class AssetModelOptionSerializer(AssetModelReferenceSerializer):
         ]
 
 
-class AssetModelSerializer(serializers.ModelSerializer):
+class AssetModelSerializer(ResourceRevisionSerializerMixin, serializers.ModelSerializer):
     manufacturer_name = serializers.CharField(source="manufacturer.name", read_only=True, allow_null=True)
     device_type_name = serializers.CharField(source="device_type.name", read_only=True, allow_null=True)
     fieldset_name = serializers.CharField(source="fieldset.name", read_only=True, allow_null=True)
@@ -1248,7 +1249,7 @@ def _default_references_option(field, option_value):
     return False
 
 
-class CustomFieldOptionSerializer(serializers.ModelSerializer):
+class CustomFieldOptionSerializer(ResourceRevisionSerializerMixin, serializers.ModelSerializer):
     def validate_value(self, value):
         value = (value or "").strip()
         if not value:
@@ -1287,7 +1288,7 @@ class CustomFieldOptionSerializer(serializers.ModelSerializer):
         read_only_fields = ["id", "created_at", "updated_at"]
 
 
-class CustomFieldSerializer(serializers.ModelSerializer):
+class CustomFieldSerializer(ResourceRevisionSerializerMixin, serializers.ModelSerializer):
     options = CustomFieldOptionSerializer(many=True, read_only=True)
     assets_count = serializers.IntegerField(read_only=True)
     fieldsets_count = serializers.IntegerField(read_only=True, default=0)
@@ -1389,7 +1390,7 @@ class CustomFieldSetItemSerializer(serializers.ModelSerializer):
         read_only_fields = ["id", "field_key", "field_name", "field_type", "field_is_active"]
 
 
-class CustomFieldSetSerializer(serializers.ModelSerializer):
+class CustomFieldSetSerializer(ResourceRevisionSerializerMixin, serializers.ModelSerializer):
     items = CustomFieldSetItemSerializer(many=True, required=False)
     models_count = serializers.IntegerField(read_only=True, default=0)
     device_types_count = serializers.IntegerField(read_only=True, default=0)
@@ -1533,7 +1534,7 @@ class CustomFieldRuntimeSchemaSerializer(serializers.ModelSerializer):
         return data
 
 
-class TagSerializer(serializers.ModelSerializer):
+class TagSerializer(ResourceRevisionSerializerMixin, serializers.ModelSerializer):
     assets_count = serializers.IntegerField(read_only=True)
 
     def validate_name(self, value):
@@ -1562,7 +1563,7 @@ class TagOptionSerializer(serializers.ModelSerializer):
         read_only_fields = fields
 
 
-class SparePartCategorySerializer(serializers.ModelSerializer):
+class SparePartCategorySerializer(ResourceRevisionSerializerMixin, serializers.ModelSerializer):
     spare_parts_count = serializers.IntegerField(read_only=True)
 
     def validate_name(self, value):
@@ -1596,7 +1597,7 @@ class SparePartCategorySerializer(serializers.ModelSerializer):
 SPARE_UNIT_CHANGE_ERROR = "该备件已有库存流水，无法修改计量单位。"
 
 
-class SparePartSerializer(serializers.ModelSerializer):
+class SparePartSerializer(ResourceRevisionSerializerMixin, serializers.ModelSerializer):
     category_name = serializers.CharField(source="category.name", read_only=True)
     category_code = serializers.CharField(source="category.code", read_only=True)
     manufacturer_name = serializers.CharField(source="manufacturer.name", read_only=True, allow_null=True)
@@ -1867,7 +1868,7 @@ class SparePartDetailSerializer(SparePartSerializer):
         ]
 
 
-class SoftwareLicenseSerializer(serializers.ModelSerializer):
+class SoftwareLicenseSerializer(ResourceRevisionSerializerMixin, serializers.ModelSerializer):
     manufacturer = ManufacturerReferenceSerializer(read_only=True)
     manufacturer_id = serializers.PrimaryKeyRelatedField(
         source="manufacturer",
@@ -1889,9 +1890,9 @@ class SoftwareLicenseSerializer(serializers.ModelSerializer):
     def _status(self, obj):
         return license_status_value(obj, today=self._system_today)
 
-    def get_utilization(self, obj) -> float:
+    def get_utilization(self, obj) -> float | None:
         if not obj.authorized_count:
-            return 0
+            return None if obj.used_count else 0
         return round(obj.used_count / obj.authorized_count * 100, 1)
 
     def get_remaining_count(self, obj) -> int:
@@ -1911,8 +1912,6 @@ class SoftwareLicenseSerializer(serializers.ModelSerializer):
         used_count = attrs.get("used_count", self.instance.used_count if self.instance else 0)
         if authorized_count < 0 or used_count < 0:
             raise serializers.ValidationError("授权数和已用数不能为负数")
-        if used_count > authorized_count:
-            raise serializers.ValidationError({"used_count": "已用授权数不能超过授权数"})
         manufacturer = attrs.get("manufacturer")
         if manufacturer and not manufacturer.is_active and (
             not self.instance or self.instance.manufacturer_id != manufacturer.pk
@@ -1930,7 +1929,7 @@ class SoftwareLicenseSerializer(serializers.ModelSerializer):
         read_only_fields = ["id", "utilization", "remaining_count", "status", "status_label", "days_remaining", "created_at", "updated_at"]
 
 
-class DataCenterSerializer(serializers.ModelSerializer):
+class DataCenterSerializer(ResourceRevisionSerializerMixin, serializers.ModelSerializer):
     assets_count = serializers.IntegerField(read_only=True)
     rooms_count = serializers.IntegerField(read_only=True)
     class Meta:
@@ -1957,7 +1956,7 @@ class DataCenterOptionSerializer(serializers.ModelSerializer):
         read_only_fields = fields
 
 
-class ServerRoomSerializer(serializers.ModelSerializer):
+class ServerRoomSerializer(ResourceRevisionSerializerMixin, serializers.ModelSerializer):
     data_center_name = serializers.CharField(source="data_center.name", read_only=True)
     racks_count = serializers.IntegerField(read_only=True)
     assets_count = serializers.IntegerField(read_only=True)
@@ -2176,7 +2175,7 @@ class PersonOptionSerializer(serializers.ModelSerializer):
         read_only_fields = fields
 
 
-class PersonSerializer(PersonSummarySerializer):
+class PersonSerializer(ResourceRevisionSerializerMixin, PersonSummarySerializer):
     account_username = serializers.CharField(source="account.username", read_only=True, allow_null=True)
     account_email = serializers.CharField(source="account.email", read_only=True, allow_null=True)
     asset_count = serializers.IntegerField(read_only=True, default=0)
@@ -3228,6 +3227,7 @@ class InventoryBulkNormalResponseSerializer(serializers.Serializer):
 
 
 class InventoryItemSerializer(serializers.ModelSerializer):
+    actual_data_center_id = serializers.PrimaryKeyRelatedField(source="actual_data_center_ref", queryset=DataCenter.objects.all(), required=False, allow_null=True)
     task_name = serializers.CharField(source="task.name", read_only=True)
     asset_no = serializers.SerializerMethodField()
     asset_name = serializers.SerializerMethodField()
@@ -3236,6 +3236,7 @@ class InventoryItemSerializer(serializers.ModelSerializer):
     status_label = serializers.SerializerMethodField()
     checked_by_name = serializers.SerializerMethodField()
     system_data_center = serializers.SerializerMethodField()
+    system_data_center_id = serializers.SerializerMethodField()
     system_server_room = serializers.SerializerMethodField()
     system_rack_code = serializers.SerializerMethodField()
     system_start_u = serializers.SerializerMethodField()
@@ -3289,6 +3290,9 @@ class InventoryItemSerializer(serializers.ModelSerializer):
     def get_system_data_center(self, obj) -> str:
         return self._snapshot(obj).get("data_center", "")
 
+    def get_system_data_center_id(self, obj) -> int | None:
+        return self._snapshot(obj).get("data_center_id")
+
     def get_system_server_room(self, obj) -> str:
         return self._snapshot(obj).get("server_room", "")
 
@@ -3325,6 +3329,9 @@ class InventoryItemSerializer(serializers.ModelSerializer):
             attrs["actual_rack"] = snapshot_rack
             attrs["actual_start_u"] = snapshot_start_u
             attrs["actual_end_u"] = snapshot_end_u
+            center_id = (self.instance.system_snapshot or {}).get("data_center_id")
+            attrs["actual_data_center_ref"] = DataCenter.objects.filter(pk=center_id).first() if center_id else None
+            attrs["actual_placement"] = "mounted" if snapshot_rack else ("data_center" if center_id else "unlocated")
         actual_rack = attrs.get("actual_rack", self.instance.actual_rack if self.instance else None)
         start_u = attrs.get("actual_start_u", self.instance.actual_start_u if self.instance else None)
         end_u = attrs.get("actual_end_u", self.instance.actual_end_u if self.instance else None)
@@ -3332,6 +3339,8 @@ class InventoryItemSerializer(serializers.ModelSerializer):
             attrs["actual_rack"] = None
             attrs["actual_start_u"] = None
             attrs["actual_end_u"] = None
+            attrs["actual_placement"] = ""
+            attrs["actual_data_center_ref"] = None
         elif any(value is not None for value in (actual_rack, start_u, end_u)):
             if not actual_rack or start_u is None or end_u is None:
                 raise serializers.ValidationError({"actual_rack": "实际机柜和起止 U 位必须填写完整"})
@@ -3345,6 +3354,33 @@ class InventoryItemSerializer(serializers.ModelSerializer):
                 raise serializers.ValidationError({"actual_start_u": "实际 U 位范围不正确"})
             if end_u > actual_rack.total_u:
                 raise serializers.ValidationError({"actual_end_u": f"实际结束 U 不能超过机柜容量 U{actual_rack.total_u}"})
+        if status not in {"pending", "not_found", "normal"}:
+            placement = attrs.get("actual_placement", self.instance.actual_placement if self.instance else "")
+            center = attrs.get("actual_data_center_ref", self.instance.actual_data_center_ref if self.instance else None)
+            if attrs.get("actual_rack") and "actual_placement" not in self.initial_data:
+                placement = "mounted"
+            if not placement and actual_rack and "actual_placement" not in self.initial_data:
+                placement = "mounted"
+            if placement == "mounted":
+                if actual_rack is None:
+                    raise serializers.ValidationError({"actual_rack": "已上架位置必须填写机柜和 U 位"})
+                if center and "actual_data_center_id" in self.initial_data and center.pk != actual_rack.room.data_center_id:
+                    raise serializers.ValidationError({"actual_data_center_id": "实际机柜不属于所选数据中心"})
+                center = actual_rack.room.data_center
+            elif placement == "data_center":
+                if center is None:
+                    raise serializers.ValidationError({"actual_data_center_id": "仅归属数据中心必须选择数据中心"})
+                if actual_rack or start_u is not None or end_u is not None:
+                    raise serializers.ValidationError({"actual_rack": "仅归属数据中心不能同时记录机柜或 U 位"})
+            elif placement == "unlocated":
+                if center or actual_rack or start_u is not None or end_u is not None:
+                    raise serializers.ValidationError({"actual_placement": "位置未指定不能同时记录数据中心、机柜或 U 位"})
+            elif center or actual_rack or start_u is not None or end_u is not None:
+                raise serializers.ValidationError({"actual_placement": "尚未确认位置不能同时记录数据中心、机柜或 U 位；请明确位置类型"})
+            if center and not center.is_active:
+                raise serializers.ValidationError({"actual_data_center_id": "实际数据中心已停用"})
+            attrs["actual_placement"] = placement
+            attrs["actual_data_center_ref"] = center
         if status == "normal":
             snapshot = self.instance.system_snapshot if self.instance else {}
             if not snapshot.get("rack_id") and actual_rack is None:
@@ -3366,10 +3402,10 @@ class InventoryItemSerializer(serializers.ModelSerializer):
         model = InventoryItem
         fields = [
             "id", "task", "task_name", "asset", "asset_no", "asset_name", "device_type_name", "serial_number",
-            "system_data_center", "system_server_room", "system_rack_code", "system_start_u", "system_end_u",
+            "system_data_center", "system_data_center_id", "system_server_room", "system_rack_code", "system_start_u", "system_end_u",
             "status", "status_label", "checked_at", "checked_by", "checked_by_name",
             "actual_rack", "actual_data_center", "actual_server_room", "actual_rack_code",
-            "actual_start_u", "actual_end_u", "actual_location_snapshot", "notes",
+            "actual_start_u", "actual_end_u", "actual_placement", "actual_data_center_id", "actual_location_snapshot", "notes",
             "resolution_status", "resolution_status_label", "resolution_action", "resolution_action_label",
             "resolution_note", "resolved_by", "resolved_by_name", "resolved_at",
             "created_at", "updated_at",
@@ -3514,7 +3550,7 @@ class InventoryTaskSerializer(serializers.ModelSerializer):
         read_only_fields = ["id", "data_center_name", "server_room_name", "inspector_name", "status", "completed_at", "summary", "can_delete", "created_at", "updated_at"]
 
 
-class RackSerializer(serializers.ModelSerializer):
+class RackSerializer(ResourceRevisionSerializerMixin, serializers.ModelSerializer):
     allocations = RackUnitAllocationSerializer(many=True, read_only=True)
     data_center_name = serializers.CharField(source="room.data_center.name", read_only=True)
     server_room_name = serializers.CharField(source="room.name", read_only=True)

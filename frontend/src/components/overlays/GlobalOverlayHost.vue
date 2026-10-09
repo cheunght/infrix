@@ -484,13 +484,8 @@ const licenseFormRules = computed<FormRules>(() => ({
     {
       validator: (_rule, value, callback) => {
         const used = String(value ?? "").trim();
-        const authorized = String(licenseForm.value.authorized_count ?? "").trim();
         if (!/^\d+$/.test(used)) {
           callback(new Error(t("overlay.usedCountInteger")));
-          return;
-        }
-        if (/^\d+$/.test(authorized) && Number(used) > Number(authorized)) {
-          callback(new Error(t("overlay.usedCountExceedsAuthorized")));
           return;
         }
         callback();

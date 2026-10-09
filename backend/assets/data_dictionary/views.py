@@ -13,6 +13,7 @@ from django.db import transaction
 from django.db.models import Count
 from django_filters.rest_framework import DjangoFilterBackend
 from rest_framework import viewsets
+from ..resource_revision import ResourceRevisionViewSetMixin
 from rest_framework.exceptions import ValidationError as DRFValidationError
 from rest_framework.filters import OrderingFilter, SearchFilter
 
@@ -98,7 +99,7 @@ def _in_use_message(kind: DictionaryKind) -> str:
     return "备件类型正在被备件使用，不能删除，请先停用"
 
 
-class DataDictionaryViewSet(viewsets.ModelViewSet):
+class DataDictionaryViewSet(ResourceRevisionViewSetMixin, viewsets.ModelViewSet):
     """Thin HTTP adapter over the manufacturer/category dictionary seam."""
 
     filter_backends = [DjangoFilterBackend, SearchFilter, OrderingFilter]

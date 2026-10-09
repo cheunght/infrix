@@ -1,3 +1,4 @@
+import { revisionHeaders } from "../revision";
 import { ref, watch, type Ref } from "vue";
 import { buildExportQuery, isAbortError, pageItems, pageTotal, type PageResult } from "../api";
 import type { DataCenter, ServerRoom, SparePart, SparePartCategory, SparePartFormState, SpareStock, SpareTransaction } from "../types";
@@ -539,7 +540,7 @@ export function useSpareParts(deps: SparePartsDeps) {
         payload.initial_data_center = sparePartForm.value.initial_data_center ? Number(sparePartForm.value.initial_data_center) : null;
         payload.initial_server_room = sparePartForm.value.initial_server_room ? Number(sparePartForm.value.initial_server_room) : null;
       }
-      await deps.request(path, { method: editingSparePart.value ? "PATCH" : "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload) });
+      await deps.request(path, { method: editingSparePart.value ? "PATCH" : "POST", headers: revisionHeaders(editingSparePart.value), body: JSON.stringify(payload) });
     } catch (error) {
       const parsed = extractFormError(error, SPARE_PART_FORM_FIELDS, tr("spare.saveFailed"));
       sparePartFormErrors.value = parsed.fields;

@@ -37,6 +37,7 @@ A physical placement may move atomically between mounted, direct data-center ass
 
 **Observed inventory placement**:
 The physical location recorded when an operator checks an inventory item. Its location names and U range describe that observation, even if the facility is later renamed or moved. A normal result confirms the task's original placement snapshot.
+An observation can identify a mounted position, a direct data-center assignment, or an explicit unlocated state. An unconfirmed observation cannot clear placement; correction to an unlocated state requires that state to have been recorded explicitly.
 
 **Inventory correction**:
 The physical-placement change recorded when an inventory result identifies a location mismatch and an operator updates the asset record.

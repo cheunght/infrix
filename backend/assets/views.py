@@ -35,6 +35,7 @@ from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
 from openpyxl.utils import get_column_letter
 from urllib.parse import quote
 from .asset_retention import active_asset_for_update, visible_assets
+from .resource_revision import ResourceRevisionViewSetMixin, check_resource_revision
 from .models import AuthThrottleState, AuditLog, Asset, AssetAssignmentEvent, AssetCustomValue, AssetModel, AssetNetworkAddress, AssetTag, Attachment, CustomField, CustomFieldOption, CustomFieldSet, CustomFieldSetItem, DataCenter, Department, DeviceType, DirectoryIdentity, FaultEvent, InventoryItem, InventoryTask, MaintenanceContract, NotificationDelivery, Person, PersonalAccessToken, ProcurementRecord, Rack, RackUnitAllocation, RepairPartUsage, RepairRecord, ServerRoom, SoftwareLicense, SparePart, SpareStock, SpareStockTransaction, Tag, UserSecurityProfile
 from .enum_contracts import (
     ASSET_STATUS_LABELS,
@@ -52,6 +53,7 @@ from .enum_contracts import (
 from .serializers import AdminPasswordResetSerializer, ApiTokenCreateSerializer, ApiTokenSerializer, AssetAssignmentEventSerializer, AssetAssignmentReturnSerializer, AssetAssignmentTargetSerializer, AssetBatchAssignmentResponseSerializer, AssetBatchAssignmentSerializer, AssetBatchDeleteResponseSerializer, AssetBatchDeleteSerializer, AssetBulkEditResponseSerializer, AssetBulkEditSerializer, AssetDetailSerializer, AssetDisposalRequestSerializer, AssetListSerializer, AssetModelOptionSerializer, AssetModelSerializer, AssetSerializer, AssetTimelineSerializer, AssetWriteSerializer, AttachmentSerializer, AuditLogSerializer, BackupConfirmationSerializer, CurrentUserProfileSerializer, CustomFieldOptionSerializer, CustomFieldRuntimeSchemaSerializer, CustomFieldSerializer, CustomFieldSetItemsWriteSerializer, CustomFieldSetOptionSerializer, CustomFieldSetSerializer, DataCenterOptionSerializer, DataCenterSerializer, DepartmentOptionSerializer, DepartmentSerializer, DeviceTypeOptionSerializer, DeviceTypeSerializer, DictionaryOptionSerializer, FaultEventSerializer, InventoryBulkNormalResponseSerializer, InventoryBulkNormalSerializer, InventoryBulkResolutionResponseSerializer, InventoryBulkResolutionSerializer, InventoryInspectorSerializer, InventoryItemPageSerializer, InventoryItemSerializer, InventoryResolutionSerializer, InventoryScopePreviewQuerySerializer, InventoryScopePreviewSerializer, InventoryTaskSerializer, LdapConfigurationUpdateSerializer, NotificationDeliverySerializer, PersonOptionSerializer, PersonSerializer, RackOptionSerializer, RackSerializer, RepairPartUsageCreateSerializer, RepairPartUsageSerializer, RepairRecordSerializer, ServerRoomOptionSerializer, ServerRoomSerializer, SoftwareLicenseSerializer, SparePartDetailSerializer, SparePartOptionSerializer, SparePartSerializer, SpareStockOptionSerializer, SpareStockSerializer, SpareStockTransactionSerializer, SmtpTestEmailSerializer, SystemResetSerializer, SystemSettingsPatchSerializer, SystemSettingsSnapshotSerializer, TagOptionSerializer, TagSerializer, TwoFactorCodeSerializer, UserBatchStatusResponseSerializer, UserBatchStatusSerializer, UserSerializer, _default_references_option
 from .fieldsets import fieldset_items_queryset, replace_fieldset_items, resolve_fieldset
 from .services import (
+    InventoryObservationConflict,
     apply_spare_stock_transaction,
     confirm_inventory_item_normal,
     create_repair_part_usage,
@@ -341,7 +343,7 @@ def _filtered_view_queryset(view_class, request, *, action="export", filter_back
     return view.filter_queryset(view.get_queryset())
 
 
-class AuditedModelViewSetMixin:
+class AuditedModelViewSetMixin(ResourceRevisionViewSetMixin):
     audit_resource = None
 
     def audit_snapshot(self, instance):
@@ -2199,10 +2201,14 @@ class CustomFieldSetViewSet(AuditedModelViewSetMixin, viewsets.ModelViewSet):
         ]
         return snapshot
 
+    @extend_schema(parameters=[OpenApiParameter("If-Match", OpenApiTypes.STR, location=OpenApiParameter.HEADER,
+        required=True, description="字段集的 revision；缺少 428，过期 409。")])
     @action(detail=True, methods=["put"], url_path="items")
     @transaction.atomic
     def replace_items(self, request, pk=None):
         fieldset = self.get_object()
+        fieldset = CustomFieldSet.objects.select_for_update().get(pk=fieldset.pk)
+        check_resource_revision(fieldset, request)
         serializer = CustomFieldSetItemsWriteSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
         incoming = serializer.validated_data["items"]
@@ -3407,7 +3413,7 @@ class InventoryTaskViewSet(AuditedModelViewSetMixin, viewsets.ModelViewSet):
         headers = [
             "盘点名称", "数据中心", "机房", "任务盘点人", "资产编号", "资产名称", "序列号", "设备类型", "业务 IP", "管理 IP", "带外 IP",
             "系统机柜", "系统 U 位", "盘点结果", "实际数据中心", "实际机房", "实际机柜", "实际 U 位",
-            "盘点时间", "实际盘点人", "备注", "处理状态", "处理方式", "处理人", "处理时间", "处理备注",
+            "盘点时间", "实际盘点人", "备注", "处理状态", "处理方式", "处理人", "处理时间", "处理备注", "实际位置类型",
         ]
         _append_excel_row(sheet, headers)
         for item in items:
@@ -3439,6 +3445,7 @@ class InventoryTaskViewSet(AuditedModelViewSetMixin, viewsets.ModelViewSet):
                 item.resolved_by.get_full_name() or item.resolved_by.username if item.resolved_by_id else "",
                 system_localtime(item.resolved_at).replace(tzinfo=None) if item.resolved_at else "",
                 item.resolution_note,
+                dict(InventoryItem._meta.get_field("actual_placement").choices).get(item.actual_placement, "未明确位置"),
             ])
         _style_export_sheet(sheet, max_width=32)
         return _xlsx_response(book, f"盘点结果_{_export_timestamp()}.xlsx")
@@ -3483,11 +3490,16 @@ class InventoryItemViewSet(viewsets.ModelViewSet):
 
     @transaction.atomic
     def perform_update(self, serializer):
-        # Validation initially happens before perform_update. Lock in the same
-        # task -> item order as completion, then validate the submitted result
-        # again so completion cannot race with this write.
+        # Lock physical parents before asset -> task -> item; joined FOR UPDATE
+        # would implicitly lock the asset before its center and invert this.
+        observed_rack = serializer.validated_data.get("actual_rack", serializer.instance.actual_rack)
+        observed_center = serializer.validated_data.get("actual_data_center_ref", serializer.instance.actual_data_center_ref)
+        lock_asset_location(asset_id=serializer.instance.asset_id,
+            target_rack_id=observed_rack.pk if observed_rack else None,
+            target_data_center_id=observed_center.pk if observed_center else None)
+        active_asset_for_update(serializer.instance.asset_id)
         task = InventoryTask.objects.select_for_update().get(pk=serializer.instance.task_id)
-        item = self.get_queryset().select_for_update().get(pk=serializer.instance.pk)
+        item = InventoryItem.objects.select_for_update().get(pk=serializer.instance.pk)
         locked_serializer = self.get_serializer(
             item,
             data=self.request.data,
@@ -3508,6 +3520,8 @@ class InventoryItemViewSet(viewsets.ModelViewSet):
             return
         before_result = (
             item.status,
+            item.actual_placement,
+            item.actual_data_center_ref_id,
             item.actual_rack_id,
             item.actual_start_u,
             item.actual_end_u,
@@ -3523,6 +3537,8 @@ class InventoryItemViewSet(viewsets.ModelViewSet):
             updated.checked_at = timezone.now()
         after_result = (
             updated.status,
+            updated.actual_placement,
+            updated.actual_data_center_ref_id,
             updated.actual_rack_id,
             updated.actual_start_u,
             updated.actual_end_u,
@@ -3611,7 +3627,7 @@ class InventoryItemViewSet(viewsets.ModelViewSet):
                     actor=request.user,
                     request=request,
                 )
-            except (DRFValidationError, PermissionDenied) as exc:
+            except (DRFValidationError, PermissionDenied, InventoryObservationConflict) as exc:
                 results.append({
                     "item_id": item_id,
                     "asset_no": item.asset.asset_no,

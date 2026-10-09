@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { revisionHeaders } from "../revision";
 import { computed, onMounted, proxyRefs, reactive, ref } from "vue";
 import { useI18n } from "vue-i18n";
 import { CircleCheck, CircleClose, Delete, Download, Edit, Filter, Upload } from "@element-plus/icons-vue";
@@ -277,7 +278,7 @@ async function saveModel() {
     };
     await c.request(editing.value ? `/asset-models/${editing.value.id}/` : "/asset-models/", {
       method: editing.value ? "PATCH" : "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: revisionHeaders(editing.value),
       body: JSON.stringify(body),
     });
     showModal.value = false;
@@ -297,7 +298,7 @@ async function toggleModel(model: AssetModel) {
   try {
     await c.request(`/asset-models/${model.id}/`, {
       method: "PATCH",
-      headers: { "Content-Type": "application/json" },
+      headers: revisionHeaders(model),
       body: JSON.stringify({ is_active: !model.is_active }),
     });
     await loadModels();

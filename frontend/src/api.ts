@@ -230,6 +230,10 @@ export async function apiRequest<T>(
       message = tr("api.sessionExpired");
     } else if (response.status === 503 && code === "maintenance_in_progress") {
       message = tr("api.maintenanceInProgress");
+    } else if (code === "resource_revision_conflict") {
+      message = tr("api.resourceRevisionConflict");
+    } else if (code === "resource_revision_required") {
+      message = tr("api.resourceRevisionRequired");
     } else if (details && typeof details === "object") {
       message = flattenError("detail" in details ? details.detail : details) || message;
     }
