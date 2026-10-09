@@ -1008,7 +1008,7 @@ class AssetViewSet(AuditedModelViewSetMixin, ScopedModelViewSet):
         queryset = asset_timeline_queryset(asset.pk)
         page = self.paginate_queryset(queryset)
         rows = page if page is not None else queryset
-        serializer = AssetTimelineSerializer(serialize_timeline(rows), many=True)
+        serializer = AssetTimelineSerializer(serialize_timeline(rows, user=request.user), many=True)
         if page is not None:
             return self.get_paginated_response(serializer.data)
         return Response(serializer.data)
@@ -5205,7 +5205,7 @@ def smtp_test_email(request):
 @extend_schema(responses=OpenApiTypes.BINARY)
 @api_view(["GET"])
 @permission_classes([CanImportAssets])
-@global_endpoint
+@scope_endpoint
 def asset_import_template(request):
     book = build_import_template()
     response = HttpResponse(content_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
@@ -5218,10 +5218,10 @@ def asset_import_template(request):
 @api_view(["POST"])
 @permission_classes([CanImportAssets])
 @parser_classes([MultiPartParser, FormParser])
-@global_endpoint
+@scope_endpoint
 def asset_import_preview(request):
     try:
-        return Response(AssetImportService.preview(request.FILES.get("file")))
+        return Response(AssetImportService.preview(request.FILES.get("file"), request))
     except ImportFileError as exc:
         return Response({"detail": str(exc)}, status=400)
 
@@ -5230,7 +5230,7 @@ def asset_import_preview(request):
 @api_view(["POST"])
 @permission_classes([CanImportAssets])
 @parser_classes([MultiPartParser, FormParser])
-@global_endpoint
+@scope_endpoint
 def asset_import(request):
     try:
         return Response(AssetImportService.commit(request.FILES.get("file"), request))
@@ -5368,7 +5368,7 @@ def department_import(request):
 )
 @api_view(["GET"])
 @permission_classes([CanManageSystemSettings])
-@global_endpoint
+@scope_endpoint
 def asset_model_export(request):
     queryset = AssetModel.objects.select_related("manufacturer", "device_type", "fieldset").order_by("manufacturer__name", "name", "id")
     for field in ("manufacturer", "device_type"):

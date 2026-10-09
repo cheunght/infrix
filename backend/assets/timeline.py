@@ -227,6 +227,8 @@ def _asset_field_value(snapshot: Mapping[str, Any], field: str) -> Any:
         return _rack_value(snapshot)
     if field == "asset_data_center":
         return snapshot.get("asset_data_center_name")
+    if field == "owning_department":
+        return snapshot.get("owning_department_name")
     if field == "asset_model":
         return snapshot.get("model_name") or snapshot.get("model_text")
     if field == "tags":
@@ -255,6 +257,7 @@ _ASSET_FIELDS = (
     "assigned_person",
     "rack_allocation",
     "asset_data_center",
+    "owning_department",
     "asset_model",
     "serial_number",
     "purpose",
@@ -466,11 +469,32 @@ def _summary_key(log: AuditLog, event_type: str) -> str:
     return f"asset.timeline.summaries.{event_type}"
 
 
-def timeline_event(log: AuditLog) -> dict[str, Any]:
+def timeline_event(log: AuditLog, *, user=None, visible_task_ids=frozenset()) -> dict[str, Any]:
     """Project one AuditLog into the stable public timeline DTO."""
 
     payload = _payload(log)
     event_type = _event_type(log, payload)
+    restricted = False
+    person_restricted = False
+    if user is not None:
+        from .data_scope import scope_for
+        from .timeline_scope import details_visible
+        from .serializers import _redact_person
+        scope = scope_for(user)
+        restricted = not details_visible(log, scope, visible_task_ids)
+        if not scope.global_read and log.resource_type == "asset":
+            for key in ("before", "after"):
+                snapshot = _snapshot(payload, key)
+                if "assigned_person" in snapshot:
+                    person = snapshot["assigned_person"]
+                    if person and (not isinstance(person, Mapping) or (
+                        "department" not in person and not scope.full_department_access())):
+                        person = {"name": "无权限", "directory_restricted": True}
+                    elif isinstance(person, Mapping):
+                        person = _redact_person(person, scope)
+                    person_restricted |= bool(isinstance(person, Mapping) and person.get("directory_restricted"))
+                    snapshot["assigned_person"] = person
+                    payload[key] = snapshot
     actor = None
     if log.actor_id and log.actor is not None:
         actor = {
@@ -487,10 +511,25 @@ def timeline_event(log: AuditLog) -> dict[str, Any]:
         "title": f"asset.timeline.eventTypes.{event_type}",
         "summary": _summary_key(log, event_type),
         "actor": actor,
-        "changes": _meaningful_changes(log, payload),
-        "metadata": _metadata(log, payload),
+        "changes": [] if restricted else _meaningful_changes(log, payload),
+        "metadata": {"scope_restricted": True} if restricted else {
+            **_metadata(log, payload), **({"scope_restricted": True} if person_restricted else {}),
+        },
     }
 
 
-def serialize_timeline(logs) -> list[dict[str, Any]]:
-    return [timeline_event(log) for log in logs]
+def serialize_timeline(logs, *, user=None) -> list[dict[str, Any]]:
+    logs = list(logs)
+    visible_task_ids = set()
+    if user is not None:
+        from .data_scope import scope_for, scoped
+        from .models import InventoryTask
+        if not scope_for(user).global_read:
+            task_ids = set()
+            for log in logs:
+                extra = _mapping(_mapping(log.payload).get("extra"))
+                for task_id in (extra.get("inventory_task_id"), _mapping(extra.get("timeline_scope")).get("inventory_task_id")):
+                    if isinstance(task_id, int) and task_id > 0:
+                        task_ids.add(task_id)
+            visible_task_ids = set(scoped(InventoryTask.objects.filter(pk__in=task_ids), user=user).values_list("pk", flat=True))
+    return [timeline_event(log, user=user, visible_task_ids=visible_task_ids) for log in logs]

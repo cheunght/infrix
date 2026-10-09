@@ -123,6 +123,7 @@ def asset_audit_snapshot(asset_id):
         "asset_model__device_type__default_fieldset",
         "asset_model__fieldset",
         "asset_data_center",
+        "owning_department",
         "rack_allocation__rack__room__data_center",
         "disposal",
     ).prefetch_related(
@@ -218,6 +219,12 @@ def write_audit_log(
         payload["before"] = json_value(before)
     if after is not None:
         payload["after"] = json_value(after)
+    from .timeline_scope import capture_scope
+    extra = dict(extra or {})
+    evidence = capture_scope(resource_type, resource_id, extra)
+    if evidence is not None:
+        extra["timeline_scope"] = evidence
+        extra.setdefault("asset_id", evidence["asset_id"])
     if extra:
         payload["extra"] = json_value(extra)
     return AuditLog.objects.create(

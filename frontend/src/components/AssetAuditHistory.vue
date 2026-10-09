@@ -32,6 +32,7 @@ const FIELD_LABEL_KEYS: Record<string, string> = {
   assigned_person: "asset.assignedPerson",
   rack_allocation: "asset.rack",
   asset_data_center: "common.dataCenter",
+  owning_department: "asset.owningDepartment",
   asset_model: "asset.model",
   serial_number: "asset.serialNumber",
   purpose: "asset.purpose",
@@ -272,6 +273,7 @@ function changePageSize(size: number) {
                 </el-tag>
               </div>
               <p class="asset-timeline__summary">{{ summaryLabel(item) }}</p>
+              <p v-if="item.metadata.scope_restricted" class="asset-timeline__summary">{{ t("asset.timeline.scopeRestricted") }}</p>
               <div v-if="disposalMetadata(item)" class="asset-timeline__disposal">
                 <span>{{ t("asset.disposedOn") }} · {{ formatDisposalValue("disposed_on", disposalMetadata(item)?.disposed_on) }}</span>
                 <span>{{ t("asset.disposalReason") }} · {{ formatDisposalValue("reason", disposalMetadata(item)?.reason) }}</span>

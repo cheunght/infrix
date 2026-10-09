@@ -7,16 +7,19 @@ the preview/confirm transaction around that serializer.
 """
 
 from collections import Counter
+from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import date, datetime
 from decimal import Decimal, InvalidOperation
 from io import BytesIO, StringIO
 import csv
+import hashlib
 import re
+import time
 
 from django.core.exceptions import ValidationError as DjangoValidationError
 from django.core.validators import DecimalValidator
-from django.db import IntegrityError, transaction
+from django.db import IntegrityError, OperationalError, connection, transaction
 from django.db.models import Q
 from openpyxl import Workbook, load_workbook
 from openpyxl.styles import Alignment, Font, PatternFill
@@ -25,6 +28,7 @@ from rest_framework.exceptions import ValidationError as DRFValidationError
 
 from .audit import asset_audit_snapshot, write_audit_log
 from .custom_fields import validate_custom_field_value
+from .data_scope import scoped
 from .enum_contracts import ASSET_STATUS_LABELS
 from .lifecycle import validate_asset_status_transition
 from .models import Asset, AssetModel, CustomField, CustomFieldSetItem, DataCenter, Department, DeviceType, Manufacturer, Person, Rack, ServerRoom, Tag
@@ -73,6 +77,7 @@ IMPORT_COLUMNS = (
     ("maintenance_start_date", "维保开始日", False, "Excel 日期单元格或 YYYY-MM-DD。"),
     ("maintenance_expiry_date", "维保到期日", False, "Excel 日期单元格或 YYYY-MM-DD，不能早于开始日。"),
     ("tags", "标签", False, "多个标签用英文分号、中文分号或逗号分隔；不会自动创建标签。"),
+    ("owning_department", "资产归属部门", False, "填写授权范围内启用部门的名称或编码；不从使用人推断。留空需要待确认归属写入授权。"),
 )
 
 IMPORT_FIELD_LABELS = {key: label for key, label, _required, _description in IMPORT_COLUMNS}
@@ -410,7 +415,11 @@ def _depreciation_preview_text(row):
     return f"{years or '—'} 年 · 残值率 {residual_rate or '—'}% · {start_date or '—'} 起"
 
 
-def _resolve_assigned_person(row):
+def _selection(queryset, request, *, write=False):
+    return scoped(queryset, user=request.user, write=write) if request is not None else queryset
+
+
+def _resolve_assigned_person(row, request=None):
     employee_no = row.get("assigned_person_employee_no", "").strip()
     name = row.get("assigned_person_name", "").strip()
     department_name = row.get("assigned_person_department", "").strip()
@@ -423,7 +432,7 @@ def _resolve_assigned_person(row):
     department = None
     if department_name:
         department = _named_active(
-            Department.objects,
+            _selection(Department.objects.all(), request),
             department_name,
             "assigned_person_department",
             "使用人部门",
@@ -431,7 +440,7 @@ def _resolve_assigned_person(row):
         )
 
     if employee_no:
-        matches = list(Person.objects.filter(employee_no__iexact=employee_no).select_related("department"))
+        matches = list(_selection(Person.objects.all(), request).filter(employee_no__iexact=employee_no).select_related("department"))
         if not matches:
             raise DjangoValidationError({"assigned_person_employee_no": "未找到对应的人员"})
         person = matches[0]
@@ -442,7 +451,7 @@ def _resolve_assigned_person(row):
     else:
         if not name:
             raise DjangoValidationError({"assigned_person_name": "没有员工编号时必须填写使用人姓名"})
-        query = Person.objects.filter(name__iexact=name).select_related("department")
+        query = _selection(Person.objects.all(), request).filter(name__iexact=name).select_related("department")
         if department is not None:
             query = query.filter(department_id=department.pk)
         matches = list(query)
@@ -457,7 +466,7 @@ def _resolve_assigned_person(row):
     return {"action": "assign", "target_person": person.pk, "reason": reason}
 
 
-def _prepare_payload(row, headers):
+def _prepare_payload(row, headers, request=None):
     asset_no = row.get("asset_no", "").strip()
     asset_name = row.get("name", "").strip()
     if not asset_no:
@@ -465,6 +474,8 @@ def _prepare_payload(row, headers):
     if not asset_name:
         raise DjangoValidationError({"name": "资产名称不能为空"})
 
+    owner = _named_active(_selection(Department.objects.all(), request, write=True),
+        row.get("owning_department"), "owning_department", "资产归属部门", allow_code=True)
     asset_model = _named_asset_model(row.get("asset_model"))
     manufacturer_name = row.get("manufacturer", "").strip()
     manufacturer = _named_active(Manufacturer.objects, manufacturer_name, "manufacturer", "厂商", allow_code=True) if manufacturer_name else None
@@ -486,7 +497,7 @@ def _prepare_payload(row, headers):
     warranty_months = _nonnegative_integer(warranty_text, "warranty_months", "实际保修月数") if warranty_text else None
 
     asset_data_center_name = row.get("asset_data_center", "").strip()
-    asset_data_center = _named_active(DataCenter.objects, asset_data_center_name, "asset_data_center", "数据中心") if asset_data_center_name else None
+    asset_data_center = _named_active(_selection(DataCenter.objects.all(), request, write=True), asset_data_center_name, "asset_data_center", "数据中心") if asset_data_center_name else None
 
     status = row.get("status", "").strip() or get_runtime_preferences().default_asset_status
     status = ASSET_STATUS_IMPORT_ALIASES.get(status, status)
@@ -506,9 +517,9 @@ def _prepare_payload(row, headers):
                 ) if not row.get(key, "").strip()
             ]
             raise DjangoValidationError({"configuration": f"机柜位置未填写完整，请补充：{'、'.join(missing)}"})
-        data_center = _named_location(DataCenter.objects, row["data_center"], "data_center", "数据中心")
-        room = _named_location(ServerRoom.objects.filter(data_center=data_center), row["server_room"], "server_room", "机房")
-        rack = _named_location(Rack.objects.filter(room=room), row["rack_code"], "rack_code", "机柜", lookup_field="code")
+        data_center = _named_location(_selection(DataCenter.objects.all(), request, write=True), row["data_center"], "data_center", "数据中心")
+        room = _named_location(_selection(ServerRoom.objects.filter(data_center=data_center), request, write=True), row["server_room"], "server_room", "机房")
+        rack = _named_location(_selection(Rack.objects.filter(room=room), request, write=True), row["rack_code"], "rack_code", "机柜", lookup_field="code")
         configuration.update({
             "data_center": str(data_center.pk),
             "server_room_id": str(room.pk),
@@ -616,10 +627,11 @@ def _prepare_payload(row, headers):
             raise DjangoValidationError({"tags": f"停用的标签“{tag_name}”不能用于新资产"})
         tag_values.append(tag.pk)
 
-    assignment = _resolve_assigned_person(row)
+    assignment = _resolve_assigned_person(row, request)
     payload = {
         "asset_no": asset_no,
         "name": asset_name,
+        "owning_department": owner.pk if owner else None,
         "manufacturer": manufacturer.pk if manufacturer and not asset_model else None,
         "device_type": device_type.pk if device_type and not asset_model else None,
         "asset_model": asset_model.pk if asset_model else None,
@@ -643,7 +655,36 @@ def _prepare_payload(row, headers):
     return payload
 
 
-def _preview_row(line, row, headers, duplicate_counts, *, lock=False):
+def _transient_database_error(exc):
+    return bool(exc.args and exc.args[0] in {1205, 1213})
+
+
+@contextmanager
+def _preview_write_access(*, lock):
+    """Coordinate rollback-only trial writes across database connections.
+
+    Duplicate-key checks in InnoDB can retain shared index locks even at
+    READ COMMITTED. Trial inserts of the same identity must not race. This
+    per-row lease is never taken inside the real commit transaction: that
+    transaction may already hold rows needed by a standalone preview.
+    """
+    if lock or connection.vendor != "mysql":
+        yield
+        return
+    name = "infrix-asset-preview-" + hashlib.sha256(str(connection.settings_dict["NAME"]).encode()).hexdigest()[:40]
+    with connection.cursor() as cursor:
+        cursor.execute("SELECT GET_LOCK(%s, 10)", [name])
+        acquired = cursor.fetchone()[0] == 1
+    if not acquired:
+        raise OperationalError(1205, "asset preview validation is busy")
+    try:
+        yield
+    finally:
+        with connection.cursor() as cursor:
+            cursor.execute("SELECT RELEASE_LOCK(%s)", [name])
+
+
+def _preview_row(line, row, headers, duplicate_counts, *, lock=False, request=None):
     asset_no = row.get("asset_no", "").strip()
     base = {
         "line": line,
@@ -665,25 +706,38 @@ def _preview_row(line, row, headers, duplicate_counts, *, lock=False):
         if existing_query.filter(asset_no=asset_no).exists():
             base["errors"] = [{"field": "asset_no", "label": "资产编号", "message": "资产编号已存在，资产导入仅支持新增"}]
             return base
-    try:
-        payload = _prepare_payload(row, headers)
-        serializer = AssetWriteSerializer(data=payload)
-        serializer.is_valid(raise_exception=True)
-        with transaction.atomic():
-            serializer.save()
-            transaction.set_rollback(True)
-    except Exception as exc:
-        detail = getattr(exc, "detail", None) or getattr(exc, "message_dict", None) or str(exc)
-        base["errors"] = _error_items(detail)
-        return base
+    for attempt in range(4):
+        try:
+            payload = _prepare_payload(row, headers, request)
+            serializer = AssetWriteSerializer(data=payload, context={"request": request} if request is not None else {})
+            serializer.is_valid(raise_exception=True)
+            with _preview_write_access(lock=lock), transaction.atomic():
+                serializer.save()
+                transaction.set_rollback(True)
+            break
+        except OperationalError as exc:
+            if lock or not _transient_database_error(exc):
+                raise
+            # Only replay a standalone, fully rolled-back preview. InnoDB
+            # may abort the entire transaction, so never retry a savepoint
+            # inside the commit transaction or automatically replay writes.
+            if not connection.in_atomic_block and attempt < 3:
+                time.sleep(0.02 * (attempt + 1))
+                continue
+            base["errors"] = _error_items({"row": "数据正在被并发操作，请稍后重新预览"})
+            return base
+        except Exception as exc:
+            detail = getattr(exc, "detail", None) or getattr(exc, "message_dict", None) or str(exc)
+            base["errors"] = _error_items(detail)
+            return base
     base["valid"] = True
     base["action"] = "create"
     return base
 
 
-def _preview_parsed(parsed, *, lock=False):
+def _preview_parsed(parsed, *, lock=False, request=None):
     duplicate_counts = Counter(row.get("asset_no", "").strip() for _line, row in parsed.rows if row.get("asset_no", "").strip())
-    rows = [_preview_row(line, row, parsed.headers, duplicate_counts, lock=lock) for line, row in parsed.rows]
+    rows = [_preview_row(line, row, parsed.headers, duplicate_counts, lock=lock, request=request) for line, row in parsed.rows]
     valid = sum(1 for row in rows if row["valid"])
     invalid = len(rows) - valid
     return {
@@ -704,21 +758,21 @@ class AssetImportService:
         return _parse_upload(upload)
 
     @classmethod
-    def preview(cls, upload):
-        return _preview_parsed(cls.parse(upload))
+    def preview(cls, upload, request=None):
+        return _preview_parsed(cls.parse(upload), request=request)
 
     @classmethod
     def commit(cls, upload, request):
         parsed = cls.parse(upload)
         try:
             with transaction.atomic():
-                preview = _preview_parsed(parsed, lock=True)
+                preview = _preview_parsed(parsed, lock=True, request=request)
                 if preview["invalid"]:
                     raise ImportValidationError(preview)
                 created = 0
                 for line, row in parsed.rows:
-                    payload = _prepare_payload(row, parsed.headers)
-                    serializer = AssetWriteSerializer(data=payload)
+                    payload = _prepare_payload(row, parsed.headers, request)
+                    serializer = AssetWriteSerializer(data=payload, context={"request": request})
                     serializer.is_valid(raise_exception=True)
                     asset = serializer.save()
                     write_audit_log(
@@ -733,8 +787,10 @@ class AssetImportService:
                 return {"created": created, "total": len(parsed.rows), "errors": []}
         except ImportValidationError:
             raise
-        except (DjangoValidationError, DRFValidationError, IntegrityError):
-            latest = _preview_parsed(parsed)
+        except (DjangoValidationError, DRFValidationError, IntegrityError, OperationalError) as exc:
+            if isinstance(exc, OperationalError) and not _transient_database_error(exc):
+                raise
+            latest = _preview_parsed(parsed, request=request)
             raise ImportValidationError(latest, concurrent=True)
 
 

@@ -520,6 +520,7 @@ export default {
     timelineEmpty: "No asset history",
     timelineLoadFailed: "Failed to load asset history",
     timeline: {
+      scopeRestricted: "Some historical details exceed your current scope or lack verifiable historical scope information and have been hidden.",
       eventTypes: {
         created: "Asset created",
         updated: "Asset updated",
@@ -2667,7 +2668,7 @@ export default {
     dropImportFile: "Drop an .xlsx or .csv file here",
     selectImportFileHint: "or choose a file; the server performs the complete validation after upload",
     importTemplateHint: "The template includes field descriptions and enabled custom-field columns",
-    importValidationNotice: "Imports only add new assets; existing or duplicate codes and any invalid row block confirmation.",
+    importValidationNotice: "Imports only add new assets. Ownership and location require write access; ownership is never inferred from the assignee. Empty ownership or location requires its own grant. Any invalid row blocks the entire import.",
     importTotalRows: "{count} rows",
     importValidRows: "{count} importable",
     importInvalidRows: "{count} invalid",

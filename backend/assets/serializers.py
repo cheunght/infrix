@@ -3124,6 +3124,12 @@ class AssetWriteSerializer(serializers.ModelSerializer):
                     validated_data["asset_data_center"] = DataCenter.objects.get(pk=center_id)
                 else:
                     require_center(target_center.pk if target_center else None)
+                    if target_center is not None:
+                        # Lock the parent before INSERT takes its foreign-key
+                        # shared lock; configure_asset later needs this row
+                        # exclusively in the same physical lock order.
+                        from .physical_location import lock_inventory_scope
+                        lock_inventory_scope(target_center.pk, None)
                 asset = Asset.objects.create(**validated_data)
                 configure_asset(asset, configuration)
                 apply_asset_custom_values(asset, custom_values)

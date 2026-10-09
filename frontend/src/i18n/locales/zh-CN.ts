@@ -520,6 +520,7 @@ export default {
     timelineEmpty: "暂无资产历史",
     timelineLoadFailed: "资产历史加载失败",
     timeline: {
+      scopeRestricted: "部分历史明细超出当前授权范围，或缺少可验证的历史范围信息，已隐藏。",
       eventTypes: {
         created: "资产创建",
         updated: "资产更新",
@@ -2667,7 +2668,7 @@ export default {
     dropImportFile: "拖拽 .xlsx 或 .csv 文件到此处",
     selectImportFileHint: "或点击选择文件，上传后由服务端执行完整校验",
     importTemplateHint: "模板包含字段说明和当前启用的自定义字段列",
-    importValidationNotice: "资产导入只支持新增；已存在编号、重复编号或任意异常行都会阻止整批确认。",
+    importValidationNotice: "资产导入只支持新增。归属部门和位置必须在写入授权范围内；不从使用人推断归属。空归属、空位置需要对应授权，任意异常行都会阻止整批确认。",
     importTotalRows: "共 {count} 行",
     importValidRows: "可导入 {count} 行",
     importInvalidRows: "异常 {count} 行",
