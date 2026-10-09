@@ -1,5 +1,12 @@
 export default {
   dataScope: {
+    baseRule: "Base rule",
+    additionalRule: "Additional rule {index}",
+    addRule: "Add rule",
+    removeRule: "Remove rule",
+    ruleName: "Rule description (optional)",
+    ruleUnion: "Centers and departments intersect within each rule; rules are combined by union. A/Department 1 and B/Department 2 do not grant the other two combinations. Add up to 20 rules. Global grants override the corresponding local scope.",
+
     readDepartments: "Readable departments",
     writeDepartments: "Writable departments",
     allDepartmentsRead: "Read all assigned departments",

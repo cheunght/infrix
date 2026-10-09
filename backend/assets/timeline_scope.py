@@ -45,10 +45,6 @@ def capture_scope(resource_type, resource_id, extra):
 
 
 def _asset_snapshot_visible(snapshot, scope):
-    if 'owning_department' not in snapshot and not scope.full_department_access():
-        return False
-    if not scope.contains_department(snapshot.get('owning_department')):
-        return False
     allocation = snapshot.get('rack_allocation')
     if allocation:
         if not isinstance(allocation, Mapping) or 'data_center_id' not in allocation:
@@ -58,7 +54,9 @@ def _asset_snapshot_visible(snapshot, scope):
         if 'asset_data_center' not in snapshot:
             return False
         center = snapshot['asset_data_center']
-    return scope.contains(center)
+    if 'owning_department' not in snapshot:
+        return scope.full_department_access(center_id=center)
+    return scope.contains_asset(center, snapshot['owning_department'])
 
 
 def details_visible(log, scope, visible_task_ids):
@@ -78,7 +76,7 @@ def details_visible(log, scope, visible_task_ids):
             return False
         if not {'asset_id', 'center_id', 'department_id'} <= evidence.keys():
             return False
-        if not scope.contains(evidence['center_id']) or not scope.contains_department(evidence['department_id']):
+        if not scope.contains_asset(evidence['center_id'], evidence['department_id']):
             return False
         if 'stock_center_id' in evidence and (
             not evidence.get('stock_source_known') or not scope.contains(evidence['stock_center_id'])):
@@ -95,8 +93,14 @@ def details_visible(log, scope, visible_task_ids):
             if not isinstance(task_id, int) or task_id not in visible_task_ids:
                 return False
             for snapshot in snapshots:
-                if snapshot.get('actual_placement') in {'mounted', 'data_center'}:
-                    if 'actual_data_center_id' not in snapshot or not scope.contains(snapshot['actual_data_center_id']):
+                if snapshot.get('actual_placement') in {'mounted', 'data_center', 'unlocated'}:
+                    observation = snapshot.get('actual_location_snapshot')
+                    if not isinstance(observation, Mapping) or 'data_center_id' not in observation:
+                        return False
+                    if 'owning_department_id' in observation:
+                        if not scope.contains_asset(observation['data_center_id'], observation['owning_department_id']):
+                            return False
+                    elif not scope.full_department_access(center_id=observation['data_center_id']):
                         return False
     task_id = extra.get('inventory_task_id')
     if task_id and (not isinstance(task_id, int) or task_id not in visible_task_ids):

@@ -717,6 +717,12 @@ class AssetViewSet(AuditedModelViewSetMixin, ScopedModelViewSet):
     def update(self, request, *args, **kwargs):
         return super().update(request, *args, **kwargs)
 
+    @transaction.atomic
+    def create(self, request, *args, **kwargs):
+        # Keep newly written ownership and placement locked until the
+        # authorized response has been materialized, just like update.
+        return super().create(request, *args, **kwargs)
+
     @extend_schema(parameters=[OpenApiParameter("If-Match", OpenApiTypes.STR, location=OpenApiParameter.HEADER, required=True, description="资产详情返回的 revision；缺失 428，过期 409。")])
     def partial_update(self, request, *args, **kwargs):
         return super().partial_update(request, *args, **kwargs)
@@ -724,7 +730,7 @@ class AssetViewSet(AuditedModelViewSetMixin, ScopedModelViewSet):
     def get_queryset(self):
         queryset = super().get_queryset()
         queryset = visible_assets(self.request, queryset)
-        if not scope_for(self.request.user).full_department_access():
+        if not scope_for(self.request.user).full_directory_access():
             self.search_fields = [field for field in self.search_fields if not field.startswith("assigned_person__")]
         manufacturer = self.request.query_params.get("manufacturer", "").strip()
         if manufacturer.isdigit():
@@ -1019,6 +1025,7 @@ class AssetViewSet(AuditedModelViewSetMixin, ScopedModelViewSet):
         description="将当前未分配使用人的资产指定给一个启用人员。",
     )
     @action(detail=True, methods=["post"], url_path="assign")
+    @transaction.atomic
     def assign(self, request, pk=None):
         self.get_object()
         serializer = AssetAssignmentTargetSerializer(data=request.data, context=self.get_serializer_context())
@@ -1038,6 +1045,7 @@ class AssetViewSet(AuditedModelViewSetMixin, ScopedModelViewSet):
         description="归还当前资产的使用人。",
     )
     @action(detail=True, methods=["post"], url_path="return")
+    @transaction.atomic
     def return_asset(self, request, pk=None):
         self.get_object()
         serializer = AssetAssignmentReturnSerializer(data=request.data)
@@ -1056,6 +1064,7 @@ class AssetViewSet(AuditedModelViewSetMixin, ScopedModelViewSet):
         description="将资产使用人转交给另一个启用人员。",
     )
     @action(detail=True, methods=["post"], url_path="transfer")
+    @transaction.atomic
     def transfer(self, request, pk=None):
         self.get_object()
         serializer = AssetAssignmentTargetSerializer(data=request.data, context=self.get_serializer_context())
@@ -1075,6 +1084,7 @@ class AssetViewSet(AuditedModelViewSetMixin, ScopedModelViewSet):
         description="通过专用报废动作原子地记录处置事实并将资产置为已报废。",
     )
     @action(detail=True, methods=["post"], url_path="dispose")
+    @transaction.atomic
     def dispose(self, request, pk=None):
         self.get_object()
         serializer = AssetDisposalRequestSerializer(data=request.data)
@@ -2705,7 +2715,7 @@ class UserViewSet(ScopedModelViewSet):
     @extend_schema(request=OpenApiTypes.OBJECT, responses=OpenApiTypes.OBJECT)
     @action(detail=True, methods=["get", "put"], url_path="data-scope")
     def data_scope(self, request, pk=None):
-        from .models import UserDataScope
+        from .models import UserDataScope, UserDataScopeRule
         from .serializers import DataScopeSerializer
         from .maintenance_gate import authorization_access
         target = self.get_object()
@@ -2716,11 +2726,12 @@ class UserViewSet(ScopedModelViewSet):
                 data = {"read_data_centers": [], "write_data_centers": [], "global_read": False,
                         "global_write": False, "unlocated_read": False, "unlocated_write": False,
                         "global_stock_metrics": False, "revision": 0, "read_departments": [], "write_departments": [],
-                        "all_departments_read": False, "all_departments_write": False, "unowned_read": False, "unowned_write": False}
+                        "all_departments_read": False, "all_departments_write": False, "unowned_read": False, "unowned_write": False, "rules": []}
             centers = list(DataCenter.objects.filter(
                 Q(read_scope_grants=grant) | Q(write_scope_grants=grant)
+                | Q(read_scope_rules__grant=grant) | Q(write_scope_rules__grant=grant)
             ).distinct().values("id", "name")) if grant else []
-            departments = list(Department.objects.filter(Q(read_scope_grants=grant) | Q(write_scope_grants=grant)).distinct().values("id", "name")) if grant else []
+            departments = list(Department.objects.filter(Q(read_scope_grants=grant) | Q(write_scope_grants=grant) | Q(read_scope_rules__grant=grant) | Q(write_scope_rules__grant=grant)).distinct().values("id", "name")) if grant else []
             return {**data, "effective": scope_for(target).as_dict(), "center_options": centers, "department_options": departments}
         if request.method == "GET":
             return Response(snapshot(UserDataScope.objects.filter(user=target).first()))
@@ -2738,6 +2749,7 @@ class UserViewSet(ScopedModelViewSet):
                 if grant is None:
                     grant = UserDataScope(user=target)
                 values = dict(serializer.validated_data)
+                rule_values = values.pop("rules")
                 reads = values.pop("read_data_centers")
                 writes = values.pop("write_data_centers")
                 department_reads = values.pop("read_departments")
@@ -2750,6 +2762,14 @@ class UserViewSet(ScopedModelViewSet):
                 grant.write_data_centers.set(writes)
                 grant.read_departments.set(department_reads)
                 grant.write_departments.set(department_writes)
+                grant.rules.all().delete()
+                for position, data in enumerate(rule_values):
+                    data = dict(data)
+                    memberships = {field: data.pop(field) for field in (
+                        "read_data_centers", "write_data_centers", "read_departments", "write_departments")}
+                    rule = UserDataScopeRule.objects.create(grant=grant, position=position, **data)
+                    for field, members in memberships.items():
+                        getattr(rule, field).set(members)
                 after = snapshot(grant)
                 write_audit_log(request, action="update", resource_type="user_data_scope", resource_id=target.pk,
                                 before=before, after=after)
@@ -6031,7 +6051,7 @@ def rack_layout_export(request):
                 header.fill = PatternFill("solid", fgColor="4472C4")
                 header.alignment = Alignment(horizontal="center")
                 sheet.merge_cells(start_row=rack_top + 1, start_column=start_col, end_row=rack_top + 1, end_column=end_col)
-                occupancy_restricted = not scope_for(request.user).full_department_access()
+                occupancy_restricted = not scope_for(request.user).full_department_access(center_id=rack.room.data_center_id)
                 effective_used_u = rack_effective_used_u(list(rack.allocations.all()), rack.total_u)
                 meta_text = f"{rack.room.name} | {rack.total_u} U | 占用信息：无权限" if occupancy_restricted else f"{rack.room.name} | {rack.total_u} U | 已用 {effective_used_u} U | 可用 {rack.total_u - effective_used_u} U"
                 meta = sheet.cell(rack_top + 1, start_col, meta_text)

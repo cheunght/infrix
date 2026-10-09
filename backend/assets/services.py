@@ -275,6 +275,10 @@ def confirm_inventory_item_normal(
         raise DRFValidationError({"detail": "该盘点项已被盘点，不能批量标记为正常"})
 
     rack, start_u, end_u = inventory_snapshot_location(item)
+    from .data_scope import require_asset_destination
+    # An explicit unlocated observation has no parent row to lock. Validate
+    # its complete ownership/location pair here for all confirmation callers.
+    require_asset_destination(item.asset_id, (item.system_snapshot or {}).get("data_center_id"), user=actor)
     before = InventoryItemSerializer(item).data
     item.status = "normal"
     item.actual_rack = rack

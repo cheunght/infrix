@@ -2,28 +2,20 @@
 import { computed, ref, watch } from "vue";
 import { useI18n } from "vue-i18n";
 import type { RequestFn } from "../page-context";
-import type { ManagedUser } from "../types";
+import type { ManagedUser, DataScopeBoundary, DataScopeRule } from "../types";
 import { normalizeApiError } from "../error-handling";
-import SearchableSelect from "./SearchableSelect.vue";
+import DataScopeBoundaryForm from "./DataScopeBoundaryForm.vue";
 import FormDialogShell from "./FormDialogShell.vue";
 
-interface ScopeForm {
+interface RuleForm extends DataScopeRule { key: string }
+interface ScopeForm extends DataScopeBoundary {
   revision: number;
   department_options?: { id: number; name: string }[];
-  read_departments: number[];
-  write_departments: number[];
-  all_departments_read: boolean;
-  all_departments_write: boolean;
-  unowned_read: boolean;
-  unowned_write: boolean;
   center_options?: { id: number; name: string }[];
-  read_data_centers: number[];
-  write_data_centers: number[];
   global_read: boolean;
   global_write: boolean;
-  unlocated_read: boolean;
-  unlocated_write: boolean;
   global_stock_metrics: boolean;
+  rules: RuleForm[];
 }
 const props = defineProps<{ modelValue: boolean; user: ManagedUser | null; request: RequestFn }>();
 const emit = defineEmits<{ "update:modelValue": [boolean] }>();
@@ -34,11 +26,15 @@ const saving = ref(false);
 const error = ref("");
 let generation = 0;
 const protectedAdmin = computed(() => Boolean(props.user?.is_superuser || props.user?.roles.some(role => role.code === "system_admin")));
-const selectedReadOptions = computed(() => (form.value?.center_options || []).filter(center => form.value?.read_data_centers.includes(center.id)).map(center => ({ value: center.id, label: center.name })));
-const selectedWriteOptions = computed(() => (form.value?.center_options || []).filter(center => form.value?.write_data_centers.includes(center.id)).map(center => ({ value: center.id, label: center.name })));
-const selectedReadDepartments = computed(() => (form.value?.department_options || []).filter(department => form.value?.read_departments?.includes(department.id)).map(department => ({ value: department.id, label: department.name })));
-const selectedWriteDepartments = computed(() => (form.value?.department_options || []).filter(department => form.value?.write_departments?.includes(department.id)).map(department => ({ value: department.id, label: department.name })));
-const centerOption = (item: Record<string, unknown>) => ({ value: Number(item.id), label: String(item.name) });
+let nextRule = 0;
+function addRule() {
+  if (!form.value || saving.value || protectedAdmin.value || form.value.rules.length >= 20) return;
+  form.value.rules.push({key:`new-${++nextRule}`,name:"",read_data_centers:[],write_data_centers:[],read_departments:[],write_departments:[],
+    unlocated_read:false,unlocated_write:false,all_departments_read:false,all_departments_write:false,unowned_read:false,unowned_write:false});
+}
+function removeRule(index: number) {
+  if (form.value && !saving.value && !protectedAdmin.value) form.value.rules.splice(index, 1);
+}
 watch(() => [props.modelValue, props.user?.id] as const, async ([open, id]) => {
   const version = ++generation;
   form.value = null;
@@ -46,8 +42,8 @@ watch(() => [props.modelValue, props.user?.id] as const, async ([open, id]) => {
   if (!open || !id) return;
   loading.value = true;
   try {
-    const result = await props.request<ScopeForm>(`/users/${id}/data-scope/`);
-    if (version === generation) form.value = result;
+    const result = await props.request<Omit<ScopeForm, "rules"> & { rules?: DataScopeRule[] }>(`/users/${id}/data-scope/`);
+    if (version === generation) form.value = {...result, rules:(result.rules || []).map((rule,index)=>({...rule,key:`saved-${rule.id ?? index}`}))};
   } catch (cause) {
     if (version === generation) error.value = normalizeApiError(cause).message;
   } finally {
@@ -65,7 +61,8 @@ async function save() {
     unlocated_write: current.unlocated_write, global_stock_metrics: current.global_stock_metrics,
     read_departments: current.read_departments, write_departments: current.write_departments,
     all_departments_read: current.all_departments_read, all_departments_write: current.all_departments_write,
-    unowned_read: current.unowned_read, unowned_write: current.unowned_write };
+    unowned_read: current.unowned_read, unowned_write: current.unowned_write,
+    rules:current.rules.map(({id: _id, key: _key, ...rule})=>rule) };
   try {
     await props.request(`/users/${props.user.id}/data-scope/`, {
       method: "PUT", headers: { "Content-Type": "application/json", "If-Match": `"${revision}"` },
@@ -81,17 +78,21 @@ async function save() {
 </script>
 
 <template>
-  <FormDialogShell :model-value="modelValue" :title="`${t('dataScope.title')} · ${user?.username || ''}`" :description="t('dataScope.description')" size="medium" :saving="saving" :show-close="!saving" :close-on-click-modal="!saving" :close-on-press-escape="!saving" :close-disabled="saving" @update:model-value="emit('update:modelValue', $event)">
+  <FormDialogShell :model-value="modelValue" :title="`${t('dataScope.title')} · ${user?.username || ''}`" :description="t('dataScope.description')" size="large" :saving="saving" :show-close="!saving" :close-on-click-modal="!saving" :close-on-press-escape="!saving" :close-disabled="saving" @update:model-value="emit('update:modelValue', $event)">
     <el-alert v-if="error" :title="error" type="error" :closable="false" show-icon />
     <el-alert v-if="protectedAdmin" :title="t('dataScope.adminHint')" type="info" :closable="false" />
     <el-form v-if="form" v-loading="loading" label-position="top" :disabled="saving || protectedAdmin">
-      <el-form-item :label="t('dataScope.readCenters')"><SearchableSelect v-model="form.read_data_centers" :selected-options="selectedReadOptions" :request="request" endpoint="/data-centers/" :map-option="centerOption" :base-query="{ is_active: 'all' }" multiple clearable /></el-form-item>
-      <el-form-item :label="t('dataScope.writeCenters')"><SearchableSelect v-model="form.write_data_centers" :selected-options="selectedWriteOptions" :request="request" endpoint="/data-centers/" :map-option="centerOption" :base-query="{ is_active: 'all' }" multiple clearable /></el-form-item>
-      <el-form-item><el-checkbox v-model="form.unlocated_read">{{ t('dataScope.unlocatedRead') }}</el-checkbox><el-checkbox v-model="form.unlocated_write">{{ t('dataScope.unlocatedWrite') }}</el-checkbox></el-form-item>
-      <el-form-item :label="t('dataScope.readDepartments')"><SearchableSelect v-model="form.read_departments" :selected-options="selectedReadDepartments" :request="request" endpoint="/departments/" :map-option="centerOption" multiple clearable /></el-form-item>
-      <el-form-item :label="t('dataScope.writeDepartments')"><SearchableSelect v-model="form.write_departments" :selected-options="selectedWriteDepartments" :request="request" endpoint="/departments/" :map-option="centerOption" multiple clearable /></el-form-item>
-      <el-form-item><el-checkbox v-model="form.all_departments_read">{{ t('dataScope.allDepartmentsRead') }}</el-checkbox><el-checkbox v-model="form.all_departments_write">{{ t('dataScope.allDepartmentsWrite') }}</el-checkbox></el-form-item>
-      <el-form-item><el-checkbox v-model="form.unowned_read">{{ t('dataScope.unownedRead') }}</el-checkbox><el-checkbox v-model="form.unowned_write">{{ t('dataScope.unownedWrite') }}</el-checkbox></el-form-item>
+      <el-alert :title="t('dataScope.ruleUnion')" type="info" :closable="false" />
+      <section class="scope-rule">
+        <h3>{{ t('dataScope.baseRule') }}</h3>
+        <DataScopeBoundaryForm :boundary="form" :center-options="form.center_options || []" :department-options="form.department_options || []" :request="request" />
+      </section>
+      <section v-for="(rule,index) in form.rules" :key="rule.key" class="scope-rule">
+        <div class="scope-rule__heading"><h3>{{ t('dataScope.additionalRule', {index:index+1}) }}</h3><el-button :disabled="saving || protectedAdmin" @click="removeRule(index)">{{ t('dataScope.removeRule') }}</el-button></div>
+        <el-form-item :label="t('dataScope.ruleName')"><el-input v-model="rule.name" :maxlength="80" show-word-limit /></el-form-item>
+        <DataScopeBoundaryForm :boundary="rule" :center-options="form.center_options || []" :department-options="form.department_options || []" :request="request" />
+      </section>
+      <el-form-item><el-button :disabled="saving || protectedAdmin || form.rules.length >= 20" @click="addRule">{{ t('dataScope.addRule') }}</el-button></el-form-item>
       <el-alert :title="t('dataScope.departmentIntersection')" type="info" :closable="false" />
       <el-form-item><el-checkbox v-model="form.global_read">{{ t('dataScope.globalRead') }}</el-checkbox><el-checkbox v-model="form.global_write">{{ t('dataScope.globalWrite') }}</el-checkbox></el-form-item>
       <el-form-item><el-checkbox v-model="form.global_stock_metrics">{{ t('dataScope.globalMetrics') }}</el-checkbox></el-form-item>
@@ -101,3 +102,9 @@ async function save() {
     <template #footer><el-button :disabled="saving" @click="emit('update:modelValue', false)">{{ t('common.cancel') }}</el-button><el-button type="primary" :loading="saving" :disabled="!form || loading || saving || protectedAdmin" @click="save">{{ t('common.save') }}</el-button></template>
   </FormDialogShell>
 </template>
+
+<style scoped>
+.scope-rule { margin: 16px 0; padding: 16px; border: 1px solid var(--el-border-color); border-radius: 8px; }
+.scope-rule__heading { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.scope-rule h3 { margin: 0 0 16px; font-size: 15px; }
+</style>

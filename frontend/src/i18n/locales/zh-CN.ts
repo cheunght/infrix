@@ -1,5 +1,12 @@
 export default {
   dataScope: {
+    baseRule: "基础规则",
+    additionalRule: "附加规则 {index}",
+    addRule: "增加规则",
+    removeRule: "移除规则",
+    ruleName: "规则说明（可选）",
+    ruleUnion: "同一规则的中心与部门取交集，多条规则取并集。例如 A/部门1 和 B/部门2 不会开放另外两个组合。最多增加 20 条规则。全局授权覆盖对应的局部范围。",
+
     readDepartments: "可读取的归属部门",
     writeDepartments: "可写入的归属部门",
     allDepartmentsRead: "读取所有已归属部门",

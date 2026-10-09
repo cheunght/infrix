@@ -488,7 +488,7 @@ def timeline_event(log: AuditLog, *, user=None, visible_task_ids=frozenset()) ->
                 if "assigned_person" in snapshot:
                     person = snapshot["assigned_person"]
                     if person and (not isinstance(person, Mapping) or (
-                        "department" not in person and not scope.full_department_access())):
+                        "department" not in person and not scope.full_directory_access())):
                         person = {"name": "无权限", "directory_restricted": True}
                     elif isinstance(person, Mapping):
                         person = _redact_person(person, scope)

@@ -5,16 +5,21 @@ A write grant includes read access. Location-less assets need an explicit grant.
 CLI callers have no HTTP actor and retain the separate operator boundary.
 """
 from contextvars import ContextVar
+from contextlib import contextmanager
 from dataclasses import dataclass
 from functools import wraps
 
 from django.db.models import Exists, OuterRef, Q
+from django.db import connection, transaction
 from rest_framework.exceptions import PermissionDenied
 from rest_framework.permissions import SAFE_METHODS
 from rest_framework import viewsets
 
 _actor = ContextVar('data_scope_actor', default=None)
 _scope_snapshot = ContextVar('data_scope_snapshot', default=None)
+_checked_transitions = ContextVar('checked_asset_transitions', default={})
+_ALL_CENTERS = object()
+KEEP_DEPARTMENT = object()
 SHARED_REFERENCES = frozenset({
     'Person', 'Department', 'Manufacturer', 'DeviceType', 'AssetModel', 'CustomField',
     'CustomFieldSet', 'CustomFieldSetItem', 'CustomFieldOption', 'Tag', 'SparePartCategory',
@@ -38,6 +43,53 @@ class Scope:
     all_departments_write: bool = False
     unowned_read: bool = False
     unowned_write: bool = False
+    rules: tuple = ()
+    name: str = ""
+
+    def boundaries(self):
+        return self.rules or (self,)
+
+    def asset_boundaries(self, *, write=False):
+        """Read access is the union of complete read and write clauses.
+
+        Facet unions are useful for directory/facility selectors, but must
+        never form an asset's center/department product across modes.
+        """
+        for rule in self.boundaries():
+            yield rule
+            if not write and (rule.read_centers, rule.read_departments, rule.unlocated_read,
+                rule.all_departments_read, rule.unowned_read) != (rule.write_centers, rule.write_departments,
+                rule.unlocated_write, rule.all_departments_write, rule.unowned_write):
+                yield Scope(read_centers=rule.write_centers, read_departments=rule.write_departments,
+                    unlocated_read=rule.unlocated_write, all_departments_read=rule.all_departments_write,
+                    unowned_read=rule.unowned_write)
+
+    def contains_asset(self, center_id, department_id, *, write=False):
+        if self.global_write if write else self.global_read:
+            return True
+        return any(rule.contains(center_id, write=write) and rule.contains_department(department_id, write=write) for rule in self.asset_boundaries(write=write))
+
+    def boundary_q(self, center_field, department_field, *, write=False, nullable=True, center_json=False, department_json=False, legacy_unknown=False):
+        if self.global_write if write else self.global_read:
+            return Q()
+        condition = Q(pk__in=[])
+        owner_known = Q()
+        if department_json:
+            parent, key = department_field.rsplit("__", 1)
+            owner_known = Q(**{f"{parent}__has_key": key})
+        for rule in self.asset_boundaries(write=write):
+            location = rule.location_q(center_field, write=write, nullable=nullable and not center_json)
+            if nullable and center_json and (rule.unlocated_write if write else rule.unlocated_read):
+                location |= Q(**{center_field: None})
+            condition |= location & owner_known & rule.department_q(department_field, write=write, json=department_json)
+        if legacy_unknown and department_json:
+            centers = self.write_centers if write else self.read_centers
+            complete = tuple(center for center in centers if self.full_department_access(write=write, center_id=center))
+            location = Q(**{f"{center_field}__in": complete})
+            if nullable and self.full_department_access(write=write, center_id=None):
+                location |= Q(**{center_field if center_json else f"{center_field}__isnull": None if center_json else True})
+            condition |= ~owner_known & location
+        return condition
 
     def department_q(self, field, *, write=False, json=False):
         if self.global_write if write else self.global_read:
@@ -48,7 +100,19 @@ class Scope:
             condition |= null
         return condition
 
-    def full_department_access(self, *, write=False):
+    def full_department_access(self, *, write=False, center_id=_ALL_CENTERS):
+        if self.global_write if write else self.global_read:
+            return True
+        if center_id is _ALL_CENTERS:
+            centers = list(self.write_centers if write else self.read_centers)
+            if self.unlocated_write if write else self.unlocated_read:
+                centers.append(None)
+            return bool(centers) and all(self.full_department_access(write=write, center_id=center) for center in centers)
+        matching = [rule for rule in self.asset_boundaries(write=write) if rule.contains(center_id, write=write)]
+        return any(rule.all_departments_write if write else rule.all_departments_read for rule in matching) and any(
+            rule.unowned_write if write else rule.unowned_read for rule in matching)
+
+    def full_directory_access(self, *, write=False):
         return (self.global_write if write else self.global_read) or (
             (self.all_departments_write and self.unowned_write) if write else (self.all_departments_read and self.unowned_read))
 
@@ -75,16 +139,34 @@ class Scope:
             condition |= Q(**{f'{field}__isnull': True})
         return condition
 
-    def as_dict(self):
+    def boundary_dict(self):
         return {
-            'global_read': self.global_read, 'global_write': self.global_write,
             'read_data_centers': list(self.read_centers), 'write_data_centers': list(self.write_centers),
             'unlocated_read': self.unlocated_read, 'unlocated_write': self.unlocated_write,
-            'global_stock_metrics': self.global_stock_metrics,
             'read_departments': list(self.read_departments), 'write_departments': list(self.write_departments),
             'all_departments_read': self.all_departments_read, 'all_departments_write': self.all_departments_write,
             'unowned_read': self.unowned_read, 'unowned_write': self.unowned_write,
         }
+
+
+    def as_dict(self):
+        return {**self.boundary_dict(), 'global_read': self.global_read, 'global_write': self.global_write,
+            'global_stock_metrics': self.global_stock_metrics,
+            'rules': [{**rule.boundary_dict(), 'name': rule.name} for rule in self.rules]}
+
+
+def _saved_boundary(grant):
+    writes = tuple(sorted(item.pk for item in grant.write_data_centers.all()))
+    reads = tuple(sorted(item.pk for item in grant.read_data_centers.all()))
+    department_writes = tuple(sorted(item.pk for item in grant.write_departments.all()))
+    department_reads = tuple(sorted(item.pk for item in grant.read_departments.all()))
+    return Scope(read_centers=reads, write_centers=writes,
+        unlocated_read=grant.unlocated_read, unlocated_write=grant.unlocated_write,
+        read_departments=department_reads, write_departments=department_writes,
+        all_departments_read=grant.all_departments_read,
+        all_departments_write=grant.all_departments_write,
+        unowned_read=grant.unowned_read, unowned_write=grant.unowned_write,
+        name=getattr(grant, 'name', ''))
 
 
 def scope_for(user=None):
@@ -98,21 +180,20 @@ def scope_for(user=None):
         return cached[1]
     if can(user, 'organization.manage'):
         return Scope(global_read=True, global_write=True, unlocated_read=True, unlocated_write=True, global_stock_metrics=True)
-    grant = UserDataScope.objects.filter(user_id=user.pk).first()
+    grant = UserDataScope.objects.prefetch_related('read_data_centers', 'write_data_centers', 'read_departments', 'write_departments',
+        'rules__read_data_centers', 'rules__write_data_centers', 'rules__read_departments', 'rules__write_departments').filter(user_id=user.pk).first()
     if grant is None:
         return Scope()
-    writes = tuple(grant.write_data_centers.values_list('pk', flat=True).order_by('pk'))
-    reads = tuple(sorted(set(writes) | set(grant.read_data_centers.values_list('pk', flat=True))))
-    department_writes = tuple(grant.write_departments.values_list('pk', flat=True).order_by('pk'))
-    department_reads = tuple(sorted(set(department_writes) | set(grant.read_departments.values_list('pk', flat=True))))
+    boundaries = (_saved_boundary(grant),) + tuple(_saved_boundary(rule) for rule in grant.rules.all())
+    union = lambda field: tuple(sorted({item for boundary in boundaries for item in getattr(boundary, field)}))
+    any_flag = lambda field: any(getattr(boundary, field) for boundary in boundaries)
     return Scope(global_read=grant.global_read or grant.global_write, global_write=grant.global_write,
-                 read_centers=reads, write_centers=writes,
-                 unlocated_read=grant.unlocated_read or grant.unlocated_write, unlocated_write=grant.unlocated_write,
-                 global_stock_metrics=grant.global_stock_metrics or grant.global_read or grant.global_write,
-                 read_departments=department_reads, write_departments=department_writes,
-                 all_departments_read=grant.all_departments_read or grant.all_departments_write,
-                 all_departments_write=grant.all_departments_write,
-                 unowned_read=grant.unowned_read or grant.unowned_write, unowned_write=grant.unowned_write)
+        global_stock_metrics=grant.global_stock_metrics or grant.global_read or grant.global_write,
+        read_centers=tuple(sorted(set(union('read_centers')) | set(union('write_centers')))), write_centers=union('write_centers'),
+        read_departments=tuple(sorted(set(union('read_departments')) | set(union('write_departments')))), write_departments=union('write_departments'),
+        unlocated_read=any_flag('unlocated_read') or any_flag('unlocated_write'), unlocated_write=any_flag('unlocated_write'),
+        all_departments_read=any_flag('all_departments_read') or any_flag('all_departments_write'), all_departments_write=any_flag('all_departments_write'),
+        unowned_read=any_flag('unowned_read') or any_flag('unowned_write'), unowned_write=any_flag('unowned_write'), rules=boundaries)
 
 
 def require_center(center_id, *, write=True, user=None):
@@ -127,6 +208,64 @@ def require_department(department_id, *, write=True, user=None):
         return
     if not scope_for(user).contains_department(department_id, write=write):
         raise PermissionDenied({'code': 'data_scope_denied', 'detail': '当前账号没有该部门或待确认归属数据的权限'})
+
+
+def require_asset_boundary(center_id, department_id, *, write=True, user=None):
+    if user is None and _actor.get() is None:
+        return
+    if not scope_for(user).contains_asset(center_id, department_id, write=write):
+        raise PermissionDenied({'code': 'data_scope_denied', 'detail': '数据中心与归属部门组合不在同一条授权规则内'})
+
+
+def _asset_coordinates(asset_id):
+    from .models import Asset
+    row = Asset.all_objects.values('owning_department_id', 'asset_data_center_id',
+        'rack_allocation__rack__room__data_center_id').get(pk=asset_id)
+    return row['rack_allocation__rack__room__data_center_id'] or row['asset_data_center_id'], row['owning_department_id']
+
+
+def require_asset_destination(asset_id, center_id, *, department_id=KEEP_DEPARTMENT, user=None):
+    if user is None and _actor.get() is None:
+        return
+    if department_id is KEEP_DEPARTMENT:
+        department_id = _asset_coordinates(asset_id)[1]
+    require_asset_boundary(center_id, department_id, user=user)
+
+
+def require_assets_destination(queryset, center_id, *, user=None):
+    if (user is None and _actor.get() is None) or scope_for(user).global_write:
+        return
+    for department_id in queryset.values_list('owning_department_id', flat=True).distinct():
+        require_asset_boundary(center_id, department_id, user=user)
+
+
+@contextmanager
+def checked_asset_transition(asset, center_id, department_id):
+    """Authorize both endpoints after the caller locks the physical graph.
+
+    A compound ownership/placement change briefly has an intermediate pair
+    while the transaction updates its rows. Only this locked, pre-authorized
+    asset can pass repeated source checks until the final pair is persisted.
+    The proof is request-local and is discarded before the transaction exits.
+    """
+    require_object(asset)
+    require_asset_boundary(center_id, department_id)
+    actor = _actor.get()
+    if actor is None or scope_for(actor).global_write:
+        yield
+        return
+    source_center, source_department = _asset_coordinates(asset.pk)
+    proof = (actor.pk, frozenset((source_center, center_id)), frozenset((source_department, department_id)))
+    token = _checked_transitions.set({**_checked_transitions.get(), asset.pk: proof})
+    try:
+        yield
+        # No partially applied combination may leave this operation.
+        final = _asset_coordinates(asset.pk)
+        require_asset_boundary(*final)
+        if final != (center_id, department_id):
+            raise PermissionDenied({'code': 'data_scope_denied', 'detail': '资产位置与归属未完整更新，操作已取消'})
+    finally:
+        _checked_transitions.reset(token)
 
 
 def serialization_scope(context=None):
@@ -160,6 +299,13 @@ def location_assets(instance):
 def require_object(instance, *, write=True, user=None):
     if user is None and _actor.get() is None:
         return
+    if write and instance.__class__.__name__ == 'Asset':
+        proof = _checked_transitions.get().get(instance.pk)
+        actor = user or _actor.get()
+        if proof is not None and actor.pk == proof[0]:
+            center, department = _asset_coordinates(instance.pk)
+            if center in proof[1] and department in proof[2]:
+                return
     if not scoped(instance.__class__._base_manager.filter(pk=instance.pk), user=user, write=write).exists():
         raise PermissionDenied({'code': 'data_scope_denied', 'detail': '对象已不在当前授权范围内，请重新加载'})
 
@@ -173,9 +319,9 @@ def scoped(queryset, *, user=None, write=False):
     if name in {'Person', 'Department'}:
         return queryset.filter(scope.department_q('department_id' if name == 'Person' else 'pk', write=write))
     if name == 'Asset':
-        return queryset.filter(scope.department_q('owning_department_id', write=write)).filter(
-            Q(rack_allocation__isnull=False) & scope.location_q('rack_allocation__rack__room__data_center_id', write=write)
-            | Q(rack_allocation__isnull=True) & scope.location_q('asset_data_center_id', write=write, nullable=True))
+        return queryset.filter(
+            Q(rack_allocation__isnull=False) & scope.boundary_q('rack_allocation__rack__room__data_center_id', 'owning_department_id', write=write, nullable=False)
+            | Q(rack_allocation__isnull=True) & scope.boundary_q('asset_data_center_id', 'owning_department_id', write=write))
     centers = {'DataCenter': 'pk', 'ServerRoom': 'data_center_id', 'Rack': 'room__data_center_id', 'SpareStock': 'data_center_id'}
     if name in centers:
         return queryset.filter(scope.location_q(centers[name], write=write))
@@ -197,19 +343,16 @@ def scoped(queryset, *, user=None, write=False):
     if name in {'InventoryTask', 'InventoryItem'}:
         # Never expose a partial task: completion and counts require its entire
         # current and frozen scope. Unknown legacy snapshots are global-only.
-        center_ids = scope.write_centers if write else scope.read_centers
-        snapshots = Q(system_snapshot__data_center_id__in=center_ids)
-        if scope.unlocated_write if write else scope.unlocated_read:
-            snapshots |= Q(system_snapshot__data_center_id=None)
+        snapshots = scope.boundary_q('system_snapshot__data_center_id', 'system_snapshot__owning_department_id',
+            write=write, center_json=True, department_json=True, legacy_unknown=True)
         visible_items = InventoryItem.objects.filter(asset_id__in=assets).filter(snapshots)
-        observed = Q(actual_placement='') | Q(actual_location_snapshot__data_center_id__in=center_ids)
-        if scope.unlocated_write if write else scope.unlocated_read:
-            observed |= Q(actual_placement='unlocated')
+        no_observation = Q(actual_location_snapshot={}) | Q(actual_location_snapshot__data_center_id=None,
+            actual_location_snapshot__rack_id=None, actual_location_snapshot__data_center='',
+            actual_location_snapshot__server_room='', actual_location_snapshot__rack_code='')
+        observed = Q(actual_placement='') & no_observation | scope.boundary_q(
+            'actual_location_snapshot__data_center_id', 'actual_location_snapshot__owning_department_id',
+            write=write, center_json=True, department_json=True, legacy_unknown=True)
         visible_items = visible_items.filter(observed)
-        if not scope.full_department_access(write=write):
-            # Unknown legacy ownership evidence requires the full department boundary.
-            ownership = scope.department_q('system_snapshot__owning_department_id', write=write, json=True)
-            visible_items = visible_items.filter(system_snapshot__has_key='owning_department_id').filter(ownership)
         visible_items = visible_items.values('pk')
         excluded_items = InventoryItem.objects.filter(task_id=OuterRef('pk')).exclude(pk__in=visible_items)
         tasks = InventoryTask.objects.exclude(scope='all_assets').filter(
@@ -222,18 +365,38 @@ def scoped(queryset, *, user=None, write=False):
     return queryset if name in SHARED_REFERENCES else queryset.none()
 
 
+@contextmanager
+def _read_response_snapshot():
+    # Enter only after the account admission lock. Otherwise a snapshot
+    # created during authentication could retain a grant already revoked
+    # before this request was admitted. TestCase/outer transactions own their
+    # existing snapshot; no per-transaction isolation change is possible there.
+    if connection.in_atomic_block:
+        yield
+        return
+    if connection.vendor == 'mysql':
+        with connection.cursor() as cursor:
+            cursor.execute('SET TRANSACTION ISOLATION LEVEL REPEATABLE READ')
+    with transaction.atomic():
+        yield
+
+
 def admit(request, user=None):
     """Called after DRF authentication, including force-authenticated probes."""
     user = user or request.user
     _actor.set(user if user.is_authenticated else None)
     raw = getattr(request, '_request', request)
-    if user.is_authenticated and not hasattr(raw, '_data_scope_access'):
+    if user.is_authenticated and user.pk is not None and not hasattr(raw, '_data_scope_access'):
         from .maintenance_gate import authorization_access
         from .organization_access import can
         if not can(user, 'organization.manage'):
             access = authorization_access(user.pk)
             access.__enter__()
             raw._data_scope_access = access
+    if user.is_authenticated and user.pk is not None and request.method in SAFE_METHODS and not hasattr(raw, '_data_scope_read_access'):
+        snapshot = _read_response_snapshot()
+        snapshot.__enter__()
+        raw._data_scope_read_access = snapshot
     cached = _scope_snapshot.get()
     if user.is_authenticated and (cached is None or cached[0] != user.pk):
         _scope_snapshot.set((user.pk, scope_for(user)))

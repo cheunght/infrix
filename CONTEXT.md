@@ -71,13 +71,16 @@ An asset already stored as retired before disposal records were introduced. It m
 Permission to perform a kind of operation. It does not grant access to every record on which the operation could run.
 
 **Data scope**:
-The explicit boundary within which an account may read or write. Asset access must satisfy both the physical-location boundary and the owning-department boundary; unlocated and unowned assets require separate explicit grants. Person directory access follows the person's department. Write access includes read access in the same scope. Selected departments do not imply their descendants. Missing grants deny business data access.
+The explicit boundary within which an account may read or write. Asset access must satisfy both the physical-location boundary and the owning-department boundary; unlocated and unowned assets require separate explicit grants. Person directory access follows the person's department. A scope consists of a base rule and optional additional rules: each asset must satisfy location and ownership in the same complete rule, and complete rules are unioned. Write access includes reading the complete write pair; read and write facets are not recombined. Facility and person selectors can use center and department unions independently, without widening asset access. Selected departments do not imply their descendants. Missing grants deny business data access.
 
 **Global data authorization**:
 An explicit authorization to operate across all data centers, departments, and assets awaiting placement or ownership confirmation; the system administrator role carries this authorization. Staff status and other business roles do not imply it.
 
 **Fully visible inventory task**:
-An inventory task whose task center, every asset's current location and ownership, frozen original location and ownership, and recorded observation are within the account's authorized scope. A partial task is not exposed as a complete task.
+An inventory task whose task center, every asset's current location and ownership, frozen original location and ownership, and recorded observation are within the account's authorized scope. Each new observation freezes the owning department at recording time. Missing legacy ownership evidence requires complete department access at its frozen center and is not inferred from the current asset. A partial task is not exposed as a complete task.
 
 **Shared reference data**:
 Company-wide catalogs used to identify and select business entities. Person directory records remain subject to department authorization. Access to shared reference data does not grant access to related assets, stock balances, or global business metrics.
+
+**Admitted read snapshot**:
+A consistent database view opened after account authorization admission and held through response preparation. It prevents concurrent facility moves from combining an old location with newly visible related records. Streamed file delivery retains the account admission lock after the database snapshot closes.

@@ -1078,6 +1078,22 @@ export type RepairPartUsageFormState = {
   quantity: number | null;
   notes: string;
 };
+export interface DataScopeBoundary {
+  read_data_centers: number[];
+  write_data_centers: number[];
+  read_departments: number[];
+  write_departments: number[];
+  unlocated_read: boolean;
+  unlocated_write: boolean;
+  all_departments_read: boolean;
+  all_departments_write: boolean;
+  unowned_read: boolean;
+  unowned_write: boolean;
+}
+export interface DataScopeRule extends DataScopeBoundary {
+  id?: number;
+  name: string;
+}
 export type AuthorizationRole = { code: string; name: string };
 export type AuthorizationSnapshot = {
   primary_role_code: string | null;
@@ -1089,6 +1105,7 @@ export type AuthorizationSnapshot = {
     read_data_centers: number[]; write_data_centers: number[];
     unlocated_read: boolean; unlocated_write: boolean; global_stock_metrics: boolean;
     read_departments: number[]; write_departments: number[]; all_departments_read: boolean; all_departments_write: boolean; unowned_read: boolean; unowned_write: boolean;
+    rules?: DataScopeRule[];
   };
 };
 export type Role = { code: string; name: string; description: string; capabilities: string[]; user_count?: number };

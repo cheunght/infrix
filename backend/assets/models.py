@@ -1383,6 +1383,11 @@ class InventoryItem(Timestamped):
                     "placement": self.actual_placement,
                     "start_u": self.actual_start_u, "end_u": self.actual_end_u,
                 }
+            if self.actual_placement:
+                # Freeze ownership at the observation, independently of the
+                # task's original owner and later changes to the live asset.
+                self.actual_location_snapshot["owning_department_id"] = Asset.all_objects.values_list(
+                    "owning_department_id", flat=True).get(pk=self.asset_id)
             if kwargs.get("update_fields"):
                 kwargs["update_fields"] = set(kwargs["update_fields"]) | {"actual_location_snapshot"}
         super().save(*args, **kwargs)
@@ -1442,6 +1447,26 @@ class UserDataScope(Timestamped):
     unowned_read = models.BooleanField(default=False)
     unowned_write = models.BooleanField(default=False)
     revision = models.PositiveBigIntegerField(default=1, editable=False)
+
+
+class UserDataScopeRule(models.Model):
+    """Additional center/department intersections, unioned with the base rule."""
+    grant = models.ForeignKey(UserDataScope, on_delete=models.CASCADE, related_name="rules")
+    name = models.CharField(max_length=80, blank=True, default="")
+    position = models.PositiveSmallIntegerField(default=0)
+    read_data_centers = models.ManyToManyField(DataCenter, related_name="read_scope_rules", blank=True)
+    write_data_centers = models.ManyToManyField(DataCenter, related_name="write_scope_rules", blank=True)
+    read_departments = models.ManyToManyField(Department, related_name="read_scope_rules", blank=True)
+    write_departments = models.ManyToManyField(Department, related_name="write_scope_rules", blank=True)
+    unlocated_read = models.BooleanField(default=False)
+    unlocated_write = models.BooleanField(default=False)
+    all_departments_read = models.BooleanField(default=False)
+    all_departments_write = models.BooleanField(default=False)
+    unowned_read = models.BooleanField(default=False)
+    unowned_write = models.BooleanField(default=False)
+
+    class Meta:
+        ordering = ["position", "pk"]
 
 
 class UserSecurityProfile(Timestamped):

@@ -16,7 +16,7 @@ from django.core.exceptions import ValidationError
 from django.db import transaction
 
 from .models import Asset, DataCenter, InventoryTask, Rack, RackUnitAllocation, ServerRoom
-from .data_scope import require_center, require_object, require_queryset, location_assets, serialization_scope
+from .data_scope import require_center, require_object, require_queryset, location_assets, serialization_scope, require_asset_destination, require_assets_destination, KEEP_DEPARTMENT, scoped
 
 
 class RoomReparentBlocked(ValueError):
@@ -101,7 +101,7 @@ def _lock_physical_location_graph(
     return allocations
 
 
-def lock_asset_location(*, asset_id: int, target_rack_id: int | None = None, target_data_center_id: int | None = None) -> None:
+def lock_asset_location(*, asset_id: int, target_rack_id: int | None = None, target_data_center_id: int | None = None, target_department_id=KEEP_DEPARTMENT) -> None:
     """Lock the current and requested rack ancestry before an asset write."""
 
     current_rack_id = (
@@ -110,6 +110,8 @@ def lock_asset_location(*, asset_id: int, target_rack_id: int | None = None, tar
         .first()
     )
     target_rack_id = _optional_id(target_rack_id)
+    if target_rack_id and serialization_scope() is not None and not scoped(Rack.objects.filter(pk=target_rack_id), write=True).exists():
+        raise ValidationError({"rack_id": "请选择授权范围内的机柜"})
     affected_rack_ids = {
         value
         for value in (current_rack_id, target_rack_id)
@@ -126,9 +128,12 @@ def lock_asset_location(*, asset_id: int, target_rack_id: int | None = None, tar
     )
     require_object(Asset.all_objects.get(pk=asset_id))
     if target_rack_id:
-        require_center(Rack.objects.values_list("room__data_center_id", flat=True).get(pk=target_rack_id))
+        center_id = Rack.objects.filter(pk=target_rack_id).values_list("room__data_center_id", flat=True).first()
+        if center_id is None:
+            raise ValidationError({"rack_id": "所选机柜已不存在，请重新选择"})
+        require_asset_destination(asset_id, center_id, department_id=target_department_id)
     if target_data_center_id is not None:
-        require_center(int(target_data_center_id))
+        require_asset_destination(asset_id, int(target_data_center_id), department_id=target_department_id)
 
 
 def lock_rack_location(*, rack_id: int, target_room_id: int | None = None) -> Rack:
@@ -151,6 +156,7 @@ def lock_rack_location(*, rack_id: int, target_room_id: int | None = None) -> Ra
     require_object(Rack.objects.get(pk=rack_id))
     require_queryset(location_assets(Rack.objects.get(pk=rack_id)))
     require_center(ServerRoom.objects.values_list("data_center_id", flat=True).get(pk=target_room_id))
+    require_assets_destination(location_assets(current_rack), ServerRoom.objects.values_list("data_center_id", flat=True).get(pk=target_room_id))
     return Rack.objects.select_for_update().select_related(
         "room__data_center"
     ).get(pk=rack_id)
@@ -179,6 +185,7 @@ def lock_server_room_location(
     require_object(ServerRoom.objects.get(pk=room_id))
     require_queryset(location_assets(ServerRoom.objects.get(pk=room_id)))
     require_center(target_data_center_id)
+    require_assets_destination(location_assets(current_room), target_data_center_id)
     return ServerRoom.objects.select_for_update().select_related(
         "data_center"
     ).get(pk=room_id)
@@ -275,6 +282,7 @@ def set_direct_asset_placement(*, asset_id: int, data_center_id: int | None) -> 
     lock_asset_location(asset_id=asset_id, target_data_center_id=data_center_id)
     from .asset_retention import active_asset_for_update
     asset = active_asset_for_update(asset_id)
+    require_asset_destination(asset_id, data_center_id)
     center = DataCenter.objects.select_for_update().get(pk=data_center_id) if data_center_id else None
     if center and not center.is_active:
         raise ValidationError({"actual_data_center_id": "停用的数据中心不能用于位置纠正"})
@@ -302,6 +310,7 @@ def clear_asset_placement(*, asset_id: int) -> None:
     require_center(None)
     RackUnitAllocation.objects.filter(asset_id=asset_id).delete()
     asset = Asset.objects.select_for_update().get(pk=asset_id)
+    require_asset_destination(asset_id, None)
     if asset.asset_data_center_id is not None:
         asset.asset_data_center_id = None
         asset.save(update_fields=["asset_data_center", "updated_at"])

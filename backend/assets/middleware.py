@@ -8,9 +8,15 @@ class DataScopeContextMiddleware:
         self.get_response = get_response
 
     def __call__(self, request):
+        import sys
         from .data_scope import _actor, _scope_snapshot
         token = _actor.set(None)
         scope_token = _scope_snapshot.set(None)
+        def release_read(error=(None, None, None)):
+            snapshot = getattr(request, "_data_scope_read_access", None)
+            if snapshot is not None:
+                del request._data_scope_read_access
+                snapshot.__exit__(*error)
         def release():
             access = getattr(request, "_data_scope_access", None)
             if access is not None:
@@ -18,6 +24,11 @@ class DataScopeContextMiddleware:
                 access.__exit__(None, None, None)
         try:
             response = self.get_response(request)
+            # Current streaming endpoints have already authorized/opened an
+            # immutable file; SQL-backed JSON/XLSX are materialized here.
+            # End the DB snapshot on this thread, retain admission until the
+            # file stream closes (including streams consumed by another thread).
+            release_read()
             if response.streaming:
                 content = response.streaming_content
                 def stream():
@@ -31,7 +42,10 @@ class DataScopeContextMiddleware:
                 release()
             return response
         except BaseException:
-            release()
+            try:
+                release_read(sys.exc_info())
+            finally:
+                release()
             raise
         finally:
             _scope_snapshot.reset(scope_token)

@@ -85,20 +85,34 @@ class CustomFieldConflictAPIException(APIException):
         })
 
 
-class DataScopeSerializer(serializers.Serializer):
+class DataScopeBoundarySerializer(serializers.Serializer):
     read_data_centers = serializers.PrimaryKeyRelatedField(many=True, queryset=DataCenter.objects.all(), required=False, default=list)
     write_data_centers = serializers.PrimaryKeyRelatedField(many=True, queryset=DataCenter.objects.all(), required=False, default=list)
-    global_read = serializers.BooleanField(required=False, default=False)
-    global_write = serializers.BooleanField(required=False, default=False)
     unlocated_read = serializers.BooleanField(required=False, default=False)
     unlocated_write = serializers.BooleanField(required=False, default=False)
-    global_stock_metrics = serializers.BooleanField(required=False, default=False)
     read_departments = serializers.PrimaryKeyRelatedField(many=True, queryset=Department.objects.all(), required=False, default=list)
     write_departments = serializers.PrimaryKeyRelatedField(many=True, queryset=Department.objects.all(), required=False, default=list)
     all_departments_read = serializers.BooleanField(required=False, default=False)
     all_departments_write = serializers.BooleanField(required=False, default=False)
     unowned_read = serializers.BooleanField(required=False, default=False)
     unowned_write = serializers.BooleanField(required=False, default=False)
+
+
+class DataScopeRuleSerializer(DataScopeBoundarySerializer):
+    id = serializers.IntegerField(read_only=True)
+    name = serializers.CharField(required=False, default="", allow_blank=True, max_length=80)
+
+    def to_internal_value(self, data):
+        if isinstance(data, dict) and {"global_read", "global_write", "global_stock_metrics"}.intersection(data):
+            raise serializers.ValidationError("全局授权只能在账号级配置，不能放在局部规则中")
+        return super().to_internal_value(data)
+
+
+class DataScopeSerializer(DataScopeBoundarySerializer):
+    global_read = serializers.BooleanField(required=False, default=False)
+    global_write = serializers.BooleanField(required=False, default=False)
+    global_stock_metrics = serializers.BooleanField(required=False, default=False)
+    rules = DataScopeRuleSerializer(many=True, required=False, default=list, max_length=20)
     revision = serializers.IntegerField(read_only=True)
 
 
@@ -2368,7 +2382,7 @@ class AssetAssignmentEventSerializer(serializers.ModelSerializer):
         data = super().to_representation(instance)
         scope = serialization_scope(self.context)
         # Existing event department names are historical labels, not reliable IDs.
-        if scope is not None and not scope.full_department_access():
+        if scope is not None and not scope.full_directory_access():
             for side in ("from_person", "to_person"):
                 if data.get(side) is not None:
                     for suffix in ("employee_no", "department", "organization", "contact"):
@@ -3107,8 +3121,9 @@ class AssetWriteSerializer(serializers.ModelSerializer):
             ) from exc
         try:
             with transaction.atomic():
-                from .data_scope import require_center, require_department
-                require_department(getattr(validated_data.get("owning_department"), "pk", None))
+                from .data_scope import require_center, require_department, require_asset_boundary
+                department_id = getattr(validated_data.get("owning_department"), "pk", None)
+                require_department(department_id)
                 target_center = validated_data.get("asset_data_center")
                 if configuration.get("rack_id"):
                     from .physical_location import lock_inventory_scope
@@ -3122,8 +3137,9 @@ class AssetWriteSerializer(serializers.ModelSerializer):
                     center_id = ServerRoom.objects.values_list("data_center_id", flat=True).get(pk=rack.room_id)
                     require_center(center_id)
                     validated_data["asset_data_center"] = DataCenter.objects.get(pk=center_id)
+                    require_asset_boundary(center_id, department_id)
                 else:
-                    require_center(target_center.pk if target_center else None)
+                    require_asset_boundary(target_center.pk if target_center else None, department_id)
                     if target_center is not None:
                         # Lock the parent before INSERT takes its foreign-key
                         # shared lock; configure_asset later needs this row
@@ -3166,6 +3182,7 @@ class AssetWriteSerializer(serializers.ModelSerializer):
                     # configuration payloads.
                     lock_asset_location(
                         asset_id=instance.pk,
+                        **({'target_department_id': getattr(validated_data['owning_department'], 'pk', None)} if 'owning_department' in validated_data else {}),
                         target_data_center_id=getattr(requested_asset_data_center, "pk", None) if requested_asset_data_center is not missing else None,
                         target_rack_id=(
                             configuration.get("rack_id")
@@ -3184,23 +3201,38 @@ class AssetWriteSerializer(serializers.ModelSerializer):
                     from .data_scope import require_center
                     require_center(requested_asset_data_center.pk if requested_asset_data_center else None)
                     self._validate_direct_asset_data_center(instance, requested_asset_data_center)
-                if requested_status is not missing:
-                    transition_asset_status(instance, requested_status)
-                for key, value in validated_data.items():
-                    setattr(instance, key, value)
-                instance.save()
-                if configuration is not None:
-                    configuration = self._merge_partial_placement_configuration(instance, configuration)
-                    configure_asset(instance, configuration)
-                apply_asset_custom_values(
-                    instance,
-                    custom_values or {},
-                    submitted=custom_values is not None,
-                    discard_incompatible=discard_incompatible,
-                )
-                if tags is not None:
-                    apply_asset_tags(instance, tags)
-                instance = self._apply_assignment(instance, assignment)
+                from .data_scope import checked_asset_transition
+                target_center_id = (getattr(requested_asset_data_center, 'pk', None)
+                    if requested_asset_data_center is not missing else instance.asset_data_center_id)
+                allocation = getattr(instance, 'rack_allocation', None)
+                if allocation is not None and not self._configuration_includes_placement(configuration):
+                    target_center_id = allocation.rack.room.data_center_id
+                if isinstance(configuration, dict) and configuration.get('rack_id'):
+                    try:
+                        target_center_id = Rack.objects.filter(pk=int(configuration['rack_id'])).values_list('room__data_center_id', flat=True).first()
+                    except (TypeError, ValueError):
+                        target_center_id = None
+                    if target_center_id is None:
+                        raise serializers.ValidationError({"rack_id": "未找到所选机柜，请重新选择"})
+                target_department_id = getattr(validated_data.get('owning_department', instance.owning_department), 'pk', None)
+                with checked_asset_transition(instance, target_center_id, target_department_id):
+                    if requested_status is not missing:
+                        transition_asset_status(instance, requested_status)
+                    for key, value in validated_data.items():
+                        setattr(instance, key, value)
+                    instance.save()
+                    if configuration is not None:
+                        configuration = self._merge_partial_placement_configuration(instance, configuration)
+                        configure_asset(instance, configuration)
+                    apply_asset_custom_values(
+                        instance,
+                        custom_values or {},
+                        submitted=custom_values is not None,
+                        discard_incompatible=discard_incompatible,
+                    )
+                    if tags is not None:
+                        apply_asset_tags(instance, tags)
+                    instance = self._apply_assignment(instance, assignment)
         except CustomFieldConflictError as exc:
             raise CustomFieldConflictAPIException(exc.conflicts) from exc
         except DjangoValidationError as exc:
@@ -3508,8 +3540,13 @@ class InventoryItemSerializer(serializers.ModelSerializer):
                 raise serializers.ValidationError({"actual_data_center_id": "实际数据中心已停用"})
             attrs["actual_placement"] = placement
             attrs["actual_data_center_ref"] = center
+            if self.instance is not None and placement in {"mounted", "data_center", "unlocated"}:
+                from .data_scope import require_asset_destination
+                require_asset_destination(self.instance.asset_id, center.pk if center else None)
         if status == "normal":
             snapshot = self.instance.system_snapshot if self.instance else {}
+            from .data_scope import require_asset_destination
+            require_asset_destination(self.instance.asset_id, snapshot.get("data_center_id"))
             if not snapshot.get("rack_id") and actual_rack is None:
                 same_location = True
             else:
@@ -3690,7 +3727,7 @@ class RackSerializer(ResourceRevisionSerializerMixin, serializers.ModelSerialize
         from .data_scope import serialization_scope, scoped
         scope = serialization_scope(self.context)
         data = super().to_representation(instance)
-        data["occupancy_restricted"] = scope is not None and not scope.full_department_access()
+        data["occupancy_restricted"] = scope is not None and not scope.full_department_access(center_id=instance.room.data_center_id)
         if data["occupancy_restricted"]:
             # Keep an authorized subset as business records, never as a complete U map.
             request = self.context.get("request")

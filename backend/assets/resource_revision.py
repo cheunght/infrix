@@ -81,7 +81,9 @@ class ResourceRevisionSerializerMixin:
                 data["global_stock_metrics_visible"] = False
             elif instance.__class__.__name__ == "SparePart":
                 data["global_stock_metrics_visible"] = True
-            if (not scope.global_read and instance.__class__.__name__ not in {"DataCenter", "ServerRoom", "Rack"}) or (not scope.full_department_access() and instance.__class__.__name__ in {"DataCenter", "ServerRoom"}):
+            model_name = instance.__class__.__name__
+            center_id = instance.pk if model_name == "DataCenter" else getattr(instance, "data_center_id", None)
+            if (not scope.global_read and model_name not in {"DataCenter", "ServerRoom", "Rack"}) or (model_name in {"DataCenter", "ServerRoom"} and not scope.full_department_access(center_id=center_id)):
                 for key in ("assets_count", "asset_count", "assigned_assets_count"):
                     if key in data:
                         data[key] = None
