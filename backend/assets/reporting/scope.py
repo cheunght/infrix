@@ -5,6 +5,7 @@ from dataclasses import dataclass, field
 from django.db.models import Q
 
 from ..models import Asset, DataCenter, Rack, ServerRoom
+from ..data_scope import scoped
 
 
 class DashboardScopeError(ValueError):
@@ -20,6 +21,7 @@ class DashboardScope:
     racks: list
     rooms: list
     active_data_centers: list
+    user: object = None
     _asset_ids_cache: list[int] | None = field(default=None, init=False, repr=False)
 
     @property
@@ -44,6 +46,9 @@ def resolve_dashboard_scope(request):
     The active-resource predicates intentionally live here so every report
     section uses the same definition of a usable data center, room and rack.
     """
+    user = getattr(request, "user", None)
+    def authorized(queryset):
+        return scoped(queryset, user=user) if user is not None else queryset
     data_center_id = _parse_id(
         request.query_params.get("data_center", "").strip(), "数据中心"
     )
@@ -55,7 +60,7 @@ def resolve_dashboard_scope(request):
 
     selected_data_center = None
     if data_center_id is not None:
-        selected_data_center = DataCenter.objects.filter(
+        selected_data_center = authorized(DataCenter.objects.all()).filter(
             pk=data_center_id, is_active=True
         ).first()
         if selected_data_center is None:
@@ -64,7 +69,7 @@ def resolve_dashboard_scope(request):
     selected_server_room = None
     if server_room_id is not None:
         selected_server_room = (
-            ServerRoom.objects.select_related("data_center")
+            authorized(ServerRoom.objects.all()).select_related("data_center")
             .filter(
                 pk=server_room_id,
                 is_active=True,
@@ -82,7 +87,7 @@ def resolve_dashboard_scope(request):
         if selected_data_center is None:
             selected_data_center = selected_server_room.data_center
 
-    asset_queryset = Asset.objects.all()
+    asset_queryset = authorized(Asset.objects.all())
     if selected_server_room is not None:
         asset_queryset = asset_queryset.filter(
             rack_allocation__rack__room_id=selected_server_room.id,
@@ -143,7 +148,7 @@ def resolve_dashboard_scope(request):
         )
     )
 
-    rack_queryset = Rack.objects.filter(
+    rack_queryset = authorized(Rack.objects.all()).filter(
         is_active=True,
         room__is_active=True,
         room__data_center__is_active=True,
@@ -160,7 +165,7 @@ def resolve_dashboard_scope(request):
         .order_by("room__data_center__name", "room__name", "code")
     )
 
-    room_queryset = ServerRoom.objects.filter(
+    room_queryset = authorized(ServerRoom.objects.all()).filter(
         is_active=True,
         data_center__is_active=True,
     )
@@ -174,7 +179,7 @@ def resolve_dashboard_scope(request):
         )
     )
 
-    active_data_center_queryset = DataCenter.objects.filter(is_active=True).order_by(
+    active_data_center_queryset = authorized(DataCenter.objects.all()).filter(is_active=True).order_by(
         "name"
     )
     if selected_data_center is not None:
@@ -183,6 +188,7 @@ def resolve_dashboard_scope(request):
         )
 
     return DashboardScope(
+        user=user,
         selected_data_center=selected_data_center,
         selected_server_room=selected_server_room,
         asset_queryset=asset_queryset,

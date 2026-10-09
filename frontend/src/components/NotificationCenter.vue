@@ -185,6 +185,7 @@ onMounted(() => {
         >{{ t('notifications.markAllRead') }}</el-button>
       </header>
 
+      <p class="notification-center__range">{{ t('dataScope.alertHint') }}</p>
       <div class="notification-center__summary" aria-live="polite">
         <span class="notification-center__summary-item is-critical">
           <i aria-hidden="true"></i>{{ levelLabel('critical') }} {{ summary.critical }}

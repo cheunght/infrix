@@ -13,7 +13,7 @@ import re
 from decimal import Decimal, InvalidOperation
 from types import SimpleNamespace
 from django.contrib.auth import authenticate, login, logout, update_session_auth_hash
-from django.core.exceptions import ValidationError as DjangoValidationError
+from django.core.exceptions import ObjectDoesNotExist, ValidationError as DjangoValidationError
 from django.middleware.csrf import get_token
 from django.contrib.auth.models import User
 from django_filters.rest_framework import DjangoFilterBackend
@@ -1148,6 +1148,8 @@ class AssetViewSet(AuditedModelViewSetMixin, ScopedModelViewSet):
             asset_no = f"ID {asset_id}"
             try:
                 with transaction.atomic():
+                    if not scoped(Asset.objects.filter(pk=asset_id), user=request.user, write=True).exists():
+                        raise Asset.DoesNotExist
                     lock_asset_location(asset_id=asset_id)
                     instance = Asset.objects.select_for_update().get(pk=asset_id)
                     asset_no = instance.asset_no
@@ -1156,13 +1158,13 @@ class AssetViewSet(AuditedModelViewSetMixin, ScopedModelViewSet):
                         request,
                         batch_operation_id=batch_operation_id,
                     )
-            except Asset.DoesNotExist:
+            except (Asset.DoesNotExist, PermissionDenied):
                 results.append({
                     "id": asset_id,
                     "asset_no": f"ID {asset_id}",
                     "success": False,
                     "code": "NOT_FOUND",
-                    "reason": "资产不存在或已被归档",
+                    "reason": "资产不存在、已归档或不在写入范围内",
                 })
             except DRFValidationError as exc:
                 results.append({
@@ -1220,6 +1222,9 @@ class AssetViewSet(AuditedModelViewSetMixin, ScopedModelViewSet):
             asset_no = f"ID {asset_id}"
             try:
                 with transaction.atomic():
+                    if not scoped(Asset.objects.filter(pk=asset_id), user=request.user, write=True).exists():
+                        raise Asset.DoesNotExist
+                    lock_asset_location(asset_id=asset_id)
                     instance = Asset.objects.select_for_update().get(pk=asset_id)
                     asset_no = instance.asset_no
                     if action == "assign":
@@ -1240,13 +1245,13 @@ class AssetViewSet(AuditedModelViewSetMixin, ScopedModelViewSet):
                             reason=reason,
                             batch_operation_id=batch_operation_id,
                         )
-            except Asset.DoesNotExist:
+            except (Asset.DoesNotExist, PermissionDenied):
                 results.append({
                     "id": asset_id,
-                    "asset_no": asset_no,
+                    "asset_no": f"ID {asset_id}",
                     "success": False,
                     "code": "NOT_FOUND",
-                    "reason": "资产不存在或已被归档",
+                    "reason": "资产不存在、已归档或不在写入范围内",
                 })
             except DRFValidationError as exc:
                 results.append({
@@ -1399,6 +1404,8 @@ class AssetViewSet(AuditedModelViewSetMixin, ScopedModelViewSet):
             asset_no = f"ID {asset_id}"
             try:
                 with transaction.atomic():
+                    if not scoped(Asset.objects.filter(pk=asset_id), user=request.user, write=True).exists():
+                        raise Asset.DoesNotExist
                     location_change = validated["changes"].get("location", {})
                     if location_change.get("enabled"):
                         if location_change.get("action") == "clear":
@@ -1408,16 +1415,18 @@ class AssetViewSet(AuditedModelViewSetMixin, ScopedModelViewSet):
                                 asset_id=asset_id,
                                 target_rack_id=location_change.get("rack"),
                             )
+                    else:
+                        lock_asset_location(asset_id=asset_id)
                     instance = Asset.objects.select_for_update().get(pk=asset_id)
                     asset_no = instance.asset_no
                     self._apply_bulk_edit(request, instance, validated["changes"], batch_operation_id)
-            except Asset.DoesNotExist:
+            except (ObjectDoesNotExist, PermissionDenied):
                 results.append({
                     "id": asset_id,
-                    "asset_no": asset_no,
+                    "asset_no": f"ID {asset_id}",
                     "success": False,
                     "code": "NOT_FOUND",
-                    "reason": "资产不存在或已被归档",
+                    "reason": "资产不存在、已归档或操作涉及未授权范围",
                 })
             except (DRFValidationError, APIException) as exc:
                 results.append({
@@ -3682,20 +3691,21 @@ class InventoryItemViewSet(ScopedModelViewSet):
         note = request_serializer.validated_data.get("note", "")
 
         items = list(
-            InventoryItem.objects.filter(pk__in=item_ids).select_related("task", "asset")
+            scoped(InventoryItem.objects.filter(pk__in=item_ids), user=request.user, write=True).select_related("task", "asset")
         )
         items_by_id = {item.pk: item for item in items}
-        missing_ids = [item_id for item_id in item_ids if item_id not in items_by_id]
-        if missing_ids:
-            raise DRFValidationError({"item_ids": f"盘点项不存在：{', '.join(map(str, missing_ids))}"})
         task_ids = {item.task_id for item in items}
-        if len(task_ids) != 1:
+        if len(task_ids) > 1:
             raise DRFValidationError({"item_ids": "所有盘点项必须属于同一个盘点任务"})
 
         results = []
         succeeded = 0
         for item_id in item_ids:
-            item = items_by_id[item_id]
+            item = items_by_id.get(item_id)
+            if item is None:
+                results.append({"item_id": item_id, "asset_no": "", "success": False,
+                                "reason": "盘点项不存在或不在完整任务写入范围内"})
+                continue
             try:
                 resolved_item = resolve_inventory_item(
                     item_id=item_id,
@@ -3704,7 +3714,10 @@ class InventoryItemViewSet(ScopedModelViewSet):
                     actor=request.user,
                     request=request,
                 )
-            except (DRFValidationError, PermissionDenied, InventoryObservationConflict) as exc:
+            except PermissionDenied:
+                results.append({"item_id": item_id, "asset_no": "", "success": False,
+                                "reason": "盘点项不在完整任务写入范围内"})
+            except (DRFValidationError, InventoryObservationConflict) as exc:
                 results.append({
                     "item_id": item_id,
                     "asset_no": item.asset.asset_no,
@@ -3747,20 +3760,21 @@ class InventoryItemViewSet(ScopedModelViewSet):
         item_ids = request_serializer.validated_data["item_ids"]
 
         items = list(
-            InventoryItem.objects.filter(pk__in=item_ids).select_related("task", "asset")
+            scoped(InventoryItem.objects.filter(pk__in=item_ids), user=request.user, write=True).select_related("task", "asset")
         )
         items_by_id = {item.pk: item for item in items}
-        missing_ids = [item_id for item_id in item_ids if item_id not in items_by_id]
-        if missing_ids:
-            raise DRFValidationError({"item_ids": f"盘点项不存在：{', '.join(map(str, missing_ids))}"})
         task_ids = {item.task_id for item in items}
-        if len(task_ids) != 1:
+        if len(task_ids) > 1:
             raise DRFValidationError({"item_ids": "所有盘点项必须属于同一个盘点任务"})
 
         results = []
         succeeded = 0
         for item_id in item_ids:
-            item = items_by_id[item_id]
+            item = items_by_id.get(item_id)
+            if item is None:
+                results.append({"item_id": item_id, "asset_no": "", "success": False,
+                                "reason": "盘点项不存在或不在完整任务写入范围内"})
+                continue
             try:
                 confirmed_item = confirm_inventory_item_normal(
                     item_id=item_id,
@@ -3769,7 +3783,10 @@ class InventoryItemViewSet(ScopedModelViewSet):
                     require_pending=True,
                     source="inventory_bulk_confirm_normal",
                 )
-            except (DRFValidationError, PermissionDenied) as exc:
+            except PermissionDenied:
+                results.append({"item_id": item_id, "asset_no": "", "success": False,
+                                "reason": "盘点项不在完整任务写入范围内"})
+            except DRFValidationError as exc:
                 results.append({
                     "item_id": item_id,
                     "asset_no": item.asset.asset_no,
@@ -5643,7 +5660,7 @@ def _spare_part_export_queryset(request):
 )
 @api_view(["GET"])
 @permission_classes([CanExportSpares])
-@global_endpoint
+@scope_endpoint
 def spare_part_export(request):
     queryset = _spare_part_export_queryset(request)
     limit_response = _export_limit_response(queryset, "备件导出结果")
@@ -5659,7 +5676,9 @@ def spare_part_export(request):
     for part in queryset:
         _append_excel_row(sheet, [
             part.code, part.name, part.category.name, part.manufacturer.name if part.manufacturer_id else "", part.model,
-            part.specification, SPARE_UNIT_LABELS.get(part.unit, part.unit), part.total_quantity, part.safety_stock, part.location_count,
+            part.specification, SPARE_UNIT_LABELS.get(part.unit, part.unit),
+            part.total_quantity if scope_for(request.user).global_stock_metrics else "无权限", part.safety_stock,
+            part.location_count if scope_for(request.user).global_stock_metrics else "无权限",
             part.storage_location, part.notes,
         ])
     _style_export_sheet(sheet, max_width=36)
@@ -5723,7 +5742,7 @@ def spare_transaction_export(request):
 @extend_schema(responses=OpenApiTypes.OBJECT)
 @api_view(["GET"])
 @permission_classes([CanViewDashboard])
-@global_endpoint
+@scope_endpoint
 def dashboard_overview(request):
     try:
         scope = resolve_dashboard_scope(request)
@@ -5739,10 +5758,11 @@ def dashboard_overview(request):
 @extend_schema(responses=OpenApiTypes.OBJECT)
 @api_view(["GET"])
 @permission_classes([CanViewDashboard])
-@global_endpoint
+@scope_endpoint
 def alerts_overview(request):
     """Return actionable reminders assembled from existing business data."""
     return Response(build_alerts_payload(
+        user=request.user,
         include_assets=can(request.user, "assets.view"),
         include_licenses=can(request.user, "licenses.view"),
         include_faults=can(request.user, "faults.view"),
@@ -5754,7 +5774,7 @@ def alerts_overview(request):
 @extend_schema(responses=OpenApiTypes.OBJECT)
 @api_view(["GET"])
 @permission_classes([CanViewDashboard])
-@global_endpoint
+@scope_endpoint
 def facilities_summary(request):
     """Compact aggregates for the room/rack management tabs."""
     data_center_id = request.query_params.get("data_center", "").strip()
@@ -5765,13 +5785,13 @@ def facilities_summary(request):
     except (TypeError, ValueError):
         return Response({"detail": "数据中心或机房筛选无效"}, status=400)
 
-    if data_center_pk is not None and not DataCenter.objects.filter(
+    if data_center_pk is not None and not scoped(DataCenter.objects.all(), user=request.user).filter(
         pk=data_center_pk, is_active=True
     ).exists():
         return Response({"detail": "数据中心筛选无效"}, status=400)
     selected_room = None
     if room_pk is not None:
-        selected_room = ServerRoom.objects.select_related("data_center").filter(
+        selected_room = scoped(ServerRoom.objects.all(), user=request.user).select_related("data_center").filter(
             pk=room_pk, is_active=True, data_center__is_active=True
         ).first()
         if selected_room is None:
@@ -5782,7 +5802,7 @@ def facilities_summary(request):
     # Keep all rooms/racks for status totals, but use only active locations for
     # capacity and device aggregates. This prevents disabled infrastructure
     # from inflating U totals while preserving maintenance-page counts.
-    rooms = ServerRoom.objects.filter(data_center__is_active=True).select_related("data_center")
+    rooms = scoped(ServerRoom.objects.all(), user=request.user).filter(data_center__is_active=True).select_related("data_center")
     if data_center_pk is not None:
         rooms = rooms.filter(data_center_id=data_center_pk)
     if room_pk is not None:
@@ -5815,7 +5835,7 @@ def facilities_summary(request):
             "is_active": room.is_active,
         })
 
-    data_centers = DataCenter.objects.filter(is_active=True).order_by("name")
+    data_centers = scoped(DataCenter.objects.all(), user=request.user).filter(is_active=True).order_by("name")
     if data_center_pk is not None:
         data_centers = data_centers.filter(pk=data_center_pk)
     elif room_pk is not None:
@@ -5926,7 +5946,7 @@ RACK_LAYOUT_DEFAULT_DEVICE_FILL = "D9EAF7"
 )
 @api_view(["GET"])
 @permission_classes([CanExportRacks])
-@global_endpoint
+@scope_endpoint
 def rack_layout_export(request):
     rack_queryset = Rack.objects.select_related("room__data_center").prefetch_related(
         "allocations__asset__asset_model__device_type",
@@ -5942,6 +5962,7 @@ def rack_layout_export(request):
         rack_queryset,
         RackViewSet(),
     )
+    rack_queryset = scoped(rack_queryset, user=request.user)
     rack_count = rack_queryset.count()
     total_u = rack_queryset.aggregate(total_u=Coalesce(Sum("total_u"), 0))["total_u"] or 0
     limit_response = _rack_layout_export_limit_response(rack_count, total_u)

@@ -295,6 +295,7 @@ def clear_asset_placement(*, asset_id: int) -> None:
     """Clear the complete physical location, including the data center."""
 
     lock_asset_location(asset_id=asset_id)
+    require_center(None)
     RackUnitAllocation.objects.filter(asset_id=asset_id).delete()
     asset = Asset.objects.select_for_update().get(pk=asset_id)
     if asset.asset_data_center_id is not None:

@@ -15,11 +15,19 @@ from ..models import (
 )
 from ..system_settings import NotificationPolicy, get_notification_policy
 from ..runtime_clock import system_now
+from ..data_scope import scoped, scope_for
 
 
 ALERT_EXPIRY_DAYS = 30
 ALERT_LIMIT = 100
 _LEVEL_ORDER = {"critical": 0, "warning": 1, "notice": 2}
+
+
+
+def _authorized(model, user):
+    # Scheduled company digests run at the independent operator boundary.
+    queryset = model.objects.all()
+    return scoped(queryset, user=user) if user is not None else queryset
 
 
 def _system_now():
@@ -42,11 +50,11 @@ def _due_alert_state(expiry_date, today):
     return "expiring", "warning"
 
 
-def _maintenance_alerts(today, expiry_days=ALERT_EXPIRY_DAYS, limit=None):
+def _maintenance_alerts(today, expiry_days=ALERT_EXPIRY_DAYS, limit=None, *, user=None):
     expiry_limit = today + timedelta(days=max(0, int(expiry_days)))
     alerts = []
     contracts = (
-        MaintenanceContract.objects.select_related("asset")
+        _authorized(MaintenanceContract, user).select_related("asset")
         .filter(expiry_date__isnull=False, expiry_date__lte=expiry_limit)
         .order_by("expiry_date", "asset__asset_no", "id")
     )
@@ -127,10 +135,10 @@ def _license_alerts(today, expiry_days=ALERT_EXPIRY_DAYS, include_expiry=True, l
     return alerts
 
 
-def _fault_alerts(limit=None):
+def _fault_alerts(limit=None, *, user=None):
     alerts = []
     faults = (
-        FaultEvent.objects.select_related("asset")
+        _authorized(FaultEvent, user).select_related("asset")
         .filter(is_closed=False)
         .order_by("occurred_at", "id")
     )
@@ -160,10 +168,10 @@ def _fault_alerts(limit=None):
     return alerts
 
 
-def _inventory_alerts(now, limit=None):
+def _inventory_alerts(now, limit=None, *, user=None):
     alerts = []
     tasks = (
-        InventoryTask.objects.filter(status="in_progress", end_at__lt=now)
+        _authorized(InventoryTask, user).filter(status="in_progress", end_at__lt=now)
         .annotate(pending_count=Count("items", filter=Q(items__status="pending")))
         .order_by("end_at", "id")
     )
@@ -218,12 +226,12 @@ def _spare_alerts(limit=None):
     return alerts
 
 
-def _alert_counts(*, today, now, setting, include_assets, include_licenses, include_faults, include_inventory, include_spares):
+def _alert_counts(*, today, now, setting, include_assets, include_licenses, include_faults, include_inventory, include_spares, user=None):
     """Count all active alerts without materializing rows for the summary."""
     counts = Counter()
     if include_assets and setting.notify_maintenance:
         expiry_limit = today + timedelta(days=max(0, int(setting.maintenance_expiry_days)))
-        maintenance = MaintenanceContract.objects.filter(
+        maintenance = _authorized(MaintenanceContract, user).filter(
             expiry_date__isnull=False,
             expiry_date__lte=expiry_limit,
         )
@@ -264,10 +272,10 @@ def _alert_counts(*, today, now, setting, include_assets, include_licenses, incl
             counts["warning"] += license_counts["expiring"] or 0
 
     if include_faults and setting.notify_open_faults:
-        counts["critical"] += FaultEvent.objects.filter(is_closed=False).count()
+        counts["critical"] += _authorized(FaultEvent, user).filter(is_closed=False).count()
 
     if include_inventory and setting.notify_overdue_inventory:
-        counts["critical"] += InventoryTask.objects.filter(
+        counts["critical"] += _authorized(InventoryTask, user).filter(
             status="in_progress",
             end_at__lt=now,
         ).count()
@@ -290,6 +298,7 @@ def build_alerts_payload(
     include_inventory=True,
     include_spares=True,
     setting=None,
+    user=None,
 ):
     """Return active alerts while keeping source records unchanged.
 
@@ -304,11 +313,12 @@ def build_alerts_payload(
         if setting is not None
         else get_notification_policy()
     )
+    include_spares = include_spares and (user is None or scope_for(user).global_stock_metrics)
     now = _system_now()
     today = now.date()
     alerts = []
     if include_assets and setting.notify_maintenance:
-        alerts.extend(_maintenance_alerts(today, setting.maintenance_expiry_days, limit=ALERT_LIMIT))
+        alerts.extend(_maintenance_alerts(today, setting.maintenance_expiry_days, limit=ALERT_LIMIT, user=user))
     if include_licenses:
         alerts.extend(
             _license_alerts(
@@ -319,9 +329,9 @@ def build_alerts_payload(
             )
         )
     if include_faults and setting.notify_open_faults:
-        alerts.extend(_fault_alerts(limit=ALERT_LIMIT))
+        alerts.extend(_fault_alerts(limit=ALERT_LIMIT, user=user))
     if include_inventory and setting.notify_overdue_inventory:
-        alerts.extend(_inventory_alerts(now, limit=ALERT_LIMIT))
+        alerts.extend(_inventory_alerts(now, limit=ALERT_LIMIT, user=user))
     if include_spares and setting.notify_low_spare_stock:
         alerts.extend(_spare_alerts(limit=ALERT_LIMIT))
 
@@ -331,6 +341,7 @@ def build_alerts_payload(
         for alert in alerts[:ALERT_LIMIT]
     ]
     counts = _alert_counts(
+        user=user,
         today=today,
         now=now,
         setting=setting,

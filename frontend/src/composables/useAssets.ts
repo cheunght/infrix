@@ -2353,7 +2353,6 @@ export function useAssets(deps: AssetsDeps) {
     assetBatchDeleteSaving.value = true;
     assetBatchDeleteResult.value = null;
     showAssetBatchDeleteResult.value = false;
-    clearAssetSelection();
     try {
       const result = await deps.request<AssetBatchDeleteResponse>("/assets/batch-delete/", {
         method: "POST",
@@ -2361,11 +2360,13 @@ export function useAssets(deps: AssetsDeps) {
         body: JSON.stringify({ ids }),
       });
       assetBatchDeleteResult.value = result;
+      const succeededIds = new Set(result.results.filter((item) => item.success).map((item) => item.id));
+      selectedAssetIds.value = selectedAssetIds.value.filter((id) => !succeededIds.has(id));
       const mutationMessage = result.failed
         ? tr("asset.batchDeleteSummary", { succeeded: result.succeeded, failed: result.failed })
         : tr("asset.batchDeleteSuccess", { count: result.succeeded });
       setActionMessage(mutationMessage, result.failed ? "error" : "success");
-      const refreshed = await loadAssets();
+      const refreshed = await loadAssets(undefined, true);
       if (!refreshed) {
         setActionMessage(`${mutationMessage}；${tr("common.refreshFailed")}，${tr("common.retry")}`, "error");
       }

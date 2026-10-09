@@ -173,6 +173,7 @@ function recentChangeLabel(action: string): string {
     <template #header>
       <PageHeader
         :title="t('dashboard.overviewTitle')"
+        :description="t('dataScope.reportHint')"
       >
         <template #actions>
           <div class="dashboard-header-actions">

@@ -203,9 +203,7 @@ class ScopedViewSetMixin:
         action = getattr(self, 'action', '')
         if action == 'timeline' and not scope.global_read:
             raise PermissionDenied({'code': 'data_scope_global_required', 'detail': '完整审计时间线需要全局读取授权；范围内历史请使用专项记录入口'})
-        # Bulk paths and global dictionaries must not bypass scope admission.
-        if action in {'batch_delete', 'batch_assignment', 'bulk_edit', 'bulk_resolve', 'bulk_confirm_normal'} and not scope.global_write:
-            raise PermissionDenied({'code': 'data_scope_global_required', 'detail': '当前批量入口需要全局写入授权'})
+        # Shared master-data changes still require global authorization.
         model = getattr(getattr(self, 'queryset', None), 'model', None)
         if model is None:
             model = getattr(getattr(self.get_serializer_class(), 'Meta', None), 'model', None)

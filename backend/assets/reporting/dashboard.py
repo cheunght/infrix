@@ -179,7 +179,8 @@ def _build_alert_data(scope):
 
 
 def _build_inventory_summary(scope):
-    inventory_queryset = InventoryTask.objects.all()
+    from ..data_scope import scoped
+    inventory_queryset = scoped(InventoryTask.objects.all(), user=scope.user) if scope.user is not None else InventoryTask.objects.all()
     if scope.selected_data_center is not None:
         inventory_queryset = inventory_queryset.filter(
             data_center_id=scope.selected_data_center.id
@@ -208,6 +209,8 @@ def _build_inventory_summary(scope):
         room__is_active=True,
         room__data_center__is_active=True,
     )
+    if scope.user is not None:
+        inventory_rack_queryset = scoped(inventory_rack_queryset, user=scope.user)
     # Coverage follows the task scope within the currently active facilities.
     # An all-assets task has no data center, rather than a null-center scope.
     if latest_inventory.scope != "all_assets":

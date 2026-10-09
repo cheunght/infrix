@@ -1,5 +1,7 @@
 export default {
   dataScope: {
+    reportHint: "Asset and facility summaries cover your readable scope. Shared company license data follow license permissions.",
+    alertHint: "Alerts cover records you can read. Low-stock alerts require global stock metrics permission.",
     title: "Data access scope",
     description: "Assign data centers for this account. Roles still control functional permissions.",
     adminHint: "System administrators have global access. Change the role first to restrict scope.",
