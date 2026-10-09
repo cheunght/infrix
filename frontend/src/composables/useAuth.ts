@@ -1,4 +1,5 @@
-import { watch, type Ref } from "vue";
+import { ref, watch, type Ref } from "vue";
+import { revisionHeaders } from "../revision";
 import { ApiError, isAbortError } from "../api";
 import {
   fieldErrorsToText,
@@ -57,6 +58,7 @@ export interface AuthDeps {
 }
 
 type AuthPayload = {
+  revision?: number;
   username: string;
   display_name: string;
   first_name?: string;
@@ -77,6 +79,7 @@ type AuthPayload = {
 };
 
 export function useAuth(deps: AuthDeps) {
+  const profileRevision = ref<number>();
   function setActionMessage(message: string, type: ActionMessageType = "success") {
     deps.actionMessageType.value = type;
     deps.actionMessage.value = message;
@@ -133,6 +136,7 @@ export function useAuth(deps: AuthDeps) {
   }
 
   function applyAuthPayload(user: AuthPayload) {
+    profileRevision.value = user.revision;
     deps.authenticated.value = true;
     deps.username.value = user.username;
     deps.userName.value = user.display_name;
@@ -348,7 +352,7 @@ export function useAuth(deps: AuthDeps) {
     try {
       const user = await deps.request<AuthPayload>("/auth/me/", {
         method: "PATCH",
-        headers: { "Content-Type": "application/json" },
+        headers: revisionHeaders({revision:profileRevision.value}),
         body: JSON.stringify({
           first_name: form.first_name,
           last_name: form.last_name,
@@ -370,6 +374,32 @@ export function useAuth(deps: AuthDeps) {
       return false;
     } finally {
       deps.profileSaving.value = false;
+    }
+  }
+
+  async function saveLocalePreference(locale: Locale) {
+    const revision = profileRevision.value;
+    const previousLocale = deps.profileForm.value.locale;
+    deps.profileForm.value.locale = locale;
+    try {
+      const user = await deps.request<AuthPayload>("/auth/me/", {
+        method: "PATCH",
+        headers: revisionHeaders({ revision }),
+        body: JSON.stringify({ locale }),
+      });
+      // Keep profile drafts, and let a newer profile load/save win over this
+      // reply rather than pairing its version with an older locale.
+      if (profileRevision.value === revision) {
+        profileRevision.value = user.revision;
+        deps.profileForm.value.locale = normalizeLocale(user.locale || locale);
+      }
+      deps.setLocale(deps.profileForm.value.locale);
+      return true;
+    } catch {
+      if (profileRevision.value === revision) deps.profileForm.value.locale = previousLocale;
+      deps.setLocale(deps.profileForm.value.locale);
+      setActionMessage(i18n.global.t("auth.languageSaveFailed"), "error");
+      return false;
     }
   }
 
@@ -415,6 +445,7 @@ export function useAuth(deps: AuthDeps) {
     logout,
     loadProfile,
     saveProfile,
+    saveLocalePreference,
     changePassword,
     openPasswordModal,
   };

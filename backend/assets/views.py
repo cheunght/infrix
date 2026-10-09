@@ -36,7 +36,7 @@ from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
 from openpyxl.utils import get_column_letter
 from urllib.parse import quote
 from .asset_retention import active_asset_for_update, visible_assets
-from .resource_revision import ResourceRevisionViewSetMixin, check_resource_revision
+from .resource_revision import ResourceRevisionViewSetMixin, ResourceRevisionConflict, ResourceRevisionRequired, check_resource_revision
 from .models import AuthThrottleState, AuditLog, Asset, AssetAssignmentEvent, AssetCustomValue, AssetModel, AssetNetworkAddress, AssetTag, Attachment, CustomField, CustomFieldOption, CustomFieldSet, CustomFieldSetItem, DataCenter, Department, DeviceType, DirectoryIdentity, FaultEvent, InventoryItem, InventoryTask, MaintenanceContract, NotificationDelivery, Person, PersonalAccessToken, ProcurementRecord, Rack, RackUnitAllocation, RepairPartUsage, RepairRecord, ServerRoom, SoftwareLicense, SparePart, SpareStock, SpareStockTransaction, Tag, UserSecurityProfile
 from .enum_contracts import (
     ASSET_STATUS_LABELS,
@@ -346,6 +346,10 @@ def _filtered_view_queryset(view_class, request, *, action="export", filter_back
 
 class AuditedModelViewSetMixin(ResourceRevisionViewSetMixin):
     audit_resource = None
+
+    @transaction.atomic
+    def create(self, request, *args, **kwargs):
+        return super().create(request, *args, **kwargs)
 
     def audit_snapshot(self, instance):
         return model_snapshot(instance)
@@ -1482,7 +1486,7 @@ class AssetViewSet(AuditedModelViewSetMixin, ScopedModelViewSet):
         return Response(AssetBulkEditResponseSerializer(response_data).data)
 
 
-class AttachmentViewSet(ScopedModelViewSet):
+class AttachmentViewSet(ResourceRevisionViewSetMixin, ScopedModelViewSet):
     queryset = Attachment.objects.select_related("asset", "repair__fault", "uploaded_by").order_by("-uploaded_at", "-id")
     serializer_class = AttachmentSerializer
     permission_classes = [IsAuthenticated]
@@ -1599,6 +1603,7 @@ class AttachmentViewSet(ScopedModelViewSet):
         serializer.instance = get_object_or_404(
             Attachment.objects.select_for_update(), pk=serializer.instance.pk,
         )
+        check_resource_revision(serializer.instance, self.request)
         before = AttachmentSerializer(serializer.instance).data
         old_name = serializer.instance.file.name
         instance = None
@@ -2705,12 +2710,29 @@ def _user_audit_snapshot(user):
 
 
 class UserViewSet(ScopedModelViewSet):
-    queryset = User.objects.select_related("directory_identity").order_by("username")
+    queryset = User.objects.select_related("directory_identity", "security_profile").order_by("username")
     serializer_class = UserSerializer
     permission_classes = [IsSystemAdministrator]
     filter_backends = [SearchFilter, OrderingFilter]
     search_fields = ["username", "first_name", "last_name", "email"]
     ordering_fields = ["username", "date_joined", "last_login"]
+
+    @transaction.atomic
+    def create(self, request, *args, **kwargs):
+        return super().create(request, *args, **kwargs)
+
+    @extend_schema(parameters=[OpenApiParameter("If-Match", OpenApiTypes.STR, location=OpenApiParameter.HEADER,
+        required=True, description="账号返回的 revision；缺少 428，过期 409。")])
+    @transaction.atomic
+    def update(self, request, *args, **kwargs):
+        target = self.get_object()
+        target = User.objects.select_for_update().get(pk=target.pk)
+        from .resource_revision import check_revision
+        check_revision(_security_profile(target).administration_revision, request.headers.get("If-Match"))
+        serializer = self.get_serializer(target, data=request.data, partial=kwargs.pop("partial", False))
+        serializer.is_valid(raise_exception=True)
+        self.perform_update(serializer)
+        return Response(serializer.data)
 
     @extend_schema(request=OpenApiTypes.OBJECT, responses=OpenApiTypes.OBJECT)
     @action(detail=True, methods=["get", "put"], url_path="data-scope")
@@ -2828,7 +2850,7 @@ class UserViewSet(ScopedModelViewSet):
     @extend_schema(
         request=UserBatchStatusSerializer,
         responses=UserBatchStatusResponseSerializer,
-        description="批量启用或停用用户；每条记录会重新执行单条用户保护校验并返回逐条结果。",
+        description="批量启用或停用用户；revisions 按账号 ID 提交读取时的 revision。逐条检查版本与账号保护，缺少或过期返回该条失败，其他条继续。",
     )
     @action(detail=False, methods=["post"], url_path="batch-status")
     def batch_status(self, request):
@@ -2836,6 +2858,7 @@ class UserViewSet(ScopedModelViewSet):
         request_serializer.is_valid(raise_exception=True)
         user_ids = request_serializer.validated_data["ids"]
         is_active = request_serializer.validated_data["is_active"]
+        revisions = request_serializer.validated_data["revisions"]
         batch_operation_id = str(uuid4())
         results = []
         succeeded = 0
@@ -2847,6 +2870,8 @@ class UserViewSet(ScopedModelViewSet):
                     with transaction.atomic():
                         instance = User.objects.select_for_update().get(pk=user_id)
                         username = instance.username
+                        from .resource_revision import check_revision
+                        check_revision(_security_profile(instance).administration_revision, revisions.get(str(user_id)))
                         serializer = UserSerializer(
                             instance=instance,
                             data={"is_active": is_active},
@@ -2863,6 +2888,10 @@ class UserViewSet(ScopedModelViewSet):
                         "code": "NOT_FOUND",
                         "reason": "用户不存在或已被删除",
                     })
+                except (ResourceRevisionConflict, ResourceRevisionRequired) as exc:
+                    results.append({"id": user_id, "username": username, "success": False,
+                        "code": "REVISION_CONFLICT" if isinstance(exc, ResourceRevisionConflict) else "REVISION_REQUIRED",
+                        "reason": str(exc.detail["detail"]), "current_revision": _security_profile(instance).administration_revision})
                 except DRFValidationError as exc:
                     detail = getattr(exc, "detail", {})
                     code = "PROTECTED" if isinstance(detail, dict) and "is_active" in detail else "INVALID_STATE"
@@ -2905,6 +2934,7 @@ class UserViewSet(ScopedModelViewSet):
     @transaction.atomic
     def reset_password(self, request, pk=None):
         instance = self.get_object()
+        instance = User.objects.select_for_update().get(pk=instance.pk)
         try:
             validate_account_action(target=instance, action="reset_password", actor=request.user)
         except AccountActionDenied as exc:
@@ -2934,6 +2964,7 @@ class UserViewSet(ScopedModelViewSet):
 
     @transaction.atomic
     def perform_destroy(self, instance):
+        instance = get_object_or_404(User.objects.select_for_update(), pk=instance.pk)
         try:
             validate_account_action(target=instance, action="delete", actor=self.request.user)
         except AccountActionDenied as exc:
@@ -3041,6 +3072,9 @@ class FaultEventViewSet(AuditedModelViewSetMixin, ScopedModelViewSet):
         # validate again so a concurrent completion cannot turn this into a
         # historical write after the first validation pass.
         locked_fault = FaultEvent.objects.select_for_update().get(pk=serializer.instance.pk)
+        from .resource_revision import check_resource_revision
+        check_resource_revision(locked_fault, self.request)
+        require_object(locked_fault, user=self.request.user)
         locked_serializer = self.get_serializer(
             locked_fault,
             data=self.request.data,
@@ -3118,6 +3152,9 @@ class RepairRecordViewSet(AuditedModelViewSetMixin, ScopedModelViewSet):
         # by an ordinary update to completed historical facts.
         FaultEvent.objects.select_for_update().get(pk=serializer.instance.fault_id)
         locked_repair = RepairRecord.objects.select_for_update().get(pk=serializer.instance.pk)
+        from .resource_revision import check_resource_revision
+        check_resource_revision(locked_repair, self.request)
+        require_object(locked_repair, user=self.request.user)
         locked_serializer = self.get_serializer(
             locked_repair,
             data=self.request.data,
@@ -3338,6 +3375,8 @@ class InventoryTaskViewSet(AuditedModelViewSetMixin, ScopedModelViewSet):
         # a lock so a completion committed between those two phases cannot be
         # overwritten by a stale full-row save.
         task = InventoryTask.objects.select_for_update().get(pk=serializer.instance.pk)
+        from .resource_revision import check_resource_revision
+        check_resource_revision(task, self.request)
         require_object(task, user=self.request.user)
         locked_serializer = self.get_serializer(
             task,
@@ -3590,7 +3629,7 @@ def _inventory_resolution_error_message(error):
     return _inventory_error_message(error, "盘点异常处理失败")
 
 
-class InventoryItemViewSet(ScopedModelViewSet):
+class InventoryItemViewSet(ResourceRevisionViewSetMixin, ScopedModelViewSet):
     queryset = InventoryItem.objects.select_related(
         "task",
         "asset",
@@ -3623,6 +3662,8 @@ class InventoryItemViewSet(ScopedModelViewSet):
         task = InventoryTask.objects.select_for_update().get(pk=serializer.instance.task_id)
         require_object(task, user=self.request.user)
         item = InventoryItem.objects.select_for_update().get(pk=serializer.instance.pk)
+        from .resource_revision import check_resource_revision
+        check_resource_revision(item, self.request)
         locked_serializer = self.get_serializer(
             item,
             data=self.request.data,
@@ -4160,10 +4201,18 @@ def _clear_login_throttle(username, ip):
 
 
 def _auth_response(user):
+    # Authentication may have loaded the user before another editor saved it.
+    # Join profile and editable fields in one read so a fresh version is never
+    # paired with the stale authentication object's name/email.
+    user = User.objects.select_related("security_profile").get(pk=user.pk)
     authorization = read_authorization_snapshot(user)
-    security_profile = _security_profile(user)
+    try:
+        security_profile = user.security_profile
+    except UserSecurityProfile.DoesNotExist:
+        security_profile = _security_profile(user)
     directory_identity = DirectoryIdentity.objects.filter(user_id=user.pk).first()
     return {
+        "revision": security_profile.administration_revision,
         "username": user.username,
         "display_name": user.get_full_name() or user.username,
         "first_name": user.first_name,
@@ -4767,6 +4816,8 @@ def _ldap_status_payload() -> dict:
     request=LdapConfigurationUpdateSerializer,
     responses=OpenApiTypes.OBJECT,
     methods=["PATCH"],
+    parameters=[OpenApiParameter("If-Match", OpenApiTypes.STR, location=OpenApiParameter.HEADER,
+        required=True, description="LDAP 配置返回的 revision；首次数据库配置为 0，缺少 428，过期 409。")],
 )
 @extend_schema(
     request=OpenApiTypes.NONE,
@@ -4786,21 +4837,29 @@ def auth_ldap_config(request):
     if not serializer.is_valid():
         return Response(serializer.errors, status=400)
 
-    current = get_effective_ldap_configuration()
-    password_value = serializer.validated_data.get("bind_password", "")
-    password_submitted = bool(password_value)
-    candidate = merge_configuration(
-        current,
-        serializer.validated_data,
-        password_submitted=password_submitted,
-        password_value=password_value,
-    )
-    errors = configuration_errors(candidate, require_password=candidate.enabled)
-    if candidate.enabled and errors:
-        return Response(errors, status=400)
+    with transaction.atomic():
+        from .models import SystemSetting, DirectoryServiceConfiguration
+        from .system_settings import ensure_system_settings
+        from .resource_revision import check_revision
+        # The settings singleton serializes first-time directory row creation.
+        ensure_system_settings()
+        SystemSetting.objects.select_for_update().get(pk=SystemSetting.SINGLETON_ID)
+        record = DirectoryServiceConfiguration.objects.select_for_update().filter(pk=1).first()
+        check_revision(record.revision if record else 0, request.headers.get("If-Match"), allow_zero=True)
+        current = get_effective_ldap_configuration()
+        password_value = serializer.validated_data.get("bind_password", "")
+        password_submitted = bool(password_value)
+        candidate = merge_configuration(
+            current,
+            serializer.validated_data,
+            password_submitted=password_submitted,
+            password_value=password_value,
+        )
+        errors = configuration_errors(candidate, require_password=candidate.enabled)
+        if candidate.enabled and errors:
+            return Response(errors, status=400)
 
-    try:
-        with transaction.atomic():
+        try:
             save_configuration(
                 candidate,
                 password_submitted=password_submitted,
@@ -4840,14 +4899,14 @@ def auth_ldap_config(request):
                     resource_id="configuration",
                     extra={"configured": True},
                 )
-    except ConfigurationIdentityError as exc:
-        return Response(exc.errors, status=400)
-    except ConfigurationSecretError as exc:
-        return Response({"bind_password": str(exc)}, status=400)
-    return Response({
-        **public_configuration(updated),
-        **_ldap_last_diagnostic_payload(),
-    })
+        except ConfigurationIdentityError as exc:
+            return Response(exc.errors, status=400)
+        except ConfigurationSecretError as exc:
+            return Response({"bind_password": str(exc)}, status=400)
+        return Response({
+            **public_configuration(updated),
+            **_ldap_last_diagnostic_payload(),
+        })
 
 
 def _safe_ldap_diagnostic_payload(result) -> dict:
@@ -4966,7 +5025,10 @@ def auth_ldap_diagnostics(request):
     return Response(payload, status=status)
 
 
-@extend_schema(request=CurrentUserProfileSerializer, responses=OpenApiTypes.OBJECT)
+@extend_schema(request=CurrentUserProfileSerializer, responses=OpenApiTypes.OBJECT, methods=["PATCH"],
+    parameters=[OpenApiParameter("If-Match", OpenApiTypes.STR, location=OpenApiParameter.HEADER,
+        required=True, description="本人信息返回的 revision；与管理员账号编辑共享版本。")])
+@extend_schema(responses=OpenApiTypes.OBJECT, methods=["GET"])
 @api_view(["GET", "PATCH"])
 @permission_classes([IsAuthenticated])
 def auth_me(request):
@@ -4976,10 +5038,13 @@ def auth_me(request):
             partial=True,
         )
         serializer.is_valid(raise_exception=True)
-        before = _user_audit_snapshot(request.user)
         with transaction.atomic():
             validated = serializer.validated_data
-            user = request.user
+            user = User.objects.select_for_update().get(pk=request.user.pk)
+            request.user = user
+            from .resource_revision import check_revision
+            check_revision(_security_profile(user).administration_revision, request.headers.get("If-Match"))
+            before = _user_audit_snapshot(user)
             user_fields = [field for field in ("first_name", "last_name", "email") if field in validated]
             for field in user_fields:
                 setattr(user, field, validated[field])
@@ -4987,8 +5052,12 @@ def auth_me(request):
                 user.save(update_fields=user_fields)
             if "locale" in validated:
                 profile = _security_profile(user)
+                locale_changed = profile.locale != validated["locale"]
                 profile.locale = validated["locale"]
                 profile.save(update_fields=["locale", "updated_at"])
+                if locale_changed:
+                    UserSecurityProfile.objects.filter(pk=profile.pk).update(administration_revision=F("administration_revision") + 1)
+                    user._state.fields_cache.pop("security_profile", None)
             write_audit_log(
                 request,
                 action="update",
@@ -5015,6 +5084,7 @@ def auth_logout(request):
 @permission_classes([IsAuthenticated])
 @transaction.atomic
 def auth_change_password(request):
+    request.user = User.objects.select_for_update().get(pk=request.user.pk)
     if is_directory_managed(request.user):
         return Response(
             {
@@ -5148,7 +5218,9 @@ def system_reset(request):
         return _backup_error_response(exc)
 
 
-@extend_schema(request=SystemSettingsPatchSerializer, responses=SystemSettingsSnapshotSerializer, methods=["PATCH"])
+@extend_schema(request=SystemSettingsPatchSerializer, responses=SystemSettingsSnapshotSerializer, methods=["PATCH"],
+    parameters=[OpenApiParameter("If-Match", OpenApiTypes.STR, location=OpenApiParameter.HEADER,
+        required=True, description="系统设置快照的 revision；与品牌设置共享版本，缺少 428，过期 409。")])
 @extend_schema(responses=SystemSettingsSnapshotSerializer, methods=["GET"])
 @api_view(["GET", "PATCH"])
 @permission_classes([CanManageSystemSettings])

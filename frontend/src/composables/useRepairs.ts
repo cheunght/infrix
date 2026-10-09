@@ -1,3 +1,4 @@
+import { revisionHeaders } from "../revision";
 import { ref, watch, type Ref } from "vue";
 import { ElMessage } from "element-plus/es/components/message/index.mjs";
 import type { LocationQuery } from "vue-router";
@@ -204,7 +205,7 @@ export function useRepairs(deps: RepairsDeps) {
     if (!deps.can("faults.view")) return;
     repairError.value = "";
     repairFormErrors.value = {};
-    selectedFault.value = fault;
+    selectedFault.value = {...fault, repair: fault.repair ? {...fault.repair} : null};
     repairForm.value = {
       provider: fault.repair?.provider || "",
       started_at: toDateTimeLocal(fault.repair?.started_at || null),
@@ -702,7 +703,7 @@ export function useRepairs(deps: RepairsDeps) {
         notes: repairForm.value.notes,
       };
       if (selectedFault.value.repair) {
-        await deps.request(`/repair-records/${selectedFault.value.repair.id}/`, { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload) });
+        await deps.request(`/repair-records/${selectedFault.value.repair.id}/`, { method: "PATCH", headers: revisionHeaders(selectedFault.value.repair), body: JSON.stringify(payload) });
       } else {
         await deps.request("/repair-records/", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload) });
       }

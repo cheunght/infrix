@@ -7,6 +7,7 @@ import type { SettingsContext } from "../page-context";
 import { applyBranding, type Branding } from "../branding";
 import { normalizeApiError } from "../error-handling";
 import { isAbortError } from "../api";
+import { revisionHeaders } from "../revision";
 
 const props = defineProps<{ context: SettingsContext }>();
 const { t } = useI18n();
@@ -71,7 +72,7 @@ async function save(reset = false) {
     for (const kind of kinds) if (files.value[kind]) body.append(kind, files.value[kind]!);
   }
   try {
-    const value = await props.context.request<Branding>("/system/settings/branding/", { method: "PATCH", body });
+    const value = await props.context.request<Branding>("/system/settings/branding/", { method: "PATCH", headers: {"If-Match": revisionHeaders(saved.value)["If-Match"]}, body });
     applyBranding(value);
     if (current === generation) {
       accept(value);

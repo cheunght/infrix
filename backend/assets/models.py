@@ -39,7 +39,7 @@ class RevisionQuerySet(models.QuerySet):
         return super().update(**kwargs)
 
 
-class RevisionedTimestamped(Timestamped):
+class RevisionedModel(models.Model):
     revision = models.PositiveBigIntegerField(default=1, editable=False)
     objects = RevisionQuerySet.as_manager()
 
@@ -52,6 +52,11 @@ class RevisionedTimestamped(Timestamped):
         super().save(*args, **kwargs)
         self.refresh_from_db(fields=["revision"])
 
+    class Meta:
+        abstract = True
+
+
+class RevisionedTimestamped(RevisionedModel, Timestamped):
     class Meta:
         abstract = True
 
@@ -771,7 +776,7 @@ SMTP_SECURITY_MODE_CHOICES = (
 )
 
 
-class SystemSetting(Timestamped):
+class SystemSetting(RevisionedTimestamped):
     """The singleton row for runtime-adjustable application defaults.
 
     This is deliberately a typed model rather than an arbitrary key/value
@@ -867,7 +872,7 @@ class NotificationDelivery(Timestamped):
         ]
 
 
-class DirectoryServiceConfiguration(Timestamped):
+class DirectoryServiceConfiguration(RevisionedTimestamped):
     """The singleton runtime configuration for the enterprise directory.
 
     The bind secret is deliberately stored only as an authenticated-encryption
@@ -1060,7 +1065,7 @@ class MaintenanceContract(Timestamped):
         ]
 
 
-class FaultEvent(Timestamped):
+class FaultEvent(RevisionedTimestamped):
     asset = models.ForeignKey(Asset, on_delete=models.PROTECT, related_name="fault_events")
     occurred_at = models.DateTimeField()
     reported_at = models.DateTimeField(null=True, blank=True)
@@ -1075,7 +1080,7 @@ class FaultEvent(Timestamped):
         ]
 
 
-class RepairRecord(Timestamped):
+class RepairRecord(RevisionedTimestamped):
     fault = models.OneToOneField(FaultEvent, on_delete=models.CASCADE, related_name="repair")
     provider = models.CharField(max_length=160, blank=True)
     started_at = models.DateTimeField(null=True, blank=True)
@@ -1162,7 +1167,7 @@ def attachment_upload_to(instance, filename):
     return f"attachments/{timezone.now():%Y/%m}/{uuid4().hex}{suffix}"
 
 
-class Attachment(models.Model):
+class Attachment(RevisionedModel):
     """A private document or image attached to an asset or repair record."""
 
     PHOTO = "photo"
@@ -1235,7 +1240,7 @@ def delete_attachment_file(sender, instance, **kwargs):
     transaction.on_commit(lambda: storage.delete(name))
 
 
-class InventoryTask(Timestamped):
+class InventoryTask(RevisionedTimestamped):
     STATUS = [("in_progress", "进行中"), ("completed", "已完成")]
     SCOPE = [
         ("all_assets", "全部资产"),
@@ -1288,7 +1293,7 @@ class InventoryTask(Timestamped):
         ]
 
 
-class InventoryItem(Timestamped):
+class InventoryItem(RevisionedTimestamped):
     STATUS = [
         ("pending", "未盘点"),
         ("normal", "正常"),
@@ -1470,6 +1475,7 @@ class UserDataScopeRule(models.Model):
 
 
 class UserSecurityProfile(Timestamped):
+    administration_revision = models.PositiveBigIntegerField(default=1, editable=False)
     LOCALE_CHOICES = [
         ("zh-CN", "简体中文"),
         ("en-US", "English"),

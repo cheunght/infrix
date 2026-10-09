@@ -16,7 +16,7 @@ from rest_framework.decorators import api_view, permission_classes
 from rest_framework.permissions import AllowAny
 from rest_framework.response import Response
 from drf_spectacular.types import OpenApiTypes
-from drf_spectacular.utils import extend_schema
+from drf_spectacular.utils import OpenApiParameter, extend_schema
 
 from .permissions import CanManageSystemSettings
 from .system_settings import apply_branding_patch, read_system_settings
@@ -90,7 +90,7 @@ def branding_payload(setting):
 def reset_branding_settings(*, actor=None, request=None, audit=True):
     """Restore branding defaults as part of the system-reset composition."""
 
-    return apply_branding_patch({}, reset=True, audit=audit, actor=actor, request=request)
+    return apply_branding_patch({}, reset=True, audit=audit, actor=actor, request=request, conditional=False)
 
 
 @extend_schema(responses=OpenApiTypes.OBJECT)
@@ -140,13 +140,16 @@ class BrandingUpdateSerializer(serializers.Serializer):
         return attrs
 
 
-@extend_schema(request=BrandingUpdateSerializer, responses=OpenApiTypes.OBJECT, methods=["PATCH"])
+@extend_schema(request=BrandingUpdateSerializer, responses=OpenApiTypes.OBJECT, methods=["PATCH"],
+    parameters=[OpenApiParameter("If-Match", OpenApiTypes.STR, location=OpenApiParameter.HEADER,
+        required=True, description="品牌设置返回的 revision；与系统设置共享版本，缺少 428，过期 409。")])
 @extend_schema(responses=OpenApiTypes.OBJECT, methods=["GET"])
 @api_view(["GET", "PATCH"])
 @permission_classes([CanManageSystemSettings])
 def branding_configuration(request):
     if request.method == "GET":
-        return Response(branding_payload(read_system_settings()))
+        setting = read_system_settings()
+        return Response({**branding_payload(setting), "revision": setting.revision})
     serializer = BrandingUpdateSerializer(data=request.data)
     serializer.is_valid(raise_exception=True)
     values = serializer.validated_data
@@ -157,4 +160,4 @@ def branding_configuration(request):
         actor=request.user,
         request=request,
     )
-    return Response(branding_payload(setting))
+    return Response({**branding_payload(setting), "revision": setting.revision})

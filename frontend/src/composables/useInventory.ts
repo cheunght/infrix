@@ -1,3 +1,4 @@
+import { revisionHeaders } from "../revision";
 import { computed, onBeforeUnmount, ref, watch, type Ref } from "vue";
 import { ElMessage } from "element-plus/es/components/message/index.mjs";
 import { ElMessageBox } from "element-plus/es/components/message-box/index.mjs";
@@ -882,7 +883,7 @@ export function useInventory(context: InventoryContext) {
     try {
       await context.request<InventoryItem>(`/inventory-items/${item.id}/`, {
         method: "PATCH",
-        headers: { "Content-Type": "application/json" },
+        headers: revisionHeaders(item),
         body: JSON.stringify({ status: "normal" }),
       });
       const [itemsLoaded, taskDetailLoaded] = await Promise.all([
@@ -1200,7 +1201,7 @@ export function useInventory(context: InventoryContext) {
       await loadRacks(item.system_rack_code);
     }
     if (itemAuxError.value) return false;
-    editingItem.value = item;
+    editingItem.value = {...item};
     const initialLocation =
       item.status === "normal"
         ? systemLocationFor(item)
@@ -1608,7 +1609,7 @@ export function useInventory(context: InventoryContext) {
           : itemForm.value;
     await context.request(`/inventory-items/${itemId}/`, {
       method: "PATCH",
-      headers: { "Content-Type": "application/json" },
+      headers: revisionHeaders(editingItem.value),
       body: JSON.stringify({
         status: itemForm.value.status,
         actual_placement: location.actual_placement,

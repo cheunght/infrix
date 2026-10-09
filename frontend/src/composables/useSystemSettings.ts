@@ -1,3 +1,4 @@
+import { revisionHeaders } from "../revision";
 import { computed, ref, watch, type Ref } from "vue";
 import { isAbortError } from "../api";
 import {
@@ -422,7 +423,7 @@ export function useSystemSettings(deps: SystemSettingsDeps) {
         "/system/settings/",
         {
           method: "PATCH",
-          headers: { "Content-Type": "application/json" },
+          headers: revisionHeaders(systemSettingsSnapshot.value),
           body: JSON.stringify(
             patchFromForm(systemSettingsForm.value, submittedKeys),
           ),

@@ -262,6 +262,7 @@ class RuntimePreferences:
 class SystemSettingsData:
     """Immutable read model exposed outside the settings persistence module."""
 
+    revision: int
     default_page_size: int
     default_asset_status: str
     default_locale: str
@@ -352,6 +353,7 @@ def ensure_system_settings() -> SystemSetting:
 
 
 _READ_MODEL_FIELDS = (
+    "revision",
     *GENERAL_SETTING_KEYS,
     *SECURITY_SETTING_KEYS,
     *SMTP_SETTING_KEYS,
@@ -445,6 +447,7 @@ def get_system_settings_snapshot(setting: SystemSettingsData | SystemSetting | N
     setting = setting or read_system_settings()
     return {
         "schema_version": 2,
+        "revision": setting.revision,
         "general": _values(setting, GENERAL_SETTING_KEYS),
         "security": _values(setting, SECURITY_SETTING_KEYS),
         "smtp": {
@@ -553,6 +556,9 @@ def apply_system_settings_patch(
             setting = SystemSetting.objects.select_for_update().get(pk=SystemSetting.SINGLETON_ID)
         except SystemSetting.DoesNotExist as exc:
             raise SystemSettingsValidationError({"detail": ["系统参数尚未初始化"]}) from exc
+        if request is not None:
+            from .resource_revision import check_resource_revision
+            check_resource_revision(setting, request)
         before = system_settings_snapshot(setting)
         values, smtp_password = _flatten_system_settings_patch(patch)
         candidate = {key: getattr(setting, key) for key in PUBLIC_SETTING_KEYS}
@@ -618,6 +624,7 @@ def apply_branding_patch(
     audit: bool = True,
     actor=None,
     request=None,
+    conditional=True,
 ) -> SystemSettingsData:
     """Persist branding through the settings module without exposing its ORM row."""
 
@@ -628,6 +635,9 @@ def apply_branding_patch(
 
     with transaction.atomic():
         setting = SystemSetting.objects.select_for_update().get(pk=SystemSetting.SINGLETON_ID)
+        if request is not None and conditional:
+            from .resource_revision import check_resource_revision
+            check_resource_revision(setting, request)
         before = _branding_audit_snapshot(setting)
         fields: list[str] = []
         if reset:

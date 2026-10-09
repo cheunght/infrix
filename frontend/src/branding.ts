@@ -3,7 +3,7 @@ import { apiBase } from "./api";
 import mark from "./assets/infrix-mark.png";
 import wordmark from "./assets/infrix-wordmark.png";
 
-export type Branding = { display_name: string; logo: string | null; compact_logo: string | null; favicon: string | null };
+export type Branding = { revision?: number; display_name: string; logo: string | null; compact_logo: string | null; favicon: string | null };
 const defaults: Branding = { display_name: "infrix", logo: null, compact_logo: null, favicon: null };
 export const branding = ref<Branding>({ ...defaults });
 export const brandingLogo = computed(() => branding.value.logo || wordmark);

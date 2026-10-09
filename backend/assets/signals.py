@@ -1,5 +1,6 @@
 from django.contrib.auth.models import Group, User
-from django.db.models.signals import post_delete, post_save, pre_delete, pre_save
+from django.db.models import F
+from django.db.models.signals import m2m_changed, post_delete, post_save, pre_delete, pre_save
 from django.dispatch import receiver
 
 from .models import Asset, AssetCustomValue, AssetNetworkAddress, AssetTag, MaintenanceContract, Person, ProcurementRecord, RackUnitAllocation, UserSecurityProfile
@@ -40,9 +41,15 @@ def protect_preset_role_delete(sender, instance, **kwargs):
 def detect_user_password_change(sender, instance, **kwargs):
     if not instance.pk:
         instance._password_changed = False
+        instance._administration_changed = False
         return
     update_fields = kwargs.get("update_fields")
-    previous = sender.objects.filter(pk=instance.pk).values("password").first()
+    fields = ("password", "username", "first_name", "last_name", "email", "is_active", "is_staff", "is_superuser")
+    previous = sender.objects.filter(pk=instance.pk).values(*fields).first()
+    instance._administration_changed = bool(previous) and any(
+        previous[field] != getattr(instance, field)
+        for field in fields if update_fields is None or field in update_fields
+    )
     if update_fields is not None and "password" not in update_fields:
         instance._password_changed = False
         return
@@ -52,6 +59,8 @@ def detect_user_password_change(sender, instance, **kwargs):
 
 @receiver(post_save, sender=User)
 def ensure_user_security_profile(sender, instance, created, **kwargs):
+    if kwargs.get("raw"):
+        return
     profile, profile_created = UserSecurityProfile.objects.get_or_create(
         user=instance,
         defaults={
@@ -63,6 +72,9 @@ def ensure_user_security_profile(sender, instance, created, **kwargs):
         profile.must_change_password = True
         profile.password_changed_at = None
         profile.save(update_fields=["must_change_password", "password_changed_at", "updated_at"])
+    if not created and getattr(instance, "_administration_changed", False):
+        UserSecurityProfile.objects.filter(user=instance).update(administration_revision=F("administration_revision") + 1)
+        instance._state.fields_cache.pop("security_profile", None)
 
     selected_person_id = getattr(instance, "_selected_person_id", None)
     if selected_person_id:
@@ -83,3 +95,16 @@ def ensure_user_security_profile(sender, instance, created, **kwargs):
             "is_active": True,
         },
     )
+
+
+@receiver(m2m_changed, sender=User.groups.through)
+def advance_user_role_revision(sender, instance, action, reverse, pk_set, **kwargs):
+    if action == "pre_clear":
+        instance._revision_user_ids = list(instance.user_set.values_list("pk", flat=True)) if reverse else [instance.pk]
+    if action not in {"post_add", "post_remove", "post_clear"}:
+        return
+    user_ids = getattr(instance, "_revision_user_ids", ()) if action == "post_clear" else (pk_set if reverse else [instance.pk])
+    if user_ids:
+        UserSecurityProfile.objects.filter(user_id__in=user_ids).update(administration_revision=F("administration_revision") + 1)
+    if not reverse:
+        instance._state.fields_cache.pop("security_profile", None)

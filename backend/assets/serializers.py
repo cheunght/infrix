@@ -117,6 +117,7 @@ class DataScopeSerializer(DataScopeBoundarySerializer):
 
 
 class UserSerializer(serializers.ModelSerializer):
+    revision = serializers.SerializerMethodField()
     display_name = serializers.SerializerMethodField()
     password = serializers.CharField(
         write_only=True,
@@ -144,6 +145,12 @@ class UserSerializer(serializers.ModelSerializer):
 
     def get_display_name(self, obj) -> str:
         return obj.get_full_name() or obj.username
+
+    def get_revision(self, obj) -> int:
+        try:
+            return obj.security_profile.administration_revision
+        except UserSecurityProfile.DoesNotExist:
+            return 1
 
     def get_roles(self, obj) -> list[dict[str, str]]:
         return [role.as_dict() for role in read_authorization_snapshot(obj).roles]
@@ -263,7 +270,7 @@ class UserSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = User
-        fields = ["id", "username", "display_name", "first_name", "last_name", "email", "is_active", "is_staff", "is_superuser", "role_code", "normalize_roles", "roles", "primary_role_code", "role_anomaly", "auth_source", "directory_provider", "directory_login_identifier", "directory_last_seen_at", "person", "person_id", "password", "last_login", "date_joined"]
+        fields = ["id", "revision", "username", "display_name", "first_name", "last_name", "email", "is_active", "is_staff", "is_superuser", "role_code", "normalize_roles", "roles", "primary_role_code", "role_anomaly", "auth_source", "directory_provider", "directory_login_identifier", "directory_last_seen_at", "person", "person_id", "password", "last_login", "date_joined"]
         read_only_fields = ["id", "display_name", "is_staff", "is_superuser", "roles", "primary_role_code", "role_anomaly", "last_login", "date_joined"]
 
 
@@ -411,6 +418,7 @@ class SystemSettingsSnapshotSerializer(serializers.Serializer):
     """Serialize the grouped, secret-safe system-settings snapshot."""
 
     schema_version = serializers.IntegerField(read_only=True)
+    revision = serializers.IntegerField(read_only=True)
     general = SystemSettingsGeneralSerializer(read_only=True)
     security = SystemSettingsSecuritySerializer(read_only=True)
     smtp = SystemSettingsSmtpSerializer(read_only=True)
@@ -813,7 +821,7 @@ class AssetBulkEditResponseSerializer(serializers.Serializer):
     results = AssetBulkEditResultSerializer(many=True)
 
 
-class AttachmentSerializer(serializers.ModelSerializer):
+class AttachmentSerializer(ResourceRevisionSerializerMixin, serializers.ModelSerializer):
     asset = serializers.PrimaryKeyRelatedField(queryset=Asset.objects.all(), required=False)
     repair = serializers.PrimaryKeyRelatedField(queryset=RepairRecord.objects.select_related("fault__asset"), required=False, allow_null=True)
     file = serializers.FileField(write_only=True, required=False)
@@ -938,6 +946,7 @@ class AttachmentSerializer(serializers.ModelSerializer):
 
 
 class UserBatchStatusSerializer(serializers.Serializer):
+    revisions = serializers.DictField(child=serializers.IntegerField(min_value=1), required=False, default=dict)
     ids = serializers.ListField(
         child=serializers.IntegerField(min_value=1),
         allow_empty=False,
@@ -952,6 +961,7 @@ class UserBatchStatusSerializer(serializers.Serializer):
 
 
 class UserBatchStatusResultSerializer(serializers.Serializer):
+    current_revision = serializers.IntegerField(required=False, allow_null=True)
     id = serializers.IntegerField()
     username = serializers.CharField(allow_blank=True)
     success = serializers.BooleanField()
@@ -3385,7 +3395,7 @@ class InventoryBulkNormalResponseSerializer(serializers.Serializer):
     results = InventoryBulkNormalResultSerializer(many=True)
 
 
-class InventoryItemSerializer(serializers.ModelSerializer):
+class InventoryItemSerializer(ResourceRevisionSerializerMixin, serializers.ModelSerializer):
     actual_data_center_id = serializers.PrimaryKeyRelatedField(source="actual_data_center_ref", queryset=DataCenter.objects.all(), required=False, allow_null=True)
     task_name = serializers.CharField(source="task.name", read_only=True)
     asset_no = serializers.SerializerMethodField()
@@ -3591,7 +3601,7 @@ class InventoryItemPageSerializer(serializers.Serializer):
     results = InventoryItemSerializer(many=True)
 
 
-class InventoryTaskSerializer(serializers.ModelSerializer):
+class InventoryTaskSerializer(ResourceRevisionSerializerMixin, serializers.ModelSerializer):
     @transaction.atomic
     def create(self, validated_data):
         try:
@@ -3900,7 +3910,7 @@ class NotificationDeliverySerializer(serializers.ModelSerializer):
         read_only_fields = fields
 
 
-class FaultEventSerializer(serializers.ModelSerializer):
+class FaultEventSerializer(ResourceRevisionSerializerMixin, serializers.ModelSerializer):
     occurred_at = SystemDateTimeInputField()
     reported_at = SystemDateTimeInputField(required=False, allow_null=True)
     asset_no = serializers.CharField(source="asset.asset_no", read_only=True)
@@ -3940,7 +3950,7 @@ class FaultEventSerializer(serializers.ModelSerializer):
         read_only_fields = ["id", "created_at", "updated_at", "asset_no", "asset_name", "resolved_at", "is_closed", "repair"]
 
 
-class RepairRecordSerializer(serializers.ModelSerializer):
+class RepairRecordSerializer(ResourceRevisionSerializerMixin, serializers.ModelSerializer):
     started_at = SystemDateTimeInputField(required=False, allow_null=True)
     finished_at = SystemDateTimeInputField(required=False, allow_null=True)
 

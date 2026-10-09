@@ -46,7 +46,7 @@ import NotificationCenter from "./components/NotificationCenter.vue";
 import LanguageSwitcher from "./components/LanguageSwitcher.vue";
 import { branding, brandingLogo, brandingMark, brandingImageFailed, loadBranding } from "./branding";
 import { statusLabel } from "./status";
-import { currentLocale, elementPlusLocale, normalizeLocale, setLocale, type Locale } from "./i18n";
+import { currentLocale, elementPlusLocale, setLocale, type Locale } from "./i18n";
 import { useI18n } from "vue-i18n";
 import {
   routeForPage,
@@ -1493,23 +1493,9 @@ async function confirmAction(message: string) {
 
 async function persistLocalePreference(locale: Locale) {
   if (!authenticated.value || localeSaving.value) return;
-  const previousLocale = profileForm.value.locale;
   localeSaving.value = true;
-  profileForm.value.locale = locale;
   try {
-    const user = await request<{ locale?: string }>("/auth/me/", {
-      method: "PATCH",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ locale }),
-    });
-    const savedLocale = normalizeLocale(user.locale || locale);
-    profileForm.value.locale = savedLocale;
-    setLocale(savedLocale);
-  } catch {
-    profileForm.value.locale = previousLocale;
-    setLocale(previousLocale);
-    actionMessageType.value = "error";
-    actionMessage.value = t("auth.languageSaveFailed");
+    await auth.saveLocalePreference(locale);
   } finally {
     localeSaving.value = false;
   }

@@ -173,6 +173,7 @@ export type RuntimeSettings = {
 };
 
 export type SystemSettingsSnapshot = {
+  revision?: number;
   schema_version: number;
   general: GeneralSettings;
   security: SecuritySettings;
@@ -844,6 +845,7 @@ export type AttachmentCategoryOption = {
   scopes: Array<"asset" | "repair">;
 };
 export type AssetAttachment = {
+  revision?: number;
   id: number;
   asset: number;
   repair: number | null;
@@ -896,6 +898,7 @@ export type InventoryBulkNormalResponse = {
   results: InventoryBulkNormalResult[];
 };
 export type InventoryItem = {
+  revision?: number;
   id: number;
   task: number;
   task_name: string;
@@ -950,6 +953,7 @@ export type InventorySummary = {
 };
 export type InventoryTaskScope = "all_assets" | "data_center" | "server_room";
 export type InventoryTask = {
+  revision?: number;
   id: number;
   name: string;
   scope: InventoryTaskScope;
@@ -1044,7 +1048,7 @@ export type FacilitySummary = {
   rooms: Array<ServerRoom & { total_u?: number; used_u?: number | null }>;
   racks: Array<Rack & { room_id: number; device_count?: number | null }>;
 };
-export type FaultEvent = { id: number; asset: number; asset_no: string; asset_name: string; occurred_at: string; reported_at: string | null; resolved_at: string | null; reason: string; description: string; is_closed: boolean; repair: { id: number; fault: number; provider: string; started_at: string | null; finished_at: string | null; cost: string | null; notes: string } | null };
+export type FaultEvent = { revision?: number; id: number; asset: number; asset_no: string; asset_name: string; occurred_at: string; reported_at: string | null; resolved_at: string | null; reason: string; description: string; is_closed: boolean; repair: { revision?: number; id: number; fault: number; provider: string; started_at: string | null; finished_at: string | null; cost: string | null; notes: string } | null };
 export type RepairPartUsage = {
   id: number;
   fault: number;
@@ -1111,6 +1115,7 @@ export type AuthorizationSnapshot = {
 export type Role = { code: string; name: string; description: string; capabilities: string[]; user_count?: number };
 export type AuthSource = "local" | "ldap";
 export type ManagedUser = {
+  revision?: number;
   id: number;
   username: string;
   display_name: string;
@@ -1156,6 +1161,7 @@ export type LdapStatus = {
 export type LdapDirectoryType = "active_directory" | "generic_ldap";
 export type LdapSecurityMode = "ldaps" | "starttls" | "none";
 export type LdapConfiguration = {
+  revision?: number;
   enabled: boolean;
   directory_type: LdapDirectoryType;
   primary_host: string;

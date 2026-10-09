@@ -66,6 +66,7 @@ class ConfigurationIdentityError(Exception):
 
 @dataclass(frozen=True)
 class EffectiveLDAPConfiguration:
+    revision: int = 0
     enabled: bool = False
     directory_type: str = DIRECTORY_TYPE_GENERIC_LDAP
     primary_host: str = ""
@@ -133,6 +134,7 @@ def _from_record(record: DirectoryServiceConfiguration) -> EffectiveLDAPConfigur
         record.bind_password_encrypted
     )
     return EffectiveLDAPConfiguration(
+        revision=record.revision,
         enabled=record.enabled,
         directory_type=record.directory_type,
         primary_host=record.primary_host,
@@ -364,6 +366,7 @@ def public_configuration(config: EffectiveLDAPConfiguration) -> dict[str, Any]:
     identity_count = directory_identity_count()
     return {
         "enabled": config.enabled,
+        "revision": config.revision,
         "directory_type": config.directory_type,
         "primary_host": config.primary_host,
         "primary_port": config.primary_port,
@@ -402,11 +405,6 @@ def save_configuration(
     password_submitted: bool,
     password_value: str,
 ) -> DirectoryServiceConfiguration:
-    current_record = get_configuration_record()
-    encrypted_password = current_record.bind_password_encrypted if current_record else ""
-    if password_submitted and password_value:
-        encrypted_password = encrypt_bind_password(password_value)
-
     field_values = {
         field: getattr(candidate, field)
         for field in (
@@ -433,11 +431,12 @@ def save_configuration(
             "operation_timeout",
         )
     }
-    field_values["bind_password_encrypted"] = encrypted_password
     with transaction.atomic():
         record = (
             DirectoryServiceConfiguration.objects.select_for_update().filter(pk=1).first()
         )
+        field_values["bind_password_encrypted"] = (encrypt_bind_password(password_value)
+            if password_submitted and password_value else (record.bind_password_encrypted if record else ""))
         persisted_configuration = _from_record(record) if record is not None else candidate
         identity_errors = identity_anchor_errors(persisted_configuration, candidate)
         if identity_errors:

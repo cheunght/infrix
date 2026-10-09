@@ -4,21 +4,24 @@ from drf_spectacular.utils import extend_schema, OpenApiParameter, OpenApiTypes
 from rest_framework.exceptions import APIException, NotFound, ValidationError
 from rest_framework.response import Response
 
-from .models import RevisionedTimestamped, Rack, ServerRoom
+from .models import RevisionedModel, Rack, ServerRoom, FaultEvent, RepairRecord, InventoryTask, InventoryItem, Attachment
 from .physical_location import lock_rack_location, lock_server_room_location
 
 
 def check_resource_revision(instance, request):
-    raw = request.headers.get("If-Match")
+    check_revision(instance.revision, request.headers.get("If-Match"))
+
+
+def check_revision(current_revision, raw, *, allow_zero=False):
     if not raw:
         raise ResourceRevisionRequired()
-    token = raw.strip()
+    token = str(raw).strip()
     if token.startswith('"') and token.endswith('"'):
         token = token[1:-1]
-    if len(token) > 20 or not token.isascii() or not token.isdecimal() or int(token) < 1:
+    if len(token) > 20 or not token.isascii() or not token.isdecimal() or int(token) < (0 if allow_zero else 1):
         raise ValidationError({"code": "resource_revision_invalid", "detail": "If-Match 必须是读取记录时返回的修订号"})
-    if int(token) != instance.revision:
-        raise ResourceRevisionConflict({"code": "resource_revision_conflict", "current_revision": instance.revision,
+    if int(token) != current_revision:
+        raise ResourceRevisionConflict({"code": "resource_revision_conflict", "current_revision": current_revision,
             "detail": "记录已被其他操作更新，当前修改未保存；请重新读取并确认差异后提交"})
 
 
@@ -33,11 +36,15 @@ class ResourceRevisionConflict(APIException):
 
 class ResourceRevisionViewSetMixin:
     @extend_schema(parameters=[OpenApiParameter("If-Match", OpenApiTypes.STR, location=OpenApiParameter.HEADER,
-        description="主数据记录的 revision；受保护记录必填，缺少 428，过期 409。")])
+        description="可编辑记录的 revision；受保护记录必填，缺少 428，过期 409。")])
     @transaction.atomic
     def update(self, request, *args, **kwargs):
         instance = self.get_object()
-        if not isinstance(instance, RevisionedTimestamped):
+        if not isinstance(instance, RevisionedModel):
+            return super().update(request, *args, **kwargs)
+        if isinstance(instance, (FaultEvent, RepairRecord, InventoryTask, InventoryItem, Attachment)):
+            # Business views compare under their domain's existing lock order.
+            check_resource_revision(instance, request)
             return super().update(request, *args, **kwargs)
         partial = kwargs.pop("partial", False)
         # Facilities must retain center -> room -> rack -> asset order.

@@ -457,7 +457,7 @@ export function useOrganizationSettings(deps: OrganizationSettingsDeps) {
     try {
       const result = await deps.request<LdapConfiguration>("/auth/ldap/config/", {
         method: "PATCH",
-        headers: { "Content-Type": "application/json" },
+        headers: revisionHeaders(ldapConfiguration.value, true),
         body: JSON.stringify(ldapConfigurationPayload()),
       });
       ldapConfiguration.value = result;
@@ -1208,7 +1208,7 @@ export function useOrganizationSettings(deps: OrganizationSettingsDeps) {
 
   function openUserModal(user?: ManagedUser) {
     if (!deps.can("organization.manage")) return;
-    editingUser.value = user || null;
+    editingUser.value = user ? {...user} : null;
     userFormErrors.value = {};
     userForm.value = user
       ? {
@@ -1301,7 +1301,7 @@ export function useOrganizationSettings(deps: OrganizationSettingsDeps) {
       const path = editingUser.value ? `/users/${editingUser.value.id}/` : "/users/";
       await deps.request(path, {
         method,
-        headers: { "Content-Type": "application/json" },
+        headers: revisionHeaders(editingUser.value),
         body: JSON.stringify({
           ...(!editingUser.value ? { username: userForm.value.username } : {}),
           first_name: userForm.value.first_name,
@@ -1349,7 +1349,7 @@ export function useOrganizationSettings(deps: OrganizationSettingsDeps) {
     try {
       await deps.request(`/users/${user.id}/`, {
         method: "PATCH",
-        headers: { "Content-Type": "application/json" },
+        headers: revisionHeaders(user),
         body: JSON.stringify({ is_active: !user.is_active }),
       });
       setActionMessage(user.is_active ? tr("settings.userDisabled") : tr("settings.userEnabled"));
@@ -1365,6 +1365,7 @@ export function useOrganizationSettings(deps: OrganizationSettingsDeps) {
   async function batchUpdateUserStatus(isActive: boolean) {
     if (!deps.can("organization.manage")) return;
     const ids = [...selectedUserIds.value];
+    const revisions = Object.fromEntries(users.value.filter(user => ids.includes(user.id)).map(user => [user.id,user.revision]));
     if (!ids.length || userBatchSaving.value) return;
     const actionLabel = isActive ? tr("status.enabled") : tr("status.disabled");
     if (!(await deps.confirmAction(tr("settings.batchUserStatusConfirm", { action: actionLabel, count: ids.length })))) return;
@@ -1376,7 +1377,7 @@ export function useOrganizationSettings(deps: OrganizationSettingsDeps) {
       const result = await deps.request<UserBatchStatusResponse>("/users/batch-status/", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ ids, is_active: isActive }),
+        body: JSON.stringify({ ids, revisions, is_active: isActive }),
       });
       userBatchResult.value = result;
       const mutationMessage = result.failed
