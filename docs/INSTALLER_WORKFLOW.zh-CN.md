@@ -2,6 +2,12 @@
 
 本文档补充[Rocky Linux 安装文档](DEPLOYMENT.zh-CN.md)中的命令，说明安装器的实际行为。英文版本见[Installer Workflow](INSTALLER_WORKFLOW.md)。
 
+## 运行依赖与账号范围
+
+后端安装入口仍为 `backend/requirements.txt`，它引用精确版本及 PyPI 来源锁 `backend/requirements.lock`；原版本范围保留在 `backend/requirements.in`，升级依赖时同时更新锁。前端使用 `package-lock.json`。发布包必须包含锁文件；离线安装继续使用安装器准备的 wheel 目录。
+
+迁移 `0009_user_data_scope` 后，原系统管理员拥有全局范围，普通账号默认没有业务数据范围。首次开放业务前，在主应用为账号配置中心或待归属授权。Admin 仅系统管理员可进入且业务记录只读。详见[数据中心范围授权](DATA-SCOPE.zh-CN.md)。
+
 ## 首次安装
 
 自动安装支持 Rocky Linux 9.x。在项目根目录或解压后的发布包目录执行：

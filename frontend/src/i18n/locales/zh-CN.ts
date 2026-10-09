@@ -1,4 +1,18 @@
 export default {
+  dataScope: {
+    title: "数据范围授权",
+    description: "配置账号可访问的数据中心。功能权限仍由角色决定。",
+    adminHint: "系统管理员角色拥有全局范围；如需缩小范围，请先调整角色。",
+    readCenters: "可读取的数据中心",
+    writeCenters: "可写入的数据中心",
+    unlocatedRead: "读取待归属资产",
+    unlocatedWrite: "写入待归属资产",
+    globalRead: "全局读取",
+    globalWrite: "全局写入",
+    globalMetrics: "查看全局库存指标",
+    writeImpliesRead: "写入授权包含同范围读取。未授权时不开放业务数据；撤销授权会等待在途请求完成。",
+    notAuthorized: "无权限",
+  },
   operations: {
     statusTab: "运行状态", resetTab: "系统重置",
     emailEnabled: "启用每日邮件摘要", recipients: "摘要人员", additionalRecipients: "其他收件邮箱（可选）", applicationUrl: "应用 HTTPS 访问地址",

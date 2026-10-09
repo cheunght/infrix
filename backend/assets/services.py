@@ -1,3 +1,4 @@
+from .data_scope import require_center, require_object
 from datetime import date
 from decimal import Decimal, InvalidOperation
 from ipaddress import ip_address
@@ -266,6 +267,7 @@ def confirm_inventory_item_normal(
     lock_asset_location(asset_id=admission["asset_id"], target_rack_id=snapshot.get("rack_id"), target_data_center_id=snapshot.get("data_center_id"))
     active_asset_for_update(admission["asset_id"])
     task = InventoryTask.objects.select_for_update().get(pk=admission["task_id"])
+    require_object(task, user=actor)
     item = InventoryItem.objects.select_for_update().get(pk=item_id)
     if task.status != "in_progress":
         raise DRFValidationError({"detail": "已完成的盘点任务不能批量标记为正常"})
@@ -394,6 +396,7 @@ def resolve_inventory_item(*, item_id, action, note, actor, request):
                         target_data_center_id=admission["actual_data_center_ref_id"] if action == "update_asset" else None)
     asset = active_asset_for_update(admission["asset_id"])
     task = InventoryTask.objects.select_for_update().get(pk=admission["task_id"])
+    require_object(task, user=actor)
     item = InventoryItem.objects.select_for_update().get(pk=item_id)
     if any(admission[field] != getattr(item, field) for field in observation_fields):
         raise InventoryObservationConflict({"code": "inventory_observation_changed", "detail": "现场位置已被修改，请重新读取盘点结果后处理"})
@@ -1508,6 +1511,8 @@ def apply_spare_stock_transaction(validated_data, operator, *, audit_context=Non
         locations.append((source_dc, source_room))
     if target_dc:
         locations.append((target_dc, target_room))
+    for center, _ in locations:
+        require_center(center.pk, user=operator)
     # Lock each data center once. This also serializes the nullable-room stock
     # lookup and avoids duplicate zero balances for central (room-less) stock.
     locked_centers = {}

@@ -3,6 +3,41 @@ from django.http import JsonResponse
 from .maintenance_gate import MaintenanceUnavailable, business_access
 
 
+class DataScopeContextMiddleware:
+    def __init__(self, get_response):
+        self.get_response = get_response
+
+    def __call__(self, request):
+        from .data_scope import _actor, _scope_snapshot
+        token = _actor.set(None)
+        scope_token = _scope_snapshot.set(None)
+        def release():
+            access = getattr(request, "_data_scope_access", None)
+            if access is not None:
+                del request._data_scope_access
+                access.__exit__(None, None, None)
+        try:
+            response = self.get_response(request)
+            if response.streaming:
+                content = response.streaming_content
+                def stream():
+                    try:
+                        yield from content
+                    finally:
+                        release()
+                response.streaming_content = stream()
+                response._resource_closers.append(release)
+            else:
+                release()
+            return response
+        except BaseException:
+            release()
+            raise
+        finally:
+            _scope_snapshot.reset(scope_token)
+            _actor.reset(token)
+
+
 class MaintenanceAdmissionMiddleware:
     """Hold admission through authentication, commit callbacks and streaming."""
 

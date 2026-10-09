@@ -1079,6 +1079,11 @@ export type AuthorizationSnapshot = {
   roles: AuthorizationRole[];
   capabilities: string[];
   is_system_admin: boolean;
+  data_scope?: {
+    global_read: boolean; global_write: boolean;
+    read_data_centers: number[]; write_data_centers: number[];
+    unlocated_read: boolean; unlocated_write: boolean; global_stock_metrics: boolean;
+  };
 };
 export type Role = { code: string; name: string; description: string; capabilities: string[]; user_count?: number };
 export type AuthSource = "local" | "ldap";
@@ -1237,10 +1242,10 @@ export type SparePart = { revision?: number;
   safety_stock: number;
   storage_location: string;
   notes: string;
-  total_quantity: number;
-  location_count: number;
-  has_stock_movements: boolean;
-  is_low_stock: boolean;
+  total_quantity: number | null;
+  location_count: number | null;
+  has_stock_movements: boolean | null;
+  is_low_stock: boolean | null;
   created_at?: string;
   updated_at?: string;
 };

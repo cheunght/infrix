@@ -63,6 +63,25 @@ class ResourceRevisionViewSetMixin:
 
 
 class ResourceRevisionSerializerMixin:
+    def to_representation(self, instance):
+        data = super().to_representation(instance)
+        from .data_scope import scope_for
+        request = self.context.get("request")
+        if request is not None:
+            scope = scope_for(request.user)
+            if not scope.global_stock_metrics and instance.__class__.__name__ == "SparePart":
+                for key in ("total_quantity", "location_count", "has_stock_movements", "is_low_stock"):
+                    if key in data:
+                        data[key] = None
+                data["global_stock_metrics_visible"] = False
+            elif instance.__class__.__name__ == "SparePart":
+                data["global_stock_metrics_visible"] = True
+            if not scope.global_read and instance.__class__.__name__ not in {"DataCenter", "ServerRoom", "Rack"}:
+                for key in ("assets_count", "asset_count", "assigned_assets_count"):
+                    if key in data:
+                        data[key] = None
+        return data
+
     def get_fields(self):
         from rest_framework import serializers
         fields = super().get_fields()

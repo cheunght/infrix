@@ -16,6 +16,7 @@ from django.core.exceptions import ValidationError
 from django.db import transaction
 
 from .models import Asset, DataCenter, InventoryTask, Rack, RackUnitAllocation, ServerRoom
+from .data_scope import require_center, require_object
 
 
 class RoomReparentBlocked(ValueError):
@@ -123,6 +124,11 @@ def lock_asset_location(*, asset_id: int, target_rack_id: int | None = None, tar
         allocation_rack_ids=affected_rack_ids,
         asset_ids=(asset_id,),
     )
+    require_object(Asset.all_objects.get(pk=asset_id))
+    if target_rack_id:
+        require_center(Rack.objects.values_list("room__data_center_id", flat=True).get(pk=target_rack_id))
+    if target_data_center_id is not None:
+        require_center(int(target_data_center_id))
 
 
 def lock_rack_location(*, rack_id: int, target_room_id: int | None = None) -> Rack:
@@ -142,6 +148,8 @@ def lock_rack_location(*, rack_id: int, target_room_id: int | None = None) -> Ra
         rack_ids=(rack_id,),
         allocation_rack_ids=(rack_id,),
     )
+    require_object(Rack.objects.get(pk=rack_id))
+    require_center(ServerRoom.objects.values_list("data_center_id", flat=True).get(pk=target_room_id))
     return Rack.objects.select_for_update().select_related(
         "room__data_center"
     ).get(pk=rack_id)
@@ -167,6 +175,8 @@ def lock_server_room_location(
         rack_ids=rack_ids,
         allocation_rack_ids=rack_ids,
     )
+    require_object(ServerRoom.objects.get(pk=room_id))
+    require_center(target_data_center_id)
     return ServerRoom.objects.select_for_update().select_related(
         "data_center"
     ).get(pk=room_id)
@@ -257,6 +267,7 @@ def place_asset(*, asset_id: int, rack_id: int, start_u: int, end_u: int) -> boo
 @transaction.atomic
 def set_direct_asset_placement(*, asset_id: int, data_center_id: int | None) -> bool:
     """Remove rack occupancy and set a direct center or an unlocated state."""
+    require_center(data_center_id)
     lock_asset_location(asset_id=asset_id, target_data_center_id=data_center_id)
     from .asset_retention import active_asset_for_update
     asset = active_asset_for_update(asset_id)

@@ -87,7 +87,8 @@ class SecureAdminAuthenticationForm(forms.Form):
                 code="invalid_login",
             ) from exc
         user = result.user
-        if not user.is_active or not user.is_staff:
+        from .organization_access import can
+        if not user.is_active or not user.is_staff or not can(user, "organization.manage"):
             raise forms.ValidationError(
                 _("Please enter the correct username and password for a staff account."),
                 code="invalid_login",
@@ -119,6 +120,9 @@ class SecureAdminSite(admin.AdminSite):
     def has_permission(self, request):
         user = getattr(request, "user", None)
         if not user or not user.is_active or not user.is_staff:
+            return False
+        from .organization_access import can
+        if not can(user, "organization.manage"):
             return False
         if requires_password_change(user):
             return False

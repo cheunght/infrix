@@ -53,3 +53,20 @@ The business fact recorded when a dedicated disposal action causes an asset to e
 
 **Legacy retired asset**:
 An asset already stored as retired before disposal records were introduced. It may have no disposal fact and must be shown as historical, not as an uncompleted disposal.
+
+## Data authorization
+
+**Function capability**:
+Permission to perform a kind of operation. It does not grant access to every record on which the operation could run.
+
+**Data scope**:
+The explicitly granted set of data centers or unlocated assets within which an account may read or write. Write access includes read access in the same scope. Missing grants deny business data access.
+
+**Global data authorization**:
+An explicit authorization to operate across all data centers and unlocated assets; the system administrator role carries this authorization. Staff status and other business roles do not imply it.
+
+**Fully visible inventory task**:
+An inventory task whose task center, every asset's current location, frozen original location, and recorded observation are within the account's authorized scope. A partial task is not exposed as a complete task.
+
+**Shared reference data**:
+Company-wide catalogs and directories used to identify and select business entities. Access to shared reference data does not grant access to related assets, stock balances, or global business metrics.

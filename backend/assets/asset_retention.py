@@ -16,10 +16,14 @@ def active_asset_for_update(asset_id):
         raise NotFound("资产不存在") from exc
     if asset.archived_at is not None:
         raise AssetArchived()
+    from .data_scope import require_object
+    require_object(asset)
     return asset
 
 
 def visible_assets(request, queryset):
+    from .data_scope import scoped
+    queryset = scoped(queryset, user=request.user, write=request.method not in {"GET", "HEAD", "OPTIONS"})
     archived = request.query_params.get("archived", "false").lower()
     if archived not in {"true", "false"}:
         raise ValidationError({"archived": "必须是 true 或 false"})

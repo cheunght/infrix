@@ -1,4 +1,18 @@
 export default {
+  dataScope: {
+    title: "Data access scope",
+    description: "Assign data centers for this account. Roles still control functional permissions.",
+    adminHint: "System administrators have global access. Change the role first to restrict scope.",
+    readCenters: "Readable data centers",
+    writeCenters: "Writable data centers",
+    unlocatedRead: "Read unlocated assets",
+    unlocatedWrite: "Write unlocated assets",
+    globalRead: "Global read access",
+    globalWrite: "Global write access",
+    globalMetrics: "View global stock metrics",
+    writeImpliesRead: "Write access includes read access in the same scope. Missing grants deny business data access. Revocation waits for in-flight requests.",
+    notAuthorized: "Not authorized",
+  },
   operations: {
     statusTab: "System status", resetTab: "System reset",
     emailEnabled: "Enable daily email digest", recipients: "Digest people", additionalRecipients: "Additional email addresses (optional)", applicationUrl: "Application HTTPS URL",

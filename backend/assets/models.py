@@ -1419,6 +1419,20 @@ class IdempotentMutation(models.Model):
         constraints = [models.UniqueConstraint(fields=["actor", "scope", "key_hash"], name="unique_idempotent_mutation")]
 
 
+class UserDataScope(Timestamped):
+    """Explicit grants; absence of a row grants no business data access."""
+
+    user = models.OneToOneField(settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name="data_scope")
+    read_data_centers = models.ManyToManyField(DataCenter, related_name="read_scope_grants", blank=True)
+    write_data_centers = models.ManyToManyField(DataCenter, related_name="write_scope_grants", blank=True)
+    global_read = models.BooleanField(default=False)
+    global_write = models.BooleanField(default=False)
+    unlocated_read = models.BooleanField(default=False)
+    unlocated_write = models.BooleanField(default=False)
+    global_stock_metrics = models.BooleanField(default=False)
+    revision = models.PositiveBigIntegerField(default=1, editable=False)
+
+
 class UserSecurityProfile(Timestamped):
     LOCALE_CHOICES = [
         ("zh-CN", "简体中文"),

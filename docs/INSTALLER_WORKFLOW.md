@@ -4,6 +4,12 @@ This document explains the behavior of the Infrix installer beyond the
 command examples in the [Rocky Linux installation guide](INSTALL_VM.md). For
 the Chinese version, see [安装流程说明](INSTALLER_WORKFLOW.zh-CN.md).
 
+## Runtime dependencies and account scopes
+
+The backend installation entry remains `backend/requirements.txt`, which includes the exact versions and PyPI source in `backend/requirements.lock`. Version ranges remain in `backend/requirements.in`; update the lock alongside dependency changes. The frontend retains `package-lock.json`. Release packages must include the lock; offline installation continues to use the installer's prepared wheel directory.
+
+After migration `0009_user_data_scope`, system administrators retain global access. Other accounts have no business data scope until explicitly granted centers or unlocated-asset access in the application. Assign grants before opening the system to ordinary users. Admin access is limited to system administrators and business records remain read-only. See the [data scope policy](DATA-SCOPE.zh-CN.md).
+
 ## First installation
 
 The automatic installer supports Rocky Linux 9.x. Run it from the project root

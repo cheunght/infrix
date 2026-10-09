@@ -8,6 +8,7 @@ import type { OrganizationSettingsState } from "../composables/useOrganizationSe
 import type { Department, ManagedUser, Person, PersonOption } from "../types";
 import { roleDescription, roleLabel } from "../business-enums";
 import { systemSettingsState } from "../system-settings";
+import DataScopeDialog from "./DataScopeDialog.vue";
 import SearchField from "./SearchField.vue";
 import SearchableSelect, { type SearchableSelectOption } from "./SearchableSelect.vue";
 import PagedTable from "./PagedTable.vue";
@@ -33,6 +34,9 @@ const props = defineProps<{
 const { t } = useI18n();
 const context = props.context;
 const organization = props.organization;
+const scopeUser = ref<ManagedUser | null>(null);
+const showDataScope = ref(false);
+function openDataScope(user: ManagedUser) { scopeUser.value = user; showDataScope.value = true; }
 
 const {
   organizationTab,
@@ -355,7 +359,7 @@ function applyPeopleFilters() {
             <el-table-column :label="t('settings.authSource')" width="116"><template #default="{ row }"><el-tooltip :content="userDirectoryTooltip(row)" placement="top"><el-tag :type="row.auth_source === 'ldap' ? 'warning' : 'info'" size="small">{{ row.auth_source === 'ldap' ? t('settings.ldapAccount') : t('settings.localAccount') }}</el-tag></el-tooltip></template></el-table-column>
             <el-table-column :label="t('settings.role')" min-width="190"><template #default="{ row }"><div class="settings-user-role-list"><el-tag v-for="role in row.roles" :key="role.code" size="small">{{ roleLabel(role.code, role.name) }}</el-tag><el-tag v-if="row.role_anomaly === 'multiple'" type="warning" size="small">{{ t('settings.multipleRoles') }}</el-tag></div></template></el-table-column>
             <el-table-column :label="t('common.status')" width="120"><template #default="{ row }"><StatusTag :tone="row.is_active ? 'success' : 'info'" :label="row.is_active ? t('status.active') : t('status.inactive')" /></template></el-table-column>
-            <el-table-column v-if="can('organization.manage')" :label="t('common.operation')" width="152" fixed="right"><template #default="{ row }"><div class="ep-table-actions"><el-button-group><TableIconButton :icon="Edit" :label="t('common.edit')" type="primary" :disabled="userPendingId === row.id || userSaving" @click="openUserModal(row)" /><TableIconButton :icon="row.is_active ? CircleClose : CircleCheck" :label="userProtectionReason(row) || (row.is_active ? t('status.inactive') : t('status.active'))" :disabled="userPendingId === row.id || userSaving || Boolean(userProtectionReason(row))" @click="toggleUser(row)" /><TableIconButton :icon="Delete" :label="userDeleteProtectionReason(row) || t('settings.deleteUser')" type="danger" :disabled="userPendingId === row.id || userSaving || Boolean(userDeleteProtectionReason(row))" @click="deleteUser(row)" /></el-button-group></div></template></el-table-column>
+            <el-table-column v-if="can('organization.manage')" :label="t('common.operation')" width="188" fixed="right"><template #default="{ row }"><div class="ep-table-actions"><el-button-group><TableIconButton :icon="Lock" :label="t('dataScope.title')" :disabled="userSaving" @click="openDataScope(row)" /><TableIconButton :icon="Edit" :label="t('common.edit')" type="primary" :disabled="userPendingId === row.id || userSaving" @click="openUserModal(row)" /><TableIconButton :icon="row.is_active ? CircleClose : CircleCheck" :label="userProtectionReason(row) || (row.is_active ? t('status.inactive') : t('status.active'))" :disabled="userPendingId === row.id || userSaving || Boolean(userProtectionReason(row))" @click="toggleUser(row)" /><TableIconButton :icon="Delete" :label="userDeleteProtectionReason(row) || t('settings.deleteUser')" type="danger" :disabled="userPendingId === row.id || userSaving || Boolean(userDeleteProtectionReason(row))" @click="deleteUser(row)" /></el-button-group></div></template></el-table-column>
           </el-table>
           <PagedTable v-if="!userListError" v-model:current-page="userPage" v-model:page-size="userPageSize" :total="userCount" :page-sizes="[20, 50, 100]" @update:current-page="changeUserPage" @update:page-size="changeUserPageSize" />
         </template>
@@ -395,6 +399,7 @@ function applyPeopleFilters() {
       @download-template="downloadDepartmentImportTemplate"
     />
 
+    <DataScopeDialog v-model="showDataScope" :user="scopeUser" :request="context.request" />
     <FormDialogShell v-model="showUserModal" :title="editingUser ? t('settings.editUser') : t('settings.addUser')" :description="t('overlay.userDialogDescription')" size="medium" :saving="userSaving" :show-close="!userSaving" :close-on-click-modal="!userSaving" :close-on-press-escape="!userSaving" :close-disabled="userSaving">
       <el-form ref="userFormRef" :model="userForm" :rules="userFormRules" :validate-on-rule-change="false" label-position="right" class="horizontal-form user-account-form" @submit.prevent="saveUser">
         <section class="form-dialog__section"><h3 class="form-dialog__section-title">{{ t('overlay.accountInformation') }}</h3><div class="horizontal-form__rows"><el-form-item :label="t('auth.username')" prop="username" required :error="userFormErrors.username"><el-input v-model="userForm.username" :disabled="!!editingUser" autocomplete="username" :validate-event="false" :placeholder="t('overlay.enterUsername')" /><FieldHelp v-if="editingUser" :text="usernameEditHelp" /></el-form-item><el-form-item :label="t('auth.email')" prop="email" :error="userFormErrors.email"><el-input v-model="userForm.email" type="email" autocomplete="email" :validate-event="false" :prefix-icon="Message" :placeholder="t('overlay.enterEmailOptional')" /></el-form-item><el-form-item :label="t('auth.lastName')" prop="last_name" required :error="userFormErrors.last_name"><el-input v-model="userForm.last_name" autocomplete="family-name" :validate-event="false" :prefix-icon="Edit" :placeholder="t('overlay.enterLastName')" /></el-form-item><el-form-item :label="t('auth.firstName')" prop="first_name" required :error="userFormErrors.first_name"><el-input v-model="userForm.first_name" autocomplete="given-name" :validate-event="false" :prefix-icon="Edit" :placeholder="t('overlay.enterFirstName')" /></el-form-item></div></section>

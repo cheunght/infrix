@@ -402,7 +402,7 @@ watch(showSpareOperationModal, (open, wasOpen) => { if (!open && wasOpen) refres
             <el-table-column :label="t('spare.globalStockQuantity')" width="126" align="center">
               <template #default="{ row }">
                 <div class="spare-stock-cell">
-                  <span>{{ row.total_quantity ?? 0 }} {{ spareUnitLabel(row.unit) }}</span>
+                  <span>{{ row.total_quantity == null ? t('dataScope.notAuthorized') : `${row.total_quantity} ${spareUnitLabel(row.unit)}` }}</span>
                   <StatusTag v-if="row.is_low_stock" size="small" tone="warning" :label="t('spare.lowStock')" />
                 </div>
               </template>
@@ -598,7 +598,7 @@ watch(showSpareOperationModal, (open, wasOpen) => { if (!open && wasOpen) refres
         <div><span>{{ t('spare.manufacturer') }}</span><strong>{{ selectedPart.manufacturer_name || t('spare.unlinkedManufacturer') }}</strong></div>
         <div><span>{{ t('asset.model') }}</span><strong>{{ selectedPart.model || t('common.notAvailable') }}</strong></div>
         <div><span>{{ t('spare.specification') }}</span><strong>{{ selectedPart.specification || t('common.notAvailable') }}</strong></div>
-        <div><span>{{ t('spare.currentStock') }}</span><strong>{{ selectedPart.total_quantity }} {{ spareUnitLabel(selectedPart.unit) }}</strong></div>
+        <div><span>{{ t('spare.currentStock') }}</span><strong>{{ selectedPart.total_quantity == null ? t('dataScope.notAuthorized') : `${selectedPart.total_quantity} ${spareUnitLabel(selectedPart.unit)}` }}</strong></div>
         <div><span>{{ t('spare.safetyStock') }}</span><strong>{{ selectedPart.safety_stock }} {{ spareUnitLabel(selectedPart.unit) }}</strong></div>
         <div><span>{{ t('spare.storageLocation') }}</span><strong>{{ selectedPart.storage_location || t('common.notAvailable') }}</strong></div>
         <div class="spare-detail-summary__notes"><span>{{ t('common.notes') }}</span><strong>{{ selectedPart.notes || t('common.notAvailable') }}</strong></div>

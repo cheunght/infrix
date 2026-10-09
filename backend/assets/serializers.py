@@ -85,6 +85,17 @@ class CustomFieldConflictAPIException(APIException):
         })
 
 
+class DataScopeSerializer(serializers.Serializer):
+    read_data_centers = serializers.PrimaryKeyRelatedField(many=True, queryset=DataCenter.objects.all(), required=False, default=list)
+    write_data_centers = serializers.PrimaryKeyRelatedField(many=True, queryset=DataCenter.objects.all(), required=False, default=list)
+    global_read = serializers.BooleanField(required=False, default=False)
+    global_write = serializers.BooleanField(required=False, default=False)
+    unlocated_read = serializers.BooleanField(required=False, default=False)
+    unlocated_write = serializers.BooleanField(required=False, default=False)
+    global_stock_metrics = serializers.BooleanField(required=False, default=False)
+    revision = serializers.IntegerField(read_only=True)
+
+
 class UserSerializer(serializers.ModelSerializer):
     display_name = serializers.SerializerMethodField()
     password = serializers.CharField(
@@ -1601,8 +1612,8 @@ class SparePartSerializer(ResourceRevisionSerializerMixin, serializers.ModelSeri
     category_name = serializers.CharField(source="category.name", read_only=True)
     category_code = serializers.CharField(source="category.code", read_only=True)
     manufacturer_name = serializers.CharField(source="manufacturer.name", read_only=True, allow_null=True)
-    total_quantity = serializers.IntegerField(read_only=True)
-    location_count = serializers.IntegerField(read_only=True)
+    total_quantity = serializers.IntegerField(read_only=True, allow_null=True)
+    location_count = serializers.IntegerField(read_only=True, allow_null=True)
     has_stock_movements = serializers.SerializerMethodField()
     is_low_stock = serializers.SerializerMethodField()
     safety_stock = serializers.IntegerField(required=False, min_value=0)
@@ -1623,13 +1634,19 @@ class SparePartSerializer(ResourceRevisionSerializerMixin, serializers.ModelSeri
     INITIAL_STOCK_FIELDS = {"initial_quantity", "initial_data_center", "initial_server_room"}
     DIRECT_STOCK_FIELDS = {"quantity", "current_stock", "total_quantity"}
 
-    def get_is_low_stock(self, obj) -> bool:
+    def get_is_low_stock(self, obj) -> bool | None:
+        from .data_scope import scope_for
+        if self.context.get("request") and not scope_for(self.context["request"].user).global_stock_metrics:
+            return None
         total_quantity = getattr(obj, "total_quantity", None)
         if total_quantity is None:
             total_quantity = obj.stocks.aggregate(total=Sum("quantity"))["total"] or 0
         return total_quantity <= obj.safety_stock
 
-    def get_has_stock_movements(self, obj) -> bool:
+    def get_has_stock_movements(self, obj) -> bool | None:
+        from .data_scope import scope_for
+        if self.context.get("request") and not scope_for(self.context["request"].user).global_stock_metrics:
+            return None
         annotated = getattr(obj, "stock_movement_exists", None)
         return bool(annotated) if annotated is not None else obj.transactions.exists()
 
@@ -1851,15 +1868,17 @@ class SparePartDetailSerializer(SparePartSerializer):
         stocks = obj.stocks.select_related("part", "part__category", "part__manufacturer", "data_center", "server_room").order_by(
             "data_center__name", "server_room__name", "id"
         )
-        return SpareStockSerializer(stocks, many=True).data
+        from .data_scope import scoped
+        return SpareStockSerializer(scoped(stocks), many=True).data
 
     def get_recent_transactions(self, obj) -> list[dict[str, Any]]:
         transactions = obj.transactions.select_related(
             "part", "part__category", "part__manufacturer",
             "operator", "source_data_center", "source_server_room",
             "target_data_center", "target_server_room",
-        ).order_by("-created_at", "-id")[:20]
-        return SpareStockTransactionSerializer(transactions, many=True).data
+        ).order_by("-created_at", "-id")
+        from .data_scope import scoped
+        return SpareStockTransactionSerializer(scoped(transactions)[:20], many=True).data
 
     class Meta(SparePartSerializer.Meta):
         fields = SparePartSerializer.Meta.fields + ["stock_locations", "recent_transactions"]
@@ -3008,6 +3027,22 @@ class AssetWriteSerializer(serializers.ModelSerializer):
             ) from exc
         try:
             with transaction.atomic():
+                from .data_scope import require_center
+                target_center = validated_data.get("asset_data_center")
+                if configuration.get("rack_id"):
+                    from .physical_location import lock_inventory_scope
+                    rack = Rack.objects.select_related("room").filter(pk=configuration["rack_id"]).first()
+                    if rack is None:
+                        raise serializers.ValidationError({"rack_id": "未找到所选机柜，请先在机房机柜维护中创建"})
+                    lock_inventory_scope(rack.room.data_center_id, rack.room_id)
+                    rack = Rack.objects.filter(pk=rack.pk).first()
+                    if rack is None:
+                        raise serializers.ValidationError({"rack_id": "所选机柜已不存在，请重新选择"})
+                    center_id = ServerRoom.objects.values_list("data_center_id", flat=True).get(pk=rack.room_id)
+                    require_center(center_id)
+                    validated_data["asset_data_center"] = DataCenter.objects.get(pk=center_id)
+                else:
+                    require_center(target_center.pk if target_center else None)
                 asset = Asset.objects.create(**validated_data)
                 configure_asset(asset, configuration)
                 apply_asset_custom_values(asset, custom_values)
@@ -3056,6 +3091,8 @@ class AssetWriteSerializer(serializers.ModelSerializer):
                     requested_asset_data_center is not missing
                     and not self._configuration_includes_placement(configuration)
                 ):
+                    from .data_scope import require_center
+                    require_center(requested_asset_data_center.pk if requested_asset_data_center else None)
                     self._validate_direct_asset_data_center(instance, requested_asset_data_center)
                 if requested_status is not missing:
                     transition_asset_status(instance, requested_status)

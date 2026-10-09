@@ -6,6 +6,7 @@ protection rules for the two supported dictionary kinds.
 """
 
 from __future__ import annotations
+from ..data_scope import ScopedViewSetMixin
 
 from typing import Literal
 
@@ -99,7 +100,7 @@ def _in_use_message(kind: DictionaryKind) -> str:
     return "备件类型正在被备件使用，不能删除，请先停用"
 
 
-class DataDictionaryViewSet(ResourceRevisionViewSetMixin, viewsets.ModelViewSet):
+class DataDictionaryViewSet(ScopedViewSetMixin, ResourceRevisionViewSetMixin, viewsets.ModelViewSet):
     """Thin HTTP adapter over the manufacturer/category dictionary seam."""
 
     filter_backends = [DjangoFilterBackend, SearchFilter, OrderingFilter]

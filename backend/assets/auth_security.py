@@ -123,6 +123,8 @@ class PersonalAccessTokenAuthentication(BaseAuthentication):
         if not token.user.is_active:
             raise AuthenticationFailed("The account associated with this API token is disabled")
 
+        from .data_scope import admit
+        admit(request, token.user)
         enforce_api_password_policy(request, token.user)
 
         now = timezone.now()
@@ -141,6 +143,8 @@ class PolicySessionAuthentication(SessionAuthentication):
     def authenticate(self, request):
         result = super().authenticate(request)
         if result is not None:
+            from .data_scope import admit
+            admit(request, result[0])
             enforce_api_password_policy(request, result[0])
         return result
 

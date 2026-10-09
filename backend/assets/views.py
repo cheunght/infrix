@@ -1,3 +1,4 @@
+from .data_scope import ScopedModelViewSet, ScopedReadOnlyModelViewSet, scoped, require_object, global_endpoint, scope_endpoint, admit, scope_for, lock_creation_locations
 import json
 import logging
 
@@ -354,6 +355,7 @@ class AuditedModelViewSetMixin(ResourceRevisionViewSetMixin):
 
     @transaction.atomic
     def perform_create(self, serializer):
+        lock_creation_locations(serializer)
         instance = serializer.save()
         after = self.audit_snapshot(instance)
         write_audit_log(
@@ -524,7 +526,7 @@ def _archive_asset_with_audit(instance, request, *, batch_operation_id=None):
     )
 
 
-class PersonViewSet(AuditedModelViewSetMixin, viewsets.ModelViewSet):
+class PersonViewSet(AuditedModelViewSetMixin, ScopedModelViewSet):
     queryset = Person.objects.select_related("department", "account").annotate(
         asset_count=Count("assigned_assets", distinct=True),
     ).order_by("name", "employee_no", "id")
@@ -619,7 +621,7 @@ class PersonViewSet(AuditedModelViewSetMixin, viewsets.ModelViewSet):
         super().perform_destroy(person)
 
 
-class AssetViewSet(AuditedModelViewSetMixin, viewsets.ModelViewSet):
+class AssetViewSet(AuditedModelViewSetMixin, ScopedModelViewSet):
     max_custom_columns = 12
     queryset = Asset.all_objects.select_related(
         "assigned_person__department", "assigned_person__account", "standalone_manufacturer",
@@ -1103,7 +1105,7 @@ class AssetViewSet(AuditedModelViewSetMixin, viewsets.ModelViewSet):
     @action(detail=True, methods=["post"], url_path="restore")
     @transaction.atomic
     def restore(self, request, pk=None):
-        asset = get_object_or_404(Asset.all_objects.select_for_update(), pk=pk)
+        asset = get_object_or_404(scoped(Asset.all_objects.select_for_update(), user=request.user, write=True), pk=pk)
         if asset.archived_at is not None:
             before = asset_audit_snapshot(asset.pk)
             asset.archived_at = None
@@ -1459,7 +1461,7 @@ class AssetViewSet(AuditedModelViewSetMixin, viewsets.ModelViewSet):
         return Response(AssetBulkEditResponseSerializer(response_data).data)
 
 
-class AttachmentViewSet(viewsets.ModelViewSet):
+class AttachmentViewSet(ScopedModelViewSet):
     queryset = Attachment.objects.select_related("asset", "repair__fault", "uploaded_by").order_by("-uploaded_at", "-id")
     serializer_class = AttachmentSerializer
     permission_classes = [IsAuthenticated]
@@ -1616,7 +1618,7 @@ class AttachmentViewSet(viewsets.ModelViewSet):
         )
 
 
-class RackViewSet(AuditedModelViewSetMixin, viewsets.ModelViewSet):
+class RackViewSet(AuditedModelViewSetMixin, ScopedModelViewSet):
     queryset = Rack.objects.select_related("room", "room__data_center").prefetch_related(
         Prefetch(
             "allocations",
@@ -1742,7 +1744,7 @@ class RackViewSet(AuditedModelViewSetMixin, viewsets.ModelViewSet):
             raise DRFValidationError("机柜仍有资产占用，不能删除，请先迁移资产或停用机柜") from exc
 
 
-class ServerRoomViewSet(AuditedModelViewSetMixin, viewsets.ModelViewSet):
+class ServerRoomViewSet(AuditedModelViewSetMixin, ScopedModelViewSet):
     queryset = ServerRoom.objects.select_related("data_center").annotate(
         racks_count=Count("racks", distinct=True),
         assets_count=Count("racks__allocations__asset", distinct=True),
@@ -1862,7 +1864,7 @@ class ServerRoomViewSet(AuditedModelViewSetMixin, viewsets.ModelViewSet):
             raise DRFValidationError("机房仍被其他业务数据引用，不能删除") from exc
 
 
-class DataCenterViewSet(AuditedModelViewSetMixin, viewsets.ModelViewSet):
+class DataCenterViewSet(AuditedModelViewSetMixin, ScopedModelViewSet):
     queryset = DataCenter.objects.annotate(
         assets_count=(
             Count("rooms__racks__allocations__asset", filter=Q(rooms__racks__allocations__asset__archived_at__isnull=True), distinct=True)
@@ -1886,7 +1888,7 @@ class DataCenterViewSet(AuditedModelViewSetMixin, viewsets.ModelViewSet):
 
     def get_queryset(self):
         if self.action == "list" and _compact_requested(self.request):
-            queryset = DataCenter.objects.only("id", "name", "address", "is_active")
+            queryset = DataCenter.objects.only("id", "name", "address", "is_active").order_by("name", "id")
         else:
             queryset = super().get_queryset()
         # Keep inactive data centers addressable for administrator actions.
@@ -1945,7 +1947,7 @@ class DataCenterViewSet(AuditedModelViewSetMixin, viewsets.ModelViewSet):
         return Response(status=204)
 
 
-class DictionaryViewSet(AuditedModelViewSetMixin, viewsets.ModelViewSet):
+class DictionaryViewSet(AuditedModelViewSetMixin, ScopedModelViewSet):
     filter_backends = [DjangoFilterBackend, SearchFilter, OrderingFilter]
     search_fields = ["name"]
     ordering_fields = ["name", "created_at", "updated_at"]
@@ -1998,7 +2000,7 @@ class DictionaryViewSet(AuditedModelViewSetMixin, viewsets.ModelViewSet):
             raise DRFValidationError("字典项仍被当前或归档业务记录引用，不能删除，请先停用") from exc
 
 
-class DepartmentViewSet(AuditedModelViewSetMixin, viewsets.ModelViewSet):
+class DepartmentViewSet(AuditedModelViewSetMixin, ScopedModelViewSet):
     queryset = Department.objects.select_related("parent").annotate(
         people_count=Count("people", distinct=True),
     ).order_by("name", "id")
@@ -2149,7 +2151,7 @@ class AssetModelViewSet(DictionaryViewSet):
         return queryset
 
 
-class CustomFieldSetViewSet(AuditedModelViewSetMixin, viewsets.ModelViewSet):
+class CustomFieldSetViewSet(AuditedModelViewSetMixin, ScopedModelViewSet):
     queryset = CustomFieldSet.objects.prefetch_related(
         Prefetch("items", queryset=fieldset_items_queryset(include_inactive_options=True))
     ).annotate(
@@ -2227,7 +2229,7 @@ class CustomFieldSetViewSet(AuditedModelViewSetMixin, viewsets.ModelViewSet):
         super().perform_destroy(instance)
 
 
-class CustomFieldViewSet(AuditedModelViewSetMixin, viewsets.ModelViewSet):
+class CustomFieldViewSet(AuditedModelViewSetMixin, ScopedModelViewSet):
     queryset = CustomField.objects.prefetch_related("options").annotate(
         assets_count=Count("asset_values__asset", filter=Q(asset_values__asset__archived_at__isnull=True), distinct=True),
         fieldsets_count=Count("fieldset_items__fieldset", distinct=True),
@@ -2340,7 +2342,7 @@ class CustomFieldViewSet(AuditedModelViewSetMixin, viewsets.ModelViewSet):
         super().perform_destroy(instance)
 
 
-class CustomFieldOptionViewSet(AuditedModelViewSetMixin, viewsets.ModelViewSet):
+class CustomFieldOptionViewSet(AuditedModelViewSetMixin, ScopedModelViewSet):
     queryset = CustomFieldOption.objects.select_related("field").order_by("field_id", "sort_order", "id")
     serializer_class = CustomFieldOptionSerializer
     permission_classes = [BusinessRolePermission]
@@ -2369,7 +2371,7 @@ class CustomFieldOptionViewSet(AuditedModelViewSetMixin, viewsets.ModelViewSet):
         super().perform_destroy(instance)
 
 
-class TagViewSet(AuditedModelViewSetMixin, viewsets.ModelViewSet):
+class TagViewSet(AuditedModelViewSetMixin, ScopedModelViewSet):
     queryset = Tag.objects.annotate(assets_count=Count("asset_tags__asset", filter=Q(asset_tags__asset__archived_at__isnull=True), distinct=True)).order_by("name", "id")
     serializer_class = TagSerializer
     permission_classes = [BusinessRolePermission]
@@ -2410,7 +2412,7 @@ class TagViewSet(AuditedModelViewSetMixin, viewsets.ModelViewSet):
         super().perform_destroy(instance)
 
 
-class SparePartViewSet(AuditedModelViewSetMixin, viewsets.ModelViewSet):
+class SparePartViewSet(AuditedModelViewSetMixin, ScopedModelViewSet):
     queryset = SparePart.objects.select_related("manufacturer", "category").annotate(
         total_quantity=Coalesce(Sum("stocks__quantity"), 0),
         location_count=Count("stocks", distinct=True),
@@ -2467,7 +2469,7 @@ class SparePartViewSet(AuditedModelViewSetMixin, viewsets.ModelViewSet):
                 matching_stock = matching_stock.filter(data_center_id=data_center)
             if server_room:
                 matching_stock = matching_stock.filter(server_room_id=server_room)
-            queryset = queryset.filter(Exists(matching_stock))
+            queryset = queryset.filter(Exists(scoped(matching_stock, user=self.request.user)))
         return queryset
 
     @transaction.atomic
@@ -2531,7 +2533,7 @@ class SparePartViewSet(AuditedModelViewSetMixin, viewsets.ModelViewSet):
         super().perform_destroy(locked_part)
 
 
-class SpareStockViewSet(viewsets.ReadOnlyModelViewSet):
+class SpareStockViewSet(ScopedReadOnlyModelViewSet):
     queryset = SpareStock.objects.select_related("part", "part__category", "part__manufacturer", "data_center", "server_room").order_by(
         "part__name", "data_center__name", "server_room__name", "id"
     )
@@ -2574,10 +2576,14 @@ class SpareStockViewSet(viewsets.ReadOnlyModelViewSet):
         return queryset
 
 
-class SpareStockTransactionViewSet(viewsets.ModelViewSet):
+class SpareStockTransactionViewSet(ScopedModelViewSet):
     @extend_schema(parameters=[OpenApiParameter("Idempotency-Key", OpenApiTypes.STR, location=OpenApiParameter.HEADER, required=True, description="每次逻辑操作的唯一键；重试必须复用。")])
     def create(self, request, *args, **kwargs):
         from .idempotency import execute_once
+        # Reauthorize submitted endpoints even when execute_once replays an
+        # already committed receipt after scope revocation.
+        admission = self.get_serializer(data=request.data)
+        admission.is_valid(raise_exception=True)
         return execute_once(request, lambda: super(SpareStockTransactionViewSet, self).create(request, *args, **kwargs))
 
     queryset = SpareStockTransaction.objects.select_related(
@@ -2631,7 +2637,7 @@ class SpareStockTransactionViewSet(viewsets.ModelViewSet):
         )
 
 
-class SoftwareLicenseViewSet(AuditedModelViewSetMixin, viewsets.ModelViewSet):
+class SoftwareLicenseViewSet(AuditedModelViewSetMixin, ScopedModelViewSet):
     queryset = SoftwareLicense.objects.select_related("manufacturer")
     serializer_class = SoftwareLicenseSerializer
     filter_backends = [DjangoFilterBackend, SearchFilter, OrderingFilter]
@@ -2676,13 +2682,60 @@ def _user_audit_snapshot(user):
     }
 
 
-class UserViewSet(viewsets.ModelViewSet):
+class UserViewSet(ScopedModelViewSet):
     queryset = User.objects.select_related("directory_identity").order_by("username")
     serializer_class = UserSerializer
     permission_classes = [IsSystemAdministrator]
     filter_backends = [SearchFilter, OrderingFilter]
     search_fields = ["username", "first_name", "last_name", "email"]
     ordering_fields = ["username", "date_joined", "last_login"]
+
+    @extend_schema(request=OpenApiTypes.OBJECT, responses=OpenApiTypes.OBJECT)
+    @action(detail=True, methods=["get", "put"], url_path="data-scope")
+    def data_scope(self, request, pk=None):
+        from .models import UserDataScope
+        from .serializers import DataScopeSerializer
+        from .maintenance_gate import authorization_access
+        target = self.get_object()
+        def snapshot(grant):
+            data = DataScopeSerializer(grant).data if grant else {}
+            if grant is None:
+                # The actor can be global; missing target grants still deny.
+                data = {"read_data_centers": [], "write_data_centers": [], "global_read": False,
+                        "global_write": False, "unlocated_read": False, "unlocated_write": False,
+                        "global_stock_metrics": False, "revision": 0}
+            centers = list(DataCenter.objects.filter(
+                Q(read_scope_grants=grant) | Q(write_scope_grants=grant)
+            ).distinct().values("id", "name")) if grant else []
+            return {**data, "effective": scope_for(target).as_dict(), "center_options": centers}
+        if request.method == "GET":
+            return Response(snapshot(UserDataScope.objects.filter(user=target).first()))
+        serializer = DataScopeSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        raw_revision = request.headers.get("If-Match", "").strip().strip('"')
+        if not raw_revision or len(raw_revision) > 20 or not raw_revision.isascii() or not raw_revision.isdecimal():
+            return Response({"code": "data_scope_revision_required", "detail": "请读取最新授权并提供 If-Match"}, status=428)
+        with authorization_access(target.pk, exclusive=True):
+            with transaction.atomic():
+                grant = UserDataScope.objects.select_for_update().filter(user=target).first()
+                if int(raw_revision) != (grant.revision if grant else 0):
+                    return Response({"code": "data_scope_revision_conflict", "detail": "授权已被修改，请重新加载"}, status=409)
+                before = snapshot(grant)
+                if grant is None:
+                    grant = UserDataScope(user=target)
+                values = dict(serializer.validated_data)
+                reads = values.pop("read_data_centers")
+                writes = values.pop("write_data_centers")
+                for key, value in values.items():
+                    setattr(grant, key, value)
+                grant.revision = int(raw_revision) + 1
+                grant.save()
+                grant.read_data_centers.set(reads)
+                grant.write_data_centers.set(writes)
+                after = snapshot(grant)
+                write_audit_log(request, action="update", resource_type="user_data_scope", resource_id=target.pk,
+                                before=before, after=after)
+            return Response(after)
 
     @transaction.atomic
     def perform_create(self, serializer):
@@ -2866,7 +2919,7 @@ class UserViewSet(viewsets.ModelViewSet):
         )
 
 
-class FaultEventViewSet(AuditedModelViewSetMixin, viewsets.ModelViewSet):
+class FaultEventViewSet(AuditedModelViewSetMixin, ScopedModelViewSet):
     queryset = FaultEvent.objects.select_related("asset", "repair")
     serializer_class = FaultEventSerializer
     filter_backends = [DjangoFilterBackend, SearchFilter, OrderingFilter]
@@ -2912,12 +2965,18 @@ class FaultEventViewSet(AuditedModelViewSetMixin, viewsets.ModelViewSet):
                 "spare_stock__server_room",
                 "operator",
             ).order_by("-created_at", "-id")
+            queryset = scoped(queryset, user=request.user)
             page = self.paginate_queryset(queryset)
             if page is not None:
                 return self.get_paginated_response(RepairPartUsageSerializer(page, many=True).data)
             return Response(RepairPartUsageSerializer(queryset, many=True).data)
 
         from .idempotency import execute_once
+        admission = RepairPartUsageCreateSerializer(data=request.data)
+        admission.is_valid(raise_exception=True)
+        stock = admission.validated_data.get("spare_stock")
+        if stock is not None:
+            require_object(stock, user=request.user)
         return execute_once(request, lambda: self._record_part_usage(request, fault))
 
     def _record_part_usage(self, request, fault):
@@ -2973,7 +3032,7 @@ class FaultEventViewSet(AuditedModelViewSetMixin, viewsets.ModelViewSet):
         sync_asset_fault_status(asset_id, request=self.request)
 
 
-class RepairRecordViewSet(AuditedModelViewSetMixin, viewsets.ModelViewSet):
+class RepairRecordViewSet(AuditedModelViewSetMixin, ScopedModelViewSet):
     queryset = RepairRecord.objects.select_related("fault", "fault__asset")
     serializer_class = RepairRecordSerializer
     filter_backends = [DjangoFilterBackend, OrderingFilter]
@@ -3154,7 +3213,7 @@ def _inventory_items_queryset(task, request):
     return queryset
 
 
-class InventoryTaskViewSet(AuditedModelViewSetMixin, viewsets.ModelViewSet):
+class InventoryTaskViewSet(AuditedModelViewSetMixin, ScopedModelViewSet):
     queryset = InventoryTask.objects.select_related(
         "data_center", "server_room", "inspector"
     ).prefetch_related("items")
@@ -3179,6 +3238,8 @@ class InventoryTaskViewSet(AuditedModelViewSetMixin, viewsets.ModelViewSet):
 
     @transaction.atomic
     def perform_create(self, serializer):
+        if serializer.validated_data["scope"] == "all_assets" and not scope_for(self.request.user).global_write:
+            raise PermissionDenied({"code": "data_scope_global_required", "detail": "全部资产盘点需要全局写入授权"})
         try:
             lock_inventory_scope(
                 getattr(serializer.validated_data.get("data_center"), "pk", None),
@@ -3215,6 +3276,7 @@ class InventoryTaskViewSet(AuditedModelViewSetMixin, viewsets.ModelViewSet):
     @transaction.atomic
     def perform_destroy(self, instance):
         task = InventoryTask.objects.select_for_update().get(pk=instance.pk)
+        require_object(task, user=self.request.user)
         items = list(InventoryItem.objects.filter(task_id=task.pk).select_for_update().order_by("pk").only(
             "status",
             "resolution_status",
@@ -3234,6 +3296,7 @@ class InventoryTaskViewSet(AuditedModelViewSetMixin, viewsets.ModelViewSet):
         # a lock so a completion committed between those two phases cannot be
         # overwritten by a stale full-row save.
         task = InventoryTask.objects.select_for_update().get(pk=serializer.instance.pk)
+        require_object(task, user=self.request.user)
         locked_serializer = self.get_serializer(
             task,
             data=self.request.data,
@@ -3260,6 +3323,11 @@ class InventoryTaskViewSet(AuditedModelViewSetMixin, viewsets.ModelViewSet):
         scope = serializer.validated_data["scope"]
         data_center = serializer.validated_data.get("data_center")
         server_room = serializer.validated_data.get("server_room")
+        from .data_scope import require_center
+        if scope == "all_assets" and not scope_for(request.user).global_write:
+            raise PermissionDenied({"code": "data_scope_global_required", "detail": "全部资产盘点需要全局写入授权"})
+        if data_center is not None:
+            require_center(data_center.pk, user=request.user)
         assets = get_inventory_scope_assets(data_center, server_room, scope=scope)
 
         total = assets.count()
@@ -3334,7 +3402,14 @@ class InventoryTaskViewSet(AuditedModelViewSetMixin, viewsets.ModelViewSet):
     @action(detail=True, methods=["post"], url_path="complete")
     @transaction.atomic
     def complete(self, request, pk=None):
-        task = InventoryTask.objects.select_for_update().get(pk=self.get_object().pk)
+        current_task = self.get_object()
+        assets = list(InventoryItem.objects.filter(task=current_task).values_list("asset_id", flat=True))
+        # Center/room locks precede assets and task, matching task reopen and
+        # physical corrections; all contained assets stay authorized to commit.
+        lock_inventory_scope(current_task.data_center_id, current_task.server_room_id)
+        list(Asset.all_objects.select_for_update().filter(pk__in=assets).order_by("pk"))
+        task = InventoryTask.objects.select_for_update().get(pk=current_task.pk)
+        require_object(task, user=request.user)
         if task.status == "completed":
             return Response(InventoryTaskSerializer(task).data)
         items = list(
@@ -3371,6 +3446,7 @@ class InventoryTaskViewSet(AuditedModelViewSetMixin, viewsets.ModelViewSet):
         if any(value is not None for value in archived_assets):
             return Response({"code": "asset_archived", "detail": "盘点包含已归档资产，请先恢复资产再重新打开任务"}, status=409)
         task = InventoryTask.objects.select_for_update().get(pk=current_task.pk)
+        require_object(task, user=request.user)
         if task.status != "completed":
             raise DRFValidationError({
                 "code": "inventory_task_not_completed",
@@ -3468,7 +3544,7 @@ def _inventory_resolution_error_message(error):
     return _inventory_error_message(error, "盘点异常处理失败")
 
 
-class InventoryItemViewSet(viewsets.ModelViewSet):
+class InventoryItemViewSet(ScopedModelViewSet):
     queryset = InventoryItem.objects.select_related(
         "task",
         "asset",
@@ -3499,6 +3575,7 @@ class InventoryItemViewSet(viewsets.ModelViewSet):
             target_data_center_id=observed_center.pk if observed_center else None)
         active_asset_for_update(serializer.instance.asset_id)
         task = InventoryTask.objects.select_for_update().get(pk=serializer.instance.task_id)
+        require_object(task, user=self.request.user)
         item = InventoryItem.objects.select_for_update().get(pk=serializer.instance.pk)
         locked_serializer = self.get_serializer(
             item,
@@ -3735,6 +3812,7 @@ class InventoryItemViewSet(viewsets.ModelViewSet):
 @api_view(["GET"])
 @permission_classes([CanViewInventory])
 def asset_inventory_records(request, pk):
+    admit(request)
     if not visible_assets(request, Asset.all_objects.all()).filter(pk=pk).exists():
         from rest_framework.exceptions import NotFound
         raise NotFound("资产不存在")
@@ -3750,6 +3828,7 @@ def asset_inventory_records(request, pk):
         "actual_rack__room__data_center",
     ).order_by("asset__asset_no", "id")
     paginator = StandardPagination()
+    records = scoped(records, user=request.user)
     page = paginator.paginate_queryset(records, request)
     return paginator.get_paginated_response(InventoryItemSerializer(page, many=True).data)
 
@@ -3757,6 +3836,7 @@ def asset_inventory_records(request, pk):
 @extend_schema(responses=InventoryInspectorSerializer(many=True))
 @api_view(["GET"])
 @permission_classes([CanManageInventory])
+@scope_endpoint
 def inventory_inspectors(request):
     users = User.objects.filter(is_active=True).only(
         "id", "username", "first_name", "last_name"
@@ -3784,7 +3864,7 @@ def inventory_inspectors(request):
     return Response(InventoryInspectorSerializer(rows, many=True).data)
 
 
-class AuditLogViewSet(viewsets.ReadOnlyModelViewSet):
+class AuditLogViewSet(ScopedReadOnlyModelViewSet):
     queryset = AuditLog.objects.select_related("actor").order_by("-created_at", "-id")
     serializer_class = AuditLogSerializer
     permission_classes = [CanViewAuditLog]
@@ -3852,7 +3932,7 @@ class AuditLogViewSet(viewsets.ReadOnlyModelViewSet):
         return _xlsx_response(book, f"{AUDIT_EXPORT_FILENAMES[export_locale]}_{_export_timestamp()}.xlsx")
 
 
-class NotificationDeliveryViewSet(viewsets.ReadOnlyModelViewSet):
+class NotificationDeliveryViewSet(ScopedReadOnlyModelViewSet):
     queryset = NotificationDelivery.objects.order_by("-attempted_at", "-id")
     serializer_class = NotificationDeliverySerializer
     permission_classes = [CanViewAuditLog]
@@ -4038,7 +4118,7 @@ def _auth_response(user):
         "is_active": user.is_active,
         "is_staff": user.is_staff,
         "is_superuser": user.is_superuser,
-        "authorization": authorization.as_dict(),
+        "authorization": {**authorization.as_dict(), "data_scope": scope_for(user).as_dict()},
         "auth_source": AUTH_SOURCE_LDAP if directory_identity is not None else AUTH_SOURCE_LOCAL,
         "directory_provider": directory_identity.provider if directory_identity is not None else None,
         "directory_login_identifier": (
@@ -5018,6 +5098,7 @@ def system_reset(request):
 @extend_schema(responses=SystemSettingsSnapshotSerializer, methods=["GET"])
 @api_view(["GET", "PATCH"])
 @permission_classes([CanManageSystemSettings])
+@global_endpoint
 def system_settings(request):
     if request.method == "GET":
         snapshot = get_system_settings_snapshot()
@@ -5041,6 +5122,7 @@ def system_settings(request):
 @extend_schema(request=SmtpTestEmailSerializer, responses=OpenApiTypes.OBJECT)
 @api_view(["POST"])
 @permission_classes([CanManageSystemSettings])
+@global_endpoint
 def smtp_test_email(request):
     serializer = SmtpTestEmailSerializer(data=request.data)
     serializer.is_valid(raise_exception=True)
@@ -5089,6 +5171,7 @@ def smtp_test_email(request):
 @extend_schema(responses=OpenApiTypes.BINARY)
 @api_view(["GET"])
 @permission_classes([CanImportAssets])
+@global_endpoint
 def asset_import_template(request):
     book = build_import_template()
     response = HttpResponse(content_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
@@ -5101,6 +5184,7 @@ def asset_import_template(request):
 @api_view(["POST"])
 @permission_classes([CanImportAssets])
 @parser_classes([MultiPartParser, FormParser])
+@global_endpoint
 def asset_import_preview(request):
     try:
         return Response(AssetImportService.preview(request.FILES.get("file")))
@@ -5112,6 +5196,7 @@ def asset_import_preview(request):
 @api_view(["POST"])
 @permission_classes([CanImportAssets])
 @parser_classes([MultiPartParser, FormParser])
+@global_endpoint
 def asset_import(request):
     try:
         return Response(AssetImportService.commit(request.FILES.get("file"), request))
@@ -5126,6 +5211,7 @@ def asset_import(request):
 @extend_schema(responses=OpenApiTypes.BINARY, description="下载资产型号新增导入模板。")
 @api_view(["GET"])
 @permission_classes([CanManageSystemSettings])
+@global_endpoint
 def asset_model_import_template(request):
     return _xlsx_response(build_asset_model_import_template(), "infrix-asset-model-import.xlsx")
 
@@ -5134,6 +5220,7 @@ def asset_model_import_template(request):
 @api_view(["POST"])
 @permission_classes([CanManageSystemSettings])
 @parser_classes([MultiPartParser, FormParser])
+@global_endpoint
 def asset_model_import_preview(request):
     return Response(preview_asset_model_import(request.FILES.get("file")))
 
@@ -5142,6 +5229,7 @@ def asset_model_import_preview(request):
 @api_view(["POST"])
 @permission_classes([CanManageSystemSettings])
 @parser_classes([MultiPartParser, FormParser])
+@global_endpoint
 def asset_model_import(request):
     with transaction.atomic():
         created = commit_asset_model_import(request.FILES.get("file"))
@@ -5160,6 +5248,7 @@ def asset_model_import(request):
 @extend_schema(responses=OpenApiTypes.BINARY, description="下载人员新增与更新导入模板。")
 @api_view(["GET"])
 @permission_classes([CanManageSystemSettings])
+@global_endpoint
 def people_import_template(request):
     return _xlsx_response(build_people_import_template(), "infrix-people-import.xlsx")
 
@@ -5168,6 +5257,7 @@ def people_import_template(request):
 @api_view(["POST"])
 @permission_classes([CanManageSystemSettings])
 @parser_classes([MultiPartParser, FormParser])
+@global_endpoint
 def people_import_preview(request):
     try:
         return Response(preview_people_import(request.FILES.get("file")))
@@ -5179,6 +5269,7 @@ def people_import_preview(request):
 @api_view(["POST"])
 @permission_classes([CanManageSystemSettings])
 @parser_classes([MultiPartParser, FormParser])
+@global_endpoint
 def people_import(request):
     try:
         return Response(commit_people_import(request.FILES.get("file"), request))
@@ -5193,6 +5284,7 @@ def people_import(request):
 @extend_schema(responses=OpenApiTypes.BINARY, description="下载部门新增与更新导入模板。")
 @api_view(["GET"])
 @permission_classes([CanManageSystemSettings])
+@global_endpoint
 def department_import_template(request):
     return _xlsx_response(build_department_import_template(), "infrix-department-import.xlsx")
 
@@ -5201,6 +5293,7 @@ def department_import_template(request):
 @api_view(["POST"])
 @permission_classes([CanManageSystemSettings])
 @parser_classes([MultiPartParser, FormParser])
+@global_endpoint
 def department_import_preview(request):
     try:
         return Response(preview_department_import(request.FILES.get("file")))
@@ -5212,6 +5305,7 @@ def department_import_preview(request):
 @api_view(["POST"])
 @permission_classes([CanManageSystemSettings])
 @parser_classes([MultiPartParser, FormParser])
+@global_endpoint
 def department_import(request):
     try:
         return Response(commit_department_import(request.FILES.get("file"), request))
@@ -5240,6 +5334,7 @@ def department_import(request):
 )
 @api_view(["GET"])
 @permission_classes([CanManageSystemSettings])
+@global_endpoint
 def asset_model_export(request):
     queryset = AssetModel.objects.select_related("manufacturer", "device_type", "fieldset").order_by("manufacturer__name", "name", "id")
     for field in ("manufacturer", "device_type"):
@@ -5300,6 +5395,7 @@ def asset_model_export(request):
 )
 @api_view(["GET"])
 @permission_classes([CanExportAssets])
+@scope_endpoint
 def asset_export(request):
     export_locale = _asset_export_locale(request)
     as_of_date = system_localdate()
@@ -5439,6 +5535,7 @@ def _repair_queryset(request):
 )
 @api_view(["GET"])
 @permission_classes([CanExportFaults])
+@scope_endpoint
 def repair_record_export(request):
     errors = _date_filter_errors(request, ("start", "end"))
     if errors:
@@ -5472,6 +5569,7 @@ def repair_record_export(request):
 @extend_schema(responses=OpenApiTypes.OBJECT)
 @api_view(["GET"])
 @permission_classes([CanViewLicenses])
+@scope_endpoint
 def license_summary(request):
     counts = license_status_counts(today=system_localdate())
     return Response(counts)
@@ -5493,6 +5591,7 @@ def license_summary(request):
 )
 @api_view(["GET"])
 @permission_classes([CanExportLicenses])
+@scope_endpoint
 def license_export(request):
     queryset = _filtered_view_queryset(
         SoftwareLicenseViewSet,
@@ -5544,6 +5643,7 @@ def _spare_part_export_queryset(request):
 )
 @api_view(["GET"])
 @permission_classes([CanExportSpares])
+@global_endpoint
 def spare_part_export(request):
     queryset = _spare_part_export_queryset(request)
     limit_response = _export_limit_response(queryset, "备件导出结果")
@@ -5581,6 +5681,7 @@ def spare_part_export(request):
 )
 @api_view(["GET"])
 @permission_classes([CanExportSpares])
+@scope_endpoint
 def spare_transaction_export(request):
     errors = _date_filter_errors(request, ("start", "end"))
     if errors:
@@ -5622,6 +5723,7 @@ def spare_transaction_export(request):
 @extend_schema(responses=OpenApiTypes.OBJECT)
 @api_view(["GET"])
 @permission_classes([CanViewDashboard])
+@global_endpoint
 def dashboard_overview(request):
     try:
         scope = resolve_dashboard_scope(request)
@@ -5637,6 +5739,7 @@ def dashboard_overview(request):
 @extend_schema(responses=OpenApiTypes.OBJECT)
 @api_view(["GET"])
 @permission_classes([CanViewDashboard])
+@global_endpoint
 def alerts_overview(request):
     """Return actionable reminders assembled from existing business data."""
     return Response(build_alerts_payload(
@@ -5651,6 +5754,7 @@ def alerts_overview(request):
 @extend_schema(responses=OpenApiTypes.OBJECT)
 @api_view(["GET"])
 @permission_classes([CanViewDashboard])
+@global_endpoint
 def facilities_summary(request):
     """Compact aggregates for the room/rack management tabs."""
     data_center_id = request.query_params.get("data_center", "").strip()
@@ -5822,6 +5926,7 @@ RACK_LAYOUT_DEFAULT_DEVICE_FILL = "D9EAF7"
 )
 @api_view(["GET"])
 @permission_classes([CanExportRacks])
+@global_endpoint
 def rack_layout_export(request):
     rack_queryset = Rack.objects.select_related("room__data_center").prefetch_related(
         "allocations__asset__asset_model__device_type",

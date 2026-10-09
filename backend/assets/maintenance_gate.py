@@ -112,6 +112,17 @@ def _reject_active(root):
 
 
 @contextlib.contextmanager
+def authorization_access(user_id, *, exclusive=False):
+    """Coordinate grant revocation with in-flight requests on this host."""
+    descriptor = _open_lock(_root(), f"scope-{int(user_id)}.lock")
+    try:
+        fcntl.flock(descriptor, fcntl.LOCK_EX if exclusive else fcntl.LOCK_SH)
+        yield
+    finally:
+        os.close(descriptor)
+
+
+@contextlib.contextmanager
 def business_access():
     root = _root()
     _reject_active(root)
