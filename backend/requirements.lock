@@ -1,0 +1,29 @@
+# Production dependency baseline, Python 3.10+ on Linux.
+# Update from requirements.in and verify the whole lock before release.
+--index-url https://pypi.org/simple
+asgiref==3.12.1
+attrs==26.1.0
+cffi==2.1.1
+cryptography==46.0.7
+Django==5.2.17
+django-filter==25.2
+djangorestframework==3.18.0
+drf-spectacular==0.30.0
+et_xmlfile==2.0.0
+gunicorn==23.0.0
+inflection==0.5.1
+jsonschema==4.26.0
+jsonschema-specifications==2025.9.1
+ldap3==2.9.1
+openpyxl==3.1.5
+packaging==26.3
+pillow==12.2.0
+pyasn1==0.6.4
+pycparser==3.0
+PyMySQL==1.2.0
+PyYAML==6.0.3
+referencing==0.37.0
+rpds-py==0.30.0
+sqlparse==0.6.0
+typing_extensions==4.16.0
+uritemplate==4.2.0
