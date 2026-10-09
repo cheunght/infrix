@@ -297,7 +297,8 @@ function deleteCurrentRack() {
                 <div class="rack-detail-grid">
                   <div class="rack-detail-grid__canvas">
                     <div class="rack-canvas-shell">
-                      <RackLayoutCanvas :context="context" />
+                      <el-alert v-if="currentRack.occupancy_restricted" :title="t('dataScope.occupancyHint')" type="info" :closable="false" />
+                      <RackLayoutCanvas v-else :context="context" />
                     </div>
                   </div>
                   <div class="rack-detail-grid__side">

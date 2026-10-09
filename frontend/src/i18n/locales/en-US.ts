@@ -1,9 +1,17 @@
 export default {
   dataScope: {
+    readDepartments: "Readable departments",
+    writeDepartments: "Writable departments",
+    allDepartmentsRead: "Read all assigned departments",
+    allDepartmentsWrite: "Write all assigned departments",
+    unownedRead: "Read assets and people without a department",
+    unownedWrite: "Write assets and people without a department",
+    departmentIntersection: "Assets must satisfy both center and department scopes. Selected departments do not include descendants. Missing ownership and missing placement require separate grants.",
+    occupancyHint: "Your department scope cannot read complete rack occupancy. The U map and occupancy metrics are unavailable.",
     reportHint: "Asset and facility summaries cover your readable scope. Shared company license data follow license permissions.",
     alertHint: "Alerts cover records you can read. Low-stock alerts require global stock metrics permission.",
     title: "Data access scope",
-    description: "Assign data centers for this account. Roles still control functional permissions.",
+    description: "Assign data center and department scopes. Roles still control functional permissions.",
     adminHint: "System administrators have global access. Change the role first to restrict scope.",
     readCenters: "Readable data centers",
     writeCenters: "Writable data centers",
@@ -408,6 +416,8 @@ export default {
     stockUsage: "Now {quantity}; safety level {safetyStock}",
   },
   asset: {
+    owningDepartment: "Asset owning department",
+    owningDepartmentHint: "Independent of the assignee department. Blank means ownership is unconfirmed. Changing it requires write access to both source and target departments.",
     title: "Asset Ledger",
     identity: "Asset",
     name: "Asset name",

@@ -195,3 +195,32 @@ def _finalize_capacity_rows(rows, sort_key):
         finalized.append(row)
     finalized.sort(key=sort_key)
     return finalized
+
+
+def redact_capacity(payload, *, restricted):
+    """An incomplete department view must not look like an empty U position."""
+    payload["capacity_restricted"] = restricted
+    if not restricted:
+        return payload
+    hidden = {"used_u", "free_u", "utilization", "device_count", "assets_count"}
+    def redact(value):
+        if isinstance(value, dict):
+            for key in value:
+                if key in hidden:
+                    value[key] = None
+                elif isinstance(value[key], (list, dict)):
+                    redact(value[key])
+        elif isinstance(value, list):
+            for item in value:
+                redact(item)
+    for key in ("racks", "data_center_capacity", "room_capacity", "data_center_overview", "rack_capacity", "data_centers", "rooms"):
+        if key in payload:
+            redact(payload[key])
+    for key in ("used_u", "free_u"):
+        if key in payload:
+            payload[key] = None
+    # Preserve a neutral order, not an order derived from hidden utilization.
+    for key in ("rack_capacity", "data_center_capacity", "room_capacity"):
+        if isinstance(payload.get(key), list):
+            payload[key].sort(key=lambda row: str(row.get("code") or row.get("data_center") or row.get("room") or row.get("id")))
+    return payload

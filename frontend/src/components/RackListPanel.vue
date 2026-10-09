@@ -67,7 +67,7 @@ function rackStatus(rack: Rack) {
               type="button"
               class="rack-list-row"
               :class="{ 'is-current': focusedRack?.id === rack.id }"
-              :aria-label="`${rack.code}, ${rackStatusLabel(rackStatus(rack), rack.is_active)}, ${t('rack.usedU')} ${rackUsedU(rack)} / ${rack.total_u} U, ${t('rack.utilization')} ${rackUtilization(rack)}%`"
+              :aria-label="rack.occupancy_restricted ? `${rack.code}, ${t('dataScope.notAuthorized')}` : `${rack.code}, ${rackStatusLabel(rackStatus(rack), rack.is_active)}, ${t('rack.usedU')} ${rackUsedU(rack)} / ${rack.total_u} U, ${t('rack.utilization')} ${rackUtilization(rack)}%`"
               :aria-pressed="focusedRack?.id === rack.id"
               @click="selectRack(rack)"
             >
@@ -80,8 +80,8 @@ function rackStatus(rack: Rack) {
                     :label="rackStatusLabel(rackStatus(rack), rack.is_active)"
                   />
                 </span>
-                <span class="rack-list-row__capacity">{{ rackUsedU(rack) }} / {{ rack.total_u }} U</span>
-                <span class="rack-list-row__utilization">{{ rackUtilization(rack) }}%</span>
+                <span class="rack-list-row__capacity">{{ rack.occupancy_restricted ? t('dataScope.notAuthorized') : `${rackUsedU(rack)} / ${rack.total_u} U` }}</span>
+                <span class="rack-list-row__utilization">{{ rack.occupancy_restricted ? "" : `${rackUtilization(rack)}%` }}</span>
               </span>
             </button>
           </div>

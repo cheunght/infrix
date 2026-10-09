@@ -529,6 +529,11 @@ class Asset(Timestamped):
         related_name="unmounted_assets",
         help_text="未上架资产的所属数据中心；已上架资产以机柜归属为准",
     )
+    owning_department = models.ForeignKey(
+        Department, null=True, blank=True, on_delete=models.PROTECT,
+        related_name="owned_assets",
+        help_text="资产归属部门，独立于使用人的所属部门；空值表示待确认归属",
+    )
     asset_model = models.ForeignKey(
         AssetModel,
         null=True,
@@ -1430,6 +1435,12 @@ class UserDataScope(Timestamped):
     unlocated_read = models.BooleanField(default=False)
     unlocated_write = models.BooleanField(default=False)
     global_stock_metrics = models.BooleanField(default=False)
+    read_departments = models.ManyToManyField(Department, related_name="read_scope_grants", blank=True)
+    write_departments = models.ManyToManyField(Department, related_name="write_scope_grants", blank=True)
+    all_departments_read = models.BooleanField(default=False)
+    all_departments_write = models.BooleanField(default=False)
+    unowned_read = models.BooleanField(default=False)
+    unowned_write = models.BooleanField(default=False)
     revision = models.PositiveBigIntegerField(default=1, editable=False)
 
 

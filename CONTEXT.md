@@ -43,6 +43,17 @@ An observation can identify a mounted position, a direct data-center assignment,
 The physical-placement change recorded when an inventory result identifies a location mismatch and an operator updates the asset record.
 _Avoid_: inventory fix
 
+## Ownership and assignment
+
+**Asset owning department**:
+The department accountable for an asset. Ownership is independent of the asset's current assignee and physical location; assignment, transfer of use, or relocation does not change ownership.
+
+**Unowned asset**:
+An asset whose owning department has not been confirmed. This is separate from an unlocated asset, which has no physical placement.
+
+**Person department**:
+The department to which a person belongs. It determines access to that person's directory record; it does not determine ownership of assets used by the person.
+
 ## Asset lifecycle
 
 **Archived asset**:
@@ -60,13 +71,13 @@ An asset already stored as retired before disposal records were introduced. It m
 Permission to perform a kind of operation. It does not grant access to every record on which the operation could run.
 
 **Data scope**:
-The explicitly granted set of data centers or unlocated assets within which an account may read or write. Write access includes read access in the same scope. Missing grants deny business data access.
+The explicit boundary within which an account may read or write. Asset access must satisfy both the physical-location boundary and the owning-department boundary; unlocated and unowned assets require separate explicit grants. Person directory access follows the person's department. Write access includes read access in the same scope. Selected departments do not imply their descendants. Missing grants deny business data access.
 
 **Global data authorization**:
-An explicit authorization to operate across all data centers and unlocated assets; the system administrator role carries this authorization. Staff status and other business roles do not imply it.
+An explicit authorization to operate across all data centers, departments, and assets awaiting placement or ownership confirmation; the system administrator role carries this authorization. Staff status and other business roles do not imply it.
 
 **Fully visible inventory task**:
-An inventory task whose task center, every asset's current location, frozen original location, and recorded observation are within the account's authorized scope. A partial task is not exposed as a complete task.
+An inventory task whose task center, every asset's current location and ownership, frozen original location and ownership, and recorded observation are within the account's authorized scope. A partial task is not exposed as a complete task.
 
 **Shared reference data**:
-Company-wide catalogs and directories used to identify and select business entities. Access to shared reference data does not grant access to related assets, stock balances, or global business metrics.
+Company-wide catalogs used to identify and select business entities. Person directory records remain subject to department authorization. Access to shared reference data does not grant access to related assets, stock balances, or global business metrics.

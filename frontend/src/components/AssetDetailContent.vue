@@ -277,6 +277,7 @@ const basicFields = computed<DetailField[]>(() => {
           current.serial_number,
         ),
         makeField("purpose", t("asset.purpose"), current.purpose),
+        makeField("owning-department", t("asset.owningDepartment"), current.owning_department_name),
         makeField("assigned-person", t("asset.assignedPerson"), current.assigned_person?.display_name),
       ];
   if (isDrawer.value && current.asset_model?.default_warranty_months != null) {

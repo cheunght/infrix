@@ -538,6 +538,8 @@ def _locked_person(person_id):
         person = Person.objects.select_for_update().select_related("department").get(pk=person_id)
     except (Person.DoesNotExist, TypeError, ValueError) as exc:
         raise DRFValidationError({"code": "assignment_target_not_found", "detail": "使用人不存在"}) from exc
+    from .data_scope import require_department
+    require_department(person.department_id, write=False)
     if not person.is_active:
         _assignment_error("assignment_target_inactive", "停用人员不能被指定为资产使用人")
     return person

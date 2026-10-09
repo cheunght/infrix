@@ -65,7 +65,9 @@ def build_dashboard_payload(scope, *, include_faults=True, include_licenses=True
         payload["recent_alerts"] = alerts["recent_alerts"]
     if include_licenses:
         payload["licenses"] = license_status_counts(today=today)
-    return payload
+    from .capacity import redact_capacity
+    from ..data_scope import scope_for
+    return redact_capacity(payload, restricted=scope.user is not None and not scope_for(scope.user).full_department_access())
 
 
 def _build_asset_distributions(scope):

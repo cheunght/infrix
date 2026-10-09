@@ -1,4 +1,4 @@
-"""Data-center authorization at HTTP admission, query and domain write seams.
+"""Center and department authorization at HTTP admission, query and write seams.
 
 Function capabilities remain in organization_access. Missing grants fail closed.
 A write grant includes read access. Location-less assets need an explicit grant.
@@ -32,6 +32,33 @@ class Scope:
     unlocated_write: bool = False
     global_stock_metrics: bool = False
 
+    read_departments: tuple = ()
+    write_departments: tuple = ()
+    all_departments_read: bool = False
+    all_departments_write: bool = False
+    unowned_read: bool = False
+    unowned_write: bool = False
+
+    def department_q(self, field, *, write=False, json=False):
+        if self.global_write if write else self.global_read:
+            return Q()
+        null = Q(**{field: None}) if json else Q(**{f'{field}__isnull': True})
+        condition = ~null if (self.all_departments_write if write else self.all_departments_read) else Q(**{f'{field}__in': self.write_departments if write else self.read_departments})
+        if self.unowned_write if write else self.unowned_read:
+            condition |= null
+        return condition
+
+    def full_department_access(self, *, write=False):
+        return (self.global_write if write else self.global_read) or (
+            (self.all_departments_write and self.unowned_write) if write else (self.all_departments_read and self.unowned_read))
+
+    def contains_department(self, department_id, *, write=False):
+        if self.global_write if write else self.global_read:
+            return True
+        if department_id is None:
+            return self.unowned_write if write else self.unowned_read
+        return (self.all_departments_write if write else self.all_departments_read) or department_id in (self.write_departments if write else self.read_departments)
+
     def contains(self, center_id, *, write=False):
         if self.global_write if write else self.global_read:
             return True
@@ -54,6 +81,9 @@ class Scope:
             'read_data_centers': list(self.read_centers), 'write_data_centers': list(self.write_centers),
             'unlocated_read': self.unlocated_read, 'unlocated_write': self.unlocated_write,
             'global_stock_metrics': self.global_stock_metrics,
+            'read_departments': list(self.read_departments), 'write_departments': list(self.write_departments),
+            'all_departments_read': self.all_departments_read, 'all_departments_write': self.all_departments_write,
+            'unowned_read': self.unowned_read, 'unowned_write': self.unowned_write,
         }
 
 
@@ -61,7 +91,7 @@ def scope_for(user=None):
     from .models import UserDataScope
     from .organization_access import can
     user = user or _actor.get()
-    if user is None or not user.is_authenticated or not user.is_active:
+    if user is None or not user.is_authenticated or not user.is_active or user.pk is None:
         return Scope()
     cached = _scope_snapshot.get()
     if cached is not None and cached[0] == user.pk:
@@ -73,16 +103,58 @@ def scope_for(user=None):
         return Scope()
     writes = tuple(grant.write_data_centers.values_list('pk', flat=True).order_by('pk'))
     reads = tuple(sorted(set(writes) | set(grant.read_data_centers.values_list('pk', flat=True))))
-    return Scope(grant.global_read or grant.global_write, grant.global_write, reads, writes,
-                 grant.unlocated_read or grant.unlocated_write, grant.unlocated_write,
-                 grant.global_stock_metrics or grant.global_read or grant.global_write)
+    department_writes = tuple(grant.write_departments.values_list('pk', flat=True).order_by('pk'))
+    department_reads = tuple(sorted(set(department_writes) | set(grant.read_departments.values_list('pk', flat=True))))
+    return Scope(global_read=grant.global_read or grant.global_write, global_write=grant.global_write,
+                 read_centers=reads, write_centers=writes,
+                 unlocated_read=grant.unlocated_read or grant.unlocated_write, unlocated_write=grant.unlocated_write,
+                 global_stock_metrics=grant.global_stock_metrics or grant.global_read or grant.global_write,
+                 read_departments=department_reads, write_departments=department_writes,
+                 all_departments_read=grant.all_departments_read or grant.all_departments_write,
+                 all_departments_write=grant.all_departments_write,
+                 unowned_read=grant.unowned_read or grant.unowned_write, unowned_write=grant.unowned_write)
 
 
 def require_center(center_id, *, write=True, user=None):
     if user is None and _actor.get() is None:
         return  # Deliberately separate server-operator boundary.
     if not scope_for(user).contains(center_id, write=write):
-        raise PermissionDenied({'code': 'data_scope_denied', 'detail': '当前账号没有该数据中心或待归属数据的权限'})
+        raise PermissionDenied({'code': 'data_scope_denied', 'detail': '当前账号没有该数据中心或未指定位置资产的权限'})
+
+
+def require_department(department_id, *, write=True, user=None):
+    if user is None and _actor.get() is None:
+        return
+    if not scope_for(user).contains_department(department_id, write=write):
+        raise PermissionDenied({'code': 'data_scope_denied', 'detail': '当前账号没有该部门或待确认归属数据的权限'})
+
+
+def serialization_scope(context=None):
+    request = (context or {}).get('request')
+    user = request.user if request is not None else _actor.get()
+    return scope_for(user) if user is not None else None
+
+
+def require_queryset(queryset, *, write=True, user=None):
+    if user is None and _actor.get() is None:
+        return
+    scope = scope_for(user)
+    if scope.global_write if write else scope.global_read:
+        return
+    if queryset.exclude(pk__in=scoped(queryset, user=user, write=write).values('pk')).exists():
+        raise PermissionDenied({'code': 'data_scope_denied', 'detail': '操作涉及范围外记录，需要完整的关联数据授权'})
+
+
+def location_assets(instance):
+    from .models import Asset
+    name = instance.__class__.__name__
+    if name == 'Rack':
+        return Asset.all_objects.filter(rack_allocation__rack_id=instance.pk)
+    if name == 'ServerRoom':
+        return Asset.all_objects.filter(rack_allocation__rack__room_id=instance.pk)
+    if name == 'DataCenter':
+        return Asset.all_objects.filter(Q(rack_allocation__rack__room__data_center_id=instance.pk) | Q(rack_allocation__isnull=True, asset_data_center_id=instance.pk))
+    return None
 
 
 def require_object(instance, *, write=True, user=None):
@@ -98,8 +170,10 @@ def scoped(queryset, *, user=None, write=False):
     if scope.global_write if write else scope.global_read:
         return queryset
     name = queryset.model.__name__
+    if name in {'Person', 'Department'}:
+        return queryset.filter(scope.department_q('department_id' if name == 'Person' else 'pk', write=write))
     if name == 'Asset':
-        return queryset.filter(
+        return queryset.filter(scope.department_q('owning_department_id', write=write)).filter(
             Q(rack_allocation__isnull=False) & scope.location_q('rack_allocation__rack__room__data_center_id', write=write)
             | Q(rack_allocation__isnull=True) & scope.location_q('asset_data_center_id', write=write, nullable=True))
     centers = {'DataCenter': 'pk', 'ServerRoom': 'data_center_id', 'Rack': 'room__data_center_id', 'SpareStock': 'data_center_id'}
@@ -131,7 +205,12 @@ def scoped(queryset, *, user=None, write=False):
         observed = Q(actual_placement='') | Q(actual_location_snapshot__data_center_id__in=center_ids)
         if scope.unlocated_write if write else scope.unlocated_read:
             observed |= Q(actual_placement='unlocated')
-        visible_items = visible_items.filter(observed).values('pk')
+        visible_items = visible_items.filter(observed)
+        if not scope.full_department_access(write=write):
+            # Unknown legacy ownership evidence requires the full department boundary.
+            ownership = scope.department_q('system_snapshot__owning_department_id', write=write, json=True)
+            visible_items = visible_items.filter(system_snapshot__has_key='owning_department_id').filter(ownership)
+        visible_items = visible_items.values('pk')
         excluded_items = InventoryItem.objects.filter(task_id=OuterRef('pk')).exclude(pk__in=visible_items)
         tasks = InventoryTask.objects.exclude(scope='all_assets').filter(
             scope.location_q('data_center_id', write=write)).filter(~Exists(excluded_items)).values('pk')
@@ -213,11 +292,19 @@ class ScopedViewSetMixin:
         } and not scope.global_write:
             raise PermissionDenied({'code': 'data_scope_global_required', 'detail': '共有主数据修改需要全局写入授权'})
 
+    def get_object(self):
+        instance = super().get_object()
+        if self.request.method not in SAFE_METHODS:
+            affected = location_assets(instance)
+            if affected is not None:
+                require_queryset(affected)
+        return instance
+
     def get_queryset(self):
         return scoped(super().get_queryset(), user=self.request.user, write=self.request.method not in SAFE_METHODS)
 
     def filter_queryset(self, queryset):
-        return scoped(super().filter_queryset(queryset), user=self.request.user, write=self.request.method not in SAFE_METHODS)
+        return scoped(super().filter_queryset(queryset), user=self.request.user, write=self.request.method not in SAFE_METHODS or self.request.query_params.get("scope_access") == "write")
 
     def get_serializer(self, *args, **kwargs):
         serializer = super().get_serializer(*args, **kwargs)
@@ -227,7 +314,7 @@ class ScopedViewSetMixin:
             child = getattr(field, 'child_relation', field)
             queryset = getattr(child, 'queryset', None)
             if queryset is not None:
-                related_write = self.request.method not in SAFE_METHODS and queryset.model.__name__ in {'Asset', 'DataCenter', 'ServerRoom', 'Rack', 'InventoryTask', 'InventoryItem', 'FaultEvent', 'RepairRecord', 'SpareStock'}
+                related_write = self.request.method not in SAFE_METHODS and queryset.model.__name__ in {'Asset', 'DataCenter', 'ServerRoom', 'Rack', 'InventoryTask', 'InventoryItem', 'FaultEvent', 'RepairRecord', 'SpareStock', 'Department'}
                 child.queryset = scoped(queryset, user=self.request.user, write=related_write)
         return serializer
 

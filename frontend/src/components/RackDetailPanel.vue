@@ -43,10 +43,11 @@ function formatDate(value?: string) {
       </el-descriptions-item>
       <el-descriptions-item :label="t('common.type')">{{ displayValue(rack.rack_type) }}</el-descriptions-item>
       <el-descriptions-item :label="t('rack.totalU')">{{ rack.total_u }} U</el-descriptions-item>
-      <el-descriptions-item :label="t('rack.usedU')">{{ usedU }} U</el-descriptions-item>
-      <el-descriptions-item :label="t('rack.availableU')">{{ freeU }} U</el-descriptions-item>
+      <el-descriptions-item :label="t('rack.usedU')">{{ rack.occupancy_restricted ? t('dataScope.notAuthorized') : `${usedU} U` }}</el-descriptions-item>
+      <el-descriptions-item :label="t('rack.availableU')">{{ rack.occupancy_restricted ? t('dataScope.notAuthorized') : `${freeU} U` }}</el-descriptions-item>
       <el-descriptions-item :label="t('rack.utilization')">
-        <div class="rack-summary-utilization">
+        <span v-if="rack.occupancy_restricted">{{ t('dataScope.notAuthorized') }}</span>
+        <div v-else class="rack-summary-utilization">
           <span>{{ utilization }}%</span>
           <el-progress
             :percentage="utilization"
@@ -56,7 +57,7 @@ function formatDate(value?: string) {
           />
         </div>
       </el-descriptions-item>
-      <el-descriptions-item :label="t('rack.assetCount')">{{ t('common.deviceCount', assetsCount) }}</el-descriptions-item>
+      <el-descriptions-item :label="t('rack.assetCount')">{{ rack.occupancy_restricted ? t('dataScope.notAuthorized') : t('common.deviceCount', assetsCount) }}</el-descriptions-item>
       <el-descriptions-item :label="t('common.status')">
         <StatusTag :tone="statusTone" :label="statusLabel" />
       </el-descriptions-item>

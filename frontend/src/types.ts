@@ -398,7 +398,7 @@ export type DataCenter = { revision?: number;
   name: string;
   address?: string;
   is_active: boolean;
-  assets_count?: number;
+  assets_count?: number | null;
   rooms_count?: number;
   created_at?: string;
   updated_at?: string;
@@ -407,17 +407,17 @@ export type DashboardStatus = { status: AssetStatus; label: string; count: numbe
 export type DashboardDataCenterCapacity = {
   data_center_id: number;
   data_center: string;
-  used_u: number;
+  used_u: number | null;
   total_u: number;
-  utilization: number;
+  utilization: number | null;
 };
 export type DashboardRoomCapacity = {
   room_id: number;
   data_center: string;
   room: string;
-  used_u: number;
+  used_u: number | null;
   total_u: number;
-  utilization: number;
+  utilization: number | null;
 };
 export type DashboardAlert = {
   id: number;
@@ -449,9 +449,9 @@ export type DashboardDataCenterOverview = {
   asset_count: number;
   rack_count: number;
   total_u: number;
-  used_u: number;
-  free_u: number;
-  utilization: number;
+  used_u: number | null;
+  free_u: number | null;
+  utilization: number | null;
 };
 export type DashboardRackCapacity = {
   id: number;
@@ -461,10 +461,10 @@ export type DashboardRackCapacity = {
   server_room: string;
   server_room_id: number;
   total_u: number;
-  used_u: number;
-  free_u: number;
-  utilization: number;
-  device_count: number;
+  used_u: number | null;
+  free_u: number | null;
+  utilization: number | null;
+  device_count: number | null;
 };
 export type DashboardInventorySummary = {
   task_id: number;
@@ -549,6 +549,7 @@ export type DepreciationInfo = {
 };
 export type AssetDepreciationSummary = Pick<DepreciationInfo, "status" | "net_book_value" | "accumulated_depreciation">;
 export type DashboardOverview = {
+  capacity_restricted?: boolean;
   assets: {
     total: number;
     in_use: number;
@@ -559,9 +560,9 @@ export type DashboardOverview = {
   };
   racks: {
     total: number;
-    used_u: number;
-    free_u: number;
-    device_count: number;
+    used_u: number | null;
+    free_u: number | null;
+    device_count: number | null;
     empty_count?: number;
   };
   data_centers?: { total: number };
@@ -731,6 +732,8 @@ export type Asset = {
   assigned_person?: Person | null;
   notes?: string;
   asset_data_center?: number | null;
+  owning_department?: number | null;
+  owning_department_name?: string | null;
   asset_data_center_name?: string;
   network_addresses?: AssetNetwork[];
   rack_allocation?: { rack?: number; rack_code: string; data_center: string; data_center_id?: number; server_room: string; server_room_id?: number; start_u: number; end_u: number; units: number } | null;
@@ -1009,35 +1012,37 @@ export type Rack = { revision?: number;
   is_active?: boolean;
   status?: RackStatus;
   status_label?: string;
-  assets_count?: number;
-  used_u?: number;
-  free_u?: number;
+  occupancy_restricted?: boolean;
+  assets_count?: number | null;
+  used_u?: number | null;
+  free_u?: number | null;
   allocations: Array<{ asset: number; start_u: number; end_u: number; units: number; asset_no: string; asset_name: string; device_type_name?: string | null; device_type_color?: string | null; manufacturer_name?: string | null; model_name?: string | null; serial_number?: string | null; status: string }>;
 };
-export type ServerRoom = { revision?: number; id: number; data_center: number; data_center_name: string; name: string; is_active: boolean; owner_name?: string; contact_phone?: string; notes?: string; racks_count: number; assets_count: number; created_at?: string; updated_at?: string };
+export type ServerRoom = { revision?: number; id: number; data_center: number; data_center_name: string; name: string; is_active: boolean; owner_name?: string; contact_phone?: string; notes?: string; racks_count: number; assets_count: number | null; created_at?: string; updated_at?: string };
 export type FacilitySummary = {
+  capacity_restricted?: boolean;
   rooms_total: number;
   rooms_in_use: number;
   rooms_disabled: number;
   racks_total: number;
   racks_in_use: number;
   total_u: number;
-  used_u: number;
-  free_u: number;
+  used_u: number | null;
+  free_u: number | null;
   data_centers?: Array<{
     id: number;
     name: string;
     rooms_count: number;
     racks_count: number;
-    assets_count: number;
+    assets_count: number | null;
     total_u: number;
-    used_u: number;
-    free_u: number;
-    utilization: number;
+    used_u: number | null;
+    free_u: number | null;
+    utilization: number | null;
     is_active: boolean;
   }>;
-  rooms: Array<ServerRoom & { total_u?: number; used_u?: number }>;
-  racks: Array<Rack & { room_id: number; device_count?: number }>;
+  rooms: Array<ServerRoom & { total_u?: number; used_u?: number | null }>;
+  racks: Array<Rack & { room_id: number; device_count?: number | null }>;
 };
 export type FaultEvent = { id: number; asset: number; asset_no: string; asset_name: string; occurred_at: string; reported_at: string | null; resolved_at: string | null; reason: string; description: string; is_closed: boolean; repair: { id: number; fault: number; provider: string; started_at: string | null; finished_at: string | null; cost: string | null; notes: string } | null };
 export type RepairPartUsage = {
@@ -1083,6 +1088,7 @@ export type AuthorizationSnapshot = {
     global_read: boolean; global_write: boolean;
     read_data_centers: number[]; write_data_centers: number[];
     unlocated_read: boolean; unlocated_write: boolean; global_stock_metrics: boolean;
+    read_departments: number[]; write_departments: number[]; all_departments_read: boolean; all_departments_write: boolean; unowned_read: boolean; unowned_write: boolean;
   };
 };
 export type Role = { code: string; name: string; description: string; capabilities: string[]; user_count?: number };

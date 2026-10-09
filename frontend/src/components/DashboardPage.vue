@@ -82,7 +82,7 @@ const licenseRiskTotal = computed(() => {
 });
 const rackTotalU = computed(() => {
   const racks = dashboard.value?.racks;
-  return racks ? racks.used_u + racks.free_u : 0;
+  return racks ? (racks.used_u ?? 0) + (racks.free_u ?? 0) : 0;
 });
 const rackUtilization = computed(() => ratio(
   dashboard.value?.racks.used_u ?? 0,
@@ -309,8 +309,8 @@ function recentChangeLabel(action: string): string {
               <span class="dashboard-kpi-card__icon" aria-hidden="true"><DataAnalysis /></span>
               <span>{{ t('dashboard.rackCapacity') }}</span>
             </div>
-            <strong class="dashboard-kpi-card__value">{{ rackUtilization.toFixed(1) }}%</strong>
-            <div class="dashboard-kpi-card__support">{{ dashboardData.racks.used_u }} / {{ rackTotalU }} U · {{ dashboardData.racks.free_u }} {{ t('dashboard.freeCapacity') }}</div>
+            <strong class="dashboard-kpi-card__value">{{ dashboardData.capacity_restricted ? t('dataScope.notAuthorized') : `${rackUtilization.toFixed(1)}%` }}</strong>
+            <div v-if="!dashboardData.capacity_restricted" class="dashboard-kpi-card__support">{{ dashboardData.racks.used_u }} / {{ rackTotalU }} U · {{ dashboardData.racks.free_u }} {{ t('dashboard.freeCapacity') }}</div>
           </el-card>
 
           <el-card

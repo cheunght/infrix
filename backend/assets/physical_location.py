@@ -16,7 +16,7 @@ from django.core.exceptions import ValidationError
 from django.db import transaction
 
 from .models import Asset, DataCenter, InventoryTask, Rack, RackUnitAllocation, ServerRoom
-from .data_scope import require_center, require_object
+from .data_scope import require_center, require_object, require_queryset, location_assets, serialization_scope
 
 
 class RoomReparentBlocked(ValueError):
@@ -149,6 +149,7 @@ def lock_rack_location(*, rack_id: int, target_room_id: int | None = None) -> Ra
         allocation_rack_ids=(rack_id,),
     )
     require_object(Rack.objects.get(pk=rack_id))
+    require_queryset(location_assets(Rack.objects.get(pk=rack_id)))
     require_center(ServerRoom.objects.values_list("data_center_id", flat=True).get(pk=target_room_id))
     return Rack.objects.select_for_update().select_related(
         "room__data_center"
@@ -176,6 +177,7 @@ def lock_server_room_location(
         allocation_rack_ids=rack_ids,
     )
     require_object(ServerRoom.objects.get(pk=room_id))
+    require_queryset(location_assets(ServerRoom.objects.get(pk=room_id)))
     require_center(target_data_center_id)
     return ServerRoom.objects.select_for_update().select_related(
         "data_center"
@@ -230,12 +232,14 @@ def place_asset(*, asset_id: int, rack_id: int, start_u: int, end_u: int) -> boo
     )
     conflict = conflicts.order_by("start_u", "id").first()
     if conflict:
-        raise ValidationError({
-            "configuration": (
-                f"机柜 {rack.code} 的 U{start_u}-U{end_u} 与资产 "
-                f"{conflict.asset.asset_no}（U{conflict.start_u}-U{conflict.end_u}）冲突"
-            )
-        })
+        from .data_scope import scoped
+        scope = serialization_scope()
+        visible = scope is None or scoped(Asset.all_objects.filter(pk=conflict.asset_id)).exists()
+        message = (
+            f"机柜 {rack.code} 的 U{start_u}-U{end_u} 与资产 "
+            f"{conflict.asset.asset_no}（U{conflict.start_u}-U{conflict.end_u}）冲突"
+        ) if visible else "所选 U 位无法使用，请联系设施管理员"
+        raise ValidationError({"configuration": message})
 
     allocation = (
         RackUnitAllocation.objects.select_for_update()
@@ -314,6 +318,7 @@ def _synchronize_asset_location_hierarchy_locked(*, rack_ids, data_center_id) ->
         .order_by("pk")
     )
     changed = 0
+    require_queryset(assets)
     for asset in assets:
         if asset.asset_data_center_id == data_center_id:
             continue

@@ -1,4 +1,4 @@
-from .data_scope import ScopedModelViewSet, ScopedReadOnlyModelViewSet, scoped, require_object, global_endpoint, scope_endpoint, admit, scope_for, lock_creation_locations
+from .data_scope import require_queryset, ScopedModelViewSet, ScopedReadOnlyModelViewSet, scoped, require_object, global_endpoint, scope_endpoint, admit, scope_for, lock_creation_locations
 import json
 import logging
 
@@ -172,11 +172,11 @@ logger = logging.getLogger(__name__)
 ASSET_EXPORT_HEADERS = {
     "zh-CN": (
         "资产编号", "资产名称", "型号来源", "标准型号名称", "型号编号", "历史型号文本", "厂商", "设备类型", "实际保修月数", "预计使用寿命（月）", "序列号", "用途", "状态", "使用人", "使用人员工编号", "使用人部门", "使用人单位", "使用人联系方式",
-        "数据中心", "机房", "机柜", "起始 U", "结束 U", "业务 IP", "管理 IP", "带外 IP", "采购日期", "供应商", "采购单号", "采购金额", "折旧方法", "折旧起算日", "折旧年限", "残值率", "资产原值", "预计残值", "月折旧额", "累计折旧", "当前净值", "折旧状态", "维保厂商", "维保合同号", "维保开始日", "维保到期日", "维保备注", "备注", "标签",
+        "数据中心", "机房", "机柜", "起始 U", "结束 U", "业务 IP", "管理 IP", "带外 IP", "采购日期", "供应商", "采购单号", "采购金额", "折旧方法", "折旧起算日", "折旧年限", "残值率", "资产原值", "预计残值", "月折旧额", "累计折旧", "当前净值", "折旧状态", "维保厂商", "维保合同号", "维保开始日", "维保到期日", "维保备注", "备注", "资产归属部门", "标签",
     ),
     "en-US": (
         "Asset code", "Asset name", "Model source", "Standard model name", "Model number", "Historical model text", "Manufacturer", "Device type", "Actual warranty (months)", "Expected service life (months)", "Serial number", "Purpose", "Status", "User", "Assigned person employee no.", "Assigned person department", "Assigned person organization", "Assigned person contact",
-        "Data center", "Server room", "Rack", "Start U", "End U", "Business IP", "Management IP", "OOB IP", "Purchase date", "Supplier", "Purchase order no.", "Purchase amount", "Depreciation method", "Depreciation start date", "Depreciation years", "Residual rate", "Original asset value", "Estimated residual value", "Monthly depreciation", "Accumulated depreciation", "Current net book value", "Depreciation status", "Maintenance provider", "Maintenance contract no.", "Maintenance start date", "Maintenance expiry date", "Maintenance notes", "Notes", "Tags",
+        "Data center", "Server room", "Rack", "Start U", "End U", "Business IP", "Management IP", "OOB IP", "Purchase date", "Supplier", "Purchase order no.", "Purchase amount", "Depreciation method", "Depreciation start date", "Depreciation years", "Residual rate", "Original asset value", "Estimated residual value", "Monthly depreciation", "Accumulated depreciation", "Current net book value", "Depreciation status", "Maintenance provider", "Maintenance contract no.", "Maintenance start date", "Maintenance expiry date", "Maintenance notes", "Notes", "Asset owning department", "Tags",
     ),
 }
 ASSET_EXPORT_SHEET_TITLES = {"zh-CN": "资产台账", "en-US": "Asset ledger"}
@@ -626,7 +626,7 @@ class AssetViewSet(AuditedModelViewSetMixin, ScopedModelViewSet):
     queryset = Asset.all_objects.select_related(
         "assigned_person__department", "assigned_person__account", "standalone_manufacturer",
         "standalone_device_type__default_fieldset", "asset_model__manufacturer",
-        "asset_model__device_type__default_fieldset", "asset_model__fieldset", "asset_data_center",
+        "asset_model__device_type__default_fieldset", "asset_model__fieldset", "asset_data_center", "owning_department",
         "rack_allocation__rack__room__data_center",
     ).prefetch_related(
         "network_addresses", "procurement_records", "maintenance_contracts", "asset_tags__tag",
@@ -639,7 +639,7 @@ class AssetViewSet(AuditedModelViewSetMixin, ScopedModelViewSet):
     permission_resource = "assets"
     audit_resource = "asset"
     filter_backends = [DjangoFilterBackend, SearchFilter, OrderingFilter]
-    filterset_fields = ["status", "asset_model"]
+    filterset_fields = ["status", "asset_model", "owning_department"]
     ordering_fields = ["asset_no", "name", "serial_number", "asset_model__name", "model_text"]
     ordering = ["asset_no", "id"]
     search_fields = [
@@ -724,6 +724,8 @@ class AssetViewSet(AuditedModelViewSetMixin, ScopedModelViewSet):
     def get_queryset(self):
         queryset = super().get_queryset()
         queryset = visible_assets(self.request, queryset)
+        if not scope_for(self.request.user).full_department_access():
+            self.search_fields = [field for field in self.search_fields if not field.startswith("assigned_person__")]
         manufacturer = self.request.query_params.get("manufacturer", "").strip()
         if manufacturer.isdigit():
             queryset = queryset.filter(
@@ -1019,7 +1021,7 @@ class AssetViewSet(AuditedModelViewSetMixin, ScopedModelViewSet):
     @action(detail=True, methods=["post"], url_path="assign")
     def assign(self, request, pk=None):
         self.get_object()
-        serializer = AssetAssignmentTargetSerializer(data=request.data)
+        serializer = AssetAssignmentTargetSerializer(data=request.data, context=self.get_serializer_context())
         serializer.is_valid(raise_exception=True)
         asset, _event = assign_asset(
             asset_id=pk,
@@ -1056,7 +1058,7 @@ class AssetViewSet(AuditedModelViewSetMixin, ScopedModelViewSet):
     @action(detail=True, methods=["post"], url_path="transfer")
     def transfer(self, request, pk=None):
         self.get_object()
-        serializer = AssetAssignmentTargetSerializer(data=request.data)
+        serializer = AssetAssignmentTargetSerializer(data=request.data, context=self.get_serializer_context())
         serializer.is_valid(raise_exception=True)
         asset, _event = transfer_asset(
             asset_id=pk,
@@ -1206,7 +1208,7 @@ class AssetViewSet(AuditedModelViewSetMixin, ScopedModelViewSet):
     )
     @action(detail=False, methods=["post"], url_path="batch-assignment")
     def batch_assignment(self, request):
-        request_serializer = AssetBatchAssignmentSerializer(data=request.data)
+        request_serializer = AssetBatchAssignmentSerializer(data=request.data, context=self.get_serializer_context())
         request_serializer.is_valid(raise_exception=True)
         validated = request_serializer.validated_data
         asset_ids = validated["ids"]
@@ -1693,11 +1695,12 @@ class RackViewSet(AuditedModelViewSetMixin, ScopedModelViewSet):
                 return queryset.none()
             if device_type_id <= 0:
                 return queryset.none()
+            readable_assets = scoped(Asset.all_objects.all(), user=self.request.user).values("pk")
             queryset = queryset.filter(
-                Q(allocations__asset__asset_model__device_type_id=device_type_id)
-                | Q(
-                    allocations__asset__asset_model__isnull=True,
-                    allocations__asset__standalone_device_type_id=device_type_id,
+                Q(allocations__asset_id__in=readable_assets) & (
+                    Q(allocations__asset__asset_model__device_type_id=device_type_id)
+                    | Q(allocations__asset__asset_model__isnull=True,
+                        allocations__asset__standalone_device_type_id=device_type_id)
                 )
             ).distinct()
         active = self.request.query_params.get("is_active", "true").strip().lower()
@@ -2712,11 +2715,13 @@ class UserViewSet(ScopedModelViewSet):
                 # The actor can be global; missing target grants still deny.
                 data = {"read_data_centers": [], "write_data_centers": [], "global_read": False,
                         "global_write": False, "unlocated_read": False, "unlocated_write": False,
-                        "global_stock_metrics": False, "revision": 0}
+                        "global_stock_metrics": False, "revision": 0, "read_departments": [], "write_departments": [],
+                        "all_departments_read": False, "all_departments_write": False, "unowned_read": False, "unowned_write": False}
             centers = list(DataCenter.objects.filter(
                 Q(read_scope_grants=grant) | Q(write_scope_grants=grant)
             ).distinct().values("id", "name")) if grant else []
-            return {**data, "effective": scope_for(target).as_dict(), "center_options": centers}
+            departments = list(Department.objects.filter(Q(read_scope_grants=grant) | Q(write_scope_grants=grant)).distinct().values("id", "name")) if grant else []
+            return {**data, "effective": scope_for(target).as_dict(), "center_options": centers, "department_options": departments}
         if request.method == "GET":
             return Response(snapshot(UserDataScope.objects.filter(user=target).first()))
         serializer = DataScopeSerializer(data=request.data)
@@ -2735,12 +2740,16 @@ class UserViewSet(ScopedModelViewSet):
                 values = dict(serializer.validated_data)
                 reads = values.pop("read_data_centers")
                 writes = values.pop("write_data_centers")
+                department_reads = values.pop("read_departments")
+                department_writes = values.pop("write_departments")
                 for key, value in values.items():
                     setattr(grant, key, value)
                 grant.revision = int(raw_revision) + 1
                 grant.save()
                 grant.read_data_centers.set(reads)
                 grant.write_data_centers.set(writes)
+                grant.read_departments.set(department_reads)
+                grant.write_departments.set(department_writes)
                 after = snapshot(grant)
                 write_audit_log(request, action="update", resource_type="user_data_scope", resource_id=target.pk,
                                 before=before, after=after)
@@ -3159,6 +3168,8 @@ def _inventory_snapshot(asset):
         }
     return {
         "asset_no": asset.asset_no,
+        "owning_department_id": asset.owning_department_id,
+        "owning_department": asset.owning_department.name if asset.owning_department_id else "",
         "name": asset.name,
         "device_type_name": asset.device_type.name if asset.device_type_id else "",
         "serial_number": asset.serial_number,
@@ -3186,6 +3197,7 @@ def _inventory_scope_limit_error(asset_count):
 def _materialize_inventory_assets_with_limit(data_center, server_room, scope):
     """Count first, then materialize only a bounded candidate set."""
     queryset = get_inventory_scope_assets(data_center, server_room, scope=scope)
+    require_queryset(queryset)
     asset_count = queryset.count()
     if asset_count > MAX_INVENTORY_TASK_ASSETS:
         raise _inventory_scope_limit_error(asset_count)
@@ -3266,6 +3278,7 @@ class InventoryTaskViewSet(AuditedModelViewSetMixin, ScopedModelViewSet):
             serializer.validated_data.get("data_center"), serializer.validated_data.get("server_room"),
             scope=serializer.validated_data["scope"],
         ).filter(pk__in=active_ids))
+        require_queryset(Asset.objects.filter(pk__in=[asset.pk for asset in assets]))
         task = serializer.save(inspector=serializer.validated_data.get("inspector") or self.request.user)
         InventoryItem.objects.bulk_create(
             [
@@ -3321,6 +3334,7 @@ class InventoryTaskViewSet(AuditedModelViewSetMixin, ScopedModelViewSet):
         description="预览创建盘点任务时将生成的资产范围，不创建任务或盘点明细。",
     )
     @action(detail=False, methods=["get"], url_path="scope-preview")
+    @transaction.atomic
     def scope_preview(self, request):
         query_params = {
             "scope": request.query_params.get("scope"),
@@ -3337,7 +3351,10 @@ class InventoryTaskViewSet(AuditedModelViewSetMixin, ScopedModelViewSet):
             raise PermissionDenied({"code": "data_scope_global_required", "detail": "全部资产盘点需要全局写入授权"})
         if data_center is not None:
             require_center(data_center.pk, user=request.user)
+        lock_inventory_scope(getattr(data_center, "pk", None), getattr(server_room, "pk", None))
         assets = get_inventory_scope_assets(data_center, server_room, scope=scope)
+        list(Asset.objects.select_for_update().filter(pk__in=assets.values("pk")).order_by("pk"))
+        require_queryset(assets)
 
         total = assets.count()
         racked = assets.filter(rack_allocation__isnull=False).count()
@@ -5456,6 +5473,8 @@ def asset_export(request):
     sheet.title = ASSET_EXPORT_SHEET_TITLES[export_locale]
     _append_excel_row(sheet, headers)
     for asset in assets:
+        from .serializers import PersonSummarySerializer
+        person = PersonSummarySerializer(asset.assigned_person, context={"request": request}).data if asset.assigned_person_id else {}
         networks = {item.role: item.address for item in asset.network_addresses.all()}
         rack = getattr(asset, "rack_allocation", None)
         procurement = next(iter(asset.procurement_records.all()), None)
@@ -5487,11 +5506,8 @@ def asset_export(request):
             asset.device_type.name if asset.device_type_id else "", asset.warranty_months if asset.warranty_months is not None else "",
             asset.asset_model.expected_life_months if asset.asset_model_id and asset.asset_model.expected_life_months is not None else "",
             asset.serial_number or "", asset.purpose, status_labels.get(asset.status, asset.status),
-            asset.assigned_person.name if asset.assigned_person_id else "",
-            asset.assigned_person.employee_no if asset.assigned_person_id else "",
-            asset.assigned_person.department.name if asset.assigned_person_id and asset.assigned_person.department_id else "",
-            asset.assigned_person.organization if asset.assigned_person_id else "",
-            asset.assigned_person.contact if asset.assigned_person_id else "",
+            person.get("name", ""), person.get("employee_no", ""), person.get("department_name", ""),
+            person.get("organization", ""), person.get("contact", ""),
             rack.rack.room.data_center.name if rack else (asset.asset_data_center.name if asset.asset_data_center_id else ""), rack.rack.room.name if rack else "", rack.rack.code if rack else "",
             rack.start_u if rack else "", rack.end_u if rack else "", networks.get("business", ""), networks.get("management", ""), networks.get("oob", ""),
             procurement.purchase_date if procurement else "", procurement.supplier if procurement else "", procurement.order_no if procurement else "", procurement.amount if procurement else "",
@@ -5527,6 +5543,7 @@ def asset_export(request):
                 else:
                     value = raw_value
                 custom_by_key[key] = value
+        row_values.insert(len(row_values) - 1, (asset.archive_snapshot.get("owning_department_name") if asset.archived_at else asset.owning_department.name if asset.owning_department_id else "") or "")
         row_values.extend(custom_by_key.get(field.key, "") for field in custom_fields)
         _append_excel_row(sheet, row_values)
     _style_export_sheet(sheet, max_width=36)
@@ -5858,7 +5875,7 @@ def facilities_summary(request):
             "utilization": round(used_u / total_u * 100, 1) if total_u else 0,
             "is_active": data_center.is_active,
         })
-    return Response({
+    payload = {
         "rooms_total": len(room_ids),
         "rooms_in_use": sum(1 for room in room_rows if room["is_active"]),
         "rooms_disabled": ServerRoom.objects.filter(pk__in=room_ids, is_active=False).count(),
@@ -5875,7 +5892,9 @@ def facilities_summary(request):
         "data_centers": data_center_rows,
         "rooms": room_rows,
         "racks": rack_rows,
-    })
+    }
+    from .reporting.capacity import redact_capacity
+    return Response(redact_capacity(payload, restricted=not scope_for(request.user).full_department_access()))
 
 
 def _rack_sheet_name(name, used):
@@ -6012,8 +6031,10 @@ def rack_layout_export(request):
                 header.fill = PatternFill("solid", fgColor="4472C4")
                 header.alignment = Alignment(horizontal="center")
                 sheet.merge_cells(start_row=rack_top + 1, start_column=start_col, end_row=rack_top + 1, end_column=end_col)
+                occupancy_restricted = not scope_for(request.user).full_department_access()
                 effective_used_u = rack_effective_used_u(list(rack.allocations.all()), rack.total_u)
-                meta = sheet.cell(rack_top + 1, start_col, f"{rack.room.name} | {rack.total_u} U | 已用 {effective_used_u} U | 可用 {rack.total_u - effective_used_u} U")
+                meta_text = f"{rack.room.name} | {rack.total_u} U | 占用信息：无权限" if occupancy_restricted else f"{rack.room.name} | {rack.total_u} U | 已用 {effective_used_u} U | 可用 {rack.total_u - effective_used_u} U"
+                meta = sheet.cell(rack_top + 1, start_col, meta_text)
                 meta.font = Font(size=9, color="44546A")
                 meta.alignment = Alignment(horizontal="center")
                 sheet.column_dimensions[get_column_letter(start_col)].width = RACK_LAYOUT_SIDE_COLUMN_WIDTH
@@ -6036,6 +6057,10 @@ def rack_layout_export(request):
                         cell = sheet.cell(row, col)
                         cell.border = border
                         cell.alignment = Alignment(horizontal="center", vertical="center", wrap_text=True)
+                if occupancy_restricted:
+                    for offset in range(rack.total_u):
+                        sheet.cell(unit_start_row + offset, start_col + 1, "无权限")
+                    continue
                 ordered_allocations = sorted(rack.allocations.all(), key=lambda allocation: (allocation.start_u, allocation.end_u))
                 for previous, current in zip(ordered_allocations, ordered_allocations[1:]):
                     if current.start_u - previous.end_u - 1 == 1:

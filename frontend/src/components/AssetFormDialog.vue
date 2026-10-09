@@ -21,6 +21,7 @@ import {
 } from "../custom-field-validation";
 import { systemDatePickerFormat } from "../system-settings";
 
+const mapOwningDepartment = (item: Record<string, unknown>): SearchableSelectOption => ({value: String(item.id), label: String(item.name)});
 const props = defineProps<{ context: AssetFormContext }>();
 const { t } = useI18n();
 const context = props.context;
@@ -645,6 +646,10 @@ watch(() => assetForm.value.purchase_date, () => {
         </el-form-item>
         <el-form-item :label="t('asset.serialNumber')" :error="fieldError('serial_number')"><el-input v-model="assetForm.serial_number" /></el-form-item>
         <el-form-item :label="t('asset.purpose')" :error="fieldError('purpose')"><el-input v-model="assetForm.purpose" /></el-form-item>
+        <el-form-item :label="t('asset.owningDepartment')" :error="fieldError('owning_department')">
+          <SearchableSelect v-model="assetForm.owning_department" :request="request" endpoint="/departments/" :map-option="mapOwningDepartment" :base-query="{ scope_access: 'write' }" :selected-option="editingAsset?.owning_department ? {value: String(editingAsset.owning_department), label: editingAsset.owning_department_name || String(editingAsset.owning_department)} : null" clearable />
+          <FieldHelp :text="t('asset.owningDepartmentHint')" />
+        </el-form-item>
         <el-form-item :label="t('asset.assignedPerson')" :error="fieldError('assigned_person')">
           <SearchableSelect
             v-model="assetForm.assigned_person"

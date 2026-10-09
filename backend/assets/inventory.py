@@ -30,7 +30,7 @@ def get_inventory_scope_assets(
     """
 
     queryset = Asset.objects.select_related(
-        "asset_data_center",
+        "asset_data_center", "owning_department",
         "asset_model__device_type",
         "standalone_device_type",
         "rack_allocation__rack__room__data_center",

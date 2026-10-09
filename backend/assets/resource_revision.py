@@ -51,6 +51,11 @@ class ResourceRevisionViewSetMixin:
                 instance = model.objects.select_for_update().get(pk=instance.pk)
         except model.DoesNotExist as exc:
             raise NotFound("记录已被删除，请刷新后再操作") from exc
+        from .data_scope import require_object, require_queryset, location_assets
+        require_object(instance)
+        affected = location_assets(instance)
+        if affected is not None:
+            require_queryset(affected)
         check_resource_revision(instance, request)
         # Preserve the normal response's annotations and related projections.
         instance = self.get_queryset().get(pk=instance.pk)
@@ -76,7 +81,7 @@ class ResourceRevisionSerializerMixin:
                 data["global_stock_metrics_visible"] = False
             elif instance.__class__.__name__ == "SparePart":
                 data["global_stock_metrics_visible"] = True
-            if not scope.global_read and instance.__class__.__name__ not in {"DataCenter", "ServerRoom", "Rack"}:
+            if (not scope.global_read and instance.__class__.__name__ not in {"DataCenter", "ServerRoom", "Rack"}) or (not scope.full_department_access() and instance.__class__.__name__ in {"DataCenter", "ServerRoom"}):
                 for key in ("assets_count", "asset_count", "assigned_assets_count"):
                     if key in data:
                         data[key] = None
@@ -86,4 +91,7 @@ class ResourceRevisionSerializerMixin:
         from rest_framework import serializers
         fields = super().get_fields()
         fields["revision"] = serializers.IntegerField(read_only=True)
+        for key in ("assets_count", "asset_count", "assigned_assets_count"):
+            if key in fields:
+                fields[key].allow_null = True
         return fields

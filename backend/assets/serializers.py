@@ -93,6 +93,12 @@ class DataScopeSerializer(serializers.Serializer):
     unlocated_read = serializers.BooleanField(required=False, default=False)
     unlocated_write = serializers.BooleanField(required=False, default=False)
     global_stock_metrics = serializers.BooleanField(required=False, default=False)
+    read_departments = serializers.PrimaryKeyRelatedField(many=True, queryset=Department.objects.all(), required=False, default=list)
+    write_departments = serializers.PrimaryKeyRelatedField(many=True, queryset=Department.objects.all(), required=False, default=list)
+    all_departments_read = serializers.BooleanField(required=False, default=False)
+    all_departments_write = serializers.BooleanField(required=False, default=False)
+    unowned_read = serializers.BooleanField(required=False, default=False)
+    unowned_write = serializers.BooleanField(required=False, default=False)
     revision = serializers.IntegerField(read_only=True)
 
 
@@ -597,7 +603,17 @@ class AssetBatchDeleteResponseSerializer(serializers.Serializer):
     results = AssetBatchDeleteResultSerializer(many=True)
 
 
-class AssetBatchAssignmentSerializer(serializers.Serializer):
+class PersonTargetScopeMixin:
+    def get_fields(self):
+        fields = super().get_fields()
+        request = self.context.get("request")
+        if request is not None and "target_person" in fields:
+            from .data_scope import scoped
+            fields["target_person"].queryset = scoped(Person.objects.all(), user=request.user)
+        return fields
+
+
+class AssetBatchAssignmentSerializer(PersonTargetScopeMixin, serializers.Serializer):
     ids = serializers.ListField(
         child=serializers.IntegerField(min_value=1),
         allow_empty=False,
@@ -2161,9 +2177,24 @@ def _asset_custom_values(obj):
     return {field["key"]: field["value"] for field in _asset_custom_fields(obj) if field["value"] is not None}
 
 
+def _redact_person(data, scope):
+    if not data or scope is None or scope.contains_department(data.get("department")):
+        return data
+    return {**data, "name": "无权限", "display_name": "无权限", "employee_no": None,
+            "department": None, "department_name": None, "email": "", "organization": "", "contact": "",
+            "directory_restricted": True}
+
+
 class PersonSummarySerializer(serializers.ModelSerializer):
     display_name = serializers.CharField(source="name", read_only=True)
     department_name = serializers.CharField(source="department.name", read_only=True, allow_null=True)
+
+    def to_representation(self, instance):
+        from .data_scope import serialization_scope
+        request = self.context.get("request")
+        own_profile = request is not None and instance.account_id == request.user.pk
+        data = super().to_representation(instance)
+        return data if own_profile else _redact_person(data, serialization_scope(self.context))
 
     class Meta:
         model = Person
@@ -2281,7 +2312,7 @@ class AssetDisposalSerializer(serializers.ModelSerializer):
         read_only_fields = fields
 
 
-class AssetAssignmentTargetSerializer(serializers.Serializer):
+class AssetAssignmentTargetSerializer(PersonTargetScopeMixin, serializers.Serializer):
     REMOVED_FIELDS = frozenset({
         "target_subject", "target_user", "responsible_user", "responsible_user_id",
         "responsible_user_name", "responsibility_subject", "responsibility_subject_id",
@@ -2332,6 +2363,20 @@ class AssetAssignmentSerializer(AssetAssignmentTargetSerializer):
 
 
 class AssetAssignmentEventSerializer(serializers.ModelSerializer):
+    def to_representation(self, instance):
+        from .data_scope import serialization_scope
+        data = super().to_representation(instance)
+        scope = serialization_scope(self.context)
+        # Existing event department names are historical labels, not reliable IDs.
+        if scope is not None and not scope.full_department_access():
+            for side in ("from_person", "to_person"):
+                if data.get(side) is not None:
+                    for suffix in ("employee_no", "department", "organization", "contact"):
+                        data[f"{side}_{suffix}"] = ""
+                    data[f"{side}_name"] = "无权限"
+            data["person_details_restricted"] = True
+        return data
+
     class Meta:
         model = AssetAssignmentEvent
         fields = [
@@ -2379,6 +2424,35 @@ class ResolvedAssetMetadataMixin(serializers.Serializer):
         return device_type.name if device_type is not None else None
 
 
+def _visible_inventory_items(asset_id, context):
+    from .data_scope import serialization_scope, scoped
+    items = InventoryItem.objects.filter(asset_id=asset_id)
+    request = context.get("request")
+    return scoped(items, user=request.user if request is not None else None) if serialization_scope(context) is not None else items
+
+
+def _scope_asset_representation(data, context):
+    from .data_scope import serialization_scope
+    scope = serialization_scope(context)
+    if "assigned_person" in data:
+        data["assigned_person"] = _redact_person(data["assigned_person"], scope)
+    if data.get("archive_snapshot"):
+        snapshot = dict(data["archive_snapshot"])
+        if "assigned_person" in snapshot:
+            snapshot["assigned_person"] = _redact_person(snapshot["assigned_person"], scope)
+        data["archive_snapshot"] = snapshot
+        if scope is not None and not scope.global_read:
+            items = _visible_inventory_items(data["id"], context)
+            count = items.count()
+            for projection in (data, snapshot):
+                if "inventory_records_count" in projection:
+                    projection["inventory_records_count"] = count
+                latest = projection.get("latest_inventory_record")
+                if latest and not items.filter(pk=latest.get("id")).exists():
+                    projection["latest_inventory_record"] = None
+    return data
+
+
 def _archive_representation(instance, data, *, custom_columns=None):
     snapshot = instance.archive_snapshot if instance.archived_at else {}
     if not snapshot:
@@ -2412,6 +2486,7 @@ def _archive_representation(instance, data, *, custom_columns=None):
 class AssetSerializer(ResolvedAssetMetadataMixin, serializers.ModelSerializer):
     revision = serializers.IntegerField(read_only=True)
     asset_data_center_name = serializers.CharField(source="asset_data_center.name", read_only=True, allow_null=True)
+    owning_department_name = serializers.CharField(source="owning_department.name", read_only=True, allow_null=True)
     asset_model = AssetModelReferenceSerializer(read_only=True, allow_null=True)
     assigned_person = PersonSummarySerializer(read_only=True, allow_null=True)
     network_addresses = AssetNetworkAddressSerializer(many=True, read_only=True)
@@ -2424,13 +2499,13 @@ class AssetSerializer(ResolvedAssetMetadataMixin, serializers.ModelSerializer):
         return [item.tag.name for item in _asset_tags_for_serialization(obj)]
 
     def to_representation(self, instance):
-        return _archive_representation(instance, super().to_representation(instance))
+        return _scope_asset_representation(_archive_representation(instance, super().to_representation(instance)), self.context)
 
     class Meta:
         model = Asset
         fields = [
             "id", "archived_at", "revision", "created_at", "updated_at", "asset_no", "name", "manufacturer", "manufacturer_name",
-            "device_type", "device_type_name", "asset_data_center", "asset_data_center_name", "asset_model",
+            "device_type", "device_type_name", "asset_data_center", "asset_data_center_name", "owning_department", "owning_department_name", "asset_model",
             "model_name", "model_number", "model_text", "warranty_months", "serial_number", "purpose", "status",
             "assigned_person", "notes", "depreciation_start_date", "depreciation_years", "residual_rate",
             "depreciation_method", "network_addresses", "rack_allocation", "procurement_records",
@@ -2457,6 +2532,7 @@ class AssetListSerializer(ResolvedAssetMetadataMixin, serializers.ModelSerialize
     """
 
     asset_data_center_name = serializers.CharField(source="asset_data_center.name", read_only=True, allow_null=True)
+    owning_department_name = serializers.CharField(source="owning_department.name", read_only=True, allow_null=True)
     assigned_person = PersonSummarySerializer(read_only=True, allow_null=True)
     business_ip = serializers.SerializerMethodField()
     management_ip = serializers.SerializerMethodField()
@@ -2580,15 +2656,18 @@ class AssetListSerializer(ResolvedAssetMetadataMixin, serializers.ModelSerialize
         return values
 
     def to_representation(self, instance):
-        return _archive_representation(instance, super().to_representation(instance),
-                                       custom_columns=set(self.context.get("requested_custom_columns", ())))
+        data = _archive_representation(
+            instance, super().to_representation(instance),
+            custom_columns=set(self.context.get("requested_custom_columns", ())),
+        )
+        return _scope_asset_representation(data, self.context)
 
     class Meta:
         model = Asset
         fields = [
             "id", "archived_at", "created_at", "updated_at", "asset_no", "name",
             "manufacturer", "manufacturer_name", "device_type",
-            "device_type_name", "asset_data_center", "asset_data_center_name", "asset_model", "model_name", "model_number", "model_text",
+            "device_type_name", "asset_data_center", "asset_data_center_name", "owning_department", "owning_department_name", "asset_model", "model_name", "model_number", "model_text",
             "serial_number", "purpose", "status", "assigned_person", "notes", "warranty_months",
             "business_ip", "management_ip", "oob_ip", "data_center", "server_room",
             "rack_code", "u_range", "purchase_date", "supplier", "purchase_order_no",
@@ -2619,6 +2698,7 @@ class DepreciationResponseSerializer(serializers.Serializer):
 class AssetDetailSerializer(ResolvedAssetMetadataMixin, serializers.ModelSerializer):
     revision = serializers.IntegerField(read_only=True)
     asset_data_center_name = serializers.CharField(source="asset_data_center.name", read_only=True, allow_null=True)
+    owning_department_name = serializers.CharField(source="owning_department.name", read_only=True, allow_null=True)
     asset_model = AssetModelReferenceSerializer(read_only=True, allow_null=True)
     assigned_person = PersonSummarySerializer(read_only=True, allow_null=True)
     network_addresses = AssetNetworkAddressSerializer(many=True, read_only=True)
@@ -2640,11 +2720,11 @@ class AssetDetailSerializer(ResolvedAssetMetadataMixin, serializers.ModelSeriali
         self._depreciation_as_of_date = system_localdate()
 
     def get_inventory_records_count(self, obj) -> int:
-        return obj.inventory_items.count()
+        return _visible_inventory_items(obj.pk, self.context).count()
 
     def get_latest_inventory_record(self, obj) -> dict[str, Any] | None:
         record = (
-            obj.inventory_items.filter(checked_at__isnull=False)
+            _visible_inventory_items(obj.pk, self.context).filter(checked_at__isnull=False)
             .select_related(
                 "asset",
                 "asset__asset_model__device_type",
@@ -2687,12 +2767,12 @@ class AssetDetailSerializer(ResolvedAssetMetadataMixin, serializers.ModelSeriali
         return "recorded" if disposal is not None else "legacy"
 
     def to_representation(self, instance):
-        return _archive_representation(instance, super().to_representation(instance))
+        return _scope_asset_representation(_archive_representation(instance, super().to_representation(instance)), self.context)
 
     class Meta:
         model = Asset
         fields = [
-            "id", "archived_at", "archive_snapshot", "revision", "created_at", "updated_at", "asset_no", "name", "manufacturer", "manufacturer_name", "device_type", "device_type_name", "asset_data_center", "asset_data_center_name", "asset_model", "model_name", "model_number", "model_text",
+            "id", "archived_at", "archive_snapshot", "revision", "created_at", "updated_at", "asset_no", "name", "manufacturer", "manufacturer_name", "device_type", "device_type_name", "asset_data_center", "asset_data_center_name", "owning_department", "owning_department_name", "asset_model", "model_name", "model_number", "model_text",
             "serial_number", "purpose", "status", "assigned_person", "notes", "warranty_months", "depreciation_start_date", "depreciation_years", "residual_rate", "depreciation_method",
             "network_addresses", "rack_allocation", "procurement_records", "maintenance_contracts", "inventory_records_count", "latest_inventory_record", "tags", "custom_fields", "custom_values", "allowed_statuses", "disposal", "disposal_status",
             "depreciation",
@@ -2749,7 +2829,7 @@ class AssetWriteSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = Asset
-        fields = ["id", "revision", "created_at", "updated_at", "asset_no", "name", "manufacturer", "device_type", "asset_data_center", "asset_model", "model_text", "warranty_months", "serial_number", "purpose", "status", "notes", "depreciation_start_date", "depreciation_years", "residual_rate", "depreciation_method", "configuration", "assignment", "tags", "custom_values", "discard_incompatible_custom_values"]
+        fields = ["id", "revision", "created_at", "updated_at", "asset_no", "name", "manufacturer", "device_type", "asset_data_center", "owning_department", "asset_model", "model_text", "warranty_months", "serial_number", "purpose", "status", "notes", "depreciation_start_date", "depreciation_years", "residual_rate", "depreciation_method", "configuration", "assignment", "tags", "custom_values", "discard_incompatible_custom_values"]
         read_only_fields = ["id", "revision", "created_at", "updated_at"]
 
     def get_fields(self):
@@ -3027,7 +3107,8 @@ class AssetWriteSerializer(serializers.ModelSerializer):
             ) from exc
         try:
             with transaction.atomic():
-                from .data_scope import require_center
+                from .data_scope import require_center, require_department
+                require_department(getattr(validated_data.get("owning_department"), "pk", None))
                 target_center = validated_data.get("asset_data_center")
                 if configuration.get("rack_id"):
                     from .physical_location import lock_inventory_scope
@@ -3070,7 +3151,7 @@ class AssetWriteSerializer(serializers.ModelSerializer):
                 # Re-read and lock the asset before applying lifecycle checks;
                 # serializer validation runs before the view transaction and
                 # must not be the final authority for retirement races.
-                if configuration is not None:
+                if configuration is not None or requested_asset_data_center is not missing:
                     if self._configuration_includes_placement(configuration):
                         configuration = self._merge_partial_placement_configuration(instance, configuration)
                     # All configuration writes can reach configure_asset,
@@ -3079,6 +3160,7 @@ class AssetWriteSerializer(serializers.ModelSerializer):
                     # configuration payloads.
                     lock_asset_location(
                         asset_id=instance.pk,
+                        target_data_center_id=getattr(requested_asset_data_center, "pk", None) if requested_asset_data_center is not missing else None,
                         target_rack_id=(
                             configuration.get("rack_id")
                             if isinstance(configuration, dict)
@@ -3086,6 +3168,8 @@ class AssetWriteSerializer(serializers.ModelSerializer):
                         ),
                     )
                 instance = active_asset_for_update(instance.pk)
+                from .data_scope import require_department
+                require_department(getattr(validated_data.get("owning_department", instance.owning_department), "pk", None))
                 check_asset_revision(instance, self.context.get("request"))
                 if (
                     requested_asset_data_center is not missing
@@ -3596,13 +3680,27 @@ class RackSerializer(ResourceRevisionSerializerMixin, serializers.ModelSerialize
     free_u = serializers.SerializerMethodField()
     status_label = serializers.SerializerMethodField()
 
-    def get_assets_count(self, obj) -> int:
+    def to_representation(self, instance):
+        from .data_scope import serialization_scope, scoped
+        scope = serialization_scope(self.context)
+        data = super().to_representation(instance)
+        data["occupancy_restricted"] = scope is not None and not scope.full_department_access()
+        if data["occupancy_restricted"]:
+            # Keep an authorized subset as business records, never as a complete U map.
+            request = self.context.get("request")
+            readable = set(scoped(Asset.all_objects.filter(pk__in=[row["asset"] for row in data["allocations"]]), user=request.user if request is not None else None).values_list("pk", flat=True))
+            data["allocations"] = [row for row in data["allocations"] if row["asset"] in readable]
+            for key in ("assets_count", "used_u", "free_u"):
+                data[key] = None
+        return data
+
+    def get_assets_count(self, obj) -> int | None:
         return len(obj.allocations.all())
 
-    def get_used_u(self, obj) -> int:
+    def get_used_u(self, obj) -> int | None:
         return rack_effective_used_u(obj.allocations.all(), obj.total_u or 0)
 
-    def get_free_u(self, obj) -> int:
+    def get_free_u(self, obj) -> int | None:
         return max((obj.total_u or 0) - self.get_used_u(obj), 0)
 
     def get_status_label(self, obj) -> str:

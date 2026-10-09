@@ -37,7 +37,7 @@ type LocationTreeRow = {
   is_active: boolean;
   rooms_count?: number;
   racks_count?: number;
-  assets_count?: number;
+  assets_count?: number | null;
   total_u?: number;
   used_u?: number;
   children?: LocationTreeRow[];
@@ -136,11 +136,12 @@ const emptyDescription = computed(() =>
 );
 
 function locationAssetCount(row: LocationTreeRow) {
-  return row.assets_count == null ? "—" : row.assets_count;
+  return row.assets_count == null ? t("dataScope.notAuthorized") : row.assets_count;
 }
 
 function locationCapacity(row: LocationTreeRow) {
   if (row.nodeType === "data-center") return t("location.roomsCount", { count: row.rooms_count ?? 0 });
+  if (facilitySummary.value?.capacity_restricted) return t("dataScope.notAuthorized");
   if (!row.is_active || row.total_u == null || row.used_u == null) return "—";
   return `${row.used_u} / ${row.total_u} U`;
 }

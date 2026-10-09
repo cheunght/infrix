@@ -73,6 +73,7 @@ export interface AssetFormState {
   notes: string;
   rack_mounted: boolean;
   asset_data_center: string;
+  owning_department: string;
   data_center: string;
   server_room_id: string;
   rack_id: string;
