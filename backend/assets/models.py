@@ -1074,6 +1074,14 @@ class FaultEvent(RevisionedTimestamped):
     description = models.TextField(blank=True)
     is_closed = models.BooleanField(default=False)
 
+    @property
+    def repair(self):
+        """Compatibility projection: the latest retained round is current."""
+        cached = getattr(self, "_prefetched_objects_cache", {}).get("repairs")
+        if cached is not None:
+            return max(cached, key=lambda row: row.round_number, default=None)
+        return self.repairs.order_by("-round_number").first()
+
     class Meta:
         indexes = [
             models.Index(fields=["is_closed", "-occurred_at", "-id"], name="assets_fault_state_time_idx"),
@@ -1081,12 +1089,22 @@ class FaultEvent(RevisionedTimestamped):
 
 
 class RepairRecord(RevisionedTimestamped):
-    fault = models.OneToOneField(FaultEvent, on_delete=models.CASCADE, related_name="repair")
+    fault = models.ForeignKey(FaultEvent, on_delete=models.PROTECT, related_name="repairs")
+    round_number = models.PositiveIntegerField(default=1)
+    previous_round = models.ForeignKey("self", null=True, blank=True, on_delete=models.RESTRICT, related_name="successor_rounds")
+    origin = models.CharField(max_length=24, default="recorded", choices=[("recorded", "记录"), ("usage_started", "用件建轮"), ("legacy", "历史记录")])
+    opened_by = models.ForeignKey(settings.AUTH_USER_MODEL, null=True, blank=True, on_delete=models.SET_NULL, related_name="opened_repair_rounds")
+    opened_by_name = models.CharField(max_length=150, blank=True)
+    completed_by = models.ForeignKey(settings.AUTH_USER_MODEL, null=True, blank=True, on_delete=models.SET_NULL, related_name="completed_repair_rounds")
+    completed_by_name = models.CharField(max_length=150, blank=True)
     provider = models.CharField(max_length=160, blank=True)
     started_at = models.DateTimeField(null=True, blank=True)
     finished_at = models.DateTimeField(null=True, blank=True)
     cost = models.DecimalField(max_digits=14, decimal_places=2, null=True, blank=True)
     notes = models.TextField(blank=True)
+
+    class Meta:
+        constraints = [models.UniqueConstraint(fields=["fault", "round_number"], name="uniq_fault_repair_round"), models.CheckConstraint(condition=models.Q(round_number__gt=0), name="repair_round_number_positive")]
 
 
 class RepairPartUsage(Timestamped):
@@ -1102,6 +1120,8 @@ class RepairPartUsage(Timestamped):
         on_delete=models.PROTECT,
         related_name="part_usages",
     )
+    repair = models.ForeignKey(RepairRecord, null=True, blank=True, on_delete=models.PROTECT, related_name="part_usages")
+    round_link = models.CharField(max_length=24, default="legacy_unassigned", choices=[("linked", "明确轮次"), ("legacy_unassigned", "历史轮次未确认")])
     source = models.CharField(max_length=30, choices=SOURCE_CHOICES)
     spare_part = models.ForeignKey(
         SparePart,
@@ -1139,6 +1159,7 @@ class RepairPartUsage(Timestamped):
         ordering = ["-created_at", "-id"]
         indexes = [models.Index(fields=["fault", "-created_at", "-id"])]
         constraints = [
+            models.CheckConstraint(condition=models.Q(round_link="legacy_unassigned", repair__isnull=True) | models.Q(round_link="linked", repair__isnull=False), name="repair_usage_round_consistent"),
             models.CheckConstraint(
                 condition=models.Q(quantity__gt=0),
                 name="repair_part_usage_quantity_positive",
@@ -1195,7 +1216,7 @@ class Attachment(RevisionedModel):
         RepairRecord,
         null=True,
         blank=True,
-        on_delete=models.CASCADE,
+        on_delete=models.PROTECT,
         related_name="attachments",
     )
     category = models.CharField(max_length=32, choices=CATEGORY_CHOICES, default=OTHER)

@@ -153,7 +153,10 @@ def create_repair_part_usage(*, fault_id, validated_data, operator, request):
         raise DRFValidationError({"spare_stock_id": "厂商提供的用件不能关联内部库存"})
 
     fault = FaultEvent.objects.select_for_update().get(pk=fault_id)
-    repair = RepairRecord.objects.select_for_update().filter(fault_id=fault_id).first()
+    repair = RepairRecord.objects.select_for_update().filter(fault_id=fault_id).order_by("-round_number").first()
+    if "repair_id" in validated_data and validated_data["repair_id"] != (repair.pk if repair else None):
+        from .repair_writes import RepairRoundConflict
+        raise RepairRoundConflict()
     if (repair is not None and repair.finished_at is not None) or fault.is_closed:
         raise DRFValidationError({"detail": "已完成的故障不能新增维修用件"})
     asset = active_asset_for_update(fault.asset_id)
@@ -197,8 +200,12 @@ def create_repair_part_usage(*, fault_id, validated_data, operator, request):
         part_model = part.model
         part_unit = part.unit
 
+    from .repair_writes import begin_usage_round
+    repair = repair or begin_usage_round(fault, request=request, actor=operator)
     usage = RepairPartUsage.objects.create(
         fault=fault,
+        repair=repair,
+        round_link="linked",
         source=source,
         spare_part=part,
         spare_stock=stock,
@@ -227,6 +234,8 @@ def create_repair_part_usage(*, fault_id, validated_data, operator, request):
                 "asset_id": asset.pk,
                 "fault_id": fault.pk,
                 "repair_part_usage_id": usage.pk,
+                "repair_id": repair.pk,
+                "round_number": repair.round_number,
             },
         )
     write_audit_log(
@@ -239,6 +248,8 @@ def create_repair_part_usage(*, fault_id, validated_data, operator, request):
             "source": "repair_part_usage",
             "asset_id": asset.pk,
             "fault_id": fault.pk,
+            "repair_id": repair.pk,
+            "round_number": repair.round_number,
             "stock_before_quantity": before_quantity,
             "stock_after_quantity": after_quantity,
         },

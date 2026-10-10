@@ -169,3 +169,7 @@ sudo env BASE_URL=https://<hostname> bash deploy/verify-release.sh
 ## 后台作业 worker
 
 迁移 0014 后，Web 同时需要独立 `infrix-worker.service` 执行导入、导出和邮件摘要。安装器会创建、启用并检查该服务；手工升级先停止 worker 和摘要定时器，完成迁移后再启动。旧摘要命令仅提交队列。目录、命令、恢复和清理规则见[持久后台作业](BACKGROUND-JOBS.zh-CN.md)。
+
+## 多轮维修升级
+
+阶段 3A 新增迁移 0015：一个故障可保留多个维修轮次，重开返回新的空白轮次 ID。旧维修和附件保留，旧用件的轮次归属不推测。升级前停止 Web、worker 和摘要定时器，按既有流程备份并迁移，发布同版本前端后再启动；数据库迁移不自动回滚。兼容接口、历史边界见[多轮维修](REPAIR-ROUNDS.zh-CN.md)。

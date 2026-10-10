@@ -7,6 +7,7 @@ import type {
   Asset,
   FaultEvent,
   RepairPartUsage,
+  RepairRound,
   RepairPartUsageFormState,
   SparePart,
   SpareStock,
@@ -88,6 +89,7 @@ export function useRepairs(deps: RepairsDeps) {
     notes: "",
   });
   const repairPartUsageItems = ref<RepairPartUsage[]>([]);
+  const repairPartUsageHistoryMode = ref<"selected" | "legacy" | "all">("selected");
   const repairPartUsagePage = ref(1);
   const repairPartUsagePageSize = ref(20);
   const repairPartUsageTotal = ref(0);
@@ -198,6 +200,8 @@ export function useRepairs(deps: RepairsDeps) {
   }
   function openRepairModal(fault: FaultEvent) {
     if (!openRepairEditor(fault)) return;
+    showRepairPartUsageModal.value = false;
+    repairPartUsageHistoryMode.value = "selected";
     repairPartUsageItems.value = [];
     repairPartUsageTotal.value = 0;
     repairPartUsagePage.value = 1;
@@ -205,6 +209,11 @@ export function useRepairs(deps: RepairsDeps) {
     repairPartUsageFormErrors.value = {};
     showRepairModal.value = true;
     void loadRepairPartUsageHistory(fault.id, 1);
+  }
+
+  function chooseRepairRound(round: RepairRound) {
+    if (!selectedFault.value || round.fault !== selectedFault.value.id) return;
+    openRepairModal({...selectedFault.value, repair: {...round}});
   }
 
   function currentRepairFilters() {
@@ -265,6 +274,8 @@ export function useRepairs(deps: RepairsDeps) {
         page: String(requestedPage),
         page_size: String(repairPartUsagePageSize.value),
       });
+      if (repairPartUsageHistoryMode.value === "legacy") params.set("repair", "legacy");
+      else if (repairPartUsageHistoryMode.value === "selected" && selectedFault.value?.repair?.id) params.set("repair", String(selectedFault.value.repair.id));
       const payload = await deps.request<PageResult<RepairPartUsage> | RepairPartUsage[]>(
         `/fault-events/${faultId}/part-usages/?${params.toString()}`,
         { signal: controller.signal },
@@ -405,7 +416,7 @@ export function useRepairs(deps: RepairsDeps) {
   }
 
   function openRepairPartUsageModal() {
-    if (!deps.can("faults.manage") || !selectedFault.value || selectedFault.value.is_closed) return;
+    if (!deps.can("faults.manage") || !selectedFault.value || selectedFault.value.is_closed || selectedFault.value.repair?.finished_at || selectedFault.value.repair?.is_current === false) return;
     repairPartUsageForm.value = emptyRepairPartUsageForm();
     if (!deps.can("spares.manage")) repairPartUsageForm.value.source = "vendor_provided";
     repairPartUsageError.value = "";
@@ -448,7 +459,7 @@ export function useRepairs(deps: RepairsDeps) {
 
   async function saveRepairPartUsage(): Promise<boolean> {
     if (!deps.can("faults.manage") || !selectedFault.value || repairPartUsageSaving.value) return false;
-    if (selectedFault.value.is_closed) {
+    if (selectedFault.value.is_closed || selectedFault.value.repair?.finished_at || selectedFault.value.repair?.is_current === false) {
       repairPartUsageError.value = tr("repair.completedViewOnly");
       return false;
     }
@@ -473,9 +484,12 @@ export function useRepairs(deps: RepairsDeps) {
     repairPartUsageError.value = "";
     repairPartUsageFormErrors.value = {};
     const faultId = selectedFault.value.id;
+    const editor = selectedFault.value;
+    const observedRepairId = editor.repair?.id ?? null;
     const requestedPartId = internalStock ? form.spare_part_id : "";
     try {
       const payload: Record<string, unknown> = {
+        repair_id: observedRepairId,
         source: form.source,
         quantity,
         notes: form.notes.trim(),
@@ -495,6 +509,7 @@ export function useRepairs(deps: RepairsDeps) {
         body: JSON.stringify(payload),
       });
     } catch (error) {
+      if (selectedFault.value !== editor) return false;
       setDialogError(
         repairPartUsageError,
         repairPartUsageFormErrors,
@@ -507,9 +522,24 @@ export function useRepairs(deps: RepairsDeps) {
       repairPartUsageSaving.value = false;
     }
 
+    if (selectedFault.value !== editor) return true;
     showRepairPartUsageModal.value = false;
     repairPartUsageForm.value = emptyRepairPartUsageForm();
+    let faultRefreshError = "";
+    // First use opens round one. Keep the draft fields, but obtain its ID/version.
+    if (observedRepairId === null) {
+      try {
+        const current = await deps.request<FaultEvent>(`/fault-events/${faultId}/`);
+        if (selectedFault.value !== editor) return true;
+        selectedFault.value = {...editor, repair: current.repair, repair_round_count: current.repair_round_count, is_closed: current.is_closed};
+      } catch (error) {
+        if (selectedFault.value === editor) faultRefreshError = errorMessage(error, tr("common.refreshFailed"));
+      }
+    }
+    const refreshEditor = selectedFault.value;
     const historyRefreshed = await loadRepairPartUsageHistory(faultId, 1);
+    if (selectedFault.value !== refreshEditor) return true;
+    if (faultRefreshError) repairPartUsageError.value = faultRefreshError;
     const stockRefreshed = form.source === "internal_stock"
       ? await loadRepairPartUsageStocks(requestedPartId)
       : true;
@@ -523,6 +553,12 @@ export function useRepairs(deps: RepairsDeps) {
 
   function retryRepairPartUsageHistory() {
     if (selectedFault.value) void loadRepairPartUsageHistory(selectedFault.value.id, repairPartUsagePage.value);
+  }
+
+  function changeRepairPartUsageHistoryMode(mode: "selected" | "legacy" | "all") {
+    repairPartUsageHistoryMode.value = mode;
+    repairPartUsageItems.value = [];
+    if (selectedFault.value) void loadRepairPartUsageHistory(selectedFault.value.id, 1);
   }
 
   function changeRepairPartUsagePage(page: number) {
@@ -690,7 +726,7 @@ export function useRepairs(deps: RepairsDeps) {
     showFaultModal, showRepairModal, selectedFault, faultForm,
     repairListLoading, repairListError, exportingRepairs, faultSaving, repairSaving, faultError, repairError,
     faultFormErrors, repairFormErrors, repairPartUsageFormErrors,
-    repairForm, repairTimeError, openFaultModal, registerFaultFromSelection, openRepairModal, loadRepairs,
+    chooseRepairRound, repairForm, repairTimeError, openFaultModal, registerFaultFromSelection, openRepairModal, loadRepairs,
     searchRepairs, onRepairStatusChange, onRepairDateChange, resetRepairFilters, retryRepairList,
     syncFiltersFromQuery,
     createFault, saveRepair, reopenRepair, exportRepairs, changeRepairPage, changeRepairPageSize,
@@ -699,6 +735,7 @@ export function useRepairs(deps: RepairsDeps) {
     repairPartUsageSaving, repairPartUsageOptions, repairPartUsageOptionsLoading, repairPartUsageOptionsError,
     repairPartUsageStocks, repairPartUsageStocksLoading, repairPartUsageStocksError,
     repairPartUsageSourceOptions: REPAIR_PART_USAGE_SOURCE_OPTIONS,
+    repairPartUsageHistoryMode, changeRepairPartUsageHistoryMode,
     openRepairPartUsageModal, loadRepairPartUsageHistory, loadRepairPartUsageOptions,
     scheduleRepairPartUsagePartSearch, loadRepairPartUsageStocks, changeRepairPartUsageSource,
     changeRepairPartUsagePart, saveRepairPartUsage, retryRepairPartUsageHistory, changeRepairPartUsagePage,

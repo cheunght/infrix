@@ -5,7 +5,7 @@ repair then asset is the shared lock order. Stock consumption owns its preceding
 stock/location locks. Trusted server callers must arrange equivalent admission.
 """
 from django.db import transaction
-from rest_framework.exceptions import NotFound, PermissionDenied, ValidationError as DRFValidationError
+from rest_framework.exceptions import APIException, NotFound, PermissionDenied, ValidationError as DRFValidationError
 from .models import FaultEvent, RepairRecord
 from .asset_retention import active_asset_for_update
 from .lifecycle import ASSET_REPAIR_RESTORE_STATUS_VALUES, transition_asset_status
@@ -14,6 +14,11 @@ from .organization_access import can
 from .data_scope import require_object, scoped
 from .resource_revision import check_resource_revision
 from .audit import model_snapshot, write_audit_log
+
+
+class RepairRoundConflict(APIException):
+    status_code = 409
+    default_detail = {"code": "repair_round_conflict", "detail": "当前维修轮次已变化，请刷新后操作"}
 
 
 def _authorize(instance, request):
@@ -52,13 +57,16 @@ def validate_fault_write(attrs, *, instance=None, initial_data=None):
         reported_at=attrs.get("reported_at", instance.reported_at if instance else None),
         repair=getattr(instance, "repair", None) if instance else None,
     )
+    if instance is not None:
+        for historical in instance.repairs.all():
+            validate_fault_times(occurred_at=attrs.get("occurred_at", instance.occurred_at), reported_at=None, repair=historical)
     return attrs
 
 
 def validate_repair_write(attrs, *, instance=None):
     if instance is not None and instance.finished_at is not None and attrs:
         raise DRFValidationError({
-            "detail": "已完成维修不可直接修改，请先重新打开。",
+            "detail": "已完成维修保持只读；重新打开会新增空白轮次。",
             "code": "finished_repair_immutable",
         })
 
@@ -74,6 +82,12 @@ def validate_repair_write(attrs, *, instance=None):
     fault = attrs.get("fault", instance.fault if instance else None)
     if fault.asset.archived_at is not None:
         raise DRFValidationError({"code": "asset_archived", "detail": "已归档资产的历史维修不能修改"})
+    if instance is not None and fault.repair and fault.repair.pk != instance.pk:
+        raise DRFValidationError({"code": "repair_round_not_current", "detail": "历史维修轮次只允许查看"})
+    previous = instance.previous_round if instance is not None else None
+    if previous is not None and previous.finished_at:
+        if (started_at is not None and started_at < previous.finished_at) or (finished_at is not None and finished_at < previous.finished_at):
+            raise DRFValidationError({"code": "repair_round_time_invalid", "detail": "本轮维修时间不能早于上一轮完成时间"})
     validate_repair_times(
         occurred_at=fault.occurred_at,
         started_at=started_at,
@@ -184,6 +198,9 @@ def sync_fault_completion(*, fault_id: int, finished_at, request=None, repair_id
     from .audit import write_audit_log
 
     fault = FaultEvent.objects.select_for_update().get(pk=fault_id)
+    current = fault.repair
+    if current is not None and repair_id is not None and current.pk != repair_id:
+        raise DRFValidationError({"code": "repair_round_not_current", "detail": "历史轮次不能改变当前故障状态"})
     next_is_closed = bool(finished_at)
     before = {"is_closed": fault.is_closed, "resolved_at": fault.resolved_at}
     after = {"is_closed": next_is_closed, "resolved_at": finished_at}
@@ -239,25 +256,31 @@ def reopen_repair(*, repair_id: int, request=None):
             "code": "repair_not_finished",
         })
 
-    before = model_snapshot(repair)
-    repair.finished_at = None
-    repair.save(update_fields=["finished_at", "updated_at"])
-    after = model_snapshot(repair)
+    fault = _lock_fault(repair.fault_id)
+    if fault.repair.pk != repair.pk:
+        raise RepairRoundConflict()
+    actor = getattr(request, "user", None)
+    successor = RepairRecord.objects.create(fault=fault, round_number=repair.round_number + 1, previous_round=repair,
+        opened_by=actor, opened_by_name=_actor_name(actor))
     if request is not None:
-        write_audit_log(
-            request,
-            action="reopen",
-            resource_type="repair_record",
-            resource_id=repair.pk,
-            before=before,
-            after=after,
-            extra={"source": "repair_record_action", "fault_id": repair.fault_id},
-        )
+        write_audit_log(request, action="reopen", resource_type="repair_record", resource_id=successor.pk,
+            after=model_snapshot(successor), extra={"source": "repair_round_open", "fault_id": fault.pk, "previous_round_id": repair.pk, "round_number": successor.round_number})
+    sync_repair_completion(successor, request=request)
+    return successor
 
-    # Keep the existing completion service as the single Fault/Asset lifecycle
-    # writer. It also enforces the retired-asset and multiple-open-fault rules.
-    sync_repair_completion(repair, request=request)
-    return repair
+
+def _actor_name(actor):
+    return (actor.get_full_name().strip() or actor.username)[:150] if actor is not None else ""
+
+
+def begin_usage_round(fault, *, request, actor):
+    """Caller owns fault admission/lock. A first usage opens a blank draft round."""
+    current = RepairRecord.objects.select_for_update().filter(fault=fault).order_by("-round_number").first()
+    if current is None:
+        current = RepairRecord.objects.create(fault=fault, origin="usage_started", opened_by=actor, opened_by_name=_actor_name(actor))
+        if request is not None:
+            _audit(current, request, "create", None, model_snapshot(current))
+    return current
 
 
 def _serializer(kind, request, instance=None):
@@ -309,6 +332,8 @@ def delete_fault(*, request, fault_id):
     _authorize(fault, request)
     if fault.is_closed:
         raise DRFValidationError({"detail": "已关闭故障不可删除。", "code": "closed_fault_immutable"})
+    if fault.repairs.exists():
+        raise DRFValidationError({"code": "repair_round_history_protected", "detail": "存在维修轮次的故障不能删除"})
     if fault.part_usages.exists():
         raise DRFValidationError("故障存在维修用件记录，不能删除。")
     before = model_snapshot(fault)
@@ -331,10 +356,19 @@ def _lock_repair(repair_id):
 def create_repair(*, request, fault_id):
     fault = _lock_fault(fault_id)
     _authorize(fault, request)
-    # Re-run OneToOne and timeline admission after acquiring the shared fault lock.
-    serializer = _serializer("repair", request)
-    repair = serializer.save()
-    _audit(repair, request, "create", None, model_snapshot(repair))
+    current = fault.repair
+    if current is not None and current.origin != "usage_started":
+        raise DRFValidationError({"fault": "故障已有维修轮次；请编辑当前轮次或从完成轮次重开"})
+    serializer = _serializer("repair", request, current)
+    actor = request.user
+    before = model_snapshot(current) if current else None
+    repair = serializer.save(origin="recorded", opened_by=current.opened_by if current else actor,
+        opened_by_name=current.opened_by_name if current else _actor_name(actor))
+    if repair.finished_at is not None:
+        repair.completed_by = actor
+        repair.completed_by_name = _actor_name(actor)
+        repair.save(update_fields=["completed_by", "completed_by_name"])
+    _audit(repair, request, "update" if current else "create", before, model_snapshot(repair))
     sync_repair_completion(repair, request=request)
     return repair
 
@@ -346,7 +380,11 @@ def update_repair(*, request, repair_id):
     check_resource_revision(repair, request)
     serializer = _serializer("repair", request, repair)
     before = model_snapshot(repair)
-    repair = serializer.save()
+    repair = serializer.save(origin="recorded" if repair.origin == "usage_started" else repair.origin)
+    if repair.finished_at is not None:
+        repair.completed_by = request.user
+        repair.completed_by_name = _actor_name(request.user)
+        repair.save(update_fields=["completed_by", "completed_by_name"])
     _audit(repair, request, "update", before, model_snapshot(repair))
     sync_repair_completion(repair, request=request)
     return repair
@@ -357,10 +395,21 @@ def delete_repair(*, request, repair_id):
     repair = _lock_repair(repair_id)
     _authorize(repair, request)
     if repair.finished_at is not None:
-        raise DRFValidationError({"detail": "已完成维修不可删除，请使用重新打开操作。", "code": "finished_repair_immutable"})
+        raise DRFValidationError({"detail": "已完成维修不可删除；重新打开会新增空白轮次。", "code": "finished_repair_immutable"})
+    if repair.previous_round_id or repair.part_usages.exists() or repair.attachments.exists():
+        raise DRFValidationError({"code": "repair_round_history_protected", "detail": "存在前轮、用件或附件的维修不能删除"})
     before = model_snapshot(repair)
     resource_id, fault_id = repair.pk, repair.fault_id
     # Read audit scope while the retained fault still exists.
     repair.delete()
     _audit(repair, request, "delete", before, None, resource_id=resource_id)
     sync_fault_completion(fault_id=fault_id, finished_at=None, request=request, repair_id=resource_id)
+
+
+def admit_repair_attachment(repair_id, *, request):
+    """Caller keeps the transaction open through storage and commit callbacks."""
+    repair = _lock_repair(repair_id)
+    _authorize(repair, request)
+    if repair.finished_at is not None or repair.fault.repair.pk != repair.pk:
+        raise DRFValidationError({"code": "finished_repair_immutable", "detail": "已完成或历史轮次的附件只允许查看和下载"})
+    return repair

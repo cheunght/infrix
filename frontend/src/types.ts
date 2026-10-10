@@ -1048,8 +1048,11 @@ export type FacilitySummary = {
   rooms: Array<ServerRoom & { total_u?: number; used_u?: number | null }>;
   racks: Array<Rack & { room_id: number; device_count?: number | null }>;
 };
-export type FaultEvent = { revision?: number; id: number; asset: number; asset_no: string; asset_name: string; occurred_at: string; reported_at: string | null; resolved_at: string | null; reason: string; description: string; is_closed: boolean; repair: { revision?: number; id: number; fault: number; provider: string; started_at: string | null; finished_at: string | null; cost: string | null; notes: string } | null };
+export type RepairRound = { revision?: number; id: number; fault: number; provider: string; started_at: string | null; finished_at: string | null; cost: string | null; notes: string; round_number?: number; previous_round?: number | null; origin?: string; is_current?: boolean; opened_by_name?: string; completed_by_name?: string };
+export type FaultEvent = { revision?: number; id: number; asset: number; asset_no: string; asset_name: string; occurred_at: string; reported_at: string | null; resolved_at: string | null; reason: string; description: string; is_closed: boolean; repair: RepairRound | null; repair_round_count?: number };
 export type RepairPartUsage = {
+  repair?: number | null;
+  round_link?: string;
   id: number;
   fault: number;
   source: RepairPartUsageSource | string;

@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import RepairRoundHistory from "../RepairRoundHistory.vue";
 import { computed, ref } from "vue";
 import { Edit, Lock, Message, User } from "@element-plus/icons-vue";
 import type { FormInstance, FormRules } from "element-plus";
@@ -240,9 +241,12 @@ const {
   repairFormErrors,
   saveRepair,
   reopenRepair,
+  chooseRepairRound,
   showRepairPartUsageModal,
   repairPartUsageForm,
   repairPartUsageItems,
+  repairPartUsageHistoryMode,
+  changeRepairPartUsageHistoryMode,
   repairPartUsagePage,
   repairPartUsagePageSize,
   repairPartUsageTotal,
@@ -314,15 +318,15 @@ const repairAttachmentContext = computed<AssetAttachmentContext>(() => ({
   download: props.assetContext.downloadFile,
   confirmAction: props.assetContext.confirmAction,
   canView: props.assetContext.can("faults.view"),
-  canManage: props.assetContext.can("faults.manage"),
+  canManage: props.assetContext.can("faults.manage") && !selectedFault.value?.repair?.finished_at && selectedFault.value?.repair?.is_current !== false,
 }));
-const repairReadOnly = computed(() => Boolean(selectedFault.value?.is_closed) || !repairCanManage.value);
+const repairReadOnly = computed(() => Boolean(selectedFault.value?.is_closed || selectedFault.value?.repair?.finished_at || selectedFault.value?.repair?.is_current === false) || !repairCanManage.value);
 const repairCanSubmit = computed(() => Boolean(selectedFault.value && !repairReadOnly.value));
 const repairCanReopen = computed(() => Boolean(
-  selectedFault.value?.is_closed && selectedFault.value.repair && repairCanManage.value,
+  selectedFault.value?.is_closed && selectedFault.value.repair && selectedFault.value.repair.is_current !== false && repairCanManage.value,
 ));
 const repairPartUsageCanManage = computed(() => Boolean(
-  selectedFault.value && !selectedFault.value.is_closed && repairCanManage.value,
+  selectedFault.value && !selectedFault.value.is_closed && !selectedFault.value.repair?.finished_at && selectedFault.value.repair?.is_current !== false && repairCanManage.value,
 ));
 const repairPartUsageSelectedPart = computed(() => {
   const partId = Number(repairPartUsageForm.value.spare_part_id);
@@ -370,11 +374,11 @@ const repairPartUsageStockImpact = computed(() => {
 });
 const repairDialogTitle = computed(() => {
   if (!selectedFault.value) return t("overlay.repairRecord");
-  if (selectedFault.value.is_closed) return t("repair.viewResult");
+  if (selectedFault.value.is_closed || selectedFault.value.repair?.finished_at) return t("repair.viewResult");
   return selectedFault.value.repair ? t("repair.process") : t("repair.start");
 });
 const repairDialogDescription = computed(() => {
-  if (selectedFault.value?.is_closed) return t("overlay.repairClosedDescription");
+  if (selectedFault.value?.is_closed || selectedFault.value?.repair?.finished_at || selectedFault.value?.repair?.is_current === false) return t("overlay.repairClosedDescription");
   if (!repairCanManage.value) return t("overlay.repairReadOnlyDescription");
   return t("overlay.repairEditDescription");
 });
@@ -948,6 +952,7 @@ function mapUnlinkedPerson(item: Record<string, unknown>): SearchableSelectOptio
     :close-on-press-escape="!repairSaving"
     :close-disabled="repairSaving"
   >
+    <RepairRoundHistory v-if="selectedFault" :fault="selectedFault" :request="request" @select="chooseRepairRound" />
     <el-form ref="repairFormRef" class="repair-action-form" :class="{ 'repair-action-form--readonly': repairReadOnly }" :model="repairForm" :rules="repairFormRules" label-position="top" :validate-on-rule-change="false">
       <div v-if="selectedFault" class="repair-action-context">
         <div class="repair-action-context__heading">
@@ -973,6 +978,11 @@ function mapUnlinkedPerson(item: Record<string, unknown>): SearchableSelectOptio
             {{ t('repair.recordPartUsage') }}
           </el-button>
         </div>
+        <el-radio-group :model-value="repairPartUsageHistoryMode" @update:model-value="changeRepairPartUsageHistoryMode($event as 'selected' | 'legacy' | 'all')">
+          <el-radio-button value="selected">{{ t('repairRounds.selectedUsage') }}</el-radio-button>
+          <el-radio-button value="legacy">{{ t('repairRounds.legacyUsage') }}</el-radio-button>
+          <el-radio-button value="all">{{ t('repairRounds.allUsage') }}</el-radio-button>
+        </el-radio-group>
         <el-alert v-if="repairPartUsageError" type="error" :closable="false" show-icon>
           <template #default>
             <div class="repair-part-usage-panel__error">

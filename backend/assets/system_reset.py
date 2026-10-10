@@ -37,6 +37,7 @@ from .models import (
     Manufacturer,
     NotificationDelivery,
     BackgroundJob,
+    Attachment,
     PersonalAccessToken,
     ProcurementRecord,
     Rack,
@@ -110,6 +111,7 @@ def _clear_mutable_data(preserved_user_ids):
     _delete_queryset(counts, "inventory_items", InventoryItem.objects.all())
     _delete_queryset(counts, "inventory_tasks", InventoryTask.objects.all())
     _delete_queryset(counts, "repair_part_usages", RepairPartUsage.objects.all())
+    _delete_queryset(counts, "attachments", Attachment.objects.all())
     _delete_queryset(counts, "repair_records", RepairRecord.objects.all())
     _delete_queryset(counts, "fault_events", FaultEvent.objects.all())
     _delete_queryset(counts, "asset_assignment_events", AssetAssignmentEvent.objects.all())

@@ -1205,6 +1205,9 @@ class AttachmentViewSet(ResourceRevisionViewSetMixin, ScopedModelViewSet):
 
     @transaction.atomic
     def perform_create(self, serializer):
+        if serializer.validated_data.get("repair") is not None:
+            from .repair_writes import admit_repair_attachment
+            serializer.validated_data["repair"] = admit_repair_attachment(serializer.validated_data["repair"].pk, request=self.request)
         active_asset_for_update(serializer.validated_data["asset"].pk)
         instance = None
         try:
@@ -1224,6 +1227,9 @@ class AttachmentViewSet(ResourceRevisionViewSetMixin, ScopedModelViewSet):
 
     @transaction.atomic
     def perform_update(self, serializer):
+        if serializer.instance.repair_id is not None:
+            from .repair_writes import admit_repair_attachment
+            admit_repair_attachment(serializer.instance.repair_id, request=self.request)
         active_asset_for_update(serializer.instance.asset_id)
         # Validation can precede another file replacement. Refresh after
         # parent admission so a note edit preserves the current file reference.
@@ -1256,6 +1262,9 @@ class AttachmentViewSet(ResourceRevisionViewSetMixin, ScopedModelViewSet):
 
     @transaction.atomic
     def perform_destroy(self, instance):
+        if instance.repair_id is not None:
+            from .repair_writes import admit_repair_attachment
+            admit_repair_attachment(instance.repair_id, request=self.request)
         active_asset_for_update(instance.asset_id)
         instance = get_object_or_404(Attachment.objects.select_for_update(), pk=instance.pk)
         before = AttachmentSerializer(instance).data
@@ -2198,7 +2207,7 @@ class UserViewSet(ScopedModelViewSet):
 
 
 class FaultEventViewSet(AuditedModelViewSetMixin, ScopedModelViewSet):
-    queryset = FaultEvent.objects.select_related("asset", "repair")
+    queryset = FaultEvent.objects.select_related("asset").prefetch_related("repairs")
     serializer_class = FaultEventSerializer
     filter_backends = [DjangoFilterBackend, SearchFilter, OrderingFilter]
     filterset_fields = ["asset", "is_closed"]
@@ -2239,6 +2248,13 @@ class FaultEventViewSet(AuditedModelViewSetMixin, ScopedModelViewSet):
                 "spare_stock__server_room",
                 "operator",
             ).order_by("-created_at", "-id")
+            repair_filter = request.query_params.get("repair", "")
+            if repair_filter == "legacy":
+                queryset = queryset.filter(repair__isnull=True)
+            elif repair_filter:
+                if not repair_filter.isascii() or not repair_filter.isdigit() or len(repair_filter) > 19 or not 0 < int(repair_filter) <= 9223372036854775807:
+                    raise DRFValidationError({"repair": "轮次必须为正整数或 legacy"})
+                queryset = queryset.filter(repair_id=int(repair_filter))
             queryset = scoped(queryset, user=request.user)
             page = self.paginate_queryset(queryset)
             if page is not None:
@@ -2260,12 +2276,12 @@ class FaultEventViewSet(AuditedModelViewSetMixin, ScopedModelViewSet):
 
 
 class RepairRecordViewSet(AuditedModelViewSetMixin, ScopedModelViewSet):
-    queryset = RepairRecord.objects.select_related("fault", "fault__asset")
+    queryset = RepairRecord.objects.select_related("fault", "fault__asset").prefetch_related("fault__repairs")
     serializer_class = RepairRecordSerializer
     filter_backends = [DjangoFilterBackend, OrderingFilter]
-    filterset_fields = ["fault"]
-    ordering_fields = ["created_at", "started_at", "finished_at"]
-    ordering = ["-created_at"]
+    filterset_fields = ["fault", "round_number"]
+    ordering_fields = ["created_at", "started_at", "finished_at", "round_number"]
+    ordering = ["-round_number", "-created_at"]
     permission_classes = [BusinessRolePermission]
     permission_resource = "faults"
     audit_resource = "repair_record"
@@ -2287,7 +2303,7 @@ class RepairRecordViewSet(AuditedModelViewSetMixin, ScopedModelViewSet):
 
     @extend_schema(
         responses=RepairRecordSerializer,
-        description="重新打开已完成维修；保留维修记录和用件历史，并按现有生命周期规则重开故障。",
+        description="从最近已完成轮次新增空白下一轮，原轮次、费用、用件及附件保持不变；轮次变化返回 409。",
     )
     @action(detail=True, methods=["post"], url_path="reopen")
     @transaction.atomic
@@ -4305,6 +4321,19 @@ def repair_record_export(request):
             repair.cost if repair and repair.cost is not None else "",
             repair.notes if repair else "",
         ])
+    rounds = RepairRecord.objects.filter(fault_id__in=queryset.values("pk")).select_related("fault__asset").order_by("fault_id", "round_number")
+    limit_response = _export_limit_response(rounds, "维修轮次导出结果")
+    if limit_response:
+        return limit_response
+    history = book.create_sheet("维修轮次")
+    _append_excel_row(history, ["资产编号", "故障 ID", "维修 ID", "轮次", "前轮 ID", "来源", "维修厂商", "开始时间", "完成时间", "费用", "备注", "建轮人员", "完成人员"])
+    for repair in rounds:
+        _append_excel_row(history, [repair.fault.asset.asset_no, repair.fault_id, repair.pk, repair.round_number,
+            repair.previous_round_id or "", repair.get_origin_display(),
+            repair.provider, system_localtime(repair.started_at).replace(tzinfo=None) if repair.started_at else "",
+            system_localtime(repair.finished_at).replace(tzinfo=None) if repair.finished_at else "",
+            repair.cost if repair.cost is not None else "", repair.notes, repair.opened_by_name, repair.completed_by_name])
+    _style_export_sheet(history, max_width=40)
     _style_export_sheet(sheet, max_width=40)
     return _xlsx_response(book, f"故障维修_{_export_timestamp()}.xlsx")
 

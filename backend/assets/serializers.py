@@ -3126,6 +3126,7 @@ class NotificationDeliverySerializer(serializers.ModelSerializer):
 
 
 class FaultEventSerializer(ResourceRevisionSerializerMixin, serializers.ModelSerializer):
+    repair_round_count = serializers.IntegerField(source="repairs.count", read_only=True)
     occurred_at = SystemDateTimeInputField()
     reported_at = SystemDateTimeInputField(required=False, allow_null=True)
     asset_no = serializers.CharField(source="asset.asset_no", read_only=True)
@@ -3142,11 +3143,17 @@ class FaultEventSerializer(ResourceRevisionSerializerMixin, serializers.ModelSer
 
     class Meta:
         model = FaultEvent
-        fields = ["id", "created_at", "updated_at", "asset", "asset_no", "asset_name", "occurred_at", "reported_at", "resolved_at", "reason", "description", "is_closed", "repair"]
+        fields = ["id", "created_at", "updated_at", "asset", "asset_no", "asset_name", "occurred_at", "reported_at", "resolved_at", "reason", "description", "is_closed", "repair", "repair_round_count"]
         read_only_fields = ["id", "created_at", "updated_at", "asset_no", "asset_name", "resolved_at", "is_closed", "repair"]
 
 
 class RepairRecordSerializer(ResourceRevisionSerializerMixin, serializers.ModelSerializer):
+    is_current = serializers.SerializerMethodField()
+
+    def get_is_current(self, obj):
+        current = obj.fault.repair
+        return bool(current and current.pk == obj.pk)
+
     started_at = SystemDateTimeInputField(required=False, allow_null=True)
     finished_at = SystemDateTimeInputField(required=False, allow_null=True)
 
@@ -3164,8 +3171,11 @@ class RepairRecordSerializer(ResourceRevisionSerializerMixin, serializers.ModelS
 
     class Meta:
         model = RepairRecord
-        fields = ["id", "fault", "provider", "started_at", "finished_at", "cost", "notes", "created_at", "updated_at"]
-        read_only_fields = ["id", "created_at", "updated_at"]
+        # The round is server assigned under the fault lock. A preliminary POST
+        # may fill a usage-started draft, so a create-time unique check is wrong.
+        validators = []
+        fields = ["id", "fault", "provider", "started_at", "finished_at", "cost", "notes", "created_at", "updated_at", "round_number", "previous_round", "origin", "opened_by", "opened_by_name", "completed_by", "completed_by_name", "is_current"]
+        read_only_fields = ["id", "created_at", "updated_at", "round_number", "previous_round", "origin", "opened_by", "opened_by_name", "completed_by", "completed_by_name", "is_current"]
 
 
 class RepairPartUsageSerializer(serializers.ModelSerializer):
@@ -3189,7 +3199,7 @@ class RepairPartUsageSerializer(serializers.ModelSerializer):
     class Meta:
         model = RepairPartUsage
         fields = [
-            "id", "fault", "source", "source_label", "spare_part", "part_code", "part_name",
+            "id", "fault", "repair", "round_link", "source", "source_label", "spare_part", "part_code", "part_name",
             "part_model", "unit", "unit_label", "spare_stock", "stock_location",
             "stock_data_center_name", "stock_server_room_name", "vendor_name", "quantity", "notes",
             "operator", "operator_name", "created_at",
@@ -3198,6 +3208,7 @@ class RepairPartUsageSerializer(serializers.ModelSerializer):
 
 
 class RepairPartUsageCreateSerializer(serializers.Serializer):
+    repair_id = serializers.IntegerField(min_value=1, allow_null=True, required=False)
     source = serializers.ChoiceField(choices=REPAIR_PART_USAGE_SOURCE_VALUES)
     spare_part_id = serializers.PrimaryKeyRelatedField(
         source="spare_part",

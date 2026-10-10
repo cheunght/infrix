@@ -242,3 +242,7 @@ sudo env BASE_URL=https://<hostname> bash deploy/verify-release.sh
 For detailed database, LDAP, SMTP, reverse-proxy, backup, and security
 procedures, continue with the language-specific installation guide or the
 [manual deployment guide](MANUAL_DEPLOYMENT.md).
+
+## Repair round upgrade
+
+Stage 3A adds migration 0015. Reopening a completed repair creates a new empty round and returns a new ID. Existing repairs and attachments remain; old part usages retain an unconfirmed round rather than an inferred link. Stop Web, the worker and the digest timer before the normal backup/migration procedure, deploy the matching frontend, then restart. Database migrations do not roll back automatically. See [repair round behavior and compatibility](REPAIR-ROUNDS.zh-CN.md).

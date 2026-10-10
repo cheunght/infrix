@@ -1,4 +1,22 @@
 export default {
+  repairRounds: {
+  "title": "维修轮次",
+  "explanation": "选择轮次查看服务商、费用、用件和附件。完成轮次只读；重开新增空白轮次。",
+  "empty": "尚无维修轮次，首次录入用件会建立第一轮。",
+  "number": "第 {number} 轮",
+  "finished": "已完成",
+  "open": "进行中",
+  "current": "当前轮次",
+  "legacy": "历史记录（早期轮次无法还原）",
+  "cost": "本轮费用",
+  "openedBy": "建轮人员",
+  "completedBy": "完成人员",
+  "select": "查看本轮",
+  "selected": "当前查看第 {number} 轮",
+  "legacyUsage": "历史用件轮次未确认",
+  "selectedUsage": "当前查看轮次用件",
+  "allUsage": "全部用件"
+},
   jobs: {
   "title": "后台作业",
   "queuedMessage": "已提交后台作业，请在顶部“后台作业”查看进度和结果。",
@@ -1481,7 +1499,7 @@ export default {
     completed: "维修已完成，故障已关闭",
     recordSaved: "维修记录已保存",
     reopen: "重新打开",
-    reopenConfirm: "重新打开后将保留维修记录和已使用备件历史，并让资产按生命周期重新进入维修状态。确定继续吗？",
+    reopenConfirm: "重新打开会新增空白维修轮次，原轮次的费用、用件和附件保留且只读。资产将按生命周期重新进入维修状态。确定继续吗？",
     reopened: "维修已重新打开",
     reopenedRefreshFailed: "维修已重新打开，但维修列表刷新失败",
     reopenFailed: "维修重新打开失败",

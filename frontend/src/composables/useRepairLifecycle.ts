@@ -70,7 +70,7 @@ export function useRepairLifecycle(deps: RepairLifecycleDeps) {
   async function saveRepair(): Promise<boolean> {
     if (!deps.can("faults.manage")) return false;
     if (!selectedFault.value || repairSaving.value) return false;
-    if (selectedFault.value.is_closed) {
+    if (selectedFault.value.is_closed || selectedFault.value.repair?.finished_at || selectedFault.value.repair?.is_current === false) {
       repairError.value = tr("repair.completedViewOnly");
       return false;
     }
@@ -127,6 +127,7 @@ export function useRepairLifecycle(deps: RepairLifecycleDeps) {
       !deps.can("faults.manage")
       || !selectedFault.value?.is_closed
       || !selectedFault.value.repair
+      || selectedFault.value.repair.is_current === false
       || repairSaving.value
     ) return false;
     repairError.value = "";

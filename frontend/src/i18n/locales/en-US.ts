@@ -1,4 +1,22 @@
 export default {
+  repairRounds: {
+  "title": "Repair rounds",
+  "explanation": "Choose a round to view its provider, cost, parts and attachments. Finished rounds are read only; reopening creates an empty round.",
+  "empty": "No repair rounds. The first part usage opens round one.",
+  "number": "Round {number}",
+  "finished": "Finished",
+  "open": "In progress",
+  "current": "Current round",
+  "legacy": "Legacy record (earlier rounds cannot be reconstructed)",
+  "cost": "Round cost",
+  "openedBy": "Opened by",
+  "completedBy": "Completed by",
+  "select": "View round",
+  "selected": "Viewing round {number}",
+  "legacyUsage": "Legacy usage: round unconfirmed",
+  "selectedUsage": "Parts for the selected round",
+  "allUsage": "All parts"
+},
   jobs: {
   "title": "Background jobs",
   "queuedMessage": "Job submitted. Open Background jobs in the header for progress and results.",
@@ -1481,7 +1499,7 @@ export default {
     completed: "Maintenance completed; fault closed",
     recordSaved: "Maintenance record saved",
     reopen: "Reopen",
-    reopenConfirm: "Reopening keeps the maintenance record and used-part history, and returns the asset to maintenance under its lifecycle rules. Continue?",
+    reopenConfirm: "Reopening creates an empty repair round. The previous round's costs, parts and attachments remain read only. The asset returns to maintenance under its lifecycle rules. Continue?",
     reopened: "Maintenance reopened",
     reopenedRefreshFailed: "Maintenance reopened, but the maintenance list failed to refresh",
     reopenFailed: "Failed to reopen maintenance",
