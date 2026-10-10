@@ -431,6 +431,8 @@ def commit_department_import(upload, request):
     parsed = _parse(upload)
     try:
         with transaction.atomic():
+            from .reference_writes import _lock_hierarchy
+            _lock_hierarchy(Department)
             departments = _load_departments(lock=True)
             preview, specs = _analyze_rows(parsed, departments)
             if preview["error"]:

@@ -47,6 +47,7 @@ export function useDataDictionary(deps: DataDictionaryDependencies) {
   const editingDictionary = ref<DataDictionaryRow | null>(null);
   const dictionaryForm = ref({ name: "", code: "", is_active: true });
   const dictionaryRequestId = ref(0);
+  let editorSequence = 0;
   let dictionaryController: AbortController | null = null;
 
   const currentDictionaryItems = computed(() => dictionaryRows.value);
@@ -196,7 +197,8 @@ export function useDataDictionary(deps: DataDictionaryDependencies) {
 
   function openDictionaryModal(item?: DataDictionaryRow) {
     if (!canManage()) return;
-    editingDictionary.value = item || null;
+    editorSequence += 1;
+    editingDictionary.value = item ? { ...item } : null;
     dictionaryFormErrors.value = {};
     dictionaryForm.value = item
       ? {
@@ -215,6 +217,7 @@ export function useDataDictionary(deps: DataDictionaryDependencies) {
   async function saveDictionary() {
     if (dictionarySaving.value || !canManage()) return;
     const section = dictionarySection.value;
+    const editor = editorSequence;
     const label = currentDictionaryLabel.value;
     dictionarySaving.value = true;
     dictionaryFormErrors.value = {};
@@ -234,10 +237,11 @@ export function useDataDictionary(deps: DataDictionaryDependencies) {
         headers: revisionHeaders(editingDictionary.value),
         body: JSON.stringify(payload),
       });
-      showDictionaryModal.value = false;
+      if (editor === editorSequence && section === dictionarySection.value) showDictionaryModal.value = false;
       setActionMessage(tr("settings.dictionarySaved", { item: label }));
       await loadDictionaries();
     } catch (error) {
+      if (editor !== editorSequence || section !== dictionarySection.value) return;
       dictionaryFormErrors.value = extractFieldErrors(error);
       setActionError(error, tr("settings.dictionarySaveFailed", { item: label }));
     } finally {
@@ -268,6 +272,8 @@ export function useDataDictionary(deps: DataDictionaryDependencies) {
 
   async function deleteDictionary(item: DataDictionaryRow) {
     if (!canManage() || dictionaryActionId.value === item.id) return;
+    const section = dictionarySection.value;
+    const path = `/${dictionaryPath(section)}/${item.id}/`;
     const label = currentDictionaryLabel.value;
     if (dictionaryItemUsed(item)) {
       setActionMessage(
@@ -277,9 +283,10 @@ export function useDataDictionary(deps: DataDictionaryDependencies) {
       return;
     }
     if (!(await deps.confirmAction(tr("settings.dictionaryDeleteConfirm", { item: label, name: item.name })))) return;
+    if (dictionarySection.value !== section || !canManage(section)) return;
     dictionaryActionId.value = item.id;
     try {
-      await deps.request(`/${dictionaryPath()}/${item.id}/`, { method: "DELETE" });
+      await deps.request(path, { method: "DELETE" });
       setActionMessage(tr("settings.dictionaryDeleted", { item: label }));
       await loadDictionaries();
     } catch (error) {

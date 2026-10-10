@@ -1,6 +1,6 @@
+import { useAccountEditor } from "./useAccountEditor";
 import { revisionHeaders } from "../revision";
-import { computed, nextTick, ref, watch, type Ref } from "vue";
-import { type FormInstance, type FormRules } from "element-plus";
+import { computed, ref, watch, type Ref } from "vue";
 import { ApiError, isAbortError, pageItems, pageTotal, type PageResult } from "../api";
 import {
   clearFieldError,
@@ -27,7 +27,6 @@ import type {
   UserBatchStatusResponse,
 } from "../types";
 import type { CapabilityFn, RequestFn } from "../page-context";
-import { systemSettingsState } from "../system-settings";
 import { i18n } from "../i18n";
 
 const tr = (key: string, params?: Record<string, unknown>): string =>
@@ -70,65 +69,17 @@ export function useOrganizationSettings(deps: OrganizationSettingsDeps) {
   const userBatchSaving = ref(false);
   const userBatchResult = ref<UserBatchStatusResponse | null>(null);
   const showUserBatchResult = ref(false);
-  const showUserModal = ref(false);
-  const editingUser = ref<ManagedUser | null>(null);
-  const userForm = ref({
-    username: "",
-    first_name: "",
-    last_name: "",
-    email: "",
-    password: "",
-    confirm_password: "",
-    is_active: true,
-    role_code: "auditor",
-    person_id: "",
-  });
-  const userFormRef = ref<FormInstance>();
   const organizationLoading = ref(false);
   const userListError = ref("");
   const roleListError = ref("");
   const organizationRequestId = ref(0);
   const userRequestId = ref(0);
-  const userSaving = ref(false);
   const userPendingId = ref<number | null>(null);
-  const userFormErrors = ref<FormErrors>({});
+  const { showUserModal, editingUser, userForm, userFormRef, userFormRules, userSaving, userFormErrors, openUserModal, saveUser, userProtectionReason, userDeleteProtectionReason, canChangeUserRole } = useAccountEditor({ ...deps, refreshUsers: () => loadUsers(), userListError, notify: setActionMessage, notifyError: setActionError });
   const unlinkedPeople = ref<PersonOption[]>([]);
   const unlinkedPeopleLoading = ref(false);
   const unlinkedPeopleError = ref("");
   const unlinkedPeopleRequestId = ref(0);
-  const userFormRules = computed<FormRules>(() => ({
-    username: [{ required: true, message: tr("settings.usernameRequired"), trigger: "blur" }],
-    last_name: [{ required: true, message: tr("settings.lastNameRequired"), trigger: "blur" }],
-    first_name: [{ required: true, message: tr("settings.firstNameRequired"), trigger: "blur" }],
-    email: [{ type: "email", message: tr("validation.invalidEmail"), trigger: ["blur", "change"] }],
-    role_code: [{ required: true, message: tr("settings.roleRequired"), trigger: "change" }],
-    password: [
-      {
-        validator: (_rule, value, callback) => {
-          const password = String(value || "");
-          if (!editingUser.value && !password) callback(new Error(tr("settings.passwordRequired")));
-          else if (password && password.length < systemSettingsState.passwordMinLength) {
-            callback(new Error(tr("validation.passwordMin", { min: systemSettingsState.passwordMinLength })));
-          }
-          else callback();
-        },
-        trigger: ["blur", "change"],
-      },
-    ],
-    confirm_password: [
-      {
-        validator: (_rule, value, callback) => {
-          const password = String(userForm.value.password || "");
-          const confirmation = String(value || "");
-          if (editingUser.value && !password && !confirmation) callback();
-          else if (!confirmation) callback(new Error(tr("settings.confirmPasswordRequired")));
-          else if (confirmation !== password) callback(new Error(tr("validation.passwordMismatch")));
-          else callback();
-        },
-        trigger: ["blur", "change"],
-      },
-    ],
-  }));
   const departments = ref<Department[]>([]);
   const departmentOptions = ref<Department[]>([]);
   const departmentTotal = ref(0);
@@ -140,6 +91,7 @@ export function useOrganizationSettings(deps: OrganizationSettingsDeps) {
   const departmentRequestId = ref(0);
   let departmentController: AbortController | null = null;
   const departmentSaving = ref(false);
+  let departmentEditorSequence = 0;
   const departmentActionId = ref<number | null>(null);
   const departmentFormErrors = ref<FormErrors>({});
   const showDepartmentModal = ref(false);
@@ -156,6 +108,7 @@ export function useOrganizationSettings(deps: OrganizationSettingsDeps) {
   const responsibilityDirectoryLoading = ref(false);
   const responsibilityDirectoryError = ref("");
   const responsibilityDirectorySaving = ref(false);
+  let personEditorSequence = 0;
   const responsibilityDirectoryActionId = ref<number | null>(null);
   const responsibilityDirectoryFormErrors = ref<FormErrors>({});
   const responsibilityDirectoryForm = ref<PersonFormState>({
@@ -952,7 +905,8 @@ export function useOrganizationSettings(deps: OrganizationSettingsDeps) {
     if (departmentOptions.value.length === 0 && !departmentLoading.value) {
       void loadDepartments();
     }
-    editingResponsibilitySubject.value = subject || null;
+    personEditorSequence += 1;
+    editingResponsibilitySubject.value = subject ? { ...subject } : null;
     responsibilityDirectoryFormErrors.value = {};
     responsibilityDirectoryForm.value = subject
       ? {
@@ -969,6 +923,7 @@ export function useOrganizationSettings(deps: OrganizationSettingsDeps) {
   }
 
   async function saveResponsibilitySubject() {
+    const editor = personEditorSequence;
     if (!deps.can("settings.manage") || responsibilityDirectorySaving.value) return;
     const name = responsibilityDirectoryForm.value.name.trim();
     if (!name) {
@@ -992,11 +947,14 @@ export function useOrganizationSettings(deps: OrganizationSettingsDeps) {
           is_active: responsibilityDirectoryForm.value.is_active,
         }),
       });
-      showResponsibilitySubjectModal.value = false;
-      editingResponsibilitySubject.value = null;
+      if (editor === personEditorSequence) {
+        showResponsibilitySubjectModal.value = false;
+        editingResponsibilitySubject.value = null;
+      }
       setActionMessage(tr("settings.personSaved"));
       await loadResponsibilityDirectory();
     } catch (error) {
+      if (editor !== personEditorSequence) return;
       responsibilityDirectoryFormErrors.value = extractFieldErrors(error, ["name", "employee_no", "department", "email", "organization", "contact", "is_active"]);
       setActionError(error, tr("settings.personSaveFailed"));
     } finally {
@@ -1043,7 +1001,8 @@ export function useOrganizationSettings(deps: OrganizationSettingsDeps) {
 
   function openDepartmentModal(department?: Department) {
     if (!deps.can("settings.manage")) return;
-    editingDepartment.value = department || null;
+    departmentEditorSequence += 1;
+    editingDepartment.value = department ? { ...department } : null;
     departmentFormErrors.value = {};
     departmentForm.value = department
       ? {
@@ -1056,6 +1015,7 @@ export function useOrganizationSettings(deps: OrganizationSettingsDeps) {
   }
 
   async function saveDepartment() {
+    const editor = departmentEditorSequence;
     if (!deps.can("settings.manage") || departmentSaving.value) return;
     departmentSaving.value = true;
     departmentFormErrors.value = {};
@@ -1071,11 +1031,14 @@ export function useOrganizationSettings(deps: OrganizationSettingsDeps) {
         headers: revisionHeaders(editingDepartment.value),
         body: JSON.stringify(payload),
       });
-      showDepartmentModal.value = false;
-      editingDepartment.value = null;
+      if (editor === departmentEditorSequence) {
+        showDepartmentModal.value = false;
+        editingDepartment.value = null;
+      }
       setActionMessage(tr("settings.departmentSaved"));
       await loadDepartments();
     } catch (error) {
+      if (editor !== departmentEditorSequence) return;
       departmentFormErrors.value = extractFieldErrors(error, ["name", "code", "parent"]);
       setActionError(error, tr("settings.departmentSaveFailed"));
     } finally {
@@ -1206,37 +1169,6 @@ export function useOrganizationSettings(deps: OrganizationSettingsDeps) {
   }
 
 
-  function openUserModal(user?: ManagedUser) {
-    if (!deps.can("organization.manage")) return;
-    editingUser.value = user ? {...user} : null;
-    userFormErrors.value = {};
-    userForm.value = user
-      ? {
-          username: user.username,
-          first_name: user.first_name,
-          last_name: user.last_name,
-          email: user.email,
-          password: "",
-          confirm_password: "",
-          is_active: user.is_active,
-          role_code: user.primary_role_code || user.roles[0]?.code || "",
-          person_id: user.person?.id ? String(user.person.id) : "",
-        }
-      : {
-          username: "",
-          first_name: "",
-          last_name: "",
-          email: "",
-          password: "",
-          confirm_password: "",
-          is_active: true,
-          role_code: "auditor",
-          person_id: "",
-        };
-    showUserModal.value = true;
-    nextTick(() => userFormRef.value?.clearValidate());
-  }
-
   async function loadUnlinkedPeople(): Promise<boolean> {
     if (!deps.can("organization.manage")) return false;
     const requestId = ++unlinkedPeopleRequestId.value;
@@ -1259,83 +1191,12 @@ export function useOrganizationSettings(deps: OrganizationSettingsDeps) {
     }
   }
 
-  function userProtectionReason(user: ManagedUser): string {
-    if (user.is_superuser) return tr("settings.superuserProtected");
-    if (user.username === deps.currentUsername.value) return tr("settings.currentUserProtected");
-    return "";
-  }
-
-  function userDeleteProtectionReason(user: ManagedUser): string {
-    if (user.auth_source === "ldap") return tr("settings.directoryUserProtected");
-    return userProtectionReason(user);
-  }
-
   function handleUserSelection(rows: ManagedUser[]) {
     selectedUserIds.value = rows.map((user) => user.id);
   }
 
   function clearUserSelection() {
     selectedUserIds.value = [];
-  }
-
-  function canChangeUserRole(user: ManagedUser): boolean {
-    return !user.is_superuser && user.username !== deps.currentUsername.value;
-  }
-
-  async function saveUser() {
-    if (!deps.can("organization.manage")) return;
-    if (userSaving.value) return;
-    userSaving.value = true;
-    let saved = false;
-    try {
-      const valid = await userFormRef.value?.validate().then(() => true).catch(() => false);
-      if (!valid) return;
-      const normalizingMultipleRoles = Boolean(
-        editingUser.value?.role_anomaly === "multiple",
-      );
-      if (
-        normalizingMultipleRoles
-        && !(await deps.confirmAction(tr("settings.normalizeRolesConfirm")))
-      ) return;
-      const method = editingUser.value ? "PATCH" : "POST";
-      const path = editingUser.value ? `/users/${editingUser.value.id}/` : "/users/";
-      await deps.request(path, {
-        method,
-        headers: revisionHeaders(editingUser.value),
-        body: JSON.stringify({
-          ...(!editingUser.value ? { username: userForm.value.username } : {}),
-          first_name: userForm.value.first_name,
-          last_name: userForm.value.last_name,
-          email: userForm.value.email,
-          is_active: userForm.value.is_active,
-          role_code: userForm.value.role_code,
-          ...(normalizingMultipleRoles ? { normalize_roles: true } : {}),
-          ...(!editingUser.value && userForm.value.person_id
-            ? { person_id: Number(userForm.value.person_id) }
-            : {}),
-          ...(!editingUser.value && userForm.value.password ? { password: userForm.value.password } : {}),
-        }),
-      });
-      saved = true;
-    } catch (error) {
-      userFormErrors.value = extractFieldErrors(error, [
-        "username",
-        "first_name",
-        "last_name",
-        "email",
-        "role_code",
-        "person_id",
-        "password",
-      ]);
-      setActionError(error, tr("settings.userSaveFailed"));
-    } finally {
-      userSaving.value = false;
-    }
-    if (!saved) return;
-    showUserModal.value = false;
-    setActionMessage(tr("settings.userSaved"));
-    const refreshed = await loadUsers();
-    if (!refreshed && userListError.value) setActionMessage(tr("settings.userSavedRefreshFailed"), "error");
   }
 
   async function toggleUser(user: ManagedUser) {

@@ -5,7 +5,7 @@ from django.db.models import Prefetch, Q, QuerySet
 from rest_framework.exceptions import APIException, ValidationError as DRFValidationError
 
 from .custom_fields import custom_field_value_is_empty
-from .models import Asset, AssetCustomValue, AssetModel, CustomFieldOption, CustomFieldSet, CustomFieldSetItem, DeviceType
+from .models import Asset, AssetCustomValue, AssetModel, CustomField, CustomFieldOption, CustomFieldSet, CustomFieldSetItem, DeviceType
 
 
 class FieldsetConflictAPIException(APIException):
@@ -126,8 +126,14 @@ def validate_fieldset_items(items) -> None:
 @transaction.atomic
 def replace_fieldset_items(fieldset: CustomFieldSet, items):
     """Validate and replace members while preserving existing asset values."""
-    validate_fieldset_items(items)
+    fieldset = CustomFieldSet.objects.select_for_update().get(pk=fieldset.pk)
     existing_ids = set(fieldset.items.values_list("field_id", flat=True))
+    field_ids = existing_ids | {item["field"].pk for item in items}
+    current_fields = {field.pk: field for field in CustomField.objects.select_for_update().filter(pk__in=field_ids).order_by("pk")}
+    if any(item["field"].pk not in current_fields for item in items):
+        raise DRFValidationError({"items": "字段已被删除，请重新选择"})
+    items = [{**item, "field": current_fields[item["field"].pk]} for item in items]
+    validate_fieldset_items(items)
     inactive = [
         item["field"].name
         for item in items

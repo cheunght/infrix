@@ -1,3 +1,4 @@
+from .reference_rules import _default_references_option, _validate_default_value
 from django.core.exceptions import ValidationError as DjangoValidationError
 from django.db import IntegrityError, transaction
 from collections import Counter
@@ -200,58 +201,16 @@ class UserSerializer(serializers.ModelSerializer):
         return value.strip()
 
     def validate(self, attrs):
-        if attrs.get("normalize_roles") and "role_code" not in attrs:
-            raise serializers.ValidationError({"role_code": "规范化角色时必须明确选择一个角色"})
-        if self.instance is not None and "role_code" in attrs:
-            snapshot = read_authorization_snapshot(self.instance)
-            if len(snapshot.role_codes) > 1 and not attrs.get("normalize_roles", False):
-                raise serializers.ValidationError({"role_code": "该账号拥有多个角色，确认后才能规范化"})
-        if self.instance is not None and "password" in attrs:
-            if is_directory_managed(self.instance):
-                raise serializers.ValidationError({"password": "目录账号密码由目录服务管理"})
-            raise serializers.ValidationError(
-                {"password": "管理员重置用户密码请使用专用 reset-password 接口"}
-            )
-        if self.instance is not None and "person" in attrs:
-            raise serializers.ValidationError({"person_id": "系统账号只能在创建时关联人员"})
-        if self.instance is None and not attrs.get("password"):
-            minimum = get_local_auth_policy().password_min_length
-            raise serializers.ValidationError({"password": f"新用户必须设置至少 {minimum} 位密码"})
-        password = attrs.get("password")
-        if password:
-            password_user = self.instance or User(username=attrs.get("username", ""))
-            try:
-                validate_local_password(password, user=password_user)
-            except DjangoValidationError as exc:
-                raise serializers.ValidationError({"password": list(exc.messages)})
-        return attrs
+        from .identity_rules import validate_account_attributes
+        return validate_account_attributes(attrs, instance=self.instance)
 
     def create(self, validated_data):
-        role_code = validated_data.pop("role_code", ROLE_AUDITOR)
-        validated_data.pop("normalize_roles", None)
-        password = validated_data.pop("password")
-        person = validated_data.pop("person", None)
-        user = User(**validated_data)
-        if person is not None:
-            user._selected_person_id = person.pk
-        user.set_password(password)
-        user.save()
-        UserSecurityProfile.objects.update_or_create(
-            user=user,
-            defaults={"must_change_password": True, "password_changed_at": None},
-        )
-        assign_role(target=user, role_code=role_code, actor=self._actor())
-        return user
+        from .identity_writes import create_account_fields
+        return create_account_fields(validated_data, request=self.context.get("request"), record_audit=self.context.get("identity_write_audit", False))
 
     def update(self, instance, validated_data):
-        role_code = validated_data.pop("role_code", None)
-        validated_data.pop("normalize_roles", None)
-        for key, value in validated_data.items():
-            setattr(instance, key, value)
-        instance.save()
-        if role_code is not None:
-            assign_role(target=instance, role_code=role_code, actor=self._actor())
-        return instance
+        from .identity_writes import update_account_fields
+        return update_account_fields(instance, validated_data, request=self.context.get("request"), record_audit=self.context.get("identity_write_audit", False), batch_operation_id=self.context.get("batch_operation_id"))
 
     class Meta:
         model = User
@@ -1021,16 +980,8 @@ class DepartmentSerializer(ResourceRevisionSerializerMixin, serializers.ModelSer
         return value
 
     def validate_parent(self, value):
-        if not value or not self.instance:
-            return value
-        current = value
-        visited = set()
-        while current is not None and current.pk not in visited:
-            if current.pk == self.instance.pk:
-                raise serializers.ValidationError("部门层级不能形成循环")
-            visited.add(current.pk)
-            current = current.parent
-        return value
+        from .reference_rules import validate_department_parent
+        return validate_department_parent(value, instance=self.instance)
 
     class Meta:
         model = Department
@@ -1080,28 +1031,8 @@ class DeviceTypeSerializer(BaseDictionarySerializer):
         return value.upper()
 
     def validate(self, attrs):
-        attrs = super().validate(attrs)
-        fieldset = attrs.get("default_fieldset", self.instance.default_fieldset if self.instance else None)
-        if fieldset is not None and not fieldset.is_active:
-            current_id = self.instance.default_fieldset_id if self.instance else None
-            if fieldset.pk != current_id:
-                raise serializers.ValidationError({"default_fieldset": "停用的字段集不能设为默认字段集"})
-        if self.instance and "default_fieldset" in attrs and attrs["default_fieldset"] != self.instance.default_fieldset:
-            affected_assets = Asset.objects.filter(
-                Q(asset_model__device_type=self.instance, asset_model__fieldset__isnull=True)
-                | Q(asset_model__isnull=True, standalone_device_type=self.instance)
-            ).distinct()
-            prospective_items = list(fieldset.items.all().values("field_id", "required")) if fieldset else []
-            prospective_items = [
-                {"field": CustomField.objects.get(pk=item["field_id"]), "required": item["required"]}
-                for item in prospective_items
-            ]
-            raise_if_fieldset_conflicts(
-                affected_assets,
-                prospective_items,
-                detail="修改默认字段集会使现有资产值失去归属或缺少必填字段",
-            )
-        return attrs
+        from .reference_rules import validate_device_type
+        return validate_device_type(attrs, instance=self.instance, initial_data=getattr(self, "initial_data", {}))
 
     class Meta(BaseDictionarySerializer.Meta):
         model = DeviceType
@@ -1167,60 +1098,8 @@ class AssetModelSerializer(ResourceRevisionSerializerMixin, serializers.ModelSer
         return (value or "").strip()
 
     def validate(self, attrs):
-        manufacturer = attrs.get("manufacturer", self.instance.manufacturer if self.instance else None)
-        device_type = attrs.get("device_type", self.instance.device_type if self.instance else None)
-        if manufacturer is None:
-            raise serializers.ValidationError({"manufacturer": "厂商不能为空"})
-        if device_type is None:
-            raise serializers.ValidationError({"device_type": "设备类型不能为空"})
-        for field in ("manufacturer", "device_type"):
-            value = attrs.get(field, getattr(self.instance, field, None) if self.instance else None)
-            if value is not None and not value.is_active:
-                current_id = getattr(self.instance, f"{field}_id", None) if self.instance else None
-                if current_id != value.pk:
-                    raise serializers.ValidationError({field: "停用的选项不能用于资产型号"})
-        fieldset = attrs.get("fieldset", self.instance.fieldset if self.instance else None)
-        if fieldset is not None and not fieldset.is_active:
-            current_id = self.instance.fieldset_id if self.instance else None
-            if fieldset.pk != current_id:
-                raise serializers.ValidationError({"fieldset": "停用的字段集不能用于资产型号"})
-        name = attrs.get("name", self.instance.name if self.instance else "")
-        duplicate_name = AssetModel.objects.filter(manufacturer=manufacturer, name__iexact=name)
-        if self.instance:
-            duplicate_name = duplicate_name.exclude(pk=self.instance.pk)
-        if duplicate_name.exists():
-            raise serializers.ValidationError({"name": "同一厂商下型号名称不能重复"})
-        model_number = attrs.get("model_number", self.instance.model_number if self.instance else "")
-        if model_number:
-            duplicate_number = AssetModel.objects.filter(manufacturer=manufacturer, model_number__iexact=model_number)
-            if self.instance:
-                duplicate_number = duplicate_number.exclude(pk=self.instance.pk)
-            if duplicate_number.exists():
-                raise serializers.ValidationError({"model_number": "同一厂商下型号编号不能重复"})
-        for field in ("default_warranty_months", "expected_life_months"):
-            value = attrs.get(field)
-            if value is not None and value < 0:
-                raise serializers.ValidationError({field: "月数不能为负数"})
-        if self.instance:
-            prospective_fieldset = fieldset or device_type.default_fieldset
-            effective_changed = (
-                prospective_fieldset.pk if prospective_fieldset else None
-            ) != (
-                (self.instance.fieldset or self.instance.device_type.default_fieldset).pk
-                if (self.instance.fieldset or self.instance.device_type.default_fieldset) else None
-            )
-            if effective_changed:
-                prospective_items = list(prospective_fieldset.items.all().values("field_id", "required")) if prospective_fieldset else []
-                prospective_items = [
-                    {"field": CustomField.objects.get(pk=item["field_id"]), "required": item["required"]}
-                    for item in prospective_items
-                ]
-                raise_if_fieldset_conflicts(
-                    Asset.objects.filter(asset_model=self.instance),
-                    prospective_items,
-                    detail="修改型号字段集会使现有资产值失去归属或缺少必填字段",
-                )
-        return attrs
+        from .reference_rules import validate_asset_model
+        return validate_asset_model(attrs, instance=self.instance, initial_data=getattr(self, "initial_data", {}))
 
     @extend_schema_field(EffectiveFieldSetSerializer(allow_null=True))
     def get_effective_fieldset(self, obj):
@@ -1238,51 +1117,6 @@ class AssetModelSerializer(ResourceRevisionSerializerMixin, serializers.ModelSer
             "assets_count", "created_at", "updated_at",
         ]
         read_only_fields = ["id", "manufacturer_name", "device_type_name", "fieldset_name", "effective_fieldset", "assets_count", "created_at", "updated_at"]
-
-
-def _validate_default_value(field, value, active_options):
-    if not isinstance(value, str):
-        raise ValueError("默认值必须是字符串")
-    if not value.strip():
-        return ""
-    field_type = field.field_type
-    candidate = value if field_type in {"text", "textarea"} else value.strip()
-    if field_type == "boolean":
-        if candidate not in {"true", "false"}:
-            raise ValueError("是/否字段的默认值只能是 true 或 false")
-        candidate = candidate == "true"
-    elif field_type == "multiselect":
-        try:
-            candidate = json.loads(candidate)
-        except (TypeError, ValueError) as exc:
-            raise ValueError("多选字段的默认值必须是 JSON 字符串数组") from exc
-
-    normalized = validate_custom_field_value(
-        field,
-        candidate,
-        allowed_option_values=active_options,
-        validate_empty=True,
-    )
-    if field_type == "boolean":
-        return "true" if normalized else "false"
-    if field_type == "multiselect":
-        return json.dumps(normalized, ensure_ascii=False, separators=(",", ":"))
-    return normalized
-
-
-def _default_references_option(field, option_value):
-    default_value = (field.default_value or "").strip()
-    if not default_value:
-        return False
-    if field.field_type == "select":
-        return default_value == option_value
-    if field.field_type == "multiselect":
-        try:
-            values = json.loads(default_value)
-        except (TypeError, ValueError):
-            return False
-        return isinstance(values, list) and option_value in values
-    return False
 
 
 class CustomFieldOptionSerializer(ResourceRevisionSerializerMixin, serializers.ModelSerializer):
@@ -1306,17 +1140,8 @@ class CustomFieldOptionSerializer(ResourceRevisionSerializerMixin, serializers.M
         return value
 
     def validate(self, attrs):
-        field = attrs.get("field", self.instance.field if self.instance else None)
-        if field and field.field_type not in {"select", "multiselect"}:
-            raise serializers.ValidationError({"field": "只有下拉单选或多选字段可以配置选项"})
-        if self.instance:
-            if "field" in attrs and attrs["field"].pk != self.instance.field_id:
-                raise serializers.ValidationError({"field": "选项创建后不能修改所属字段"})
-            if "value" in attrs and attrs["value"] != self.instance.value:
-                raise serializers.ValidationError({"value": "选项值创建后不能修改"})
-            if "is_active" in attrs and not attrs["is_active"] and _default_references_option(self.instance.field, self.instance.value):
-                raise serializers.ValidationError({"is_active": "选项被字段默认值引用，不能停用"})
-        return attrs
+        from .reference_rules import validate_custom_field_option
+        return validate_custom_field_option(attrs, instance=self.instance, initial_data=getattr(self, "initial_data", {}))
 
     class Meta:
         model = CustomFieldOption
@@ -1358,47 +1183,8 @@ class CustomFieldSerializer(ResourceRevisionSerializerMixin, serializers.ModelSe
         return value
 
     def validate(self, attrs):
-        field_type = attrs.get("field_type", self.instance.field_type if self.instance else None)
-        effective_form_visible = attrs.get(
-            "form_visible",
-            self.instance.form_visible if self.instance else True,
-        )
-        if (
-            self.instance
-            and self.instance.form_visible
-            and not effective_form_visible
-            and CustomFieldSetItem.objects.filter(field_id=self.instance.pk, required=True).exists()
-        ):
-            raise serializers.ValidationError({
-                "form_visible": "字段已在字段集中设为必填，不能隐藏；请先取消必填或移出字段集",
-            })
-        if self.instance and "field_type" in attrs and attrs["field_type"] != self.instance.field_type:
-            if self.instance.asset_values.exists() or self.instance.options.exists():
-                raise serializers.ValidationError({"field_type": "字段已有资产值或选项，不能修改字段类型"})
-            if "validation_config" not in attrs:
-                attrs["validation_config"] = {}
-        config = attrs.get("validation_config", self.instance.validation_config if self.instance else {})
-        try:
-            attrs["validation_config"] = _normalize_validation_config(field_type, config)
-        except ValueError as exc:
-            raise serializers.ValidationError({"validation_config": str(exc)}) from exc
-
-        default_value = attrs.get("default_value", self.instance.default_value if self.instance else "")
-        if "default_value" in self.initial_data and not isinstance(self.initial_data["default_value"], str):
-            raise serializers.ValidationError({"default_value": "默认值必须是字符串"})
-        active_options = set()
-        if self.instance:
-            active_options = set(self.instance.options.filter(is_active=True).values_list("value", flat=True))
-        validation_field = CustomField(
-            name=attrs.get("name", self.instance.name if self.instance else "自定义字段"),
-            field_type=field_type,
-            validation_config=attrs["validation_config"],
-        )
-        try:
-            attrs["default_value"] = _validate_default_value(validation_field, default_value, active_options)
-        except ValueError as exc:
-            raise serializers.ValidationError({"default_value": str(exc)}) from exc
-        return attrs
+        from .reference_rules import validate_custom_field
+        return validate_custom_field(attrs, instance=self.instance, initial_data=getattr(self, "initial_data", {}))
 
     class Meta:
         model = CustomField
@@ -1452,26 +1238,16 @@ class CustomFieldSetSerializer(ResourceRevisionSerializerMixin, serializers.Mode
         return value
 
     def validate(self, attrs):
-        items = attrs.get("items")
-        if items is not None:
-            validate_fieldset_items(items)
-        return attrs
+        from .reference_rules import validate_custom_field_set
+        return validate_custom_field_set(attrs, instance=self.instance, initial_data=getattr(self, "initial_data", {}))
 
-    @transaction.atomic
     def create(self, validated_data):
-        items = validated_data.pop("items", None)
-        instance = super().create(validated_data)
-        if items is not None:
-            replace_fieldset_items(instance, items)
-        return instance
+        from .reference_writes import persist_fieldset
+        return persist_fieldset(validated_data, instance=None)
 
-    @transaction.atomic
     def update(self, instance, validated_data):
-        items = validated_data.pop("items", None)
-        instance = super().update(instance, validated_data)
-        if items is not None:
-            replace_fieldset_items(instance, items)
-        return instance
+        from .reference_writes import persist_fieldset
+        return persist_fieldset(validated_data, instance=instance)
 
     class Meta:
         model = CustomFieldSet
@@ -1934,16 +1710,8 @@ class SoftwareLicenseSerializer(ResourceRevisionSerializerMixin, serializers.Mod
         return (obj.expiry_date - self._system_today).days if obj.expiry_date else None
 
     def validate(self, attrs):
-        authorized_count = attrs.get("authorized_count", self.instance.authorized_count if self.instance else 0)
-        used_count = attrs.get("used_count", self.instance.used_count if self.instance else 0)
-        if authorized_count < 0 or used_count < 0:
-            raise serializers.ValidationError("授权数和已用数不能为负数")
-        manufacturer = attrs.get("manufacturer")
-        if manufacturer and not manufacturer.is_active and (
-            not self.instance or self.instance.manufacturer_id != manufacturer.pk
-        ):
-            raise serializers.ValidationError({"manufacturer_id": "停用的厂商不能用于新许可或修改许可"})
-        return attrs
+        from .reference_rules import validate_software_license
+        return validate_software_license(attrs, instance=self.instance, initial_data=getattr(self, "initial_data", {}))
 
     class Meta:
         model = SoftwareLicense
@@ -2249,14 +2017,8 @@ class PersonSerializer(ResourceRevisionSerializerMixin, PersonSummarySerializer)
         return value
 
     def validate(self, attrs):
-        current_active = self.instance.is_active if self.instance else True
-        target_active = attrs.get("is_active", current_active)
-        if current_active and not target_active and self.instance and self.instance.assigned_assets.exists():
-            raise serializers.ValidationError({"is_active": "该人员仍有资产，处理名下资产后才能停用"})
-        for field in ("organization", "contact"):
-            if field in attrs:
-                attrs[field] = (attrs[field] or "").strip()
-        return attrs
+        from .reference_rules import validate_person
+        return validate_person(attrs, instance=self.instance, initial_data=getattr(self, "initial_data", {}))
 
     class Meta(PersonSummarySerializer.Meta):
         fields = PersonSummarySerializer.Meta.fields + [
@@ -2818,9 +2580,6 @@ class AssetWriteSerializer(serializers.ModelSerializer):
         return super().to_representation(instance)
 
 
-
-
-
     def to_internal_value(self, data):
         data = data.copy()
         for field in (
@@ -2832,9 +2591,6 @@ class AssetWriteSerializer(serializers.ModelSerializer):
             if data.get(field) == "":
                 data[field] = None
         return super().to_internal_value(data)
-
-
-
 
 
     def validate(self, attrs):

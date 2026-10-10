@@ -1,3 +1,6 @@
+from .identity_writes import update_own_profile, change_own_password
+from .reference_writes import SharedReferenceWriteMixin, edit_fieldset_items
+from .identity_writes import (_user_audit_snapshot, _security_profile, _locked_security_profile, edit_account, reset_account_password, delete_account, batch_account_status, account_scope_snapshot, replace_account_scope)
 from .asset_writes import archive_asset, restore_asset
 from .asset_batches import batch_archive_assets, batch_assign_assets, bulk_edit_assets
 from .repair_writes import create_fault, update_fault, delete_fault, create_repair, update_repair, delete_repair, reopen_repair
@@ -75,7 +78,7 @@ from .physical_location import (
 from .inventory import get_inventory_scope_assets
 from .depreciation import calculate_asset_depreciation
 from .license_status import LICENSE_STATUS_KEYS, LICENSE_STATUS_LABELS, filter_licenses_by_status, license_status_counts, license_status_value
-from .audit import asset_audit_snapshot, asset_custom_value_changes, json_value, model_snapshot, software_license_audit_snapshot, spare_part_audit_snapshot, write_audit_log
+from .audit import asset_audit_snapshot, asset_custom_value_changes, json_value, model_snapshot, write_audit_log
 from .timeline import asset_timeline_queryset, serialize_timeline
 from .imports import AssetImportService, ImportFileError, ImportValidationError, build_import_template
 from .asset_model_imports import build_asset_model_import_template, commit_asset_model_import, preview_asset_model_import
@@ -491,8 +494,7 @@ def _batch_error_code(error, fallback):
     return fallback
 
 
-
-class PersonViewSet(AuditedModelViewSetMixin, ScopedModelViewSet):
+class PersonViewSet(SharedReferenceWriteMixin, AuditedModelViewSetMixin, ScopedModelViewSet):
     queryset = Person.objects.select_related("department", "account").annotate(
         asset_count=Count("assigned_assets", distinct=True),
     ).order_by("name", "employee_no", "id")
@@ -570,21 +572,6 @@ class PersonViewSet(AuditedModelViewSetMixin, ScopedModelViewSet):
         if self.request.query_params.get("search", "").strip():
             queryset = queryset.distinct()
         return queryset
-
-    @transaction.atomic
-    def perform_update(self, serializer):
-        person = Person.objects.select_for_update().get(pk=serializer.instance.pk)
-        if person.is_active and serializer.validated_data.get("is_active") is False and person.assigned_assets.exists():
-            raise DRFValidationError({"is_active": "该人员仍有资产，处理名下资产后才能停用"})
-        serializer.instance = person
-        super().perform_update(serializer)
-
-    @transaction.atomic
-    def perform_destroy(self, instance):
-        person = Person.objects.select_for_update().get(pk=instance.pk)
-        if person.assigned_assets.exists():
-            raise DRFValidationError("人员仍被资产使用，不能删除，请先归还或转交资产")
-        super().perform_destroy(person)
 
 
 class AssetViewSet(AuditedModelViewSetMixin, ScopedModelViewSet):
@@ -1614,7 +1601,7 @@ class DataCenterViewSet(AuditedModelViewSetMixin, ScopedModelViewSet):
         return Response(status=204)
 
 
-class DictionaryViewSet(AuditedModelViewSetMixin, ScopedModelViewSet):
+class DictionaryViewSet(SharedReferenceWriteMixin, AuditedModelViewSetMixin, ScopedModelViewSet):
     filter_backends = [DjangoFilterBackend, SearchFilter, OrderingFilter]
     search_fields = ["name"]
     ordering_fields = ["name", "created_at", "updated_at"]
@@ -1653,21 +1640,12 @@ class DictionaryViewSet(AuditedModelViewSetMixin, ScopedModelViewSet):
         instance.assets_count = 0
 
     def perform_update(self, serializer):
-        AuditedModelViewSetMixin.perform_update(self, serializer)
+        SharedReferenceWriteMixin.perform_update(self, serializer)
         instance = serializer.instance
         instance.assets_count = instance.assets.count()
 
-    def perform_destroy(self, instance):
-        if instance.assets.exists():
-            from rest_framework.exceptions import ValidationError as DRFValidationError
-            raise DRFValidationError("字典项正在被资产使用，不能删除，请先停用")
-        try:
-            AuditedModelViewSetMixin.perform_destroy(self, instance)
-        except ProtectedError as exc:
-            raise DRFValidationError("字典项仍被当前或归档业务记录引用，不能删除，请先停用") from exc
 
-
-class DepartmentViewSet(AuditedModelViewSetMixin, ScopedModelViewSet):
+class DepartmentViewSet(SharedReferenceWriteMixin, AuditedModelViewSetMixin, ScopedModelViewSet):
     queryset = Department.objects.select_related("parent").annotate(
         people_count=Count("people", distinct=True),
     ).order_by("name", "id")
@@ -1704,14 +1682,6 @@ class DepartmentViewSet(AuditedModelViewSetMixin, ScopedModelViewSet):
         else:
             queryset = super().get_queryset()
         return queryset
-
-    def perform_destroy(self, instance):
-        if instance.people.exists():
-            raise DRFValidationError("部门仍被人员使用，不能删除，请先调整人员资料")
-        try:
-            super().perform_destroy(instance)
-        except ProtectedError as exc:
-            raise DRFValidationError("部门仍有子部门使用，不能删除，请先调整部门层级") from exc
 
 
 class DeviceTypeViewSet(DictionaryViewSet):
@@ -1752,16 +1722,8 @@ class DeviceTypeViewSet(DictionaryViewSet):
         serializer.instance.custom_fields_count = 0
 
     def perform_update(self, serializer):
-        AuditedModelViewSetMixin.perform_update(self, serializer)
+        SharedReferenceWriteMixin.perform_update(self, serializer)
         serializer.instance.custom_fields_count = serializer.instance.default_fieldset.items.count() if serializer.instance.default_fieldset_id else 0
-
-    def perform_destroy(self, instance):
-        if instance.standalone_assets.exists() or instance.asset_models.filter(assets__isnull=False).exists():
-            raise DRFValidationError("设备类型正在被资产使用，不能删除，请先停用")
-        try:
-            AuditedModelViewSetMixin.perform_destroy(self, instance)
-        except ProtectedError as exc:
-            raise DRFValidationError("设备类型仍被业务数据使用，不能删除，请先停用") from exc
 
 
 class AssetModelViewSet(DictionaryViewSet):
@@ -1818,7 +1780,7 @@ class AssetModelViewSet(DictionaryViewSet):
         return queryset
 
 
-class CustomFieldSetViewSet(AuditedModelViewSetMixin, ScopedModelViewSet):
+class CustomFieldSetViewSet(SharedReferenceWriteMixin, AuditedModelViewSetMixin, ScopedModelViewSet):
     queryset = CustomFieldSet.objects.prefetch_related(
         Prefetch("items", queryset=fieldset_items_queryset(include_inactive_options=True))
     ).annotate(
@@ -1853,50 +1815,18 @@ class CustomFieldSetViewSet(AuditedModelViewSetMixin, ScopedModelViewSet):
             queryset = queryset.filter(is_active=active == "true")
         return queryset
 
-    def audit_snapshot(self, instance):
-        snapshot = model_snapshot(instance)
-        snapshot["items"] = [
-            {
-                "field_id": item.field_id,
-                "field_key": item.field.key,
-                "field_name": item.field.name,
-                "required": item.required,
-                "group": item.group,
-                "sort_order": item.sort_order,
-            }
-            for item in CustomFieldSetItem.objects.select_related("field")
-            .filter(fieldset=instance)
-            .order_by("sort_order", "id")
-        ]
-        return snapshot
 
-    @extend_schema(parameters=[OpenApiParameter("If-Match", OpenApiTypes.STR, location=OpenApiParameter.HEADER,
-        required=True, description="字段集的 revision；缺少 428，过期 409。")])
+    @extend_schema(parameters=[OpenApiParameter("If-Match", OpenApiTypes.STR, location=OpenApiParameter.HEADER, required=True)])
     @action(detail=True, methods=["put"], url_path="items")
-    @transaction.atomic
     def replace_items(self, request, pk=None):
         fieldset = self.get_object()
-        fieldset = CustomFieldSet.objects.select_for_update().get(pk=fieldset.pk)
-        check_resource_revision(fieldset, request)
         serializer = CustomFieldSetItemsWriteSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
-        incoming = serializer.validated_data["items"]
-        before = self.audit_snapshot(fieldset)
-        replace_fieldset_items(fieldset, incoming)
-        fieldset = CustomFieldSet.objects.prefetch_related(
-            Prefetch("items", queryset=fieldset_items_queryset(include_inactive_options=True))
-        ).get(pk=fieldset.pk)
-        after = self.audit_snapshot(fieldset)
-        write_audit_log(request, action="update", resource_type=self.audit_resource, resource_id=fieldset.pk, before=before, after=after)
+        fieldset = edit_fieldset_items(request, fieldset.pk, serializer.validated_data["items"])
         return Response(CustomFieldSetSerializer(fieldset).data)
 
-    def perform_destroy(self, instance):
-        if instance.asset_models.exists() or instance.default_for_device_types.exists():
-            raise DRFValidationError("字段集正在被资产型号或设备类型引用，不能删除，请先停用")
-        super().perform_destroy(instance)
 
-
-class CustomFieldViewSet(AuditedModelViewSetMixin, ScopedModelViewSet):
+class CustomFieldViewSet(SharedReferenceWriteMixin, AuditedModelViewSetMixin, ScopedModelViewSet):
     queryset = CustomField.objects.prefetch_related("options").annotate(
         assets_count=Count("asset_values__asset", filter=Q(asset_values__asset__archived_at__isnull=True), distinct=True),
         fieldsets_count=Count("fieldset_items__fieldset", distinct=True),
@@ -1998,18 +1928,8 @@ class CustomFieldViewSet(AuditedModelViewSetMixin, ScopedModelViewSet):
             items = items.filter(field__is_active=True)
         return Response(CustomFieldRuntimeSchemaSerializer(items, many=True).data)
 
-    def perform_destroy(self, instance):
-        from rest_framework.exceptions import ValidationError as DRFValidationError
-        if instance.asset_values.exists():
-            raise DRFValidationError("字段已有资产值，不能删除，请先停用")
-        if instance.fieldset_items.exists():
-            raise DRFValidationError("字段正在被字段集引用，不能删除，请先停用")
-        if instance.options.exists():
-            raise DRFValidationError("字段仍有选项，不能删除，请先删除选项")
-        super().perform_destroy(instance)
 
-
-class CustomFieldOptionViewSet(AuditedModelViewSetMixin, ScopedModelViewSet):
+class CustomFieldOptionViewSet(SharedReferenceWriteMixin, AuditedModelViewSetMixin, ScopedModelViewSet):
     queryset = CustomFieldOption.objects.select_related("field").order_by("field_id", "sort_order", "id")
     serializer_class = CustomFieldOptionSerializer
     permission_classes = [BusinessRolePermission]
@@ -2020,25 +1940,8 @@ class CustomFieldOptionViewSet(AuditedModelViewSetMixin, ScopedModelViewSet):
     search_fields = ["value", "label", "field__name"]
     ordering_fields = ["sort_order", "created_at", "updated_at"]
 
-    def perform_destroy(self, instance):
-        from rest_framework.exceptions import ValidationError as DRFValidationError
-        if _default_references_option(instance.field, instance.value):
-            raise DRFValidationError("选项被字段默认值引用，不能删除")
-        used = False
-        for text_value, json_value in AssetCustomValue.objects.filter(
-            field_id=instance.field_id
-        ).values_list("text_value", "json_value"):
-            if text_value == instance.value or (
-                isinstance(json_value, list) and instance.value in json_value
-            ):
-                used = True
-                break
-        if used:
-            raise DRFValidationError("选项已有资产使用，不能删除，请先停用")
-        super().perform_destroy(instance)
 
-
-class TagViewSet(AuditedModelViewSetMixin, ScopedModelViewSet):
+class TagViewSet(SharedReferenceWriteMixin, AuditedModelViewSetMixin, ScopedModelViewSet):
     queryset = Tag.objects.annotate(assets_count=Count("asset_tags__asset", filter=Q(asset_tags__asset__archived_at__isnull=True), distinct=True)).order_by("name", "id")
     serializer_class = TagSerializer
     permission_classes = [BusinessRolePermission]
@@ -2072,14 +1975,8 @@ class TagViewSet(AuditedModelViewSetMixin, ScopedModelViewSet):
                 queryset = queryset.filter(is_active=active == "true")
         return queryset
 
-    def perform_destroy(self, instance):
-        from rest_framework.exceptions import ValidationError as DRFValidationError
-        if instance.asset_tags.exists():
-            raise DRFValidationError("标签正在被资产使用，不能删除，请先停用")
-        super().perform_destroy(instance)
 
-
-class SparePartViewSet(AuditedModelViewSetMixin, ScopedModelViewSet):
+class SparePartViewSet(SharedReferenceWriteMixin, AuditedModelViewSetMixin, ScopedModelViewSet):
     queryset = SparePart.objects.select_related("manufacturer", "category").annotate(
         total_quantity=Coalesce(Sum("stocks__quantity"), 0),
         location_count=Count("stocks", distinct=True),
@@ -2104,8 +2001,6 @@ class SparePartViewSet(AuditedModelViewSetMixin, ScopedModelViewSet):
             return SparePartOptionSerializer
         return super().get_serializer_class()
 
-    def audit_snapshot(self, instance):
-        return spare_part_audit_snapshot(instance)
 
     def get_queryset(self):
         if self.action == "list" and _compact_requested(self.request):
@@ -2143,25 +2038,6 @@ class SparePartViewSet(AuditedModelViewSetMixin, ScopedModelViewSet):
         serializer.instance = create_spare_part_with_stock(
             validated_data=serializer.validated_data, operator=self.request.user, request=self.request,
         )
-
-    @transaction.atomic
-    def perform_destroy(self, instance):
-        from rest_framework.exceptions import ValidationError as DRFValidationError
-        # Keep the delete lock order identical to the inventory module:
-        # part first, then related stock/ledger rows.
-        try:
-            locked_part = SparePart.objects.select_for_update().get(pk=instance.pk)
-        except SparePart.DoesNotExist as exc:
-            raise DRFValidationError("备件不存在") from exc
-        if locked_part.transactions.exists():
-            raise DRFValidationError("该备件已有库存流水，无法删除。")
-        if locked_part.repair_part_usages.exists():
-            raise DRFValidationError("该备件已有维修用件记录，无法删除。")
-        # Stock balances without a movement are not historical records. They
-        # must be removed before the part because their FK is also PROTECT;
-        # deletion eligibility is determined only by transaction history.
-        locked_part.stocks.all().delete()
-        super().perform_destroy(locked_part)
 
 
 class SpareStockViewSet(ScopedReadOnlyModelViewSet):
@@ -2241,7 +2117,7 @@ class SpareStockTransactionViewSet(ScopedModelViewSet):
         return super().list(request, *args, **kwargs)
 
 
-class SoftwareLicenseViewSet(AuditedModelViewSetMixin, ScopedModelViewSet):
+class SoftwareLicenseViewSet(SharedReferenceWriteMixin, AuditedModelViewSetMixin, ScopedModelViewSet):
     queryset = SoftwareLicense.objects.select_related("manufacturer")
     serializer_class = SoftwareLicenseSerializer
     filter_backends = [DjangoFilterBackend, SearchFilter, OrderingFilter]
@@ -2253,8 +2129,6 @@ class SoftwareLicenseViewSet(AuditedModelViewSetMixin, ScopedModelViewSet):
     permission_resource = "licenses"
     audit_resource = "software_license"
 
-    def audit_snapshot(self, instance):
-        return software_license_audit_snapshot(instance)
 
     def get_queryset(self):
         queryset = super().get_queryset()
@@ -2269,23 +2143,6 @@ class GroupViewSet(viewsets.ViewSet):
         return Response({"results": list_role_definitions(request.user)})
 
 
-def _user_audit_snapshot(user):
-    authorization = read_authorization_snapshot(user)
-    role_code = authorization.primary_role_code
-    definition = role_definition(role_code)
-    return {
-        "username": user.username,
-        "display_name": user.get_full_name() or user.username,
-        "first_name": user.first_name,
-        "last_name": user.last_name,
-        "email": user.email,
-        "role_code": role_code,
-        "role_codes": list(authorization.role_codes),
-        "role_name": definition.name if definition else "",
-        "is_active": user.is_active,
-    }
-
-
 class UserViewSet(ScopedModelViewSet):
     queryset = User.objects.select_related("directory_identity", "security_profile").order_by("username")
     serializer_class = UserSerializer
@@ -2294,275 +2151,50 @@ class UserViewSet(ScopedModelViewSet):
     search_fields = ["username", "first_name", "last_name", "email"]
     ordering_fields = ["username", "date_joined", "last_login"]
 
-    @transaction.atomic
     def create(self, request, *args, **kwargs):
         return super().create(request, *args, **kwargs)
 
     @extend_schema(parameters=[OpenApiParameter("If-Match", OpenApiTypes.STR, location=OpenApiParameter.HEADER,
         required=True, description="账号返回的 revision；缺少 428，过期 409。")])
-    @transaction.atomic
     def update(self, request, *args, **kwargs):
         target = self.get_object()
-        target = User.objects.select_for_update().get(pk=target.pk)
-        from .resource_revision import check_revision
-        check_revision(_security_profile(target).administration_revision, request.headers.get("If-Match"))
-        serializer = self.get_serializer(target, data=request.data, partial=kwargs.pop("partial", False))
-        serializer.is_valid(raise_exception=True)
-        self.perform_update(serializer)
-        return Response(serializer.data)
+        return Response(edit_account(request, target.pk, partial=kwargs.pop("partial", False)))
 
     @extend_schema(request=OpenApiTypes.OBJECT, responses=OpenApiTypes.OBJECT)
     @action(detail=True, methods=["get", "put"], url_path="data-scope")
     def data_scope(self, request, pk=None):
-        from .models import UserDataScope, UserDataScopeRule
-        from .serializers import DataScopeSerializer
-        from .maintenance_gate import authorization_access
         target = self.get_object()
-        def snapshot(grant):
-            data = DataScopeSerializer(grant).data if grant else {}
-            if grant is None:
-                # The actor can be global; missing target grants still deny.
-                data = {"read_data_centers": [], "write_data_centers": [], "global_read": False,
-                        "global_write": False, "unlocated_read": False, "unlocated_write": False,
-                        "global_stock_metrics": False, "revision": 0, "read_departments": [], "write_departments": [],
-                        "all_departments_read": False, "all_departments_write": False, "unowned_read": False, "unowned_write": False, "rules": []}
-            centers = list(DataCenter.objects.filter(
-                Q(read_scope_grants=grant) | Q(write_scope_grants=grant)
-                | Q(read_scope_rules__grant=grant) | Q(write_scope_rules__grant=grant)
-            ).distinct().values("id", "name")) if grant else []
-            departments = list(Department.objects.filter(Q(read_scope_grants=grant) | Q(write_scope_grants=grant) | Q(read_scope_rules__grant=grant) | Q(write_scope_rules__grant=grant)).distinct().values("id", "name")) if grant else []
-            return {**data, "effective": scope_for(target).as_dict(), "center_options": centers, "department_options": departments}
         if request.method == "GET":
-            return Response(snapshot(UserDataScope.objects.filter(user=target).first()))
+            from .models import UserDataScope
+            return Response(account_scope_snapshot(target, UserDataScope.objects.filter(user=target).first()))
+        from .serializers import DataScopeSerializer
         serializer = DataScopeSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
-        raw_revision = request.headers.get("If-Match", "").strip().strip('"')
-        if not raw_revision or len(raw_revision) > 20 or not raw_revision.isascii() or not raw_revision.isdecimal():
-            return Response({"code": "data_scope_revision_required", "detail": "请读取最新授权并提供 If-Match"}, status=428)
-        with authorization_access(target.pk, exclusive=True):
-            with transaction.atomic():
-                grant = UserDataScope.objects.select_for_update().filter(user=target).first()
-                if int(raw_revision) != (grant.revision if grant else 0):
-                    return Response({"code": "data_scope_revision_conflict", "detail": "授权已被修改，请重新加载"}, status=409)
-                before = snapshot(grant)
-                if grant is None:
-                    grant = UserDataScope(user=target)
-                values = dict(serializer.validated_data)
-                rule_values = values.pop("rules")
-                reads = values.pop("read_data_centers")
-                writes = values.pop("write_data_centers")
-                department_reads = values.pop("read_departments")
-                department_writes = values.pop("write_departments")
-                for key, value in values.items():
-                    setattr(grant, key, value)
-                grant.revision = int(raw_revision) + 1
-                grant.save()
-                grant.read_data_centers.set(reads)
-                grant.write_data_centers.set(writes)
-                grant.read_departments.set(department_reads)
-                grant.write_departments.set(department_writes)
-                grant.rules.all().delete()
-                for position, data in enumerate(rule_values):
-                    data = dict(data)
-                    memberships = {field: data.pop(field) for field in (
-                        "read_data_centers", "write_data_centers", "read_departments", "write_departments")}
-                    rule = UserDataScopeRule.objects.create(grant=grant, position=position, **data)
-                    for field, members in memberships.items():
-                        getattr(rule, field).set(members)
-                after = snapshot(grant)
-                write_audit_log(request, action="update", resource_type="user_data_scope", resource_id=target.pk,
-                                before=before, after=after)
-            return Response(after)
+        return Response(replace_account_scope(request, target.pk, serializer.validated_data))
 
-    @transaction.atomic
     def perform_create(self, serializer):
-        instance = serializer.save()
-        write_audit_log(
-            self.request,
-            action="create",
-            resource_type="user",
-            resource_id=instance.pk,
-            after=_user_audit_snapshot(instance),
-        )
+        serializer.context["identity_write_audit"] = True
+        serializer.save()
 
-    def _validate_protected_update(self, serializer):
-        instance = serializer.instance
-        requested_role = serializer.validated_data.get("role_code")
-        requested_active = serializer.validated_data.get("is_active")
-        current_role = read_authorization_snapshot(instance).primary_role_code
-        try:
-            if requested_role is not None and requested_role != current_role:
-                validate_account_action(
-                    target=instance,
-                    action="change_role",
-                    actor=self.request.user,
-                )
-            if requested_active is False:
-                validate_account_action(
-                    target=instance,
-                    action="deactivate",
-                    actor=self.request.user,
-                )
-        except AccountActionDenied as exc:
-            if exc.field:
-                raise DRFValidationError({exc.field: str(exc)}) from exc
-            raise DRFValidationError(str(exc)) from exc
 
-    @transaction.atomic
     def perform_update(self, serializer):
-        self._validate_protected_update(serializer)
-        before = _user_audit_snapshot(serializer.instance)
-        instance = serializer.save()
-        batch_operation_id = getattr(self, "_batch_operation_id", None)
-        write_audit_log(
-            self.request,
-            action="update",
-            resource_type="user",
-            resource_id=instance.pk,
-            before=before,
-            after=_user_audit_snapshot(instance),
-            extra={"batch_operation_id": batch_operation_id} if batch_operation_id else None,
-        )
+        serializer.context["identity_write_audit"] = True
+        serializer.save()
 
-    @extend_schema(
-        request=UserBatchStatusSerializer,
-        responses=UserBatchStatusResponseSerializer,
-        description="批量启用或停用用户；revisions 按账号 ID 提交读取时的 revision。逐条检查版本与账号保护，缺少或过期返回该条失败，其他条继续。",
-    )
+    @extend_schema(request=UserBatchStatusSerializer, responses=UserBatchStatusResponseSerializer)
     @action(detail=False, methods=["post"], url_path="batch-status")
     def batch_status(self, request):
-        request_serializer = UserBatchStatusSerializer(data=request.data)
-        request_serializer.is_valid(raise_exception=True)
-        user_ids = request_serializer.validated_data["ids"]
-        is_active = request_serializer.validated_data["is_active"]
-        revisions = request_serializer.validated_data["revisions"]
-        batch_operation_id = str(uuid4())
-        results = []
-        succeeded = 0
-        self._batch_operation_id = batch_operation_id
-        try:
-            for user_id in user_ids:
-                username = f"ID {user_id}"
-                try:
-                    with transaction.atomic():
-                        instance = User.objects.select_for_update().get(pk=user_id)
-                        username = instance.username
-                        from .resource_revision import check_revision
-                        check_revision(_security_profile(instance).administration_revision, revisions.get(str(user_id)))
-                        serializer = UserSerializer(
-                            instance=instance,
-                            data={"is_active": is_active},
-                            partial=True,
-                            context={"request": request},
-                        )
-                        serializer.is_valid(raise_exception=True)
-                        self.perform_update(serializer)
-                except User.DoesNotExist:
-                    results.append({
-                        "id": user_id,
-                        "username": username,
-                        "success": False,
-                        "code": "NOT_FOUND",
-                        "reason": "用户不存在或已被删除",
-                    })
-                except (ResourceRevisionConflict, ResourceRevisionRequired) as exc:
-                    results.append({"id": user_id, "username": username, "success": False,
-                        "code": "REVISION_CONFLICT" if isinstance(exc, ResourceRevisionConflict) else "REVISION_REQUIRED",
-                        "reason": str(exc.detail["detail"]), "current_revision": _security_profile(instance).administration_revision})
-                except DRFValidationError as exc:
-                    detail = getattr(exc, "detail", {})
-                    code = "PROTECTED" if isinstance(detail, dict) and "is_active" in detail else "INVALID_STATE"
-                    results.append({
-                        "id": user_id,
-                        "username": username,
-                        "success": False,
-                        "code": code,
-                        "reason": _batch_error_message(exc, "用户当前不能更新状态"),
-                    })
-                except DatabaseError:
-                    results.append({
-                        "id": user_id,
-                        "username": username,
-                        "success": False,
-                        "code": "CONFLICT",
-                        "reason": "用户状态更新发生并发冲突，请重试",
-                    })
-                else:
-                    succeeded += 1
-                    results.append({
-                        "id": user_id,
-                        "username": username,
-                        "success": True,
-                        "code": "",
-                        "reason": "",
-                    })
-        finally:
-            delattr(self, "_batch_operation_id")
-
-        response_data = {
-            "requested": len(user_ids),
-            "succeeded": succeeded,
-            "failed": len(user_ids) - succeeded,
-            "results": results,
-        }
-        return Response(UserBatchStatusResponseSerializer(response_data).data)
+        serializer = UserBatchStatusSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        return Response(UserBatchStatusResponseSerializer(batch_account_status(request, serializer.validated_data)).data)
 
     @action(detail=True, methods=["post"], url_path="reset-password")
-    @transaction.atomic
     def reset_password(self, request, pk=None):
-        instance = self.get_object()
-        instance = User.objects.select_for_update().get(pk=instance.pk)
-        try:
-            validate_account_action(target=instance, action="reset_password", actor=request.user)
-        except AccountActionDenied as exc:
-            raise DRFValidationError({"detail": str(exc), "code": exc.code}) from exc
-        serializer = AdminPasswordResetSerializer(
-            data=request.data,
-            context={"user": instance},
-        )
-        serializer.is_valid(raise_exception=True)
-        instance.set_password(serializer.validated_data["new_password"])
-        instance.save(update_fields=["password"])
-        profile = _security_profile(instance)
-        profile.must_change_password = True
-        profile.password_changed_at = None
-        profile.save(update_fields=["must_change_password", "password_changed_at", "updated_at"])
-        revoked_token_count = PersonalAccessToken.objects.filter(
-            user=instance, revoked_at__isnull=True,
-        ).update(revoked_at=timezone.now())
-        write_audit_log(
-            request,
-            action="update",
-            resource_type="user",
-            resource_id=instance.pk,
-            extra={"password_reset": True, "target_username": instance.username, "revoked_token_count": revoked_token_count},
-        )
+        reset_account_password(request, self.get_object().pk)
         return Response({"ok": True})
 
-    @transaction.atomic
     def perform_destroy(self, instance):
-        instance = get_object_or_404(User.objects.select_for_update(), pk=instance.pk)
-        try:
-            validate_account_action(target=instance, action="delete", actor=self.request.user)
-        except AccountActionDenied as exc:
-            if exc.code != "protected":
-                raise DRFValidationError({"detail": str(exc), "code": exc.code}) from exc
-            raise DRFValidationError(str(exc)) from exc
-        if InventoryTask.objects.filter(inspector_id=instance.pk).exists():
-            raise DRFValidationError("用户仍被盘点任务引用，不能删除")
-        before = _user_audit_snapshot(instance)
-        resource_id = instance.pk
-        try:
-            instance.delete()
-        except ProtectedError as exc:
-            raise DRFValidationError("用户仍被其他业务数据引用，不能删除") from exc
-        write_audit_log(
-            self.request,
-            action="delete",
-            resource_type="user",
-            resource_id=resource_id,
-            before=before,
-        )
+        delete_account(self.request, instance.pk)
 
 
 class FaultEventViewSet(AuditedModelViewSetMixin, ScopedModelViewSet):
@@ -3122,24 +2754,6 @@ def _clear_pending_two_factor(request):
         TWO_FACTOR_PENDING_FAILURES_KEY,
     ):
         request.session.pop(key, None)
-
-
-def _security_profile(user):
-    profile, _ = UserSecurityProfile.objects.get_or_create(
-        user=user,
-        defaults={
-            "must_change_password": False,
-            "locale": get_runtime_preferences().default_locale,
-        },
-    )
-    return profile
-
-
-def _locked_security_profile(user):
-    """Return a security profile while tolerating pre-signal user rows."""
-
-    profile = _security_profile(user)
-    return UserSecurityProfile.objects.select_for_update().get(pk=profile.pk)
 
 
 def _login_ip(request):
@@ -4106,41 +3720,9 @@ def auth_ldap_diagnostics(request):
 @permission_classes([IsAuthenticated])
 def auth_me(request):
     if request.method == "PATCH":
-        serializer = CurrentUserProfileSerializer(
-            data=request.data,
-            partial=True,
-        )
+        serializer = CurrentUserProfileSerializer(data=request.data, partial=True)
         serializer.is_valid(raise_exception=True)
-        with transaction.atomic():
-            validated = serializer.validated_data
-            user = User.objects.select_for_update().get(pk=request.user.pk)
-            request.user = user
-            from .resource_revision import check_revision
-            check_revision(_security_profile(user).administration_revision, request.headers.get("If-Match"))
-            before = _user_audit_snapshot(user)
-            user_fields = [field for field in ("first_name", "last_name", "email") if field in validated]
-            for field in user_fields:
-                setattr(user, field, validated[field])
-            if user_fields:
-                user.save(update_fields=user_fields)
-            if "locale" in validated:
-                profile = _security_profile(user)
-                locale_changed = profile.locale != validated["locale"]
-                profile.locale = validated["locale"]
-                profile.save(update_fields=["locale", "updated_at"])
-                if locale_changed:
-                    UserSecurityProfile.objects.filter(pk=profile.pk).update(administration_revision=F("administration_revision") + 1)
-                    user._state.fields_cache.pop("security_profile", None)
-            write_audit_log(
-                request,
-                action="update",
-                resource_type="user",
-                resource_id=user.pk,
-                before=before,
-                after=_user_audit_snapshot(user),
-                extra={"profile_update": True},
-            )
-        return Response(_auth_response(request.user))
+        update_own_profile(request, serializer.validated_data)
     return Response(_auth_response(request.user))
 
 
@@ -4155,46 +3737,8 @@ def auth_logout(request):
 @extend_schema(request=OpenApiTypes.OBJECT, responses=OpenApiTypes.OBJECT)
 @api_view(["POST"])
 @permission_classes([IsAuthenticated])
-@transaction.atomic
 def auth_change_password(request):
-    request.user = User.objects.select_for_update().get(pk=request.user.pk)
-    if is_directory_managed(request.user):
-        return Response(
-            {
-                "detail": "Directory-managed accounts must change passwords through the corporate directory.",
-                "code": "directory_password_managed",
-            },
-            status=400,
-        )
-    old_password = request.data.get("old_password", "")
-    new_password = request.data.get("new_password", "")
-    confirm_password = request.data.get("confirm_password")
-    if not request.user.check_password(old_password):
-        return Response({"detail": "原密码错误"}, status=400)
-    if not new_password:
-        return Response({"new_password": ["新密码不能为空"]}, status=400)
-    if confirm_password is not None and new_password != confirm_password:
-        return Response({"confirm_password": ["两次输入的新密码不一致"]}, status=400)
-    if request.user.check_password(new_password):
-        return Response({"new_password": ["新密码不能与当前密码相同"]}, status=400)
-    try:
-        validate_local_password(new_password, user=request.user)
-    except DjangoValidationError as exc:
-        return Response({"new_password": list(exc.messages)}, status=400)
-    request.user.set_password(new_password)
-    request.user.save(update_fields=["password"])
-    profile = _security_profile(request.user)
-    profile.must_change_password = False
-    profile.password_changed_at = timezone.now()
-    profile.save(update_fields=["must_change_password", "password_changed_at", "updated_at"])
-    write_audit_log(
-        request,
-        action="update",
-        resource_type="user",
-        resource_id=request.user.pk,
-        extra={"password_change": True},
-    )
-    update_session_auth_hash(request, request.user)
+    change_own_password(request)
     return Response({"ok": True, "password_change_required": False})
 
 

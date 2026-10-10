@@ -6,11 +6,12 @@ protection rules for the two supported dictionary kinds.
 """
 
 from __future__ import annotations
+
+from ..reference_writes import SharedReferenceWriteMixin
 from ..data_scope import ScopedViewSetMixin
 
 from typing import Literal
 
-from django.db import transaction
 from django.db.models import Count
 from django_filters.rest_framework import DjangoFilterBackend
 from rest_framework import viewsets
@@ -18,7 +19,6 @@ from ..resource_revision import ResourceRevisionViewSetMixin
 from rest_framework.exceptions import ValidationError as DRFValidationError
 from rest_framework.filters import OrderingFilter, SearchFilter
 
-from ..audit import model_snapshot, write_audit_log
 from ..models import Asset, Manufacturer, SparePartCategory
 from ..permissions import (
     BusinessRolePermission,
@@ -83,24 +83,7 @@ def _filter_active(queryset, request, *, can_view_inactive: bool):
     return queryset
 
 
-def _is_in_use(kind: DictionaryKind, instance) -> bool:
-    if kind == "manufacturers":
-        return (
-            instance.standalone_assets.exists()
-            or instance.asset_models.filter(assets__isnull=False).exists()
-            or instance.software_licenses.exists()
-            or instance.spare_parts.exists()
-        )
-    return instance.spare_parts.exists()
-
-
-def _in_use_message(kind: DictionaryKind) -> str:
-    if kind == "manufacturers":
-        return "厂商正在被资产、软件许可或备件使用，不能删除，请先停用"
-    return "备件类型正在被备件使用，不能删除，请先停用"
-
-
-class DataDictionaryViewSet(ScopedViewSetMixin, ResourceRevisionViewSetMixin, viewsets.ModelViewSet):
+class DataDictionaryViewSet(SharedReferenceWriteMixin, ScopedViewSetMixin, ResourceRevisionViewSetMixin, viewsets.ModelViewSet):
     """Thin HTTP adapter over the manufacturer/category dictionary seam."""
 
     filter_backends = [DjangoFilterBackend, SearchFilter, OrderingFilter]
@@ -135,74 +118,22 @@ class DataDictionaryViewSet(ScopedViewSetMixin, ResourceRevisionViewSetMixin, vi
             can_view_inactive=self.can_view_inactive(),
         )
 
-    def _audit_create(self, instance):
-        write_audit_log(
-            self.request,
-            action="create",
-            resource_type=self.audit_resource,
-            resource_id=instance.pk,
-            after=model_snapshot(instance),
-        )
 
-    def _audit_update(self, instance, before):
-        write_audit_log(
-            self.request,
-            action="update",
-            resource_type=self.audit_resource,
-            resource_id=instance.pk,
-            before=before,
-            after=model_snapshot(instance),
-        )
-
-    def _audit_delete(self, instance, before):
-        write_audit_log(
-            self.request,
-            action="delete",
-            resource_type=self.audit_resource,
-            resource_id=instance.pk,
-            before=before,
-        )
-
-    @transaction.atomic
     def perform_create(self, serializer):
-        instance = serializer.save()
+        super().perform_create(serializer)
+        instance = serializer.instance
+        instance.spare_parts_count = 0
         if self.dictionary_kind == "manufacturers":
             instance.assets_count = 0
             instance.licenses_count = 0
-            instance.spare_parts_count = 0
-        else:
-            instance.spare_parts_count = 0
-        self._audit_create(instance)
 
-    @transaction.atomic
     def perform_update(self, serializer):
-        before = model_snapshot(serializer.instance)
-        instance = serializer.save()
+        super().perform_update(serializer)
+        instance = serializer.instance
+        instance.spare_parts_count = instance.spare_parts.count()
         if self.dictionary_kind == "manufacturers":
-            instance.assets_count = (
-                instance.standalone_assets.count()
-                + Asset.objects.filter(asset_model__manufacturer=instance).count()
-            )
+            instance.assets_count = instance.standalone_assets.count() + Asset.objects.filter(asset_model__manufacturer=instance).count()
             instance.licenses_count = instance.software_licenses.count()
-            instance.spare_parts_count = instance.spare_parts.count()
-        else:
-            instance.spare_parts_count = instance.spare_parts.count()
-        self._audit_update(instance, before)
-
-    @transaction.atomic
-    def perform_destroy(self, instance):
-        if _is_in_use(self.dictionary_kind, instance):
-            raise DRFValidationError(_in_use_message(self.dictionary_kind))
-        before = model_snapshot(instance)
-        resource_id = instance.pk
-        instance.delete()
-        write_audit_log(
-            self.request,
-            action="delete",
-            resource_type=self.audit_resource,
-            resource_id=resource_id,
-            before=before,
-        )
 
 
 class ManufacturerViewSet(DataDictionaryViewSet):
