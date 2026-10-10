@@ -1,3 +1,4 @@
+import { useAssetLifecycle } from "./useAssetLifecycle";
 import { computed, reactive, ref, watch, type Ref } from "vue";
 import type { LocationQuery } from "vue-router";
 import { ElMessage } from "element-plus/es/components/message/index.mjs";
@@ -52,8 +53,6 @@ import {
 const tr = (key: string, params?: Record<string, unknown>): string =>
   String(params ? i18n.global.t(key, params) : i18n.global.t(key));
 
-const RESPONSIBILITY_ACTION_FIELDS = ["target_person", "reason"] as const;
-const ASSET_DISPOSAL_FIELDS = ["disposed_on", "reason", "method", "notes"] as const;
 
 export type StaticAssetColumnKey =
   | "asset_no"
@@ -518,13 +517,6 @@ function extractAssetFormErrors(error: unknown): {
 export function useAssets(deps: AssetsDeps) {
   const assets = ref<Asset[]>([]);
   const selectedAssetIds = ref<number[]>([]);
-  const assetBatchDeleteSaving = ref(false);
-  const assetBatchDeleteResult = ref<AssetBatchDeleteResponse | null>(null);
-  const showAssetBatchDeleteResult = ref(false);
-  const assetBatchAssignmentSaving = ref(false);
-  const assetBatchAssignmentError = ref("");
-  const assetBatchAssignmentResult = ref<AssetBatchAssignmentResponse | null>(null);
-  const showAssetBatchAssignmentResult = ref(false);
   const assetLabelPrintLoading = ref(false);
   const assetCount = ref(0);
   const assetPage = ref(1);
@@ -764,12 +756,6 @@ export function useAssets(deps: AssetsDeps) {
   const assetModelsError = ref("");
   const assetModelsRequestId = ref(0);
   let assetModelsController: AbortController | null = null;
-  const responsibilityActionSaving = ref(false);
-  const responsibilityActionError = ref("");
-  const responsibilityActionFieldErrors = ref<Record<string, string>>({});
-  const assetDisposalSaving = ref(false);
-  const assetDisposalError = ref("");
-  const assetDisposalFieldErrors = ref<Record<string, string>>({});
 
   const assetDynamicColumnOptions = computed<AssetColumnOption[]>(() =>
     assetListCustomFieldSchema.value.map((field) => ({
@@ -1594,157 +1580,21 @@ export function useAssets(deps: AssetsDeps) {
     }
   }
 
+  const { assetBatchDeleteSaving, assetBatchDeleteResult, showAssetBatchDeleteResult, assetBatchAssignmentSaving, assetBatchAssignmentError, assetBatchAssignmentResult, showAssetBatchAssignmentResult, responsibilityActionSaving, responsibilityActionError, responsibilityActionFieldErrors, assetDisposalSaving, assetDisposalError, assetDisposalFieldErrors, assignAsset, returnAsset, transferAsset, disposeAsset, clearAssetDisposalErrors, clearResponsibilityActionErrors, clearResponsibilityActionFieldError, restoreAsset, deleteAsset, deleteSelectedAssets, closeAssetBatchDeleteResult, batchAssignAssets, closeAssetBatchAssignmentResult } = useAssetLifecycle({
+    can: deps.can, request: deps.request, confirmAction: deps.confirmAction, selectedAssetIds,
+    refreshList: (force) => loadAssets(undefined, force), notify: setActionMessage,
+    refreshDetail: refreshOpenAssetDetail,
+    refreshAfterAction: async (assetId, history) => {
+      const listRefreshed = await loadAssets();
+      if (!deps.showAssetDetail.value || detailAssetId.value !== assetId) return listRefreshed;
+      await openAssetDetail(assetId);
+      const historyFailed = history === "disposal" ? assetAuditError.value : inventoryHistoryError.value || responsibilityHistoryError.value;
+      return listRefreshed && !deps.detailError.value && !historyFailed;
+    },
+  });
+
   async function retryAssetModels(): Promise<boolean> {
     return loadAssetModels(true);
-  }
-
-  async function mutateAssetResponsibility(
-    assetId: number,
-    path: string,
-    body: Record<string, unknown>,
-    successMessage: string,
-  ): Promise<boolean> {
-    if (!deps.can("assets.manage") || responsibilityActionSaving.value) return false;
-    responsibilityActionSaving.value = true;
-    responsibilityActionError.value = "";
-    responsibilityActionFieldErrors.value = {};
-    try {
-      await deps.request<AssetDetail>(path, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(body),
-      });
-      const listRefreshed = await loadAssets();
-      let detailRefreshed = true;
-      let historyRefreshed = true;
-      if (deps.showAssetDetail.value && detailAssetId.value === assetId) {
-        await openAssetDetail(assetId);
-        detailRefreshed = !deps.detailError.value;
-        historyRefreshed = !inventoryHistoryError.value && !responsibilityHistoryError.value;
-      }
-      const refreshFailed = !(listRefreshed && detailRefreshed && historyRefreshed);
-      setActionMessage(
-        refreshFailed
-          ? `${successMessage}；${tr("common.refreshFailed")}，${tr("common.retry")}`
-          : successMessage,
-        refreshFailed ? "error" : "success",
-      );
-      return true;
-    } catch (error) {
-      if (!isAbortError(error)) {
-        const normalized = normalizeApiError(error);
-        responsibilityActionFieldErrors.value = fieldErrorsToText(
-          normalized.fieldErrors,
-          RESPONSIBILITY_ACTION_FIELDS,
-        );
-        const hasUnknownField = Object.keys(normalized.fieldErrors).some(
-          (field) => !RESPONSIBILITY_ACTION_FIELDS.includes(field as typeof RESPONSIBILITY_ACTION_FIELDS[number]),
-        );
-        responsibilityActionError.value = normalized.kind === "field-validation" && !hasUnknownField
-          ? ""
-          : normalized.kind === "unknown"
-            ? tr("asset.assignmentActionFailed")
-            : normalized.message;
-      }
-      return false;
-    } finally {
-      responsibilityActionSaving.value = false;
-    }
-  }
-
-  function clearResponsibilityActionErrors() {
-    responsibilityActionError.value = "";
-    responsibilityActionFieldErrors.value = {};
-  }
-
-  function clearResponsibilityActionFieldError(field: string) {
-    if (responsibilityActionFieldErrors.value[field]) {
-      responsibilityActionFieldErrors.value = clearFieldError(
-        responsibilityActionFieldErrors.value,
-        field,
-      );
-    }
-  }
-
-  function assignAsset(assetId: number, targetPersonId: number, reason: string): Promise<boolean> {
-    return mutateAssetResponsibility(
-      assetId,
-      `/assets/${assetId}/assign/`,
-      { target_person: targetPersonId, reason },
-      tr("asset.assignPersonSuccess"),
-    );
-  }
-
-  function returnAsset(assetId: number, reason: string): Promise<boolean> {
-    return mutateAssetResponsibility(
-      assetId,
-      `/assets/${assetId}/return/`,
-      { reason },
-      tr("asset.returnPersonSuccess"),
-    );
-  }
-
-  function transferAsset(assetId: number, targetPersonId: number, reason: string): Promise<boolean> {
-    return mutateAssetResponsibility(
-      assetId,
-      `/assets/${assetId}/transfer/`,
-      { target_person: targetPersonId, reason },
-      tr("asset.transferPersonSuccess"),
-    );
-  }
-
-  async function disposeAsset(assetId: number, payload: AssetDisposalInput): Promise<boolean> {
-    if (!deps.can("assets.manage") || assetDisposalSaving.value) return false;
-    assetDisposalSaving.value = true;
-    assetDisposalError.value = "";
-    assetDisposalFieldErrors.value = {};
-    try {
-      await deps.request<AssetDetail>(`/assets/${assetId}/dispose/`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(payload),
-      });
-      const listRefreshed = await loadAssets();
-      let detailRefreshed = true;
-      let historyRefreshed = true;
-      if (deps.showAssetDetail.value && detailAssetId.value === assetId) {
-        await openAssetDetail(assetId);
-        detailRefreshed = !deps.detailError.value;
-        historyRefreshed = !assetAuditError.value;
-      }
-      const refreshFailed = !(listRefreshed && detailRefreshed && historyRefreshed);
-      setActionMessage(
-        refreshFailed
-          ? `${tr("asset.disposalSaved")}；${tr("common.refreshFailed")}，${tr("common.retry")}`
-          : tr("asset.disposalSaved"),
-        refreshFailed ? "error" : "success",
-      );
-      return true;
-    } catch (error) {
-      if (!isAbortError(error)) {
-        const normalized = normalizeApiError(error);
-        assetDisposalFieldErrors.value = fieldErrorsToText(
-          normalized.fieldErrors,
-          ASSET_DISPOSAL_FIELDS,
-        );
-        const hasUnknownField = Object.keys(normalized.fieldErrors).some(
-          (field) => !ASSET_DISPOSAL_FIELDS.includes(field as typeof ASSET_DISPOSAL_FIELDS[number]),
-        );
-        assetDisposalError.value = normalized.kind === "field-validation" && !hasUnknownField
-          ? ""
-          : normalized.kind === "unknown"
-            ? tr("asset.disposalFailed")
-            : normalized.message;
-      }
-      return false;
-    } finally {
-      assetDisposalSaving.value = false;
-    }
-  }
-
-  function clearAssetDisposalErrors() {
-    assetDisposalError.value = "";
-    assetDisposalFieldErrors.value = {};
   }
 
   async function openAssetDetail(assetId: number) {
@@ -2111,6 +1961,7 @@ export function useAssets(deps: AssetsDeps) {
   async function saveAsset(discardIncompatibleCustomValues = false) {
     if (!deps.can("assets.manage")) return;
     if (assetFormSaving.value || assetCustomSchemaLoading.value || assetCustomSchemaError.value) return;
+    const editor = assetFormRequestId.value;
     const editingAssetId = editingAsset.value?.id || null;
     assetFormFieldErrors.value = {};
     const existingDepreciation = Boolean(
@@ -2123,7 +1974,7 @@ export function useAssets(deps: AssetsDeps) {
     );
     if (existingDepreciation && !assetForm.value.depreciation_enabled) {
       const confirmed = await deps.confirmAction(tr("asset.clearDepreciationConfirm"));
-      if (!confirmed) return;
+      if (!confirmed || assetFormRequestId.value !== editor) return;
     }
     assetFormSaving.value = true;
     try {
@@ -2250,12 +2101,14 @@ export function useAssets(deps: AssetsDeps) {
           },
         }),
       });
-      showAssetModal.value = false;
       const wasEditing = Boolean(editingAssetId);
-      editingAsset.value = null;
-      assetForm.value = emptyAssetForm();
-      depreciationStartTouched.value = false;
-      assetCustomFieldUserEditedKeys.clear();
+      if (assetFormRequestId.value === editor) {
+        showAssetModal.value = false;
+        editingAsset.value = null;
+        assetForm.value = emptyAssetForm();
+        depreciationStartTouched.value = false;
+        assetCustomFieldUserEditedKeys.clear();
+      }
       await loadAssets();
       let refreshFailed = Boolean(assetListError.value);
       if (
@@ -2275,6 +2128,7 @@ export function useAssets(deps: AssetsDeps) {
         refreshFailed ? "error" : "success",
       );
     } catch (error) {
+      if (assetFormRequestId.value !== editor) return;
       const conflictDetails = error instanceof ApiError && error.status === 409 && error.details && typeof error.details === "object"
         ? error.details as { code?: string; fields?: Array<{ name?: string }> }
         : null;
@@ -2289,6 +2143,7 @@ export function useAssets(deps: AssetsDeps) {
             ? tr("asset.customFieldConflictConfirm", { fields })
             : tr("asset.customFieldConflictConfirmWithoutNames"),
         );
+        if (assetFormRequestId.value !== editor) return;
         if (confirmed) {
           assetFormSaving.value = false;
           await saveAsset(true);
@@ -2321,143 +2176,6 @@ export function useAssets(deps: AssetsDeps) {
 
   function clearAssetSelection() {
     selectedAssetIds.value = [];
-  }
-
-  async function restoreAsset(asset: Asset) {
-    if (!deps.can("assets.manage") || !asset.archived_at) return;
-    if (!(await deps.confirmAction(tr("asset.restoreConfirm", { asset: asset.asset_no })))) return;
-    try {
-      await deps.request(`/assets/${asset.id}/restore/`, { method: "POST" });
-      setActionMessage(tr("asset.restored"));
-      if (!(await loadAssets())) setActionMessage(tr("asset.restoredRefreshFailed"), "error");
-      if (detailAssetId.value === asset.id) await openAssetDetail(asset.id);
-    } catch (error) {
-      setActionError(error, tr("asset.restoreFailed"));
-    }
-  }
-
-  async function deleteAsset(asset: Asset) {
-    if (!deps.can("assets.manage")) return;
-    if (!(await deps.confirmAction(tr("asset.deleteConfirm", { asset: asset.asset_no })))) return;
-    try {
-      await deps.request(`/assets/${asset.id}/`, { method: "DELETE" });
-      selectedAssetIds.value = selectedAssetIds.value.filter((id) => id !== asset.id);
-      setActionMessage(tr("asset.deleted"));
-      if (!(await loadAssets())) {
-        setActionMessage(tr("asset.deletedRefreshFailed"), "error");
-      }
-    } catch (error) {
-      setActionError(error, tr("asset.deleteFailed"));
-    }
-  }
-
-  async function deleteSelectedAssets() {
-    if (!deps.can("assets.manage")) return;
-    const ids = [...selectedAssetIds.value];
-    if (!ids.length || assetBatchDeleteSaving.value) return;
-    if (!(await deps.confirmAction(tr("asset.batchDeleteConfirm", { count: ids.length })))) return;
-    assetBatchDeleteSaving.value = true;
-    assetBatchDeleteResult.value = null;
-    showAssetBatchDeleteResult.value = false;
-    try {
-      const result = await deps.request<AssetBatchDeleteResponse>("/assets/batch-delete/", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ ids }),
-      });
-      assetBatchDeleteResult.value = result;
-      const succeededIds = new Set(result.results.filter((item) => item.success).map((item) => item.id));
-      selectedAssetIds.value = selectedAssetIds.value.filter((id) => !succeededIds.has(id));
-      const mutationMessage = result.failed
-        ? tr("asset.batchDeleteSummary", { succeeded: result.succeeded, failed: result.failed })
-        : tr("asset.batchDeleteSuccess", { count: result.succeeded });
-      setActionMessage(mutationMessage, result.failed ? "error" : "success");
-      const refreshed = await loadAssets(undefined, true);
-      if (!refreshed) {
-        setActionMessage(`${mutationMessage}；${tr("common.refreshFailed")}，${tr("common.retry")}`, "error");
-      }
-      if (result.failed) showAssetBatchDeleteResult.value = true;
-    } catch (error) {
-      setActionError(error, tr("asset.batchDeleteFailed"));
-    } finally {
-      assetBatchDeleteSaving.value = false;
-    }
-  }
-
-  function closeAssetBatchDeleteResult() {
-    if (assetBatchDeleteSaving.value) return;
-    showAssetBatchDeleteResult.value = false;
-    assetBatchDeleteResult.value = null;
-  }
-
-  async function batchAssignAssets(
-    action: AssetBatchAssignmentAction,
-    assetIds: number[],
-    targetPersonId: number,
-    reason: string,
-  ): Promise<boolean> {
-    if (!deps.can("assets.manage") || assetBatchAssignmentSaving.value) return false;
-    const ids = Array.from(new Set(assetIds));
-    if (!ids.length || ids.length > 100 || !Number.isSafeInteger(targetPersonId) || targetPersonId <= 0) {
-      assetBatchAssignmentError.value = ids.length > 100
-        ? tr("asset.batchAssignmentLimit")
-        : tr("asset.selectPerson");
-      return false;
-    }
-
-    assetBatchAssignmentSaving.value = true;
-    assetBatchAssignmentError.value = "";
-    assetBatchAssignmentResult.value = null;
-    showAssetBatchAssignmentResult.value = false;
-    try {
-      const result = await deps.request<AssetBatchAssignmentResponse>("/assets/batch-assignment/", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          ids,
-          action,
-          target_person: targetPersonId,
-          reason: reason.trim(),
-        }),
-      });
-      assetBatchAssignmentResult.value = result;
-      const succeededIds = result.results.filter((item) => item.success).map((item) => item.id);
-      selectedAssetIds.value = selectedAssetIds.value.filter((id) => !succeededIds.includes(id));
-      const mutationMessage = result.failed
-        ? tr("asset.batchAssignmentSummary", { succeeded: result.succeeded, failed: result.failed })
-        : tr("asset.batchAssignmentSuccess", { count: result.succeeded });
-      setActionMessage(mutationMessage, result.failed ? "error" : "success");
-      const refreshed = await loadAssets(undefined, true);
-      if (!refreshed) {
-        setActionMessage(`${mutationMessage}；${tr("common.refreshFailed")}，${tr("common.retry")}`, "error");
-      }
-      selectedAssetIds.value = selectedAssetIds.value.filter((id) =>
-        result.results.some((item) => item.id === id && !item.success),
-      );
-      showAssetBatchAssignmentResult.value = true;
-      return true;
-    } catch (error) {
-      const normalized = normalizeApiError(error);
-      assetBatchAssignmentError.value = normalized.kind === "unknown"
-        ? tr("asset.batchAssignmentNetworkUnknown")
-        : normalized.kind === "field-validation"
-          ? normalized.message
-          : normalized.message || tr("asset.batchAssignmentFailed");
-      if (normalized.kind === "unknown") {
-        await loadAssets(undefined, true);
-      }
-      setActionMessage(assetBatchAssignmentError.value, "error");
-      return false;
-    } finally {
-      assetBatchAssignmentSaving.value = false;
-    }
-  }
-
-  function closeAssetBatchAssignmentResult() {
-    if (assetBatchAssignmentSaving.value) return;
-    showAssetBatchAssignmentResult.value = false;
-    assetBatchAssignmentResult.value = null;
-    assetBatchAssignmentError.value = "";
   }
 
   async function exportAssets() {

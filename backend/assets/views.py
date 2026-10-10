@@ -1,3 +1,5 @@
+from .asset_writes import archive_asset, restore_asset
+from .asset_batches import batch_archive_assets, batch_assign_assets, bulk_edit_assets
 from .repair_writes import create_fault, update_fault, delete_fault, create_repair, update_repair, delete_repair, reopen_repair
 from .data_scope import require_queryset, ScopedModelViewSet, ScopedReadOnlyModelViewSet, scoped, require_object, global_endpoint, scope_endpoint, admit, scope_for, lock_creation_locations
 import json
@@ -489,38 +491,6 @@ def _batch_error_code(error, fallback):
     return fallback
 
 
-def _archive_asset_with_audit(instance, request, *, batch_operation_id=None):
-    """Archive under the caller's asset/location locks; retain business facts."""
-    from .audit import json_value
-
-    reasons = []
-    if instance.assigned_person_id:
-        reasons.append("仍有当前使用人，请先归还")
-    if RackUnitAllocation.objects.filter(asset=instance).exists():
-        reasons.append("仍占用机柜 U 位，请先下架")
-    if FaultEvent.objects.filter(asset=instance, is_closed=False).exists():
-        reasons.append("存在未关闭故障")
-    if RepairRecord.objects.filter(fault__asset=instance, finished_at__isnull=True).exists():
-        reasons.append("存在未完成维修")
-    if InventoryItem.objects.filter(asset=instance, task__status="in_progress").exists():
-        reasons.append("存在进行中的盘点任务")
-    if reasons:
-        raise DRFValidationError({"code": "asset_archive_blocked", "detail": "；".join(reasons)})
-    before = asset_audit_snapshot(instance.pk)
-    instance.archived_at = timezone.now()
-    instance.archive_snapshot = json_value({
-        **before,
-        "archived_at": instance.archived_at,
-        "archived_by": request.user.pk,
-        "archived_by_name": request.user.get_full_name() or request.user.username,
-    })
-    instance.save(update_fields=["archived_at", "archive_snapshot", "updated_at"])
-    extra = {"batch_operation_id": str(batch_operation_id)} if batch_operation_id else None
-    write_audit_log(
-        request, action="archive", resource_type="asset", resource_id=instance.pk,
-        before=before, after=asset_audit_snapshot(instance.pk), extra=extra,
-    )
-
 
 class PersonViewSet(AuditedModelViewSetMixin, ScopedModelViewSet):
     queryset = Person.objects.select_related("department", "account").annotate(
@@ -984,6 +954,14 @@ class AssetViewSet(AuditedModelViewSetMixin, ScopedModelViewSet):
             return AssetListSerializer
         return AssetSerializer
 
+    def perform_create(self, serializer):
+        serializer.context["asset_write_audit"] = True
+        serializer.save()
+
+    def perform_update(self, serializer):
+        serializer.context["asset_write_audit"] = True
+        serializer.save()
+
     @extend_schema(
         responses=AssetAssignmentEventSerializer(many=True),
         description="按时间倒序分页返回资产使用人变化历史。历史记录只读。",
@@ -1097,45 +1075,16 @@ class AssetViewSet(AuditedModelViewSetMixin, ScopedModelViewSet):
         refreshed = self.get_queryset().get(pk=pk)
         return Response(AssetDetailSerializer(refreshed, context=self.get_serializer_context()).data)
 
-    def audit_snapshot(self, instance):
-        return asset_audit_snapshot(instance.pk)
-
-    def audit_extra(self, before, after, *, action):
-        if action not in {"create", "update"}:
-            return None
-        changes = asset_custom_value_changes(
-            (before or {}).get("custom_value_snapshot"),
-            (after or {}).get("custom_value_snapshot"),
-        )
-        return {"custom_changes": changes} if changes else None
-
     @extend_schema(request=None, responses=AssetDetailSerializer, description="恢复归档资产；原资产编号和业务状态保持不变。")
     @action(detail=True, methods=["post"], url_path="restore")
     @transaction.atomic
     def restore(self, request, pk=None):
-        asset = get_object_or_404(scoped(Asset.all_objects.select_for_update(), user=request.user, write=True), pk=pk)
-        if asset.archived_at is not None:
-            before = asset_audit_snapshot(asset.pk)
-            asset.archived_at = None
-            asset.save(update_fields=["archived_at", "updated_at"])
-            write_audit_log(request, action="restore", resource_type="asset", resource_id=asset.pk,
-                            before=before, after=asset_audit_snapshot(asset.pk))
+        asset = restore_asset(asset_id=pk, request=request)
         return Response(AssetDetailSerializer(asset, context=self.get_serializer_context()).data)
 
     def perform_destroy(self, instance):
         try:
-            # Serialize the single-delete path with history writers that lock
-            # the asset before appending an immutable business record.  Keep
-            # the atomic block inside the try so a deferred FK violation at
-            # transaction exit is translated into the same 4xx contract as a
-            # Django ProtectedError.
-            with transaction.atomic():
-                lock_asset_location(asset_id=instance.pk)
-                locked_instance = get_object_or_404(
-                    Asset.objects.select_for_update(),
-                    pk=instance.pk,
-                )
-                _archive_asset_with_audit(locked_instance, self.request)
+            archive_asset(asset_id=instance.pk, request=self.request)
         except IntegrityError as exc:
             raise DRFValidationError("资产存在关联数据，不能删除") from exc
 
@@ -1146,66 +1095,10 @@ class AssetViewSet(AuditedModelViewSetMixin, ScopedModelViewSet):
     )
     @action(detail=False, methods=["post"], url_path="batch-delete")
     def batch_delete(self, request):
-        request_serializer = AssetBatchDeleteSerializer(data=request.data)
-        request_serializer.is_valid(raise_exception=True)
-        asset_ids = request_serializer.validated_data["ids"]
-        batch_operation_id = uuid4()
-        results = []
-        succeeded = 0
-        for asset_id in asset_ids:
-            asset_no = f"ID {asset_id}"
-            try:
-                with transaction.atomic():
-                    if not scoped(Asset.objects.filter(pk=asset_id), user=request.user, write=True).exists():
-                        raise Asset.DoesNotExist
-                    lock_asset_location(asset_id=asset_id)
-                    instance = Asset.objects.select_for_update().get(pk=asset_id)
-                    asset_no = instance.asset_no
-                    _archive_asset_with_audit(
-                        instance,
-                        request,
-                        batch_operation_id=batch_operation_id,
-                    )
-            except (Asset.DoesNotExist, PermissionDenied):
-                results.append({
-                    "id": asset_id,
-                    "asset_no": f"ID {asset_id}",
-                    "success": False,
-                    "code": "NOT_FOUND",
-                    "reason": "资产不存在、已归档或不在写入范围内",
-                })
-            except DRFValidationError as exc:
-                results.append({
-                    "id": asset_id,
-                    "asset_no": asset_no,
-                    "success": False,
-                    "code": "PROTECTED",
-                    "reason": _batch_error_message(exc, "资产当前不能归档"),
-                })
-            except DatabaseError:
-                results.append({
-                    "id": asset_id,
-                    "asset_no": asset_no,
-                    "success": False,
-                    "code": "CONFLICT",
-                    "reason": "资产当前存在关联数据，未归档",
-                })
-            else:
-                succeeded += 1
-                results.append({
-                    "id": asset_id,
-                    "asset_no": asset_no,
-                    "success": True,
-                    "code": "",
-                    "reason": "",
-                })
-        response_data = {
-            "requested": len(asset_ids),
-            "succeeded": succeeded,
-            "failed": len(asset_ids) - succeeded,
-            "results": results,
-        }
-        return Response(AssetBatchDeleteResponseSerializer(response_data).data)
+        serializer = AssetBatchDeleteSerializer(data=request.data, context=self.get_serializer_context())
+        serializer.is_valid(raise_exception=True)
+        result = batch_archive_assets(request, serializer.validated_data["ids"])
+        return Response(AssetBatchDeleteResponseSerializer(result).data)
 
     @extend_schema(
         request=AssetBatchAssignmentSerializer,
@@ -1214,186 +1107,11 @@ class AssetViewSet(AuditedModelViewSetMixin, ScopedModelViewSet):
     )
     @action(detail=False, methods=["post"], url_path="batch-assignment")
     def batch_assignment(self, request):
-        request_serializer = AssetBatchAssignmentSerializer(data=request.data, context=self.get_serializer_context())
-        request_serializer.is_valid(raise_exception=True)
-        validated = request_serializer.validated_data
-        asset_ids = validated["ids"]
-        action = validated["action"]
-        target_person_id = validated["target_person"].pk
-        reason = validated.get("reason", "")
-        batch_operation_id = uuid4()
-        results = []
-        succeeded = 0
-        actor = request.user if request.user.is_authenticated else None
+        serializer = AssetBatchAssignmentSerializer(data=request.data, context=self.get_serializer_context())
+        serializer.is_valid(raise_exception=True)
+        result = batch_assign_assets(request, serializer.validated_data)
+        return Response(AssetBatchAssignmentResponseSerializer(result).data)
 
-        for asset_id in asset_ids:
-            asset_no = f"ID {asset_id}"
-            try:
-                with transaction.atomic():
-                    if not scoped(Asset.objects.filter(pk=asset_id), user=request.user, write=True).exists():
-                        raise Asset.DoesNotExist
-                    lock_asset_location(asset_id=asset_id)
-                    instance = Asset.objects.select_for_update().get(pk=asset_id)
-                    asset_no = instance.asset_no
-                    if action == "assign":
-                        assign_asset(
-                            asset_id=asset_id,
-                            target_person_id=target_person_id,
-                            actor=actor,
-                            request=request,
-                            reason=reason,
-                            batch_operation_id=batch_operation_id,
-                        )
-                    else:
-                        transfer_asset(
-                            asset_id=asset_id,
-                            target_person_id=target_person_id,
-                            actor=actor,
-                            request=request,
-                            reason=reason,
-                            batch_operation_id=batch_operation_id,
-                        )
-            except (Asset.DoesNotExist, PermissionDenied):
-                results.append({
-                    "id": asset_id,
-                    "asset_no": f"ID {asset_id}",
-                    "success": False,
-                    "code": "NOT_FOUND",
-                    "reason": "资产不存在、已归档或不在写入范围内",
-                })
-            except DRFValidationError as exc:
-                results.append({
-                    "id": asset_id,
-                    "asset_no": asset_no,
-                    "success": False,
-                    "code": _batch_error_code(exc, "ASSIGNMENT_REJECTED"),
-                    "reason": _batch_error_message(exc, "资产当前不能执行使用人操作"),
-                })
-            except DatabaseError:
-                results.append({
-                    "id": asset_id,
-                    "asset_no": asset_no,
-                    "success": False,
-                    "code": "CONFLICT",
-                    "reason": "资产当前存在并发变更，未执行使用人操作",
-                })
-            else:
-                succeeded += 1
-                results.append({
-                    "id": asset_id,
-                    "asset_no": asset_no,
-                    "success": True,
-                    "code": "",
-                    "reason": "",
-                })
-
-        response_data = {
-            "requested": len(asset_ids),
-            "succeeded": succeeded,
-            "failed": len(asset_ids) - succeeded,
-            "results": results,
-        }
-        return Response(AssetBatchAssignmentResponseSerializer(response_data).data)
-
-
-    def _apply_bulk_edit(self, request, instance, changes, batch_operation_id):
-        """Apply the explicitly selected asset fields inside one asset transaction."""
-        before = asset_audit_snapshot(instance.pk)
-        write_data = {}
-        changed_fields = []
-
-        model_change = changes.get("model", {})
-        if model_change.get("enabled"):
-            changed_fields.append("model")
-            if model_change["mode"] == "set":
-                write_data["asset_model"] = model_change["asset_model"]
-            else:
-                write_data.update({
-                    "asset_model": None,
-                    "device_type": model_change["device_type"],
-                    "manufacturer": model_change.get("manufacturer"),
-                    "model_text": model_change.get("model_text", ""),
-                })
-
-        purpose_change = changes.get("purpose", {})
-        if purpose_change.get("enabled"):
-            changed_fields.append("purpose")
-            write_data["purpose"] = "" if purpose_change["action"] == "clear" else purpose_change.get("value", "")
-
-        tag_change = changes.get("tags", {})
-        if tag_change.get("enabled"):
-            changed_fields.append("tags")
-            requested_tag_ids = tag_change.get("values", [])
-            requested_tags = list(Tag.objects.filter(pk__in=requested_tag_ids))
-            if len(requested_tags) != len(requested_tag_ids):
-                raise DRFValidationError({"tags": "存在不存在的标签"})
-            inactive_new = [tag.name for tag in requested_tags if not tag.is_active]
-            existing_tag_ids = set(AssetTag.objects.filter(asset_id=instance.pk).values_list("tag_id", flat=True))
-            if inactive_new and any(tag_id not in existing_tag_ids for tag_id in requested_tag_ids):
-                raise DRFValidationError({"tags": "停用的标签不能用于资产"})
-            requested_by_id = {tag.pk: tag for tag in requested_tags}
-            if tag_change["mode"] == "add":
-                final_ids = list(dict.fromkeys([*existing_tag_ids, *requested_by_id]))
-            elif tag_change["mode"] == "remove":
-                remove_ids = set(requested_by_id)
-                final_ids = [tag_id for tag_id in existing_tag_ids if tag_id not in remove_ids]
-            else:
-                final_ids = list(dict.fromkeys(requested_by_id))
-            write_data["tags"] = final_ids
-
-        if write_data:
-            serializer = AssetWriteSerializer(
-                instance=instance,
-                data=write_data,
-                partial=True,
-                context=self.get_serializer_context(),
-            )
-            serializer.is_valid(raise_exception=True)
-            instance = serializer.save()
-
-        location_change = changes.get("location", {})
-        if location_change.get("enabled"):
-            changed_fields.append("location")
-            if location_change["action"] == "clear":
-                clear_asset_placement(asset_id=instance.pk)
-            else:
-                data_center = DataCenter.objects.filter(pk=location_change["data_center"]).first()
-                room = ServerRoom.objects.select_related("data_center").filter(
-                    pk=location_change["server_room"],
-                    data_center_id=location_change["data_center"],
-                ).first()
-                rack = Rack.objects.select_related("room__data_center").filter(
-                    pk=location_change["rack"],
-                    room_id=location_change["server_room"],
-                ).first()
-                if not data_center:
-                    raise DRFValidationError({"location.data_center": "数据中心不存在"})
-                if not room:
-                    raise DRFValidationError({"location.server_room": "机房不属于所选数据中心"})
-                if not rack:
-                    raise DRFValidationError({"location.rack": "机柜不属于所选机房"})
-                place_asset(
-                    asset_id=instance.pk,
-                    rack_id=rack.pk,
-                    start_u=location_change["start_u"],
-                    end_u=location_change["end_u"],
-                )
-
-        after = asset_audit_snapshot(instance.pk)
-        write_audit_log(
-            request,
-            action="bulk_update",
-            resource_type="asset",
-            resource_id=instance.pk,
-            before=before,
-            after=after,
-            extra={
-                "source": "asset_bulk_edit",
-                "batch_operation_id": str(batch_operation_id),
-                "changed_fields": changed_fields,
-            },
-        )
-        return instance
 
     @extend_schema(
         request=AssetBulkEditSerializer,
@@ -1402,80 +1120,10 @@ class AssetViewSet(AuditedModelViewSetMixin, ScopedModelViewSet):
     )
     @action(detail=False, methods=["post"], url_path="bulk-edit")
     def bulk_edit(self, request):
-        request_serializer = AssetBulkEditSerializer(data=request.data)
-        request_serializer.is_valid(raise_exception=True)
-        validated = request_serializer.validated_data
-        batch_operation_id = uuid4()
-        results = []
-        succeeded = 0
-        for asset_id in validated["ids"]:
-            asset_no = f"ID {asset_id}"
-            try:
-                with transaction.atomic():
-                    if not scoped(Asset.objects.filter(pk=asset_id), user=request.user, write=True).exists():
-                        raise Asset.DoesNotExist
-                    location_change = validated["changes"].get("location", {})
-                    if location_change.get("enabled"):
-                        if location_change.get("action") == "clear":
-                            lock_asset_location(asset_id=asset_id)
-                        else:
-                            lock_asset_location(
-                                asset_id=asset_id,
-                                target_rack_id=location_change.get("rack"),
-                            )
-                    else:
-                        lock_asset_location(asset_id=asset_id)
-                    instance = Asset.objects.select_for_update().get(pk=asset_id)
-                    asset_no = instance.asset_no
-                    self._apply_bulk_edit(request, instance, validated["changes"], batch_operation_id)
-            except (ObjectDoesNotExist, PermissionDenied):
-                results.append({
-                    "id": asset_id,
-                    "asset_no": f"ID {asset_id}",
-                    "success": False,
-                    "code": "NOT_FOUND",
-                    "reason": "资产不存在、已归档或操作涉及未授权范围",
-                })
-            except (DRFValidationError, APIException) as exc:
-                results.append({
-                    "id": asset_id,
-                    "asset_no": asset_no,
-                    "success": False,
-                    "code": _batch_error_code(exc, "BULK_EDIT_REJECTED"),
-                    "reason": _batch_error_message(exc, "资产当前不能执行批量编辑"),
-                })
-            except DjangoValidationError as exc:
-                results.append({
-                    "id": asset_id,
-                    "asset_no": asset_no,
-                    "success": False,
-                    "code": "BULK_EDIT_REJECTED",
-                    "reason": _batch_error_message(exc, "资产当前不能执行批量编辑"),
-                })
-            except DatabaseError:
-                results.append({
-                    "id": asset_id,
-                    "asset_no": asset_no,
-                    "success": False,
-                    "code": "CONFLICT",
-                    "reason": "资产当前存在并发变更，未执行批量编辑",
-                })
-            else:
-                succeeded += 1
-                results.append({
-                    "id": asset_id,
-                    "asset_no": asset_no,
-                    "success": True,
-                    "code": "",
-                    "reason": "",
-                })
-        response_data = {
-            "requested": len(validated["ids"]),
-            "succeeded": succeeded,
-            "failed": len(validated["ids"]) - succeeded,
-            "results": results,
-        }
-        return Response(AssetBulkEditResponseSerializer(response_data).data)
+        serializer = AssetBulkEditSerializer(data=request.data, context=self.get_serializer_context())
+        serializer.is_valid(raise_exception=True)
+        result = bulk_edit_assets(request, serializer.validated_data)
+        return Response(AssetBulkEditResponseSerializer(result).data)
 
 
 class AttachmentViewSet(ResourceRevisionViewSetMixin, ScopedModelViewSet):

@@ -18,7 +18,7 @@ from .asset_retention import active_asset_for_update
 from .models import AssetModel, AuditLog, Asset, AssetAssignmentEvent, AssetCustomValue, AssetDisposal, AssetNetworkAddress, AssetTag, Attachment, CustomField, CustomFieldOption, CustomFieldSet, CustomFieldSetItem, DataCenter, Department, DeviceType, DirectoryIdentity, FaultEvent, InventoryItem, InventoryTask, MaintenanceContract, Manufacturer, NotificationDelivery, Person, PersonalAccessToken, ProcurementRecord, Rack, RackUnitAllocation, RepairPartUsage, RepairRecord, ServerRoom, SoftwareLicense, SparePart, SparePartCategory, SpareStock, SpareStockTransaction, SystemSetting, Tag, UserSecurityProfile, DEFAULT_ASSET_STATUS_CHOICES, SYSTEM_CURRENCY_CHOICES, SYSTEM_DATE_FORMAT_CHOICES, SYSTEM_LOCALE_CHOICES, SMTP_SECURITY_MODE_CHOICES
 from .inventory_writes import inventory_task_can_delete, validate_inventory_resolution_request
 from .fieldsets import fieldset_items_queryset, raise_if_fieldset_conflicts, replace_fieldset_items, resolve_fieldset, validate_fieldset_items
-from .depreciation import DepreciationValidationError, calculate_asset_depreciation, validate_depreciation_configuration
+from .depreciation import calculate_asset_depreciation
 from .enum_contracts import (
     INVENTORY_ITEM_STATUS_LABELS,
     INVENTORY_RESOLUTION_ACTION_LABELS,
@@ -31,16 +31,14 @@ from .enum_contracts import (
     STOCK_OPERATION_TYPE_LABELS,
 )
 from .license_status import LICENSE_STATUS_LABELS, license_status_value
-from .asset_revision import check_asset_revision
 from .resource_revision import ResourceRevisionSerializerMixin
 from .reporting.capacity import rack_effective_used_u
-from .services import CustomFieldConflictError, apply_asset_custom_values, apply_asset_tags, assign_asset, configure_asset, return_asset, transfer_asset
 from .physical_location import RoomReparentBlocked, lock_inventory_scope, lock_asset_location, update_rack, update_server_room
 from .custom_fields import validate_custom_field_value
 from .custom_fields import normalize_validation_config as _normalize_validation_config
 from .attachment_security import validate_attachment_file
 from .attachment_storage import cleanup_attachment_file
-from .lifecycle import allowed_asset_status_values, transition_asset_status, validate_asset_status_transition
+from .lifecycle import allowed_asset_status_values
 from .organization_access import (
     ROLE_AUDITOR,
     assign_role,
@@ -51,7 +49,6 @@ from .ldap_auth import AUTH_SOURCE_LDAP, AUTH_SOURCE_LOCAL, is_directory_managed
 from .ldap_configuration import DIRECTORY_TYPE_CHOICES, SECURITY_MODE_CHOICES
 from .system_settings import (
     get_local_auth_policy,
-    get_runtime_preferences,
     system_setting_definitions,
     validate_local_password,
 )
@@ -70,16 +67,7 @@ class SystemDateTimeInputField(serializers.DateTimeField):
         return super().to_internal_value(parsed)
 
 
-class CustomFieldConflictAPIException(APIException):
-    status_code = 409
-    default_code = "custom_field_conflict"
-
-    def __init__(self, conflicts):
-        super().__init__({
-            "code": "custom_field_conflict",
-            "detail": "当前自定义字段值与新的字段集不兼容",
-            "fields": conflicts,
-        })
+from .asset_configuration import CustomFieldConflictAPIException
 
 
 class DataScopeBoundarySerializer(serializers.Serializer):
@@ -2783,26 +2771,6 @@ class AssetDetailSerializer(ResolvedAssetMetadataMixin, serializers.ModelSeriali
 
 
 class AssetWriteSerializer(serializers.ModelSerializer):
-    PLACEMENT_CONFIGURATION_KEYS = (
-        "data_center",
-        "server_room_id",
-        "rack_id",
-        "rack_start_u",
-        "rack_end_u",
-        "rack_total_u",
-    )
-    REQUIRED_PLACEMENT_CONFIGURATION_KEYS = frozenset(PLACEMENT_CONFIGURATION_KEYS[:5])
-    DERIVED_DEPRECIATION_FIELDS = {
-        "depreciation",
-        "original_value",
-        "residual_value",
-        "monthly_depreciation",
-        "accumulated_depreciation",
-        "net_book_value",
-        "elapsed_months",
-        "total_months",
-        "progress",
-    }
     id = serializers.IntegerField(read_only=True)
     created_at = serializers.DateTimeField(read_only=True)
     updated_at = serializers.DateTimeField(read_only=True)
@@ -2849,62 +2817,9 @@ class AssetWriteSerializer(serializers.ModelSerializer):
         instance.refresh_from_db()
         return super().to_representation(instance)
 
-    def _stored_procurement_amount(self):
-        if not self.instance:
-            return None
-        cache = getattr(self.instance, "_prefetched_objects_cache", {})
-        if "procurement_records" in cache:
-            records = cache["procurement_records"]
-            return records[0].amount if records else None
-        return self.instance.procurement_records.order_by("-purchase_date", "-id").values_list("amount", flat=True).first()
 
-    @staticmethod
-    def _submitted_procurement_amount(configuration):
-        if not isinstance(configuration, dict):
-            return None
-        purchase_fields = (
-            "purchase_date",
-            "supplier",
-            "purchase_order_no",
-            "purchase_amount",
-            "procurement_notes",
-        )
-        if not any(str(configuration.get(key) or "").strip() for key in purchase_fields):
-            return None
-        value = configuration.get("purchase_amount")
-        if value is None or not str(value).strip():
-            return None
-        return value
 
-    def _prospective_procurement_amount(self, attrs):
-        if "configuration" in attrs:
-            configuration = attrs.get("configuration")
-            if isinstance(configuration, dict) and configuration:
-                if "purchase_amount" not in configuration:
-                    return self._stored_procurement_amount()
-            return self._submitted_procurement_amount(configuration)
-        return self._stored_procurement_amount()
 
-    def _validate_depreciation(self, attrs):
-        current = self.instance
-        values = {
-            field: attrs.get(field, getattr(current, field, None) if current else None)
-            for field in (
-                "depreciation_start_date",
-                "depreciation_years",
-                "residual_rate",
-                "depreciation_method",
-            )
-        }
-        if not any(value is not None and value != "" for value in values.values()):
-            return
-        try:
-            validate_depreciation_configuration(
-                **values,
-                amount=self._prospective_procurement_amount(attrs),
-            )
-        except DepreciationValidationError as exc:
-            raise serializers.ValidationError(exc.errors) from exc
 
     def to_internal_value(self, data):
         data = data.copy()
@@ -2918,317 +2833,24 @@ class AssetWriteSerializer(serializers.ModelSerializer):
                 data[field] = None
         return super().to_internal_value(data)
 
-    @staticmethod
-    def _configuration_includes_placement(configuration) -> bool:
-        if not isinstance(configuration, dict):
-            return False
-        return any(
-            key in configuration
-            for key in (
-                "data_center",
-                "server_room_id",
-                "server_room",
-                "rack_id",
-                "rack_code",
-                "rack_start_u",
-                "rack_end_u",
-            )
-        )
 
-    @classmethod
-    def _current_placement_configuration(cls, instance):
-        allocation = (
-            RackUnitAllocation.objects.select_related("rack__room__data_center")
-            .filter(asset=instance)
-            .first()
-        )
-        if allocation is None:
-            return {}
-        return {
-            "data_center": allocation.rack.room.data_center_id,
-            "server_room_id": allocation.rack.room_id,
-            "rack_id": allocation.rack_id,
-            "rack_total_u": allocation.rack.total_u,
-            "rack_start_u": allocation.start_u,
-            "rack_end_u": allocation.end_u,
-        }
 
-    @classmethod
-    def _merge_partial_placement_configuration(cls, instance, configuration):
-        if not isinstance(configuration, dict):
-            return configuration
-        current = cls._current_placement_configuration(instance)
-        if not current:
-            return configuration
 
-        submitted_required = set(configuration).intersection(
-            cls.REQUIRED_PLACEMENT_CONFIGURATION_KEYS
-        )
-        if submitted_required == cls.REQUIRED_PLACEMENT_CONFIGURATION_KEYS and all(
-            not str(configuration.get(key) or "").strip()
-            for key in cls.REQUIRED_PLACEMENT_CONFIGURATION_KEYS
-        ):
-            # The form sends all five empty values to explicitly unmount an
-            # asset.  Preserve that intent instead of restoring the current
-            # allocation below.
-            return configuration
-        return {**current, **configuration}
-
-    def _validate_direct_asset_data_center(self, instance, requested_data_center) -> None:
-        allocation = RackUnitAllocation.objects.select_related(
-            "rack__room__data_center"
-        ).filter(asset=instance).first()
-        if allocation is not None and getattr(requested_data_center, "pk", None) != allocation.rack.room.data_center_id:
-            raise DjangoValidationError({
-                "asset_data_center": "已上架资产的数据中心由机柜位置决定，请通过机柜位置调整",
-            })
 
     def validate(self, attrs):
-        removed_fields = {
-            "responsible_user", "responsible_user_id", "responsible_user_name",
-            "responsibility_subject", "responsibility_subject_id", "assigned_to", "assignee", "target_user",
-            "target_subject", "target_person", "assigned_person", "assigned_person_id",
-            "department", "department_id", "owner_name",
-            "model", "manufacturer_model", "manufacturer_id", "asset_model_name", "asset_model_number",
-        }
-        submitted_removed_fields = removed_fields.intersection(self.initial_data)
-        if submitted_removed_fields:
-            field = sorted(submitted_removed_fields)[0]
-            if field in {"model", "manufacturer_model", "manufacturer_id", "asset_model_name", "asset_model_number"}:
-                message = "该资产型号字段已移除，请使用 asset_model，或使用 manufacturer、device_type 和 model_text"
-            else:
-                message = "该字段已移除，请使用 assignment 或使用人操作"
-            raise serializers.ValidationError({field: message})
-        derived_fields = self.DERIVED_DEPRECIATION_FIELDS & set(self.initial_data)
-        if derived_fields:
-            field = sorted(derived_fields)[0]
-            raise serializers.ValidationError({field: "折旧派生值只读，不能提交"})
-        if "status_before_repair" in self.initial_data:
-            raise serializers.ValidationError({"status_before_repair": "该字段由维修流程维护"})
-        if "configuration" in attrs and not isinstance(attrs["configuration"], dict):
-            raise serializers.ValidationError({"configuration": "配置必须是 JSON 对象"})
-        asset_model = attrs.get("asset_model", self.instance.asset_model if self.instance else None)
-        if asset_model is not None:
-            current_model_id = self.instance.asset_model_id if self.instance else None
-            if not asset_model.is_active and asset_model.pk != current_model_id:
-                raise serializers.ValidationError({"asset_model": "停用的资产型号不能用于资产"})
-            standalone_submitted = {
-                "manufacturer": self.initial_data.get("manufacturer"),
-                "device_type": self.initial_data.get("device_type"),
-                "model_text": self.initial_data.get("model_text"),
-            }
-            if any(value not in (None, "") for value in standalone_submitted.values()):
-                raise serializers.ValidationError({"asset_model": "选择标准型号后不能同时提交独立厂商、设备类型或历史型号文本"})
-            attrs["standalone_manufacturer"] = None
-            attrs["standalone_device_type"] = None
-            attrs["model_text"] = ""
-        else:
-            manufacturer = attrs.get(
-                "standalone_manufacturer",
-                self.instance.standalone_manufacturer if self.instance and not self.instance.asset_model_id else None,
-            )
-            device_type = attrs.get(
-                "standalone_device_type",
-                self.instance.standalone_device_type if self.instance and not self.instance.asset_model_id else None,
-            )
-            if not device_type:
-                raise serializers.ValidationError({"device_type": "未选择标准型号时设备类型不能为空"})
-            if not device_type.is_active and (not self.instance or self.instance.device_type_id != device_type.pk):
-                raise serializers.ValidationError({"device_type": "停用的设备类型不能用于新资产或修改资产"})
-            if manufacturer and not manufacturer.is_active and (not self.instance or self.instance.manufacturer_id != manufacturer.pk):
-                raise serializers.ValidationError({"manufacturer": "停用的厂商不能用于新资产或修改资产"})
-            attrs["standalone_device_type"] = device_type
-            attrs["standalone_manufacturer"] = manufacturer
-        asset_data_center = attrs.get("asset_data_center")
-        if asset_data_center and not asset_data_center.is_active:
-            if not self.instance or self.instance.asset_data_center_id != asset_data_center.pk:
-                raise serializers.ValidationError({"asset_data_center": "停用的数据中心不能用于资产"})
-        if "serial_number" in attrs and not attrs["serial_number"]:
-            attrs["serial_number"] = None
-        if "status" in attrs:
-            try:
-                validate_asset_status_transition(self.instance, attrs["status"])
-            except DjangoValidationError as exc:
-                raise serializers.ValidationError(
-                    getattr(exc, "message_dict", {"status": exc.messages})
-                ) from exc
-        assignment = attrs.get("assignment")
-        if assignment and assignment.get("action") == "transfer" and "status" in attrs:
-            if self.instance is not None and attrs["status"] != self.instance.status:
-                raise serializers.ValidationError({"status": "转交使用人不会改变资产状态"})
-        self._validate_depreciation(attrs)
-        return attrs
+        from .asset_write_rules import validate_asset_write
+        return validate_asset_write(attrs, instance=self.instance, initial_data=self.initial_data)
 
-    def _apply_assignment(self, asset, assignment):
-        if not assignment:
-            return asset
-        request = self.context.get("request")
-        actor = request.user if request is not None and request.user.is_authenticated else None
-        action = assignment["action"]
-        reason = assignment.get("reason", "")
-        if action == "assign":
-            asset, _event = assign_asset(
-                asset_id=asset.pk,
-                target_person_id=assignment["target_person"].pk,
-                actor=actor,
-                request=request,
-                reason=reason,
-            )
-        elif action == "transfer":
-            asset, _event = transfer_asset(
-                asset_id=asset.pk,
-                target_person_id=assignment["target_person"].pk,
-                actor=actor,
-                request=request,
-                reason=reason,
-            )
-        else:
-            asset, _event = return_asset(
-                asset_id=asset.pk,
-                actor=actor,
-                request=request,
-                reason=reason,
-            )
-        return asset
 
     def create(self, validated_data):
-        configuration = validated_data.pop("configuration", {})
-        assignment = validated_data.pop("assignment", None)
-        tags = validated_data.pop("tags", None)
-        custom_values = validated_data.pop("custom_values", {})
-        validated_data.pop("discard_incompatible_custom_values", None)
-        asset_model = validated_data.get("asset_model")
-        if validated_data.get("warranty_months") is None and asset_model is not None:
-            validated_data["warranty_months"] = asset_model.default_warranty_months
-        if "status" not in validated_data:
-            validated_data["status"] = get_runtime_preferences().default_asset_status
-        try:
-            validate_asset_status_transition(None, validated_data["status"])
-        except DjangoValidationError as exc:
-            raise serializers.ValidationError(
-                getattr(exc, "message_dict", {"status": exc.messages})
-            ) from exc
-        try:
-            with transaction.atomic():
-                from .data_scope import require_center, require_department, require_asset_boundary
-                department_id = getattr(validated_data.get("owning_department"), "pk", None)
-                require_department(department_id)
-                target_center = validated_data.get("asset_data_center")
-                if configuration.get("rack_id"):
-                    from .physical_location import lock_inventory_scope
-                    rack = Rack.objects.select_related("room").filter(pk=configuration["rack_id"]).first()
-                    if rack is None:
-                        raise serializers.ValidationError({"rack_id": "未找到所选机柜，请先在机房机柜维护中创建"})
-                    lock_inventory_scope(rack.room.data_center_id, rack.room_id)
-                    rack = Rack.objects.filter(pk=rack.pk).first()
-                    if rack is None:
-                        raise serializers.ValidationError({"rack_id": "所选机柜已不存在，请重新选择"})
-                    center_id = ServerRoom.objects.values_list("data_center_id", flat=True).get(pk=rack.room_id)
-                    require_center(center_id)
-                    validated_data["asset_data_center"] = DataCenter.objects.get(pk=center_id)
-                    require_asset_boundary(center_id, department_id)
-                else:
-                    require_asset_boundary(target_center.pk if target_center else None, department_id)
-                    if target_center is not None:
-                        # Lock the parent before INSERT takes its foreign-key
-                        # shared lock; configure_asset later needs this row
-                        # exclusively in the same physical lock order.
-                        from .physical_location import lock_inventory_scope
-                        lock_inventory_scope(target_center.pk, None)
-                asset = Asset.objects.create(**validated_data)
-                configure_asset(asset, configuration)
-                apply_asset_custom_values(asset, custom_values)
-                apply_asset_tags(asset, tags or [])
-                asset = self._apply_assignment(asset, assignment)
-        except CustomFieldConflictError as exc:
-            raise CustomFieldConflictAPIException(exc.conflicts) from exc
-        except DjangoValidationError as exc:
-            raise serializers.ValidationError(getattr(exc, "message_dict", {"configuration": exc.messages})) from exc
-        except IntegrityError as exc:
-            raise serializers.ValidationError({"configuration": "关联信息已存在或与其他资产冲突"}) from exc
-        return asset
+        from .asset_writes import create_asset
+        return create_asset(validated_data, request=self.context.get("request"),
+            record_audit=self.context.get("asset_write_audit", False))
 
     def update(self, instance, validated_data):
-        configuration = validated_data.pop("configuration", None)
-        assignment = validated_data.pop("assignment", None)
-        tags = validated_data.pop("tags", None)
-        custom_values = validated_data.pop("custom_values", None)
-        discard_incompatible = validated_data.pop("discard_incompatible_custom_values", False)
-        missing = object()
-        requested_asset_data_center = validated_data.get("asset_data_center", missing)
-        requested_status = validated_data.pop("status", missing)
-        try:
-            with transaction.atomic():
-                # Re-read and lock the asset before applying lifecycle checks;
-                # serializer validation runs before the view transaction and
-                # must not be the final authority for retirement races.
-                if configuration is not None or requested_asset_data_center is not missing:
-                    if self._configuration_includes_placement(configuration):
-                        configuration = self._merge_partial_placement_configuration(instance, configuration)
-                    # All configuration writes can reach configure_asset,
-                    # which may clear an allocation. Lock the current graph
-                    # before the asset row even for network-only or empty
-                    # configuration payloads.
-                    lock_asset_location(
-                        asset_id=instance.pk,
-                        **({'target_department_id': getattr(validated_data['owning_department'], 'pk', None)} if 'owning_department' in validated_data else {}),
-                        target_data_center_id=getattr(requested_asset_data_center, "pk", None) if requested_asset_data_center is not missing else None,
-                        target_rack_id=(
-                            configuration.get("rack_id")
-                            if isinstance(configuration, dict)
-                            else None
-                        ),
-                    )
-                instance = active_asset_for_update(instance.pk)
-                from .data_scope import require_department
-                require_department(getattr(validated_data.get("owning_department", instance.owning_department), "pk", None))
-                check_asset_revision(instance, self.context.get("request"))
-                if (
-                    requested_asset_data_center is not missing
-                    and not self._configuration_includes_placement(configuration)
-                ):
-                    from .data_scope import require_center
-                    require_center(requested_asset_data_center.pk if requested_asset_data_center else None)
-                    self._validate_direct_asset_data_center(instance, requested_asset_data_center)
-                from .data_scope import checked_asset_transition
-                target_center_id = (getattr(requested_asset_data_center, 'pk', None)
-                    if requested_asset_data_center is not missing else instance.asset_data_center_id)
-                allocation = getattr(instance, 'rack_allocation', None)
-                if allocation is not None and not self._configuration_includes_placement(configuration):
-                    target_center_id = allocation.rack.room.data_center_id
-                if isinstance(configuration, dict) and configuration.get('rack_id'):
-                    try:
-                        target_center_id = Rack.objects.filter(pk=int(configuration['rack_id'])).values_list('room__data_center_id', flat=True).first()
-                    except (TypeError, ValueError):
-                        target_center_id = None
-                    if target_center_id is None:
-                        raise serializers.ValidationError({"rack_id": "未找到所选机柜，请重新选择"})
-                target_department_id = getattr(validated_data.get('owning_department', instance.owning_department), 'pk', None)
-                with checked_asset_transition(instance, target_center_id, target_department_id):
-                    if requested_status is not missing:
-                        transition_asset_status(instance, requested_status)
-                    for key, value in validated_data.items():
-                        setattr(instance, key, value)
-                    instance.save()
-                    if configuration is not None:
-                        configuration = self._merge_partial_placement_configuration(instance, configuration)
-                        configure_asset(instance, configuration)
-                    apply_asset_custom_values(
-                        instance,
-                        custom_values or {},
-                        submitted=custom_values is not None,
-                        discard_incompatible=discard_incompatible,
-                    )
-                    if tags is not None:
-                        apply_asset_tags(instance, tags)
-                    instance = self._apply_assignment(instance, assignment)
-        except CustomFieldConflictError as exc:
-            raise CustomFieldConflictAPIException(exc.conflicts) from exc
-        except DjangoValidationError as exc:
-            raise serializers.ValidationError(getattr(exc, "message_dict", {"configuration": exc.messages})) from exc
-        except IntegrityError as exc:
-            raise serializers.ValidationError({"configuration": "关联信息已存在或与其他资产冲突"}) from exc
-        return instance
+        from .asset_writes import update_asset
+        return update_asset(instance, validated_data, request=self.context.get("request"),
+            record_audit=self.context.get("asset_write_audit", False))
 
 
 class InventoryScopePreviewQuerySerializer(serializers.Serializer):
