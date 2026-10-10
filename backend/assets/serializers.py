@@ -31,7 +31,6 @@ from .enum_contracts import (
     STOCK_OPERATION_TYPE_LABELS,
 )
 from .license_status import LICENSE_STATUS_LABELS, license_status_value
-from .fault_timeline import validate_fault_times, validate_repair_times
 from .asset_revision import check_asset_revision
 from .resource_revision import ResourceRevisionSerializerMixin
 from .reporting.capacity import rack_effective_used_u
@@ -3760,27 +3759,8 @@ class FaultEventSerializer(ResourceRevisionSerializerMixin, serializers.ModelSer
         return RepairRecordSerializer(repair).data if repair else None
 
     def validate(self, attrs):
-        if "is_closed" in self.initial_data:
-            raise serializers.ValidationError({"is_closed": "故障关闭状态由维修完成时间维护"})
-        if "resolved_at" in self.initial_data:
-            raise serializers.ValidationError({"resolved_at": "故障解决时间由维修完成时间维护"})
-        if self.instance is not None and self.instance.is_closed and attrs:
-            raise serializers.ValidationError({
-                "detail": "已关闭故障不可修改。",
-                "code": "closed_fault_immutable",
-            })
-        if (
-            self.instance is not None
-            and "asset" in attrs
-            and attrs["asset"].pk != self.instance.asset_id
-        ):
-            raise serializers.ValidationError({"asset": "故障关联资产创建后不能修改"})
-        validate_fault_times(
-            occurred_at=attrs.get("occurred_at", self.instance.occurred_at if self.instance else None),
-            reported_at=attrs.get("reported_at", self.instance.reported_at if self.instance else None),
-            repair=getattr(self.instance, "repair", None) if self.instance else None,
-        )
-        return attrs
+        from .repair_writes import validate_fault_write
+        return validate_fault_write(attrs, instance=self.instance, initial_data=self.initial_data)
 
     class Meta:
         model = FaultEvent
@@ -3793,30 +3773,8 @@ class RepairRecordSerializer(ResourceRevisionSerializerMixin, serializers.ModelS
     finished_at = SystemDateTimeInputField(required=False, allow_null=True)
 
     def validate(self, attrs):
-        if self.instance is not None and self.instance.finished_at is not None and attrs:
-            raise serializers.ValidationError({
-                "detail": "已完成维修不可直接修改，请先重新打开。",
-                "code": "finished_repair_immutable",
-            })
-
-        if (
-            self.instance is not None
-            and "fault" in attrs
-            and attrs["fault"].pk != self.instance.fault_id
-        ):
-            raise serializers.ValidationError({"fault": "维修记录关联故障创建后不能修改"})
-
-        started_at = attrs.get("started_at", self.instance.started_at if self.instance else None)
-        finished_at = attrs.get("finished_at", self.instance.finished_at if self.instance else None)
-        fault = attrs.get("fault", self.instance.fault if self.instance else None)
-        if fault.asset.archived_at is not None:
-            raise serializers.ValidationError({"code": "asset_archived", "detail": "已归档资产的历史维修不能修改"})
-        validate_repair_times(
-            occurred_at=fault.occurred_at,
-            started_at=started_at,
-            finished_at=finished_at,
-        )
-        return attrs
+        from .repair_writes import validate_repair_write
+        return validate_repair_write(attrs, instance=self.instance)
 
     cost = serializers.DecimalField(
         max_digits=14,

@@ -1,4 +1,4 @@
-import { revisionHeaders } from "../revision";
+import { useRepairLifecycle } from "./useRepairLifecycle";
 import { ref, watch, type Ref } from "vue";
 import { ElMessage } from "element-plus/es/components/message/index.mjs";
 import type { LocationQuery } from "vue-router";
@@ -43,9 +43,6 @@ export interface RepairsDeps {
 function nowDateTimeLocal() {
   return systemDateTimeInputValue();
 }
-function toDateTimeLocal(value: string | null) {
-  return value ? systemDateTimeInputValue(value) : "";
-}
 
 function emptyRepairPartUsageForm(): RepairPartUsageFormState {
   return {
@@ -62,7 +59,6 @@ function emptyRepairPartUsageForm(): RepairPartUsageFormState {
 }
 
 const FAULT_FORM_FIELDS = ["asset", "occurred_at", "reason", "description"] as const;
-const REPAIR_FORM_FIELDS = ["provider", "started_at", "finished_at", "cost", "notes"] as const;
 const REPAIR_PART_USAGE_FORM_FIELDS = [
   "source", "spare_part_id", "spare_stock_id", "part_code", "part_name", "part_model", "vendor_name", "quantity", "notes",
 ] as const;
@@ -78,10 +74,7 @@ export function useRepairs(deps: RepairsDeps) {
   const repairEnd = ref("");
   const focusedFaultId = ref<number | null>(null);
   const showFaultModal = ref(false);
-  const showRepairModal = ref(false);
-  const selectedFault = ref<FaultEvent | null>(null);
   const faultForm = ref({ asset: "", occurred_at: "", reason: "", description: "" });
-  const repairForm = ref({ provider: "", started_at: "", finished_at: "", cost: "", notes: "" });
   const showRepairPartUsageModal = ref(false);
   const repairPartUsageForm = ref<RepairPartUsageFormState>({
     source: "internal_stock",
@@ -119,17 +112,20 @@ export function useRepairs(deps: RepairsDeps) {
   const exportingRepairs = ref(false);
   const repairRequestId = ref(0);
   const faultSaving = ref(false);
-  const repairSaving = ref(false);
   const faultError = ref("");
-  const repairError = ref("");
   const faultFormErrors = ref<Record<string, string>>({});
-  const repairFormErrors = ref<Record<string, string>>({});
   const repairPartUsageFormErrors = ref<Record<string, string>>({});
   const appliedRepairFilters = ref({
     keyword: "",
     status: "",
     start: "",
     end: "",
+  });
+
+  const { selectedFault, showRepairModal, repairForm, repairSaving, repairError, repairFormErrors,
+    openRepairEditor, repairTimeError, saveRepair, reopenRepair } = useRepairLifecycle({
+    can: deps.can, request: deps.request, confirmAction: deps.confirmAction,
+    refreshOpenAssetDetail: deps.refreshOpenAssetDetail, refreshList: loadRepairs, setActionMessage,
   });
 
   function setActionMessage(message: string, type: ActionMessageType = "success") {
@@ -173,7 +169,6 @@ export function useRepairs(deps: RepairsDeps) {
   }
 
   watchFormFieldErrors(faultForm, faultFormErrors, FAULT_FORM_FIELDS);
-  watchFormFieldErrors(repairForm, repairFormErrors, REPAIR_FORM_FIELDS);
   watchFormFieldErrors(repairPartUsageForm, repairPartUsageFormErrors, REPAIR_PART_USAGE_FORM_FIELDS);
 
   function totalPages(total: number, size: number) {
@@ -202,17 +197,7 @@ export function useRepairs(deps: RepairsDeps) {
     openFaultModal(deps.selectedAssetIds.value[0]);
   }
   function openRepairModal(fault: FaultEvent) {
-    if (!deps.can("faults.view")) return;
-    repairError.value = "";
-    repairFormErrors.value = {};
-    selectedFault.value = {...fault, repair: fault.repair ? {...fault.repair} : null};
-    repairForm.value = {
-      provider: fault.repair?.provider || "",
-      started_at: toDateTimeLocal(fault.repair?.started_at || null),
-      finished_at: toDateTimeLocal(fault.repair?.finished_at || null),
-      cost: fault.repair?.cost || "",
-      notes: fault.repair?.notes || "",
-    };
+    if (!openRepairEditor(fault)) return;
     repairPartUsageItems.value = [];
     repairPartUsageTotal.value = 0;
     repairPartUsagePage.value = 1;
@@ -222,13 +207,6 @@ export function useRepairs(deps: RepairsDeps) {
     void loadRepairPartUsageHistory(fault.id, 1);
   }
 
-  function repairTimeError() {
-    const startedAt = repairForm.value.started_at.trim();
-    const finishedAt = repairForm.value.finished_at.trim();
-    return startedAt && finishedAt && startedAt > finishedAt
-      ? tr("repair.invalidTimeRange")
-      : "";
-  }
   function currentRepairFilters() {
     return {
       keyword: repairKeyword.value.trim(),
@@ -675,102 +653,6 @@ export function useRepairs(deps: RepairsDeps) {
     showFaultModal.value = false;
     setActionMessage(tr("repair.faultRegistered"), "success");
     if (!(await loadRepairs())) ElMessage.warning(tr("repair.faultRegisteredRefreshFailed"));
-    return true;
-  }
-  async function saveRepair(): Promise<boolean> {
-    if (!deps.can("faults.manage")) return false;
-    if (!selectedFault.value || repairSaving.value) return false;
-    if (selectedFault.value.is_closed) {
-      repairError.value = tr("repair.completedViewOnly");
-      return false;
-    }
-    repairError.value = "";
-    repairFormErrors.value = {};
-    const timeError = repairTimeError();
-    if (timeError) {
-      repairError.value = timeError;
-      return false;
-    }
-    repairSaving.value = true;
-    const repairedAssetId = selectedFault.value.asset;
-    try {
-      const payload = {
-        fault: selectedFault.value.id,
-        provider: repairForm.value.provider.trim(),
-        started_at: repairForm.value.started_at || null,
-        finished_at: repairForm.value.finished_at || null,
-        cost: repairForm.value.cost.trim() || null,
-        notes: repairForm.value.notes,
-      };
-      if (selectedFault.value.repair) {
-        await deps.request(`/repair-records/${selectedFault.value.repair.id}/`, { method: "PATCH", headers: revisionHeaders(selectedFault.value.repair), body: JSON.stringify(payload) });
-      } else {
-        await deps.request("/repair-records/", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload) });
-      }
-    } catch (error) {
-      setDialogError(repairError, repairFormErrors, error, tr("repair.recordSaveFailed"), REPAIR_FORM_FIELDS);
-      return false;
-    } finally {
-      repairSaving.value = false;
-    }
-    showRepairModal.value = false;
-    const successMessage = repairForm.value.finished_at ? tr("repair.completed") : tr("repair.recordSaved");
-    const listRefreshed = await loadRepairs();
-    let detailRefresh: boolean | null = null;
-    if (deps.refreshOpenAssetDetail) {
-      try {
-        detailRefresh = await deps.refreshOpenAssetDetail(repairedAssetId);
-      } catch {
-        detailRefresh = false;
-      }
-    }
-    const followUpMessages: string[] = [];
-    if (!listRefreshed) followUpMessages.push(tr("common.refreshFailed"));
-    if (detailRefresh === false) followUpMessages.push(tr("asset.assetDetailLoadFailed"));
-    setActionMessage(successMessage, "success");
-    if (followUpMessages.length) ElMessage.warning(followUpMessages.join("；"));
-    return true;
-  }
-  async function reopenRepair(): Promise<boolean> {
-    if (
-      !deps.can("faults.manage")
-      || !selectedFault.value?.is_closed
-      || !selectedFault.value.repair
-      || repairSaving.value
-    ) return false;
-    repairError.value = "";
-    repairFormErrors.value = {};
-    repairSaving.value = true;
-    const repairedAssetId = selectedFault.value.asset;
-    const repairId = selectedFault.value.repair.id;
-    try {
-      if (!deps.confirmAction || !(await deps.confirmAction(tr("repair.reopenConfirm")))) return false;
-      await deps.request(`/repair-records/${repairId}/reopen/`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-      });
-    } catch (error) {
-      repairError.value = errorMessage(error, tr("repair.reopenFailed"));
-      return false;
-    } finally {
-      repairSaving.value = false;
-    }
-
-    showRepairModal.value = false;
-    const listRefreshed = await loadRepairs();
-    let detailRefresh: boolean | null = null;
-    if (deps.refreshOpenAssetDetail) {
-      try {
-        detailRefresh = await deps.refreshOpenAssetDetail(repairedAssetId);
-      } catch {
-        detailRefresh = false;
-      }
-    }
-    const followUpMessages: string[] = [];
-    if (!listRefreshed) followUpMessages.push(tr("repair.reopenedRefreshFailed"));
-    if (detailRefresh === false) followUpMessages.push(tr("asset.assetDetailLoadFailed"));
-    setActionMessage(tr("repair.reopened"), "success");
-    if (followUpMessages.length) ElMessage.warning(followUpMessages.join("；"));
     return true;
   }
   async function exportRepairs() {

@@ -1,3 +1,4 @@
+from .repair_writes import create_fault, update_fault, delete_fault, create_repair, update_repair, delete_repair, reopen_repair
 from .data_scope import require_queryset, ScopedModelViewSet, ScopedReadOnlyModelViewSet, scoped, require_object, global_endpoint, scope_endpoint, admit, scope_for, lock_creation_locations
 import json
 import logging
@@ -56,10 +57,6 @@ from .stock import create_spare_part_with_stock, record_stock_transaction, recor
 from .inventory_writes import resolve_inventory_item, record_inventory_observation, update_inventory_task, delete_inventory_task, change_inventory_task_status, submit_inventory_batch
 from .fieldsets import fieldset_items_queryset, replace_fieldset_items, resolve_fieldset
 from .services import (
-    reopen_repair,
-    sync_asset_fault_status,
-    sync_fault_completion,
-    sync_repair_completion,
     assign_asset,
     dispose_asset,
     return_asset,
@@ -2932,10 +2929,6 @@ class FaultEventViewSet(AuditedModelViewSetMixin, ScopedModelViewSet):
     permission_resource = "faults"
     audit_resource = "fault_event"
 
-    def audit_extra(self, before, after, *, action):
-        asset_id = (after or {}).get("asset") or (before or {}).get("asset")
-        return {"asset_id": asset_id, "source": "fault_event"} if asset_id else None
-
     def get_queryset(self):
         queryset = super().get_queryset()
         if self.request.method not in {"GET", "HEAD", "OPTIONS"}:
@@ -2976,49 +2969,14 @@ class FaultEventViewSet(AuditedModelViewSetMixin, ScopedModelViewSet):
         admission.is_valid(raise_exception=True)
         return record_repair_part_usage(request, fault=fault, validated_data=admission.validated_data)
 
-    @transaction.atomic
     def perform_create(self, serializer):
-        get_object_or_404(Asset.objects.select_for_update(), pk=serializer.validated_data["asset"].pk)
-        super().perform_create(serializer)
-        fault = serializer.instance
-        sync_asset_fault_status(fault.asset_id, request=self.request, fault_id=fault.pk)
+        serializer.instance = create_fault(request=self.request, asset_id=serializer.validated_data["asset"].pk)
 
-    @transaction.atomic
     def perform_update(self, serializer):
-        # Validation initially happens before perform_update. Re-lock and
-        # validate again so a concurrent completion cannot turn this into a
-        # historical write after the first validation pass.
-        locked_fault = FaultEvent.objects.select_for_update().get(pk=serializer.instance.pk)
-        from .resource_revision import check_resource_revision
-        check_resource_revision(locked_fault, self.request)
-        require_object(locked_fault, user=self.request.user)
-        locked_serializer = self.get_serializer(
-            locked_fault,
-            data=self.request.data,
-            partial=self.request.method == "PATCH",
-        )
-        locked_serializer.is_valid(raise_exception=True)
-        previous_asset_id = locked_fault.asset_id
-        super().perform_update(locked_serializer)
-        serializer.instance = locked_serializer.instance
-        fault = locked_serializer.instance
-        sync_asset_fault_status(previous_asset_id, request=self.request)
-        if fault.asset_id != previous_asset_id:
-            sync_asset_fault_status(fault.asset_id, request=self.request, fault_id=fault.pk)
+        serializer.instance = update_fault(request=self.request, fault_id=serializer.instance.pk)
 
-    @transaction.atomic
     def perform_destroy(self, instance):
-        locked_fault = FaultEvent.objects.select_for_update().get(pk=instance.pk)
-        if locked_fault.is_closed:
-            raise DRFValidationError({
-                "detail": "已关闭故障不可删除。",
-                "code": "closed_fault_immutable",
-            })
-        if locked_fault.part_usages.exists():
-            raise DRFValidationError("故障存在维修用件记录，不能删除。")
-        asset_id = locked_fault.asset_id
-        super().perform_destroy(locked_fault)
-        sync_asset_fault_status(asset_id, request=self.request)
+        delete_fault(request=self.request, fault_id=instance.pk)
 
 
 class RepairRecordViewSet(AuditedModelViewSetMixin, ScopedModelViewSet):
@@ -3038,75 +2996,21 @@ class RepairRecordViewSet(AuditedModelViewSetMixin, ScopedModelViewSet):
             queryset = queryset.filter(fault__asset__archived_at__isnull=True)
         return queryset
 
-    def audit_extra(self, before, after, *, action):
-        fault_id = (after or {}).get("fault") or (before or {}).get("fault")
-        asset_id = (
-            FaultEvent.objects.filter(pk=fault_id).values_list("asset_id", flat=True).first()
-            if fault_id
-            else None
-        )
-        return {
-            "asset_id": asset_id,
-            "fault_id": fault_id,
-            "source": "repair_record",
-        } if asset_id else None
-
-    @transaction.atomic
     def perform_create(self, serializer):
-        # The fault is the shared timeline lock, including concurrent edits to
-        # its occurrence time. Validate once more under that lock.
-        FaultEvent.objects.select_for_update().get(pk=serializer.validated_data["fault"].pk)
-        locked_serializer = self.get_serializer(data=self.request.data)
-        locked_serializer.is_valid(raise_exception=True)
-        super().perform_create(locked_serializer)
-        serializer.instance = locked_serializer.instance
-        repair = locked_serializer.instance
-        sync_repair_completion(repair, request=self.request)
+        serializer.instance = create_repair(request=self.request, fault_id=serializer.validated_data["fault"].pk)
 
-    @transaction.atomic
     def perform_update(self, serializer):
-        # Revalidate after locking so a concurrent finish cannot be followed
-        # by an ordinary update to completed historical facts.
-        FaultEvent.objects.select_for_update().get(pk=serializer.instance.fault_id)
-        locked_repair = RepairRecord.objects.select_for_update().get(pk=serializer.instance.pk)
-        from .resource_revision import check_resource_revision
-        check_resource_revision(locked_repair, self.request)
-        require_object(locked_repair, user=self.request.user)
-        locked_serializer = self.get_serializer(
-            locked_repair,
-            data=self.request.data,
-            partial=self.request.method == "PATCH",
-        )
-        locked_serializer.is_valid(raise_exception=True)
-        super().perform_update(locked_serializer)
-        serializer.instance = locked_serializer.instance
-        repair = locked_serializer.instance
-        sync_repair_completion(repair, request=self.request)
+        serializer.instance = update_repair(request=self.request, repair_id=serializer.instance.pk)
 
-    @transaction.atomic
     def perform_destroy(self, instance):
-        FaultEvent.objects.select_for_update().get(pk=instance.fault_id)
-        locked_repair = RepairRecord.objects.select_for_update().get(pk=instance.pk)
-        if locked_repair.finished_at is not None:
-            raise DRFValidationError({
-                "detail": "已完成维修不可删除，请使用重新打开操作。",
-                "code": "finished_repair_immutable",
-            })
-        fault_id = locked_repair.fault_id
-        repair_id = locked_repair.pk
-        super().perform_destroy(locked_repair)
-        sync_fault_completion(
-            fault_id=fault_id,
-            finished_at=None,
-            request=self.request,
-            repair_id=repair_id,
-        )
+        delete_repair(request=self.request, repair_id=instance.pk)
 
     @extend_schema(
         responses=RepairRecordSerializer,
         description="重新打开已完成维修；保留维修记录和用件历史，并按现有生命周期规则重开故障。",
     )
     @action(detail=True, methods=["post"], url_path="reopen")
+    @transaction.atomic
     def reopen(self, request, pk=None):
         repair = reopen_repair(repair_id=self.get_object().pk, request=request)
         return Response(RepairRecordSerializer(repair).data)
