@@ -1,4 +1,44 @@
 export default {
+  jobs: {
+  "title": "Background jobs",
+  "queuedMessage": "Job submitted. Open Background jobs in the header for progress and results.",
+  "explanation": "Imports commit the whole file and cannot be cancelled once running. Refresh the business page after completion. Regenerate exports after business or permission changes.",
+  "digest": "Queue daily email digest",
+  "empty": "No jobs",
+  "attempts": "{count} attempts",
+  "download": "Download result",
+  "regenerate": "Result expired. Generate a new export.",
+  "previous": "Previous",
+  "next": "Next",
+  "status": {
+    "queued": "Queued",
+    "running": "Running",
+    "succeeded": "Completed",
+    "failed": "Failed",
+    "cancelled": "Cancelled"
+  },
+  "errors": {
+    "job_execution_failed": "Execution failed. Retry; check configuration and files if failures persist.",
+    "job_validation_failed": "Input validation failed. Correct the input and submit again.",
+    "job_authorization_denied": "Account or permissions changed. Retry or submit under current permissions."
+  },
+  "kinds": {
+    "asset_import": "Asset import",
+    "asset_model_import": "Model import",
+    "people_import": "People import",
+    "department_import": "Department import",
+    "asset_export": "Asset export",
+    "asset_model_export": "Model export",
+    "repair_record_export": "Repair export",
+    "license_export": "License export",
+    "spare_part_export": "Spare part export",
+    "spare_transaction_export": "Stock transaction export",
+    "rack_layout_export": "Rack export",
+    "inventory_export": "Inventory export",
+    "audit_export": "Audit export",
+    "notification_digest": "Daily email digest"
+  }
+},
   dataScope: {
     baseRule: "Base rule",
     additionalRule: "Additional rule {index}",

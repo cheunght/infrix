@@ -1,6 +1,16 @@
 #!/usr/bin/env bash
 set -Eeuo pipefail
 IFS=$'\n\t'
+upgrade_background_units=()
+
+resume_background_after_setup_failure() {
+  [[ "${upgrade_mutation_started:-0}" == 0 ]] || return 0
+  local background_unit
+  for background_unit in "${upgrade_background_units[@]:-}"; do
+    [[ -n "$background_unit" ]] || continue
+    systemctl start "$background_unit" >/dev/null 2>&1 || true
+  done
+}
 
 log() {
   printf '\n[%s] %s\n' "$(date '+%F %T')" "$*"
@@ -11,6 +21,7 @@ fail() {
   if [[ "${upgrade_service_was_active:-0}" == 1 && "${upgrade_mutation_started:-0}" == 0 ]]; then
     systemctl start infrix >&2 2>/dev/null || true
   fi
+  resume_background_after_setup_failure
   exit 1
 }
 
@@ -25,6 +36,7 @@ on_error() {
   if [[ "${upgrade_service_was_active:-0}" -eq 1 && "${upgrade_mutation_started:-0}" -eq 0 ]]; then
     systemctl start infrix >&2 2>/dev/null || true
   fi
+  resume_background_after_setup_failure
 }
 trap 'on_error "$LINENO"' ERR
 
@@ -539,6 +551,15 @@ sql_literal() {
 
 stop_existing_service_for_upgrade() {
   [[ ( "$INSTALL_MODE" == "upgrade" || "$resume_phase" == database-ready ) && -f "$SYSTEMD_UNIT_FILE" ]] || return 0
+  local background_unit
+  for background_unit in infrix-worker.service infrix-digest.timer infrix-digest.service; do
+    if systemctl cat "$background_unit" >/dev/null 2>&1; then
+      if systemctl is-active --quiet "$background_unit"; then
+        upgrade_background_units+=("$background_unit")
+      fi
+      systemctl stop "$background_unit" || fail "无法停止 $background_unit，升级已停止。"
+    fi
+  done
   if systemctl is-active --quiet infrix; then
     upgrade_service_was_active=1
     log "停止 Infrix 服务，避免升级期间继续使用旧代码。"
@@ -550,6 +571,7 @@ restart_service_after_upgrade_setup_failure() {
   if [[ "${upgrade_service_was_active:-0}" -eq 1 && "${upgrade_mutation_started:-0}" -eq 0 ]]; then
     systemctl start infrix >/dev/null 2>&1 || true
   fi
+  resume_background_after_setup_failure
 }
 
 validate_existing_migrations() {
@@ -971,6 +993,31 @@ WantedBy=multi-user.target
 EOF
 chmod 644 "$SYSTEMD_UNIT_FILE"
 
+log "写入后台作业 worker 服务"
+cat > /etc/systemd/system/infrix-worker.service <<EOF
+[Unit]
+Description=Infrix durable background jobs
+After=network-online.target mariadb.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=$APP_USER
+Group=$APP_GROUP
+WorkingDirectory=$APP_DIR/backend
+EnvironmentFile=$ENV_FILE
+ExecStart=$APP_DIR/backend/.venv/bin/python manage.py work_jobs
+Restart=always
+RestartSec=5
+TimeoutStopSec=120
+PrivateTmp=true
+NoNewPrivileges=true
+
+[Install]
+WantedBy=multi-user.target
+EOF
+chmod 644 /etc/systemd/system/infrix-worker.service
+
 log "写入每日邮件摘要定时任务"
 cat > "$DIGEST_SERVICE_UNIT_FILE" <<EOF
 [Unit]
@@ -1260,6 +1307,8 @@ if [[ "$service_ready" -ne 1 ]]; then
   fail "Infrix 服务启动失败。"
 fi
 systemctl reload nginx
+systemctl enable --now infrix-worker.service
+systemctl is-active --quiet infrix-worker.service || fail "后台作业 worker 启动失败。"
 systemctl enable --now "$(basename -- "$DIGEST_TIMER_UNIT_FILE")"
 
 health_host="${DJANGO_ALLOWED_HOSTS%%,*}"

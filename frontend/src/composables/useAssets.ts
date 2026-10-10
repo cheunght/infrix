@@ -1,3 +1,4 @@
+import { isQueuedJob, type QueuedJob } from "../jobs";
 import { useAssetLifecycle } from "./useAssetLifecycle";
 import { computed, reactive, ref, watch, type Ref } from "vue";
 import type { LocationQuery } from "vue-router";
@@ -2364,7 +2365,12 @@ export function useAssets(deps: AssetsDeps) {
     importing.value = true;
     importPreviewError.value = "";
     try {
-      const result = await deps.request<ImportResult>("/assets/import/", { method: "POST", body: form, signal: importController.signal });
+      const result = await deps.request<ImportResult | QueuedJob>("/assets/import/", { method: "POST", body: form, signal: importController.signal });
+      if (isQueuedJob(result)) {
+        showImportDialog.value = false;
+        setActionMessage(tr("jobs.queuedMessage"), "success");
+        return;
+      }
       importResult.value = result;
       importStep.value = "result";
       const importMessage = result.errors.length

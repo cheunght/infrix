@@ -42,6 +42,7 @@ import { normalizeApiError, type ActionMessageType } from "./error-handling";
 import { useRoute, useRouter, type RouteLocationRaw } from "vue-router";
 import ApiErrorAlert from "./components/ApiErrorAlert.vue";
 import SearchField from "./components/SearchField.vue";
+import JobCenter from "./components/JobCenter.vue";
 import NotificationCenter from "./components/NotificationCenter.vue";
 import LanguageSwitcher from "./components/LanguageSwitcher.vue";
 import { branding, brandingLogo, brandingMark, brandingImageFailed, loadBranding } from "./branding";
@@ -2359,6 +2360,7 @@ watch(hasOpenGlobalOverlay, (isOpen) => {
             :username="username"
             @select="handleNotificationSelect"
           />
+          <JobCenter :request="request" :download="download" :username="username" :can="can" />
           <LanguageSwitcher :disabled="localeSaving" @change="persistLocalePreference" />
           <el-dropdown class="user-menu" trigger="click"
             ><el-button

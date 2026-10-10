@@ -1,5 +1,6 @@
 from rest_framework.routers import DefaultRouter
 from django.urls import path
+from .job_views import jobs, job_detail, job_action, job_result
 from .branding import public_branding, branding_image, branding_configuration
 from .views import AssetModelViewSet, AuditLogViewSet, AssetViewSet, AttachmentViewSet, CustomFieldOptionViewSet, CustomFieldSetViewSet, CustomFieldViewSet, DataCenterViewSet, DepartmentViewSet, DeviceTypeViewSet, FaultEventViewSet, GroupViewSet, InventoryItemViewSet, InventoryTaskViewSet, ManufacturerViewSet, NotificationDeliveryViewSet, PersonViewSet, RackViewSet, RepairRecordViewSet, ServerRoomViewSet, SoftwareLicenseViewSet, SparePartCategoryViewSet, SparePartViewSet, SpareStockViewSet, SpareStockTransactionViewSet, TagViewSet, UserViewSet, alerts_overview, asset_inventory_records, asset_model_export, asset_model_import, asset_model_import_preview, asset_model_import_template, dashboard_overview, facilities_summary, inventory_inspectors, license_export, license_summary, repair_record_export, rack_layout_export, spare_part_export, spare_transaction_export, auth_login, auth_me, auth_logout, auth_csrf, auth_change_password, auth_2fa_status, auth_2fa_setup, auth_2fa_confirm, auth_2fa_disable, auth_2fa_verify, auth_api_tokens, auth_api_token_revoke, auth_ldap_status, auth_ldap_config, auth_ldap_diagnostics, operational_status, smtp_test_email, system_reset, system_settings, system_backups, system_backup_download, system_backup_delete, system_backup_restore, asset_import, asset_import_preview, asset_import_template, asset_export, department_import, department_import_preview, department_import_template, people_import, people_import_preview, people_import_template
 
@@ -33,6 +34,10 @@ router.register("inventory-tasks", InventoryTaskViewSet, basename="inventory-tas
 router.register("inventory-items", InventoryItemViewSet, basename="inventory-item")
 
 urlpatterns = [
+    path("jobs/", jobs),
+    path("jobs/<uuid:job_id>/", job_detail),
+    path("jobs/<uuid:job_id>/result/", job_result),
+    path("jobs/<uuid:job_id>/<str:action>/", job_action),
     path("system/operations/", operational_status),
     path("branding/", public_branding),
     path("branding/images/<str:kind>/", branding_image),

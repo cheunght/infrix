@@ -36,6 +36,7 @@ from .models import (
     MaintenanceContract,
     Manufacturer,
     NotificationDelivery,
+    BackgroundJob,
     PersonalAccessToken,
     ProcurementRecord,
     Rack,
@@ -98,6 +99,7 @@ def _preserved_admin_ids(actor):
 def _clear_mutable_data(preserved_user_ids):
     """Delete business records in dependency order, never schema metadata."""
     counts = {}
+    _delete_queryset(counts, "background_jobs", BackgroundJob.objects.all())
 
     # Operational history and authentication state must be removed before
     # their actors or referenced business objects disappear.
@@ -212,7 +214,8 @@ def _reset_system_in_transaction(*, actor, request):
 
 def reset_system(*, actor, request):
     """Atomically reset mutable application data and preserve administrators."""
-    with backup_operation_lock():
+    from .background_jobs import file_access
+    with file_access(exclusive=True), backup_operation_lock():
         with _RESET_LOCK:
             with transaction.atomic():
                 return _reset_system_in_transaction(actor=actor, request=request)

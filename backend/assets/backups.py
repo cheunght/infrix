@@ -686,8 +686,12 @@ def _verify_media_tree(root, references):
 
 
 def _referenced_media(root):
+    from .models import BackgroundJob
     references = []
-    for name in sorted(set(Attachment.objects.exclude(file="").values_list("file", flat=True))):
+    names = set(Attachment.objects.exclude(file="").values_list("file", flat=True))
+    names.update(BackgroundJob.objects.exclude(input_file="").values_list("input_file", flat=True))
+    names.update(BackgroundJob.objects.exclude(result_file="").values_list("result_file", flat=True))
+    for name in sorted(names):
         name = _media_path(name)
         path = root / name
         if path.is_symlink() or not path.resolve().is_relative_to(root.resolve()) or not path.is_file():
@@ -1362,6 +1366,9 @@ def _post_restore() -> tuple[int, list[str]]:
     invalidated_sessions = 0
     try:
         invalidated_sessions, _ = Session.objects.all().delete()
+        from .background_jobs import suppress_restored_notifications
+        suppress_restored_notifications()
+        warnings.append("恢复前 SMTP 发送不能回滚；已取消恢复的待发摘要，并暂停当日自动摘要，次日恢复。")
     except Exception:
         logger.exception("Unable to invalidate sessions after restore")
         raise BackupServiceError("恢复后的会话失效未完成。", code="post_restore_validation_failed", status_code=502) from None

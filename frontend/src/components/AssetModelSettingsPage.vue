@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { isQueuedJob, type QueuedJob } from "../jobs";
 import { revisionHeaders } from "../revision";
 import { computed, onMounted, proxyRefs, reactive, ref } from "vue";
 import { useI18n } from "vue-i18n";
@@ -369,8 +370,9 @@ async function confirmImport() {
   importing.value = true;
   importError.value = "";
   try {
-    const result = await c.request<{ created: number }>("/asset-models/import/", { method: "POST", body });
+    const result = await c.request<{ created: number } | QueuedJob>("/asset-models/import/", { method: "POST", body });
     showImportModal.value = false;
+    if (isQueuedJob(result)) { ElMessage.success(t("jobs.queuedMessage")); return; }
     ElMessage.success(t("assetModel.importSuccess", { count: result.created }));
     await loadModels();
   } catch (commitError) {

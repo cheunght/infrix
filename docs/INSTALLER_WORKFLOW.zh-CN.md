@@ -165,3 +165,7 @@ sudo env BASE_URL=https://<hostname> bash deploy/verify-release.sh
 ```
 
 数据库、LDAP、SMTP、反向代理、备份和生产安全的详细操作，请继续阅读本中文安装文档或[中文手工部署文档](MANUAL_DEPLOYMENT.zh-CN.md)。
+
+## 后台作业 worker
+
+迁移 0014 后，Web 同时需要独立 `infrix-worker.service` 执行导入、导出和邮件摘要。安装器会创建、启用并检查该服务；手工升级先停止 worker 和摘要定时器，完成迁移后再启动。旧摘要命令仅提交队列。目录、命令、恢复和清理规则见[持久后台作业](BACKGROUND-JOBS.zh-CN.md)。

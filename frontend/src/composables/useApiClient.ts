@@ -1,4 +1,5 @@
 import { ref, type Ref } from "vue";
+import { announceJob, exportJobs, importJobs, type QueuedJob } from "../jobs";
 import {
   apiBase,
   apiRequest,
@@ -21,6 +22,8 @@ export function useApiClient({ csrfToken, authenticated }: ApiClientOptions) {
   const loadVersion = ref(0);
   let activeLoadController: AbortController | null = null;
   const loadRequests = createRequestCoordinator();
+  const pendingExports = new Map<string, string>();
+  let pendingImports = new WeakMap<File, Map<string, string>>();
 
   function beginLoad() {
     activeLoadController?.abort();
@@ -55,6 +58,24 @@ export function useApiClient({ csrfToken, authenticated }: ApiClientOptions) {
     signal?: AbortSignal,
   ): Promise<T> {
     const method = (options.method || "GET").toUpperCase();
+    const importKind = importJobs[path];
+    if (method === "POST" && importKind && options.body instanceof FormData) {
+      const file = options.body.get("file");
+      if (file instanceof File) {
+        let keys = pendingImports.get(file);
+        if (!keys) { keys = new Map(); pendingImports.set(file, keys); }
+        let key = keys.get(importKind);
+        if (!key) { key = crypto.randomUUID(); keys.set(importKind, key); }
+        const body = new FormData();
+        body.append("kind", importKind);
+        body.append("file", file);
+        const headers = new Headers(options.headers);
+        headers.set("Idempotency-Key", key);
+        const result = await request<QueuedJob>("/jobs/", {...options, body, headers}, retryCsrf, signal);
+        announceJob(result.job);
+        return result as T;
+      }
+    }
     // Route changes may cancel page reads; mutation cancellation must be explicit.
     const inheritedLoadSignal = method === "GET" || method === "HEAD"
       ? activeLoadController?.signal
@@ -75,6 +96,20 @@ export function useApiClient({ csrfToken, authenticated }: ApiClientOptions) {
   }
 
   async function download(path: string, filename?: string) {
+    const url = new URL(path, window.location.origin);
+    const task = url.pathname.match(/^\/inventory-tasks\/(\d+)\/export\/$/);
+    const kind = exportJobs[url.pathname] || (task ? "inventory_export" : "");
+    if (kind) {
+      const params = Object.fromEntries(url.searchParams.entries());
+      if (task) params.task_id = task[1]!;
+      const body = JSON.stringify({kind, params});
+      let key = pendingExports.get(body);
+      if (!key) { key = crypto.randomUUID(); pendingExports.set(body, key); }
+      const result = await request<QueuedJob>("/jobs/", {method: "POST", body, headers: {"Content-Type": "application/json", "Idempotency-Key": key}});
+      pendingExports.delete(body);
+      announceJob(result.job);
+      return;
+    }
     await downloadBlob(path, {
       filename,
       onUnauthorized: () => {
@@ -86,6 +121,8 @@ export function useApiClient({ csrfToken, authenticated }: ApiClientOptions) {
   function dispose() {
     activeLoadController?.abort();
     loadRequests.cancelAll();
+    pendingExports.clear();
+    pendingImports = new WeakMap();
   }
 
   return {

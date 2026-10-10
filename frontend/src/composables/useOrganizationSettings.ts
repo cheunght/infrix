@@ -1,3 +1,4 @@
+import { isQueuedJob, type QueuedJob } from "../jobs";
 import { useAccountEditor } from "./useAccountEditor";
 import { revisionHeaders } from "../revision";
 import { computed, ref, watch, type Ref } from "vue";
@@ -709,12 +710,18 @@ export function useOrganizationSettings(deps: OrganizationSettingsDeps) {
     peopleImporting.value = true;
     peopleImportError.value = "";
     try {
-      const result = await deps.request<PeopleImportResult>("/people/import/", {
+      const result = await deps.request<PeopleImportResult | QueuedJob>("/people/import/", {
         method: "POST",
         body: form,
         signal: controller.signal,
       });
       if (requestId !== peopleImportRequestId.value || controller.signal.aborted) return false;
+      if (isQueuedJob(result)) {
+        peopleImporting.value = false;
+        closePeopleImport();
+        setActionMessage(tr("jobs.queuedMessage"), "success");
+        return true;
+      }
       const refreshed = await loadResponsibilityDirectory();
       if (requestId !== peopleImportRequestId.value || controller.signal.aborted) return false;
       closePeopleImport();
@@ -849,12 +856,18 @@ export function useOrganizationSettings(deps: OrganizationSettingsDeps) {
     departmentImporting.value = true;
     departmentImportError.value = "";
     try {
-      const result = await deps.request<DepartmentImportResult>("/departments/import/", {
+      const result = await deps.request<DepartmentImportResult | QueuedJob>("/departments/import/", {
         method: "POST",
         body: form,
         signal: controller.signal,
       });
       if (requestId !== departmentImportRequestId.value || controller.signal.aborted) return false;
+      if (isQueuedJob(result)) {
+        departmentImporting.value = false;
+        closeDepartmentImport();
+        setActionMessage(tr("jobs.queuedMessage"), "success");
+        return true;
+      }
       const refreshVersion = deps.beginLoad();
       const [departmentsRefreshed, peopleRefreshed] = await Promise.all([
         loadDepartments(refreshVersion),

@@ -1,4 +1,44 @@
 export default {
+  jobs: {
+  "title": "后台作业",
+  "queuedMessage": "已提交后台作业，请在顶部“后台作业”查看进度和结果。",
+  "explanation": "导入按整份文件提交，执行中不能取消。完成后刷新业务页面查看数据。导出后业务或授权变化时，请重新生成。",
+  "digest": "提交每日邮件摘要",
+  "empty": "暂无作业",
+  "attempts": "执行 {count} 次",
+  "download": "下载结果",
+  "regenerate": "结果已失效，请重新导出。",
+  "previous": "上一页",
+  "next": "下一页",
+  "status": {
+    "queued": "排队中",
+    "running": "执行中",
+    "succeeded": "已完成",
+    "failed": "失败",
+    "cancelled": "已取消"
+  },
+  "errors": {
+    "job_execution_failed": "执行失败；可重试，重复失败请检查运行配置及文件。",
+    "job_validation_failed": "输入校验失败，请修正后重新提交。",
+    "job_authorization_denied": "账号或授权已变化，请按当前权限重试或重新提交。"
+  },
+  "kinds": {
+    "asset_import": "资产导入",
+    "asset_model_import": "型号导入",
+    "people_import": "人员导入",
+    "department_import": "部门导入",
+    "asset_export": "资产导出",
+    "asset_model_export": "型号导出",
+    "repair_record_export": "维修导出",
+    "license_export": "许可导出",
+    "spare_part_export": "备件导出",
+    "spare_transaction_export": "库存流水导出",
+    "rack_layout_export": "机柜导出",
+    "inventory_export": "盘点导出",
+    "audit_export": "审计导出",
+    "notification_digest": "每日邮件摘要"
+  }
+},
   dataScope: {
     baseRule: "基础规则",
     additionalRule: "附加规则 {index}",
