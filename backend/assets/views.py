@@ -52,12 +52,11 @@ from .enum_contracts import (
     STOCK_OPERATION_TYPE_VALUES,
 )
 from .serializers import AdminPasswordResetSerializer, ApiTokenCreateSerializer, ApiTokenSerializer, AssetAssignmentEventSerializer, AssetAssignmentReturnSerializer, AssetAssignmentTargetSerializer, AssetBatchAssignmentResponseSerializer, AssetBatchAssignmentSerializer, AssetBatchDeleteResponseSerializer, AssetBatchDeleteSerializer, AssetBulkEditResponseSerializer, AssetBulkEditSerializer, AssetDetailSerializer, AssetDisposalRequestSerializer, AssetListSerializer, AssetModelOptionSerializer, AssetModelSerializer, AssetSerializer, AssetTimelineSerializer, AssetWriteSerializer, AttachmentSerializer, AuditLogSerializer, BackupConfirmationSerializer, CurrentUserProfileSerializer, CustomFieldOptionSerializer, CustomFieldRuntimeSchemaSerializer, CustomFieldSerializer, CustomFieldSetItemsWriteSerializer, CustomFieldSetOptionSerializer, CustomFieldSetSerializer, DataCenterOptionSerializer, DataCenterSerializer, DepartmentOptionSerializer, DepartmentSerializer, DeviceTypeOptionSerializer, DeviceTypeSerializer, DictionaryOptionSerializer, FaultEventSerializer, InventoryBulkNormalResponseSerializer, InventoryBulkNormalSerializer, InventoryBulkResolutionResponseSerializer, InventoryBulkResolutionSerializer, InventoryInspectorSerializer, InventoryItemPageSerializer, InventoryItemSerializer, InventoryResolutionSerializer, InventoryScopePreviewQuerySerializer, InventoryScopePreviewSerializer, InventoryTaskSerializer, LdapConfigurationUpdateSerializer, NotificationDeliverySerializer, PersonOptionSerializer, PersonSerializer, RackOptionSerializer, RackSerializer, RepairPartUsageCreateSerializer, RepairPartUsageSerializer, RepairRecordSerializer, ServerRoomOptionSerializer, ServerRoomSerializer, SoftwareLicenseSerializer, SparePartDetailSerializer, SparePartOptionSerializer, SparePartSerializer, SpareStockOptionSerializer, SpareStockSerializer, SpareStockTransactionSerializer, SmtpTestEmailSerializer, SystemResetSerializer, SystemSettingsPatchSerializer, SystemSettingsSnapshotSerializer, TagOptionSerializer, TagSerializer, TwoFactorCodeSerializer, UserBatchStatusResponseSerializer, UserBatchStatusSerializer, UserSerializer, _default_references_option
+from .stock import create_spare_part_with_stock, record_stock_transaction, record_repair_part_usage
 from .fieldsets import fieldset_items_queryset, replace_fieldset_items, resolve_fieldset
 from .services import (
     InventoryObservationConflict,
-    apply_spare_stock_transaction,
     confirm_inventory_item_normal,
-    create_repair_part_usage,
     inventory_task_delete_block_reason,
     reopen_repair,
     reset_inventory_resolution,
@@ -81,7 +80,7 @@ from .physical_location import (
 from .inventory import get_inventory_scope_assets
 from .depreciation import calculate_asset_depreciation
 from .license_status import LICENSE_STATUS_KEYS, LICENSE_STATUS_LABELS, filter_licenses_by_status, license_status_counts, license_status_value
-from .audit import asset_audit_snapshot, asset_custom_value_changes, json_value, model_snapshot, software_license_audit_snapshot, spare_part_audit_snapshot, spare_stock_transaction_audit_snapshot, write_audit_log
+from .audit import asset_audit_snapshot, asset_custom_value_changes, json_value, model_snapshot, software_license_audit_snapshot, spare_part_audit_snapshot, write_audit_log
 from .timeline import asset_timeline_queryset, serialize_timeline
 from .imports import AssetImportService, ImportFileError, ImportValidationError, build_import_template
 from .asset_model_imports import build_asset_model_import_template, commit_asset_model_import, preview_asset_model_import
@@ -2499,51 +2498,15 @@ class SparePartViewSet(AuditedModelViewSetMixin, ScopedModelViewSet):
             queryset = queryset.filter(Exists(scoped(matching_stock, user=self.request.user)))
         return queryset
 
-    @transaction.atomic
     def perform_create(self, serializer):
-        initial_quantity = serializer.validated_data.pop("initial_quantity", 0)
-        initial_data_center = serializer.validated_data.pop("initial_data_center", None)
-        initial_server_room = serializer.validated_data.pop("initial_server_room", None)
-        instance = serializer.save()
-        after = self.audit_snapshot(instance)
-        write_audit_log(
-            self.request,
-            action="create",
-            resource_type=self.audit_resource,
-            resource_id=instance.pk,
-            after=after,
-            extra=self.audit_extra(None, after, action="create"),
-        )
-        if initial_quantity <= 0:
-            return
-        try:
-            transaction_row = apply_spare_stock_transaction(
-                {
-                    "part": instance,
-                    "operation_type": "initial",
-                    "quantity": initial_quantity,
-                    "target_data_center": initial_data_center,
-                    "target_server_room": initial_server_room,
-                    "reference": "初始库存",
-                    "notes": "新增备件时登记的初始库存",
-                },
-                self.request.user,
-            )
-        except DjangoValidationError as exc:
-            detail = getattr(exc, "message_dict", None) or {"detail": "; ".join(exc.messages)}
-            raise DRFValidationError(detail) from exc
-        write_audit_log(
-            self.request,
-            action="create",
-            resource_type="spare_stock_transaction",
-            resource_id=transaction_row.pk,
-            after=SpareStockTransactionSerializer(transaction_row).data,
+        serializer.instance = create_spare_part_with_stock(
+            validated_data=serializer.validated_data, operator=self.request.user, request=self.request,
         )
 
     @transaction.atomic
     def perform_destroy(self, instance):
         from rest_framework.exceptions import ValidationError as DRFValidationError
-        # Keep the delete lock order identical to apply_spare_stock_transaction:
+        # Keep the delete lock order identical to the inventory module:
         # part first, then related stock/ledger rows.
         try:
             locked_part = SparePart.objects.select_for_update().get(pk=instance.pk)
@@ -2606,12 +2569,10 @@ class SpareStockViewSet(ScopedReadOnlyModelViewSet):
 class SpareStockTransactionViewSet(ScopedModelViewSet):
     @extend_schema(parameters=[OpenApiParameter("Idempotency-Key", OpenApiTypes.STR, location=OpenApiParameter.HEADER, required=True, description="每次逻辑操作的唯一键；重试必须复用。")])
     def create(self, request, *args, **kwargs):
-        from .idempotency import execute_once
-        # Reauthorize submitted endpoints even when execute_once replays an
-        # already committed receipt after scope revocation.
+        # Field parsing belongs here; the inventory module owns submission.
         admission = self.get_serializer(data=request.data)
         admission.is_valid(raise_exception=True)
-        return execute_once(request, lambda: super(SpareStockTransactionViewSet, self).create(request, *args, **kwargs))
+        return record_stock_transaction(request, admission.validated_data)
 
     queryset = SpareStockTransaction.objects.select_related(
         "part", "part__category", "part__manufacturer", "operator", "source_data_center", "source_server_room",
@@ -2637,31 +2598,6 @@ class SpareStockTransactionViewSet(ScopedModelViewSet):
         if errors:
             return Response(errors, status=400)
         return super().list(request, *args, **kwargs)
-
-    @transaction.atomic
-    def perform_create(self, serializer):
-        from rest_framework.exceptions import ValidationError as DRFValidationError
-        audit_context = {}
-        try:
-            transaction_row = apply_spare_stock_transaction(
-                serializer.validated_data,
-                self.request.user,
-                audit_context=audit_context,
-            )
-        except DjangoValidationError as exc:
-            detail = getattr(exc, "message_dict", None) or {"detail": "; ".join(exc.messages)}
-            raise DRFValidationError(detail) from exc
-        serializer.instance = transaction_row
-        write_audit_log(
-            self.request,
-            action="create",
-            resource_type="spare_stock_transaction",
-            resource_id=transaction_row.pk,
-            after=spare_stock_transaction_audit_snapshot(
-                transaction_row,
-                transfer_context=audit_context,
-            ),
-        )
 
 
 class SoftwareLicenseViewSet(AuditedModelViewSetMixin, ScopedModelViewSet):
@@ -3040,24 +2976,9 @@ class FaultEventViewSet(AuditedModelViewSetMixin, ScopedModelViewSet):
                 return self.get_paginated_response(RepairPartUsageSerializer(page, many=True).data)
             return Response(RepairPartUsageSerializer(queryset, many=True).data)
 
-        from .idempotency import execute_once
         admission = RepairPartUsageCreateSerializer(data=request.data)
         admission.is_valid(raise_exception=True)
-        stock = admission.validated_data.get("spare_stock")
-        if stock is not None:
-            require_object(stock, user=request.user)
-        return execute_once(request, lambda: self._record_part_usage(request, fault))
-
-    def _record_part_usage(self, request, fault):
-        input_serializer = RepairPartUsageCreateSerializer(data=request.data)
-        input_serializer.is_valid(raise_exception=True)
-        usage = create_repair_part_usage(
-            fault_id=fault.pk,
-            validated_data=input_serializer.validated_data,
-            operator=request.user,
-            request=request,
-        )
-        return Response(RepairPartUsageSerializer(usage).data, status=201)
+        return record_repair_part_usage(request, fault=fault, validated_data=admission.validated_data)
 
     @transaction.atomic
     def perform_create(self, serializer):

@@ -1,15 +1,10 @@
+import { useSpareStockOperations } from "./useSpareStockOperations";
 import { revisionHeaders } from "../revision";
 import { ref, watch, type Ref } from "vue";
 import { buildExportQuery, isAbortError, pageItems, pageTotal, type PageResult } from "../api";
 import type { DataCenter, ServerRoom, SparePart, SparePartCategory, SparePartFormState, SpareStock, SpareTransaction } from "../types";
 import type { CapabilityFn, RequestFn } from "../page-context";
-import {
-  businessOptionLabel,
-  STOCK_OPERATION_OPTIONS,
-  STOCK_SOURCE_OPERATION_VALUES,
-  STOCK_TARGET_OPERATION_VALUES,
-  type StockOperationType,
-} from "../business-enums";
+import type { StockOperationType } from "../business-enums";
 import { i18n } from "../i18n";
 import {
   clearFieldError,
@@ -37,24 +32,7 @@ const SPARE_PART_FORM_FIELDS = [
   "notes",
 ] as const;
 
-const SPARE_OPERATION_FORM_FIELDS = [
-  "part",
-  "quantity",
-  "adjustment_quantity",
-  "source_data_center",
-  "source_server_room",
-  "target_data_center",
-  "target_server_room",
-  "reference",
-  "notes",
-] as const;
-
-export type SpareOperationLocation = {
-  data_center: number;
-  server_room: number | null;
-  quantity: number;
-  label: string;
-};
+export type { SpareOperationLocation } from "./useSpareStockOperations";
 
 export interface SparePartsDeps {
   request: RequestFn;
@@ -97,17 +75,6 @@ export function useSpareParts(deps: SparePartsDeps) {
   const spareListRequestId = ref(0);
   let spareListController: AbortController | null = null;
 
-  const spareOperationType = ref<StockOperationType>("inbound");
-  const spareOperationForm = ref({
-    part: "", quantity: "1", adjustment_quantity: "", source_data_center: "", source_server_room: "", target_data_center: "", target_server_room: "", reference: "", notes: "",
-  });
-  const showSpareOperationModal = ref(false);
-  const spareOperationSaving = ref(false);
-  const spareOperationError = ref("");
-  const spareOperationFormErrors = ref<Record<string, string>>({});
-  const spareOperationCurrentQuantity = ref<number | null>(null);
-  const spareOperationLocationLabel = ref("");
-  const spareOperationLocationLocked = ref(false);
   const spareTransactionFilters = ref<{
     part: string;
     operation_type: StockOperationType | "";
@@ -179,11 +146,6 @@ export function useSpareParts(deps: SparePartsDeps) {
     sparePartForm as unknown as Ref<Record<string, unknown>>,
     sparePartFormErrors,
     SPARE_PART_FORM_FIELDS,
-  );
-  watchFormFieldErrors(
-    spareOperationForm,
-    spareOperationFormErrors,
-    SPARE_OPERATION_FORM_FIELDS,
   );
 
   function totalPages(total: number, pageSize: number) {
@@ -477,7 +439,7 @@ export function useSpareParts(deps: SparePartsDeps) {
     if (!deps.can("spares.manage")) return;
     sparePartFormError.value = "";
     sparePartFormErrors.value = {};
-    editingSparePart.value = part || null;
+    editingSparePart.value = part ? {...part} : null;
     const defaultCategory = deps.spareCategories.value.find((item) => item.is_active)?.id;
     sparePartForm.value = part
       ? {
@@ -571,75 +533,14 @@ export function useSpareParts(deps: SparePartsDeps) {
       deletingSparePartId.value = null;
     }
   }
-
-  function openSpareOperation(part: SparePart, operationType: StockOperationType = "inbound", location?: SpareOperationLocation) {
-    if (!deps.can("spares.manage")) return;
-    spareOperationError.value = "";
-    spareOperationFormErrors.value = {};
-    spareOperationType.value = operationType;
-    let remembered: Partial<SpareOperationLocation> | null = null;
-    if (!location) {
-      try { remembered = JSON.parse(localStorage.getItem("infrix.spare.last_location") || "null") as Partial<SpareOperationLocation> | null; } catch { remembered = null; }
-    }
-    const rememberedCenterId = remembered?.data_center ? Number(remembered.data_center) : 0;
-    const rememberedRoomId = remembered?.server_room ? Number(remembered.server_room) : 0;
-    const rememberedCenter = Number.isInteger(rememberedCenterId) && rememberedCenterId > 0
-      ? { id: rememberedCenterId }
-      : null;
-    const rememberedRoom = rememberedCenter && Number.isInteger(rememberedRoomId) && rememberedRoomId > 0
-      ? { id: rememberedRoomId, data_center: rememberedCenter.id }
-      : null;
-    const preset = location || (rememberedCenter && (!remembered?.server_room || rememberedRoom) ? { data_center: rememberedCenter.id, server_room: rememberedRoom?.id || null, quantity: 0, label: tr("spare.recentLocation") } : undefined);
-    spareOperationForm.value = {
-      part: String(part.id), quantity: "1", adjustment_quantity: "",
-      source_data_center: preset && STOCK_SOURCE_OPERATION_VALUES.includes(operationType) ? String(preset.data_center) : "",
-      source_server_room: preset && STOCK_SOURCE_OPERATION_VALUES.includes(operationType) && preset.server_room ? String(preset.server_room) : "",
-      target_data_center: preset && STOCK_TARGET_OPERATION_VALUES.includes(operationType) ? String(preset.data_center) : "",
-      target_server_room: preset && STOCK_TARGET_OPERATION_VALUES.includes(operationType) && preset.server_room ? String(preset.server_room) : "",
-      reference: "", notes: "",
-    };
-    spareOperationCurrentQuantity.value = location ? location.quantity : null;
-    spareOperationLocationLabel.value = location?.label || "";
-    spareOperationLocationLocked.value = Boolean(location);
-    showSpareOperationModal.value = true;
-  }
-
-  async function saveSpareOperation(): Promise<boolean> {
-    if (!deps.can("spares.manage")) return false;
-    if (spareOperationSaving.value) return false;
-    spareOperationError.value = "";
-    spareOperationFormErrors.value = {};
-    spareOperationSaving.value = true;
-    try {
-      const operation = spareOperationType.value;
-      const form = spareOperationForm.value;
-      const payload: Record<string, unknown> = { part: Number(form.part), operation_type: operation, reference: form.reference, notes: form.notes };
-      if (operation === "adjustment") payload.adjustment_quantity = Number(form.adjustment_quantity || 0);
-      else payload.quantity = Number(form.quantity || 0);
-      if (STOCK_TARGET_OPERATION_VALUES.includes(operation)) { payload.target_data_center = Number(form.target_data_center); payload.target_server_room = form.target_server_room ? Number(form.target_server_room) : null; }
-      if (STOCK_SOURCE_OPERATION_VALUES.includes(operation)) { payload.source_data_center = Number(form.source_data_center); payload.source_server_room = form.source_server_room ? Number(form.source_server_room) : null; }
-      await deps.request("/spare-transactions/", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload) });
-      const locationDataCenter = STOCK_SOURCE_OPERATION_VALUES.includes(operation) ? form.source_data_center : form.target_data_center;
-      const locationServerRoom = STOCK_SOURCE_OPERATION_VALUES.includes(operation) ? form.source_server_room : form.target_server_room;
-      if (locationDataCenter) localStorage.setItem("infrix.spare.last_location", JSON.stringify({ data_center: Number(locationDataCenter), server_room: locationServerRoom ? Number(locationServerRoom) : null }));
-      showSpareOperationModal.value = false;
-      setActionMessage(tr("spare.transactionSaved"));
+  const operations = useSpareStockOperations({
+    request: deps.request, can: deps.can, spareRooms,
+    actionMessage: deps.actionMessage, actionMessageType: deps.actionMessageType,
+    refresh: async () => {
       const refreshed = await loadSpareData();
-      if (!refreshed && spareListError.value) setActionMessage(tr("spare.transactionSavedRefreshFailed"), "error");
-      return true;
-    } catch (error) {
-      const parsed = extractFormError(error, SPARE_OPERATION_FORM_FIELDS, tr("spare.operationFailed"));
-      spareOperationFormErrors.value = parsed.fields;
-      spareOperationError.value = parsed.message;
-      return false;
-    } finally {
-      spareOperationSaving.value = false;
-    }
-  }
-
-  function spareOperationLabel(operation: string) {
-    return businessOptionLabel(STOCK_OPERATION_OPTIONS, operation);
-  }
+      return refreshed ? null : spareListError.value || null;
+    },
+  });
 
   return {
     spareParts, sparePartCount,
@@ -649,12 +550,11 @@ export function useSpareParts(deps: SparePartsDeps) {
     sparePartForm, showSparePartModal, editingSparePart, spareSaving, deletingSparePartId,
     sparePartFormError, sparePartFormErrors,
     spareListLoading, spareListError, exportingSpares, loadSpareData, refreshSparePart, searchSpareParts, resetSpareFilters, retrySpareList,
-    spareOperationType, spareOperationForm, showSpareOperationModal, spareOperationSaving, spareOperationError, spareOperationFormErrors, spareOperationCurrentQuantity,
-    spareOperationLocationLabel, spareOperationLocationLocked, spareTransactionFilters,
+    ...operations, spareTransactionFilters,
     stockLocations, stockLocationLoadingByPart, stockLocationErrorByPart, stockLocationTotalsByPart,
     stockLocationLoadedByPart, loadStockLocations, transactionRows, transactionCount, transactionPage, transactionPageSize,
     transactionLoading, transactionError, loadTransactions, changeTransactionPage, changeTransactionPageSize,
     changeSparePage, changeSparePageSize, openSparePartModal, saveSparePart,
-    deleteSparePart, openSpareOperation, saveSpareOperation, spareOperationLabel, exportSpareParts, exportSpareTransactions,
+    deleteSparePart, exportSpareParts, exportSpareTransactions,
   };
 }

@@ -27,17 +27,14 @@ from .enum_contracts import (
     REPAIR_PART_USAGE_SOURCE_LABELS,
     REPAIR_PART_USAGE_SOURCE_VALUES,
     SPARE_UNIT_LABELS,
-    STOCK_SOURCE_OPERATION_TYPES,
-    STOCK_TARGET_OPERATION_TYPES,
     STOCK_OPERATION_TYPE_LABELS,
-    STOCK_OPERATION_TYPE_VALUES,
 )
 from .license_status import LICENSE_STATUS_LABELS, license_status_value
 from .fault_timeline import validate_fault_times, validate_repair_times
 from .asset_revision import check_asset_revision
 from .resource_revision import ResourceRevisionSerializerMixin
 from .reporting.capacity import rack_effective_used_u
-from .services import CustomFieldConflictError, apply_asset_custom_values, apply_asset_tags, apply_spare_stock_transaction, assign_asset, configure_asset, inventory_snapshot_location, inventory_task_can_delete, return_asset, transfer_asset, validate_inventory_resolution_request
+from .services import CustomFieldConflictError, apply_asset_custom_values, apply_asset_tags, assign_asset, configure_asset, inventory_snapshot_location, inventory_task_can_delete, return_asset, transfer_asset, validate_inventory_resolution_request
 from .physical_location import RoomReparentBlocked, lock_inventory_scope, lock_asset_location, update_rack, update_server_room
 from .custom_fields import validate_custom_field_value
 from .custom_fields import normalize_validation_config as _normalize_validation_config
@@ -1860,29 +1857,11 @@ class SpareStockTransactionSerializer(serializers.ModelSerializer):
         return data
 
     def validate(self, attrs):
-        operation_type = attrs.get("operation_type")
-        if operation_type not in STOCK_OPERATION_TYPE_VALUES:
-            raise serializers.ValidationError({"operation_type": "不支持的库存操作类型"})
-        quantity = attrs.get("quantity", 0)
-        if operation_type != "adjustment" and quantity <= 0:
-            raise serializers.ValidationError({"quantity": "数量必须大于 0"})
-        if operation_type == "adjustment":
-            if "quantity" in self.initial_data:
-                raise serializers.ValidationError({"quantity": "盘点调整请使用 adjustment_quantity"})
-            adjustment_quantity = attrs.get("adjustment_quantity")
-            if adjustment_quantity is None:
-                raise serializers.ValidationError({"adjustment_quantity": "盘点调整必须填写调整数量"})
-            if adjustment_quantity == 0:
-                raise serializers.ValidationError({"adjustment_quantity": "调整数量不能为 0"})
-        elif "adjustment_quantity" in attrs:
-            raise serializers.ValidationError({"adjustment_quantity": "只有盘点调整支持调整数量"})
-        if operation_type in STOCK_SOURCE_OPERATION_TYPES and not attrs.get("source_data_center"):
-            raise serializers.ValidationError({"source_data_center": "必须选择来源数据中心"})
-        if operation_type in STOCK_TARGET_OPERATION_TYPES and not attrs.get("target_data_center"):
-            raise serializers.ValidationError({"target_data_center": "必须选择目标数据中心"})
-        if operation_type == "transfer" and not attrs.get("target_data_center"):
-            raise serializers.ValidationError({"target_data_center": "调拨必须选择目标数据中心"})
-        return attrs
+        from .stock import validate_stock_movement
+        try:
+            return validate_stock_movement(attrs, submitted_fields=self.initial_data)
+        except DjangoValidationError as exc:
+            raise serializers.ValidationError(exc.message_dict) from exc
 
     class Meta:
         model = SpareStockTransaction
@@ -4045,31 +4024,5 @@ class RepairPartUsageCreateSerializer(serializers.Serializer):
     notes = serializers.CharField(required=False, allow_blank=True)
 
     def validate(self, attrs):
-        source = attrs["source"]
-        stock = attrs.get("spare_stock")
-        attrs["part_code"] = str(attrs.get("part_code") or "").strip()
-        attrs["part_name"] = str(attrs.get("part_name") or "").strip()
-        attrs["part_model"] = str(attrs.get("part_model") or "").strip()
-        vendor_name = str(attrs.get("vendor_name") or "").strip()
-        attrs["vendor_name"] = vendor_name
-        attrs["notes"] = str(attrs.get("notes") or "").strip()
-
-        if source == RepairPartUsage.INTERNAL_STOCK:
-            if stock is None:
-                raise serializers.ValidationError({"spare_stock_id": "内部库存用件必须选择明确的库存位置"})
-            if vendor_name:
-                raise serializers.ValidationError({"vendor_name": "内部库存用件不能填写厂商名称"})
-            if attrs.get("spare_part") is not None and stock.part_id != attrs["spare_part"].pk:
-                raise serializers.ValidationError({"spare_stock_id": "所选库存备件与部件不一致"})
-            attrs["spare_part"] = stock.part
-            if (
-                not stock.data_center.is_active
-                or (stock.server_room is not None and not stock.server_room.is_active)
-            ):
-                raise serializers.ValidationError({"spare_stock_id": "停用的数据中心或机房不能作为用件库存位置"})
-        else:
-            if stock is not None:
-                raise serializers.ValidationError({"spare_stock_id": "厂商提供的用件不能关联内部库存"})
-            if not attrs["part_name"]:
-                raise serializers.ValidationError({"part_name": "厂商提供的用件必须填写部件名称"})
-        return attrs
+        from .stock import validate_repair_usage
+        return validate_repair_usage(attrs)
