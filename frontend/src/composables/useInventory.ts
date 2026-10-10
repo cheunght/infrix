@@ -1,3 +1,4 @@
+import { useInventoryTaskActions } from "./useInventoryTaskActions";
 import { revisionHeaders } from "../revision";
 import { computed, onBeforeUnmount, ref, watch, type Ref } from "vue";
 import { ElMessage } from "element-plus/es/components/message/index.mjs";
@@ -62,8 +63,6 @@ export function useInventory(context: InventoryContext) {
   const auxErrors = ref<Record<AuxKey, string>>({ rooms: "", inspectors: "", racks: "" });
   const taskCreating = ref(false);
   const taskDeletingId = ref<number | null>(null);
-  const taskCompleting = ref(false);
-  const taskReopening = ref(false);
   const itemSaving = ref(false);
   const scannedNormalSaving = ref(false);
   const resolutionSaving = ref(false);
@@ -1062,81 +1061,6 @@ export function useInventory(context: InventoryContext) {
     }
   }
 
-  async function completeTask() {
-    if (!context.can("inventory.manage") || !activeTask.value || taskCompleting.value) return;
-    if (activeTask.value.summary.pending > 0) {
-      ElMessage.warning(i18n.global.t("inventory.pendingCannotComplete", { count: activeTask.value.summary.pending }));
-      return;
-    }
-    const summary = activeTask.value.summary;
-    const ok = await ElMessageBox.confirm(
-      [
-        i18n.global.t("inventory.completeSummaryTotal", { count: summary.total }),
-        i18n.global.t("inventory.completeSummaryNormal", { count: summary.normal, exceptions: summary.exceptions }),
-        i18n.global.t("inventory.completeSummaryPending", { pending: summary.pending, unresolved: summary.resolution_pending }),
-        "",
-        i18n.global.t("inventory.completeConfirmWarning"),
-      ].join("\n"),
-      i18n.global.t("inventory.completeTaskTitle"),
-      {
-        type: "warning",
-        confirmButtonText: i18n.global.t("inventory.completeTask"),
-        cancelButtonText: i18n.global.t("common.cancel"),
-      },
-    ).catch(() => false);
-    if (!ok || !activeTask.value || taskCompleting.value) return;
-    const taskId = activeTask.value.id;
-    taskCompleting.value = true;
-    try {
-      const result = await context.request<InventoryTask>(
-        `/inventory-tasks/${taskId}/complete/`,
-        { method: "POST" },
-      );
-      if (activeTask.value?.id === taskId) activeTask.value = result;
-      await Promise.all([loadItems(), loadTasks()]);
-      const resolutionPending = result.summary.resolution_pending || 0;
-      setActionMessage(
-        resolutionPending > 0
-          ? i18n.global.t("inventory.taskCompletedWithPending", { count: resolutionPending })
-          : i18n.global.t("inventory.taskCompleted"),
-        "success",
-      );
-      if (itemListError.value || taskListError.value) {
-        ElMessage.warning(i18n.global.t("inventory.taskCompleteRefreshFailed"));
-      }
-    } catch (error) {
-      setActionError(error, i18n.global.t("inventory.taskCompleteFailed"));
-    } finally {
-      taskCompleting.value = false;
-    }
-  }
-
-  async function reopenTask() {
-    if (!context.can("inventory.manage") || !activeTask.value || taskReopening.value) return;
-    if (activeTask.value.status !== "completed") {
-      ElMessage.warning(i18n.global.t("inventory.reopenOnlyCompleted"));
-      return;
-    }
-    const taskId = activeTask.value.id;
-    taskReopening.value = true;
-    try {
-      const result = await context.request<InventoryTask>(
-        `/inventory-tasks/${taskId}/reopen/`,
-        { method: "POST" },
-      );
-      if (activeTask.value?.id === taskId) activeTask.value = result;
-      await Promise.all([loadItems(), loadTasks()]);
-      setActionMessage(i18n.global.t("inventory.taskReopened"), "success");
-      if (itemListError.value || taskListError.value) {
-        ElMessage.warning(i18n.global.t("inventory.taskReopenRefreshFailed"));
-      }
-    } catch (error) {
-      setActionError(error, i18n.global.t("inventory.taskReopenFailed"));
-    } finally {
-      taskReopening.value = false;
-    }
-  }
-
   async function exportTask(task = activeTask.value) {
     if (!context.can("inventory.export") || !task || exportingTaskId.value !== null) return;
     exportingTaskId.value = task.id;
@@ -1788,6 +1712,11 @@ export function useInventory(context: InventoryContext) {
   );
 
   onBeforeUnmount(clearScopePreview);
+
+  const {taskCompleting, taskReopening, completeTask, reopenTask} = useInventoryTaskActions({
+    request: context.request, can: context.can, activeTask, itemListError, taskListError,
+    loadItems, loadTasks, setActionMessage, setActionError,
+  });
 
   return {
     taskListLoading,

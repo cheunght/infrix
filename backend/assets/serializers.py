@@ -16,6 +16,7 @@ import json
 import re
 from .asset_retention import active_asset_for_update
 from .models import AssetModel, AuditLog, Asset, AssetAssignmentEvent, AssetCustomValue, AssetDisposal, AssetNetworkAddress, AssetTag, Attachment, CustomField, CustomFieldOption, CustomFieldSet, CustomFieldSetItem, DataCenter, Department, DeviceType, DirectoryIdentity, FaultEvent, InventoryItem, InventoryTask, MaintenanceContract, Manufacturer, NotificationDelivery, Person, PersonalAccessToken, ProcurementRecord, Rack, RackUnitAllocation, RepairPartUsage, RepairRecord, ServerRoom, SoftwareLicense, SparePart, SparePartCategory, SpareStock, SpareStockTransaction, SystemSetting, Tag, UserSecurityProfile, DEFAULT_ASSET_STATUS_CHOICES, SYSTEM_CURRENCY_CHOICES, SYSTEM_DATE_FORMAT_CHOICES, SYSTEM_LOCALE_CHOICES, SMTP_SECURITY_MODE_CHOICES
+from .inventory_writes import inventory_task_can_delete, validate_inventory_resolution_request
 from .fieldsets import fieldset_items_queryset, raise_if_fieldset_conflicts, replace_fieldset_items, resolve_fieldset, validate_fieldset_items
 from .depreciation import DepreciationValidationError, calculate_asset_depreciation, validate_depreciation_configuration
 from .enum_contracts import (
@@ -34,7 +35,7 @@ from .fault_timeline import validate_fault_times, validate_repair_times
 from .asset_revision import check_asset_revision
 from .resource_revision import ResourceRevisionSerializerMixin
 from .reporting.capacity import rack_effective_used_u
-from .services import CustomFieldConflictError, apply_asset_custom_values, apply_asset_tags, assign_asset, configure_asset, inventory_snapshot_location, inventory_task_can_delete, return_asset, transfer_asset, validate_inventory_resolution_request
+from .services import CustomFieldConflictError, apply_asset_custom_values, apply_asset_tags, assign_asset, configure_asset, return_asset, transfer_asset
 from .physical_location import RoomReparentBlocked, lock_inventory_scope, lock_asset_location, update_rack, update_server_room
 from .custom_fields import validate_custom_field_value
 from .custom_fields import normalize_validation_config as _normalize_validation_config
@@ -3454,102 +3455,10 @@ class InventoryItemSerializer(ResourceRevisionSerializerMixin, serializers.Model
         return self._snapshot(obj).get("end_u")
 
     def validate(self, attrs):
-        protected_fields = {
-            "resolution_status",
-            "resolution_action",
-            "resolution_note",
-            "resolved_by",
-            "resolved_at",
-        }
-        if any(field in self.initial_data for field in protected_fields):
-            raise serializers.ValidationError({"detail": "异常处理字段只能通过专用处理接口修改"})
-        task = self.instance.task if self.instance else self.context.get("task")
-        if task and task.status == "completed":
-            raise serializers.ValidationError({"detail": "已完成的盘点任务已锁定，不能修改"})
-        status = attrs.get("status", self.instance.status if self.instance else "pending")
-        if status == "normal":
-            if not self.instance:
-                raise serializers.ValidationError({"status": "盘点项必须来自已生成的盘点任务"})
-            try:
-                snapshot_rack, snapshot_start_u, snapshot_end_u = inventory_snapshot_location(self.instance)
-            except DRFValidationError as exc:
-                raise serializers.ValidationError(exc.detail) from exc
-            attrs["actual_rack"] = snapshot_rack
-            attrs["actual_start_u"] = snapshot_start_u
-            attrs["actual_end_u"] = snapshot_end_u
-            center_id = (self.instance.system_snapshot or {}).get("data_center_id")
-            attrs["actual_data_center_ref"] = DataCenter.objects.filter(pk=center_id).first() if center_id else None
-            attrs["actual_placement"] = "mounted" if snapshot_rack else ("data_center" if center_id else "unlocated")
-        actual_rack = attrs.get("actual_rack", self.instance.actual_rack if self.instance else None)
-        start_u = attrs.get("actual_start_u", self.instance.actual_start_u if self.instance else None)
-        end_u = attrs.get("actual_end_u", self.instance.actual_end_u if self.instance else None)
-        if status in {"pending", "not_found"}:
-            attrs["actual_rack"] = None
-            attrs["actual_start_u"] = None
-            attrs["actual_end_u"] = None
-            attrs["actual_placement"] = ""
-            attrs["actual_data_center_ref"] = None
-        elif any(value is not None for value in (actual_rack, start_u, end_u)):
-            if not actual_rack or start_u is None or end_u is None:
-                raise serializers.ValidationError({"actual_rack": "实际机柜和起止 U 位必须填写完整"})
-            if (
-                not actual_rack.is_active
-                or not actual_rack.room.is_active
-                or not actual_rack.room.data_center.is_active
-            ):
-                raise serializers.ValidationError({"actual_rack": "实际机柜、机房或数据中心已停用，不能记录为现场位置"})
-            if start_u < 1 or end_u < start_u:
-                raise serializers.ValidationError({"actual_start_u": "实际 U 位范围不正确"})
-            if end_u > actual_rack.total_u:
-                raise serializers.ValidationError({"actual_end_u": f"实际结束 U 不能超过机柜容量 U{actual_rack.total_u}"})
-        if status not in {"pending", "not_found", "normal"}:
-            placement = attrs.get("actual_placement", self.instance.actual_placement if self.instance else "")
-            center = attrs.get("actual_data_center_ref", self.instance.actual_data_center_ref if self.instance else None)
-            if attrs.get("actual_rack") and "actual_placement" not in self.initial_data:
-                placement = "mounted"
-            if not placement and actual_rack and "actual_placement" not in self.initial_data:
-                placement = "mounted"
-            if placement == "mounted":
-                if actual_rack is None:
-                    raise serializers.ValidationError({"actual_rack": "已上架位置必须填写机柜和 U 位"})
-                if center and "actual_data_center_id" in self.initial_data and center.pk != actual_rack.room.data_center_id:
-                    raise serializers.ValidationError({"actual_data_center_id": "实际机柜不属于所选数据中心"})
-                center = actual_rack.room.data_center
-            elif placement == "data_center":
-                if center is None:
-                    raise serializers.ValidationError({"actual_data_center_id": "仅归属数据中心必须选择数据中心"})
-                if actual_rack or start_u is not None or end_u is not None:
-                    raise serializers.ValidationError({"actual_rack": "仅归属数据中心不能同时记录机柜或 U 位"})
-            elif placement == "unlocated":
-                if center or actual_rack or start_u is not None or end_u is not None:
-                    raise serializers.ValidationError({"actual_placement": "位置未指定不能同时记录数据中心、机柜或 U 位"})
-            elif center or actual_rack or start_u is not None or end_u is not None:
-                raise serializers.ValidationError({"actual_placement": "尚未确认位置不能同时记录数据中心、机柜或 U 位；请明确位置类型"})
-            if center and not center.is_active:
-                raise serializers.ValidationError({"actual_data_center_id": "实际数据中心已停用"})
-            attrs["actual_placement"] = placement
-            attrs["actual_data_center_ref"] = center
-            if self.instance is not None and placement in {"mounted", "data_center", "unlocated"}:
-                from .data_scope import require_asset_destination
-                require_asset_destination(self.instance.asset_id, center.pk if center else None)
-        if status == "normal":
-            snapshot = self.instance.system_snapshot if self.instance else {}
-            from .data_scope import require_asset_destination
-            require_asset_destination(self.instance.asset_id, snapshot.get("data_center_id"))
-            if not snapshot.get("rack_id") and actual_rack is None:
-                same_location = True
-            else:
-                same_location = (
-                    actual_rack is not None
-                    and actual_rack.code == snapshot.get("rack_code")
-                    and actual_rack.room_id == snapshot.get("server_room_id")
-                    and actual_rack.room.data_center_id == snapshot.get("data_center_id")
-                    and start_u == snapshot.get("start_u")
-                    and end_u == snapshot.get("end_u")
-                )
-            if not same_location:
-                raise serializers.ValidationError({"status": "实际位置与系统记录不一致，请选择“位置不符”"})
-        return attrs
+        from .inventory_writes import validate_inventory_observation
+        request = self.context.get("request")
+        return validate_inventory_observation(attrs, instance=self.instance, submitted_fields=self.initial_data,
+            actor=getattr(request, "user", None), task=self.context.get("task"))
 
     class Meta:
         model = InventoryItem
@@ -3581,20 +3490,12 @@ class InventoryItemPageSerializer(serializers.Serializer):
 
 
 class InventoryTaskSerializer(ResourceRevisionSerializerMixin, serializers.ModelSerializer):
-    @transaction.atomic
     def create(self, validated_data):
-        try:
-            center, room = lock_inventory_scope(
-                getattr(validated_data.get("data_center"), "pk", None),
-                getattr(validated_data.get("server_room"), "pk", None),
-            )
-        except DjangoValidationError as exc:
-            raise serializers.ValidationError(exc.message_dict) from exc
-        if center:
-            validated_data["data_center"] = center
-        if room:
-            validated_data["server_room"] = room
-        return super().create(validated_data)
+        from .inventory_writes import create_inventory_task
+        request = self.context.get("request")
+        if request is None:
+            raise serializers.ValidationError({"detail": "盘点任务必须通过已授权的领域入口创建"})
+        return create_inventory_task(validated_data=validated_data, actor=request.user, request=request)
 
     start_at = SystemDateTimeInputField()
     end_at = SystemDateTimeInputField()
@@ -3648,50 +3549,8 @@ class InventoryTaskSerializer(ResourceRevisionSerializerMixin, serializers.Model
         }
 
     def validate(self, attrs):
-        if self.instance and self.instance.status == "completed":
-            raise serializers.ValidationError({"detail": "已完成的盘点任务已锁定，请先重新打开任务"})
-        data_center = attrs.get("data_center", self.instance.data_center if self.instance else None)
-        server_room = attrs.get("server_room", self.instance.server_room if self.instance else None)
-        scope = attrs.get("scope")
-        start_at = attrs.get("start_at", self.instance.start_at if self.instance else None)
-        end_at = attrs.get("end_at", self.instance.end_at if self.instance else None)
-        if scope is None:
-            if self.instance and "data_center" not in attrs and "server_room" not in attrs:
-                scope = self.instance.scope
-            elif server_room is not None:
-                scope = "server_room"
-            elif data_center is not None:
-                scope = "data_center"
-            else:
-                raise serializers.ValidationError({"scope": "请选择盘点范围"})
-            attrs["scope"] = scope
-
-        if scope == "all_assets":
-            if data_center is not None or server_room is not None:
-                raise serializers.ValidationError({"scope": "全部资产范围不能同时指定数据中心或机房"})
-        else:
-            if data_center is None:
-                raise serializers.ValidationError({"data_center": "指定位置范围必须选择数据中心"})
-            if server_room and server_room.data_center_id != data_center.id:
-                raise serializers.ValidationError({"server_room": "机房不属于所选数据中心"})
-            if scope == "data_center" and server_room is not None:
-                raise serializers.ValidationError({"server_room": "数据中心范围不能同时指定机房"})
-            if scope == "server_room" and server_room is None:
-                raise serializers.ValidationError({"server_room": "机房范围必须选择机房"})
-        if start_at and end_at and end_at < start_at:
-            raise serializers.ValidationError({"end_at": "结束时间不能早于开始时间"})
-        if data_center and not data_center.is_active:
-            raise serializers.ValidationError({"data_center": "停用的数据中心不能创建盘点任务"})
-        if server_room and not server_room.is_active:
-            raise serializers.ValidationError({"server_room": "停用的机房不能创建盘点任务"})
-        if self.instance:
-            if scope != self.instance.scope:
-                raise serializers.ValidationError({"scope": "任务已经生成固定清单，不能修改盘点范围"})
-            if "data_center" in attrs and (data_center.id if data_center else None) != self.instance.data_center_id:
-                raise serializers.ValidationError({"data_center": "任务已经生成固定清单，不能修改数据中心范围"})
-            if "server_room" in attrs and (server_room.id if server_room else None) != self.instance.server_room_id:
-                raise serializers.ValidationError({"server_room": "任务已经生成固定清单，不能修改机房范围"})
-        return attrs
+        from .inventory_writes import validate_inventory_task
+        return validate_inventory_task(attrs, instance=self.instance)
 
     class Meta:
         model = InventoryTask

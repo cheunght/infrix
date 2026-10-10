@@ -8,7 +8,7 @@ from django.core.validators import DecimalValidator
 from django.db import IntegrityError, transaction
 from django.db.models import Q
 from django.contrib.auth.models import User
-from rest_framework.exceptions import APIException, PermissionDenied, ValidationError as DRFValidationError
+from rest_framework.exceptions import ValidationError as DRFValidationError
 from django.utils import timezone
 
 from .asset_retention import active_asset_for_update
@@ -23,8 +23,6 @@ from .models import (
     CustomField,
     DataCenter,
     FaultEvent,
-    InventoryItem,
-    InventoryTask,
     MaintenanceContract,
     normalize_network_address,
     ProcurementRecord,
@@ -36,8 +34,6 @@ from .models import (
 )
 from .enum_contracts import (
     ASSET_STATUS_VALUES,
-    INVENTORY_EXCEPTION_STATUS_VALUES,
-    INVENTORY_RESOLUTION_ACTION_VALUES,
 )
 from .custom_fields import (
     custom_field_storage_payload,
@@ -181,315 +177,6 @@ def _optional_date(data, key):
         return date.fromisoformat(value)
     except ValueError as exc:
         raise ValidationError({key: "日期格式应为 YYYY-MM-DD"}) from exc
-
-
-INVENTORY_EXCEPTION_STATUSES = frozenset(INVENTORY_EXCEPTION_STATUS_VALUES)
-
-
-class InventoryObservationConflict(APIException):
-    status_code = 409
-
-
-def reset_inventory_resolution(item):
-    """Reset the resolution lifecycle after a盘点结果 changes."""
-    if item.status in {"pending", "normal"}:
-        item.resolution_status = "not_required"
-    else:
-        item.resolution_status = "pending"
-    item.resolution_action = None
-    item.resolution_note = ""
-    item.resolved_by = None
-    item.resolved_at = None
-
-
-def inventory_snapshot_location(item):
-    """Resolve a task snapshot into the exact location used by a normal result."""
-    snapshot = item.system_snapshot or {}
-    rack_id = snapshot.get("rack_id")
-    if rack_id in (None, ""):
-        return None, None, None
-
-    try:
-        rack = Rack.objects.select_related("room__data_center").get(pk=rack_id)
-    except (Rack.DoesNotExist, TypeError, ValueError) as exc:
-        raise DRFValidationError({"status": "任务创建时的系统机柜已不存在，无法标记为正常"}) from exc
-
-    if (
-        not snapshot.get("rack_code")
-        or snapshot.get("server_room_id") is None
-        or snapshot.get("data_center_id") is None
-        or rack.code != snapshot.get("rack_code")
-        or rack.room_id != snapshot.get("server_room_id")
-        or rack.room.data_center_id != snapshot.get("data_center_id")
-    ):
-        raise DRFValidationError({"status": "任务创建时的系统位置已发生变化，无法标记为正常"})
-
-    try:
-        start_u = int(snapshot.get("start_u"))
-        end_u = int(snapshot.get("end_u"))
-    except (TypeError, ValueError) as exc:
-        raise DRFValidationError({"status": "任务创建时的系统 U 位快照不完整，无法标记为正常"}) from exc
-
-    if start_u < 1 or end_u < start_u or end_u > rack.total_u:
-        raise DRFValidationError({"status": "任务创建时的系统 U 位快照无效，无法标记为正常"})
-    if not rack.is_active or not rack.room.is_active or not rack.room.data_center.is_active:
-        raise DRFValidationError({"status": "系统快照对应的机柜、机房或数据中心已停用，无法标记为正常"})
-    return rack, start_u, end_u
-
-
-@transaction.atomic
-def confirm_inventory_item_normal(
-    *,
-    item_id,
-    actor,
-    request,
-    require_pending=False,
-    source="inventory_confirm_normal",
-    notes=None,
-):
-    """Record a normal result from the immutable task snapshot."""
-    from .audit import write_audit_log
-    from .serializers import InventoryItemSerializer
-
-    admission = InventoryItem.objects.filter(pk=item_id).values("task_id", "asset_id", "system_snapshot").first()
-    if admission is None:
-        raise InventoryItem.DoesNotExist
-    snapshot = admission["system_snapshot"] or {}
-    lock_asset_location(asset_id=admission["asset_id"], target_rack_id=snapshot.get("rack_id"), target_data_center_id=snapshot.get("data_center_id"))
-    active_asset_for_update(admission["asset_id"])
-    task = InventoryTask.objects.select_for_update().get(pk=admission["task_id"])
-    require_object(task, user=actor)
-    item = InventoryItem.objects.select_for_update().get(pk=item_id)
-    if task.status != "in_progress":
-        raise DRFValidationError({"detail": "已完成的盘点任务不能批量标记为正常"})
-    if require_pending and item.status != "pending":
-        raise DRFValidationError({"detail": "该盘点项已被盘点，不能批量标记为正常"})
-
-    rack, start_u, end_u = inventory_snapshot_location(item)
-    from .data_scope import require_asset_destination
-    # An explicit unlocated observation has no parent row to lock. Validate
-    # its complete ownership/location pair here for all confirmation callers.
-    require_asset_destination(item.asset_id, (item.system_snapshot or {}).get("data_center_id"), user=actor)
-    before = InventoryItemSerializer(item).data
-    item.status = "normal"
-    item.actual_rack = rack
-    item.actual_start_u = start_u
-    item.actual_end_u = end_u
-    center_id = (item.system_snapshot or {}).get("data_center_id")
-    item.actual_data_center_ref_id = center_id if DataCenter.objects.filter(pk=center_id).exists() else None
-    item.actual_placement = "mounted" if rack else ("data_center" if center_id else "unlocated")
-    item.checked_by = actor
-    item.checked_at = timezone.now()
-    if notes is not None:
-        item.notes = notes
-    reset_inventory_resolution(item)
-    item.save(update_fields=[
-        "status",
-        "actual_rack",
-        "actual_start_u",
-        "actual_end_u",
-        "actual_data_center_ref",
-        "actual_placement",
-        "checked_by",
-        "checked_at",
-        "notes",
-        "resolution_status",
-        "resolution_action",
-        "resolution_note",
-        "resolved_by",
-        "resolved_at",
-        "updated_at",
-    ])
-    write_audit_log(
-        request,
-        action="update",
-        resource_type="inventory_item",
-        resource_id=item.pk,
-        before=before,
-        after=InventoryItemSerializer(item).data,
-        extra={
-            "source": source,
-            "inventory_task_id": task.pk,
-            "inventory_item_id": item.pk,
-            "asset_id": item.asset_id,
-            "status": "normal",
-            "checked_by": actor.pk,
-            "checked_at": item.checked_at,
-        },
-    )
-    return item
-
-
-def _inventory_task_items(task, items=None):
-    if items is not None:
-        return items
-    prefetched = getattr(task, "_prefetched_objects_cache", {}).get("items")
-    if prefetched is not None:
-        return prefetched
-    return task.items.only(
-        "status",
-        "resolution_status",
-        "resolution_action",
-        "resolution_note",
-        "resolved_by",
-        "resolved_at",
-    ).all()
-
-
-def inventory_task_delete_block_reason(task, items=None):
-    """Return the business reason that prevents deleting an inventory task."""
-    if task.status == "completed":
-        return "已完成的盘点任务不能删除。"
-    if task.status != "in_progress":
-        return "当前状态的盘点任务不能删除。"
-
-    task_items = _inventory_task_items(task, items)
-    for item in task_items:
-        if (
-            item.resolution_status == "resolved"
-            or item.resolved_by_id
-            or item.resolved_at
-            or item.resolution_action
-            or str(item.resolution_note or "").strip()
-        ):
-            return "已有异常处理记录的任务不能删除，请保留盘点记录。"
-    if any(item.status != "pending" for item in task_items):
-        return "已经开始盘点的任务不能删除，请保留盘点记录。"
-    return None
-
-
-def inventory_task_can_delete(task, items=None):
-    """Return whether a task is still an untouched, deletable draft."""
-    return inventory_task_delete_block_reason(task, items) is None
-
-
-def validate_inventory_resolution_request(action, note="", *, bulk=False):
-    """Validate request-level resolution rules shared by single and bulk APIs."""
-    if action not in INVENTORY_RESOLUTION_ACTION_VALUES:
-        raise DRFValidationError({"action": "无效的盘点异常处理方式"})
-    if bulk and action == "update_asset":
-        raise DRFValidationError({"action": "批量处理不支持更新资产台账，请逐条处理位置异常。"})
-    if action == "ignore" and not str(note or "").strip():
-        raise DRFValidationError({"note": "忽略异常时必须填写处理备注"})
-
-
-@transaction.atomic
-def resolve_inventory_item(*, item_id, action, note, actor, request):
-    """Resolve one inventory exception with the canonical row-level rules."""
-    validate_inventory_resolution_request(action, note)
-    if action == "update_asset" and not can(actor, "assets.manage"):
-        raise PermissionDenied("更新资产台账需要 assets.manage 权限")
-
-    from .audit import asset_audit_snapshot, write_audit_log
-    from .serializers import InventoryItemSerializer
-
-    observation_fields = ("actual_placement", "actual_rack_id", "actual_data_center_ref_id", "actual_start_u", "actual_end_u")
-    admission = InventoryItem.objects.filter(pk=item_id).values("task_id", "asset_id", *observation_fields).first()
-    if admission is None:
-        raise InventoryItem.DoesNotExist
-    lock_asset_location(asset_id=admission["asset_id"], target_rack_id=admission["actual_rack_id"] if action == "update_asset" else None,
-                        target_data_center_id=admission["actual_data_center_ref_id"] if action == "update_asset" else None)
-    asset = active_asset_for_update(admission["asset_id"])
-    task = InventoryTask.objects.select_for_update().get(pk=admission["task_id"])
-    require_object(task, user=actor)
-    item = InventoryItem.objects.select_for_update().get(pk=item_id)
-    if any(admission[field] != getattr(item, field) for field in observation_fields):
-        raise InventoryObservationConflict({"code": "inventory_observation_changed", "detail": "现场位置已被修改，请重新读取盘点结果后处理"})
-    if item.status not in INVENTORY_EXCEPTION_STATUSES:
-        raise DRFValidationError({"detail": "只有异常盘点项可以处理"})
-    if item.resolution_status != "pending":
-        raise DRFValidationError({
-            "detail": "该异常已被处理",
-            "code": "inventory_item_already_resolved",
-        })
-    if action == "confirm_missing" and item.status != "not_found":
-        raise DRFValidationError({"action": "确认设备缺失只适用于未找到的资产"})
-    if action == "update_asset" and item.status != "location_mismatch":
-        raise DRFValidationError({"action": "更新资产台账目前只适用于位置不符"})
-
-    if action == "update_asset":
-        placement = item.actual_placement or ("mounted" if item.actual_rack_id else "")
-        if placement not in {"mounted", "data_center", "unlocated"}:
-            raise DRFValidationError({"action": "请先明确实际位置类型，再更新资产台账"})
-        if placement == "mounted" and (item.actual_rack_id is None or item.actual_start_u is None or item.actual_end_u is None):
-            raise DRFValidationError({"action": "已上架位置必须包含完整的实际机柜和起止 U 位"})
-        if placement == "data_center" and item.actual_data_center_ref_id is None:
-            raise DRFValidationError({"action": "实际数据中心缺失，请重新记录现场位置"})
-        if placement == "mounted":
-            rack = Rack.objects.select_related("room").get(pk=item.actual_rack_id)
-            snapshot = item.actual_location_snapshot or {}
-            if (rack.room_id != snapshot.get("server_room_id")
-                    or rack.room.data_center_id != snapshot.get("data_center_id")):
-                raise InventoryObservationConflict({"code": "inventory_observation_stale",
-                    "detail": "实际机柜的机房或数据中心归属已改变，请重新记录现场位置后再纠正台账"})
-
-    before_item = InventoryItemSerializer(item).data
-    asset_changed = False
-    if action == "update_asset":
-        before_asset = asset_audit_snapshot(asset.pk)
-        try:
-            if placement == "mounted":
-                asset_changed = place_asset(asset_id=asset.pk, rack_id=item.actual_rack_id,
-                                            start_u=item.actual_start_u, end_u=item.actual_end_u)
-            else:
-                asset_changed = set_direct_asset_placement(asset_id=asset.pk,
-                    data_center_id=item.actual_data_center_ref_id if placement == "data_center" else None)
-        except ValidationError as exc:
-            detail = exc.message_dict if hasattr(exc, "message_dict") else {"detail": exc.messages}
-            raise DRFValidationError(detail) from exc
-        if asset_changed:
-            after_asset = asset_audit_snapshot(asset.pk)
-            write_audit_log(
-                request,
-                action="update",
-                resource_type="asset",
-                resource_id=asset.pk,
-                before=before_asset,
-                after=after_asset,
-                extra={
-                    "source": "inventory_resolution",
-                    "inventory_task_id": task.pk,
-                    "inventory_item_id": item.pk,
-                    "resolution_action": action,
-                },
-            )
-
-    from django.utils import timezone
-
-    now = timezone.now()
-    item.resolution_status = "resolved"
-    item.resolution_action = action
-    item.resolution_note = note
-    item.resolved_by = actor
-    item.resolved_at = now
-    item.save(update_fields=[
-        "resolution_status",
-        "resolution_action",
-        "resolution_note",
-        "resolved_by",
-        "resolved_at",
-        "updated_at",
-    ])
-    write_audit_log(
-        request,
-        action="resolve",
-        resource_type="inventory_item",
-        resource_id=item.pk,
-        before=before_item,
-        after=InventoryItemSerializer(item).data,
-        extra={
-            "inventory_task_id": task.pk,
-            "inventory_item_id": item.pk,
-            "asset_id": asset.pk,
-            "exception_status": item.status,
-            "resolution_action": action,
-            "resolution_note": note,
-            "resolved_by": actor.pk,
-            "resolved_at": now,
-            "asset_changed": asset_changed,
-        },
-    )
-    return item
 
 
 def _assignment_error(code, message):
@@ -1247,3 +934,6 @@ def reopen_repair(*, repair_id: int, request=None):
 
 # Existing server callers retain their import path; inventory writes live here.
 from .stock import apply_spare_stock_transaction, create_repair_part_usage
+
+# Counting rules and writes are owned by the inventory domain.
+from .inventory_writes import (InventoryObservationConflict, reset_inventory_resolution, inventory_snapshot_location, confirm_inventory_item_normal, inventory_task_delete_block_reason, inventory_task_can_delete, validate_inventory_resolution_request, resolve_inventory_item)
