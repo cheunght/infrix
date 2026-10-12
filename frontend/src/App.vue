@@ -189,6 +189,9 @@ provide(JobTasksKey, jobTasks);
 const currentJobKinds = computed(() => routeJobKinds(route.path, route.path === "/settings/organization" ? organizationTab.value : route.path === "/assets/configuration" ? assetConfigSection.value : route.query.tab));
 jobTasks.onCompleted(job => {
   if (job.status === 'cancelled') return;
+  if (!currentJobKinds.value.includes(job.kind) && !(job.kind === 'notification_digest' && route.path === '/settings/system' && systemSettingsTab.value === 'notifications')) {
+    ElMessage({message: t('jobs.completedAway', {kind: t(`jobs.kinds.${job.kind}`)}), type: job.status === 'succeeded' ? 'success' : 'warning'});
+  }
   if (job.status === 'succeeded' && job.kind === 'asset_import' && page.value === 'ledger') void assetsApi.loadAssets().then(ok => { if (!ok) ElMessage.warning(t('jobs.refreshFailed')); });
   if (job.status === 'succeeded' && currentJobKinds.value.includes(job.kind) && (job.kind === 'people_import' || job.kind === 'department_import')) {
     void Promise.all([organizationSettings.loadResponsibilityDirectory(), organizationSettings.loadDepartments()]).then(results => { if (results.some(ok => ok === false)) ElMessage.warning(t('jobs.refreshFailed')); });
@@ -2376,7 +2379,7 @@ watch(hasOpenGlobalOverlay, (isOpen) => {
             @search="lookupAsset"
           />
           <NotificationCenter
-            v-if="can('dashboard.view')"
+            :tasks="jobTasks"
             :request="request"
             :can="can"
             :username="username"

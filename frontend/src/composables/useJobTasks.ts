@@ -72,14 +72,15 @@ export function useJobTasks(options: {
       listeners.forEach((listener) => listener(job));
   }
   async function read<T>(path: string): Promise<T> {
-    if (!options.enabled.value) throw new Error("Session unavailable");
+    const version = generation;
+    if (!alive(version)) throw new DOMException("Session unavailable", "AbortError");
     if (Date.now() < cooldown) throw new ApiError(503, error.value);
     const controller = new AbortController();
     controllers.add(controller);
     try {
       return await options.request<T>(path, { signal: controller.signal });
     } catch (failure) {
-      if (failure instanceof ApiError && failure.status === 503) {
+      if (alive(version) && failure instanceof ApiError && failure.status === 503) {
         cooldown = Date.now() + Math.max(10000, failure.retryAfterMs || 0);
         error.value = failure.message;
       }
@@ -185,6 +186,7 @@ export function useJobTasks(options: {
     file?: File,
   ): Promise<BackgroundJob> {
     const version = generation;
+    if (!alive(version)) throw new DOMException("Session unavailable", "AbortError");
     const identity = JSON.stringify({ kind, params });
     let key: string;
     if (file) {
@@ -235,6 +237,7 @@ export function useJobTasks(options: {
     return submit(kind, params);
   }
   async function act(job: BackgroundJob, action: "cancel" | "retry") {
+    if (!alive(generation)) throw new DOMException("Session unavailable", "AbortError");
     if (busyIds.value.has(job.id)) return;
     const version = generation;
     busyIds.value = new Set([...busyIds.value, job.id]);
@@ -254,6 +257,7 @@ export function useJobTasks(options: {
     }
   }
   async function download(job: BackgroundJob) {
+    if (!alive(generation)) throw new DOMException("Session unavailable", "AbortError");
     if (!job.result_available) throw new Error("Result unavailable");
     const version = generation;
     const controller = new AbortController();
@@ -263,7 +267,12 @@ export function useJobTasks(options: {
         signal: controller.signal,
       });
     } catch (failure) {
-      if (alive(version)) await detail(job.id).catch(() => {});
+      if (alive(version)) {
+        if (failure instanceof ApiError && failure.status === 503) {
+          cooldown = Date.now() + Math.max(10000, failure.retryAfterMs || 0);
+          error.value = failure.message;
+        } else await detail(job.id).catch(() => {});
+      }
       throw failure;
     } finally {
       controllers.delete(controller);

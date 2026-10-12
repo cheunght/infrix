@@ -40,10 +40,10 @@ def filtered_jobs(request, rows):
         rows = rows.filter(kind="inventory_export").filter(Q(params__task_id=value) | Q(params__task_id=int(value)))
     try:
         offset = int(request.query_params.get("offset", 0))
-        if offset < 0:
+        if not 0 <= offset <= 2_147_483_647:
             raise ValueError
     except (ValueError, TypeError):
-        raise ValidationError({"offset": "必须是非负整数"}) from None
+        raise ValidationError({"offset": "必须是 0 到 2147483647 的整数"}) from None
     return rows, offset
 
 

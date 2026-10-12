@@ -2,7 +2,7 @@ import type { App, Component } from "vue";
 import { ElAlert } from "element-plus/es/components/alert/index.mjs";
 import { ElAvatar } from "element-plus/es/components/avatar/index.mjs";
 import { ElBadge } from "element-plus/es/components/badge/index.mjs";
-import { ElButton } from "element-plus/es/components/button/index.mjs";
+import { ElButton, ElButtonGroup } from "element-plus/es/components/button/index.mjs";
 import { ElConfigProvider } from "element-plus/es/components/config-provider/index.mjs";
 import { ElAside, ElContainer, ElHeader, ElMain } from "element-plus/es/components/container/index.mjs";
 import { ElDropdown, ElDropdownItem, ElDropdownMenu } from "element-plus/es/components/dropdown/index.mjs";
@@ -79,6 +79,7 @@ const shellComponents: Record<string, Component> = {
   ElAvatar,
   ElBadge,
   ElButton,
+  ElButtonGroup,
   ElConfigProvider,
   ElContainer,
   ElDropdown,

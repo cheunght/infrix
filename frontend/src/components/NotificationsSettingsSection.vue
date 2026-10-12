@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import NotificationDigestStatus from "./NotificationDigestStatus.vue";
 import { useI18n } from "vue-i18n";
 import type { SettingsContext } from "../page-context";
 import type { PersonOption as PersonOptionType } from "../types";
@@ -67,6 +68,7 @@ function mapDigestPerson(item: Record<string, unknown>): SearchableSelectOption 
             <el-input v-model="form.application_url" :disabled="!context.can('settings.manage') || systemSettingsSaving" />
           </el-form-item>
         </div>
+        <NotificationDigestStatus :context="context" :dirty="context.systemSettingsDirty.value || context.systemSettingsSaving.value" />
       </section>
 
       <section class="settings-system__notification-section">

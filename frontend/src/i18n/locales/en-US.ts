@@ -18,6 +18,8 @@ export default {
   "allUsage": "All parts"
 },
   jobs: {
+  "kind": "Operation type",
+  "submitter": "Submitted by",
   "actions": "Actions",
   "otherFilter": "Other filter",
   "submittedAt": "Submitted at",

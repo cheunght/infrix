@@ -11,6 +11,7 @@ import PageContent from "./page/PageContent.vue";
 import PageTabs, { type PageTabItem } from "./page/PageTabs.vue";
 import PageToolbar from "./page/PageToolbar.vue";
 import ToolbarIconButton from "./page/ToolbarIconButton.vue";
+import JobRuntimeRecords from "./JobRuntimeRecords.vue";
 import SystemOperations from "./SystemOperations.vue";
 import BackupRestorePage from "./BackupRestorePage.vue";
 
@@ -52,6 +53,7 @@ const {
 const maintenanceTab = ref<MaintenanceTab>("operations");
 const maintenanceTabs = computed<PageTabItem[]>(() => [
   { value: "operations", label: t("operations.statusTab") },
+  ...(context.can("settings.manage") ? [{ value: "jobs", label: t("jobs.runtimeRecords") }] : []),
   { value: "backup", label: t("settings.backupRestoreTab"), disabled: !context.can("system.reset") },
   { value: "reset", label: t("operations.resetTab"), disabled: !context.can("system.reset") },
 ]);
@@ -63,6 +65,7 @@ function routeTab(): string | undefined {
 
 function maintenanceTabFromRoute(): MaintenanceTab {
   const value = routeTab();
+  if (value === "jobs" && context.can("settings.manage")) return "jobs";
   if (context.can("system.reset") && (value === "backup" || value === "reset")) return value;
   return "operations";
 }
@@ -70,8 +73,8 @@ function maintenanceTabFromRoute(): MaintenanceTab {
 function syncMaintenanceTabFromRoute() {
   maintenanceTab.value = maintenanceTabFromRoute();
   const value = routeTab();
-  const known = value === undefined || value === "operations" || value === "backup" || value === "reset";
-  const unauthorized = !context.can("system.reset") && (value === "backup" || value === "reset");
+  const known = value === undefined || value === "operations" || value === "jobs" || value === "backup" || value === "reset";
+  const unauthorized = (!context.can("system.reset") && (value === "backup" || value === "reset")) || (value === "jobs" && !context.can("settings.manage"));
   if (!known || unauthorized) {
     void router.replace(routeForPage("settings", { settingsSection: "maintenance" }));
   }
@@ -83,7 +86,7 @@ function loadCurrentTab() {
 }
 
 watch(
-  [() => route.query.tab, () => context.can("system.reset")],
+  [() => route.query.tab, () => context.can("system.reset"), () => context.can("settings.manage")],
   () => {
     syncMaintenanceTabFromRoute();
     loadCurrentTab();
@@ -92,8 +95,9 @@ watch(
 );
 
 function changeMaintenanceTab(value: string) {
-  if (value !== "operations" && value !== "backup" && value !== "reset") return;
-  if (value !== "operations" && !context.can("system.reset")) return;
+  if (value !== "operations" && value !== "jobs" && value !== "backup" && value !== "reset") return;
+  if (value === "jobs" && !context.can("settings.manage")) return;
+  if ((value === "backup" || value === "reset") && !context.can("system.reset")) return;
   maintenanceTab.value = value;
   void router.push(routeForPage("settings", {
     settingsSection: "maintenance",
@@ -132,6 +136,7 @@ function changeMaintenanceTab(value: string) {
           :loading="statusLoading"
           :error="statusError"
         />
+        <JobRuntimeRecords v-if="maintenanceTab === 'jobs' && context.can('settings.manage')" :context="context" />
         <BackupRestorePage
           v-if="maintenanceTab === 'backup' && context.can('system.reset')"
           :context="context"

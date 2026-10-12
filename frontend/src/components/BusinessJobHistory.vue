@@ -57,7 +57,7 @@ async function load() {
   }
 }
 watch(
-  () => [props.kinds.join(","), props.taskId],
+  () => [props.kinds.join(","), props.taskId, props.tasks.account.value],
   () => {
     ++version;
     offset.value = 0;

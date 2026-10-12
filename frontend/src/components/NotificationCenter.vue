@@ -1,14 +1,17 @@
 <script setup lang="ts">
-import { computed, onMounted, ref } from "vue";
+import { computed, onBeforeUnmount, onMounted, ref, watch } from "vue";
 import { useI18n } from "vue-i18n";
 import { Bell, Refresh } from "@element-plus/icons-vue";
 import { formatSystemDate, formatSystemDateTime } from "../system-settings";
+import type { JobTasks } from "../composables/useJobTasks";
+import { jobLocation, jobAttemptKey } from "../jobs";
 import { useNotifications } from "../composables/useNotifications";
 import type { OperationalAlert } from "../types";
 import type { CapabilityFn, RequestFn } from "../page-context";
 
 const props = defineProps<{
   request: RequestFn;
+  tasks?: JobTasks;
   can: CapabilityFn;
   username: string;
 }>();
@@ -26,7 +29,7 @@ const {
   loading,
   error,
   generatedAt,
-  unreadCount,
+  unreadCount: alertUnreadCount,
   isRead,
   loadNotifications,
   markRead,
@@ -49,7 +52,9 @@ const alertTitleKeys: Record<string, string> = {
 };
 
 function alertTitle(alert: OperationalAlert) {
-  return t(alertTitleKeys[`${alert.kind}:${alert.state}`] || "notifications.title");
+  return t(
+    alertTitleKeys[`${alert.kind}:${alert.state}`] || "notifications.title",
+  );
 }
 
 function alertSubject(alert: OperationalAlert) {
@@ -59,12 +64,16 @@ function alertSubject(alert: OperationalAlert) {
       assetName: alert.asset_name || t("common.notAvailable"),
     });
   }
-  return alert.name || alert.code || alert.reference || t("common.notAvailable");
+  return (
+    alert.name || alert.code || alert.reference || t("common.notAvailable")
+  );
 }
 
 function formatDate(value: string | undefined) {
   if (!value) return "";
-  return value.includes("T") ? formatSystemDateTime(value) : formatSystemDate(value);
+  return value.includes("T")
+    ? formatSystemDateTime(value)
+    : formatSystemDate(value);
 }
 
 function alertMeta(alert: OperationalAlert) {
@@ -76,7 +85,8 @@ function alertMeta(alert: OperationalAlert) {
   }
   if (alert.kind === "maintenance" || alert.kind === "license") {
     const days = alert.days_remaining ?? 0;
-    if (days < 0) return t("notifications.dueDaysOverdue", { count: Math.abs(days) });
+    if (days < 0)
+      return t("notifications.dueDaysOverdue", { count: Math.abs(days) });
     if (days === 0) return t("notifications.dueToday");
     return t("notifications.dueInDays", { count: days });
   }
@@ -96,11 +106,17 @@ function alertMeta(alert: OperationalAlert) {
 }
 
 function alertContext(alert: OperationalAlert) {
-  if (alert.kind === "license" && alert.state !== "expired" && alert.state !== "expiring") {
+  if (
+    alert.kind === "license" &&
+    alert.state !== "expired" &&
+    alert.state !== "expiring"
+  ) {
     return "";
   }
   if (alert.kind === "inventory") {
-    return t("notifications.inventoryPending", { count: alert.pending_count ?? 0 });
+    return t("notifications.inventoryPending", {
+      count: alert.pending_count ?? 0,
+    });
   }
   if (alert.kind === "spare") return "";
   return alert.due_date ? formatDate(alert.due_date) : alert.reference || "";
@@ -123,7 +139,9 @@ function alertAccessibleLabel(alert: OperationalAlert) {
     alertSubject(alert),
     alertContext(alert),
     alertMeta(alert),
-  ].filter(Boolean).join(" · ");
+  ]
+    .filter(Boolean)
+    .join(" · ");
 }
 
 function handleSelect(alert: OperationalAlert) {
@@ -133,14 +151,94 @@ function handleSelect(alert: OperationalAlert) {
 }
 
 function handleMarkAllRead() {
-  markAllRead();
+  if (activeTab.value === "operations") markOperationsRead();
+  else markAllRead();
 }
 
 function handleOpen() {
+  void props.tasks?.refresh();
+  void loadOperations();
   void loadNotifications();
 }
 
-const showingLimitedAlerts = computed(() => summary.value.total > alerts.value.length);
+const activeTab = ref(props.can("dashboard.view") ? "alerts" : "operations");
+const operationIds = ref<string[]>([]);
+const operationCount = ref(0);
+const operationOffset = ref(0);
+const operationError = ref("");
+const operationLoading = ref(false);
+let operationVersion = 0;
+const unreadCount = computed(
+  () => alertUnreadCount.value + (props.tasks?.unread.value || 0),
+);
+async function loadOperations() {
+  if (!props.tasks) return;
+  const current = ++operationVersion;
+  operationLoading.value = true;
+  operationError.value = "";
+  try {
+    const page = await props.tasks.list({
+      status: "succeeded,failed,cancelled",
+      offset: operationOffset.value,
+    });
+    if (current !== operationVersion) return;
+    operationCount.value = page.count;
+    operationIds.value = page.results.map((job) => job.id);
+  } catch (cause) {
+    if (current === operationVersion)
+      operationError.value =
+        cause instanceof Error ? cause.message : String(cause);
+  } finally {
+    if (current === operationVersion) operationLoading.value = false;
+  }
+}
+function openOperation(id: string) {
+  const job = props.tasks?.records.value[id];
+  if (job) props.tasks?.markRead(job);
+  visible.value = false;
+}
+function operationPage(step: number) {
+  operationOffset.value = Math.max(0, operationOffset.value + step);
+  void loadOperations();
+}
+function markOperationsRead() {
+  operationIds.value.forEach((id) => {
+    const job = props.tasks?.records.value[id];
+    if (job) props.tasks?.markRead(job);
+  });
+}
+watch(
+  () => props.username,
+  () => {
+    ++operationVersion;
+    operationIds.value = [];
+    operationOffset.value = 0;
+    operationCount.value = 0;
+    operationError.value = "";
+    operationLoading.value = false;
+    visible.value = false;
+  },
+);
+watch(activeTab, (tab) => {
+  if (tab === "operations" && visible.value) void loadOperations();
+});
+
+const stopJobCompletion = props.tasks?.onCompleted(() => {
+  if (
+    visible.value &&
+    activeTab.value === "operations" &&
+    operationOffset.value === 0
+  )
+    void loadOperations();
+});
+onBeforeUnmount(() => {
+  ++operationVersion;
+  stopJobCompletion?.();
+});
+
+const showingLimitedAlerts = computed(
+  () => summary.value.total > alerts.value.length,
+);
 
 onMounted(() => {
   void loadNotifications();
@@ -171,74 +269,177 @@ onMounted(() => {
       </el-button>
     </template>
 
-    <section class="notification-center" role="dialog" :aria-label="t('notifications.title')">
+    <section
+      class="notification-center"
+      role="dialog"
+      :aria-label="t('notifications.title')"
+    >
       <header class="notification-center__header">
         <div class="notification-center__heading">
-          <strong>{{ t('notifications.title') }}</strong>
-          <span v-if="unreadCount">{{ t('notifications.unread', { count: unreadCount }) }}</span>
-          <span v-else>{{ t('notifications.total', { count: summary.total }) }}</span>
+          <strong>{{ t("notifications.title") }}</strong>
+          <span v-if="unreadCount">{{
+            t("notifications.unread", { count: unreadCount })
+          }}</span>
+          <span v-else>{{
+            t("notifications.total", { count: summary.total })
+          }}</span>
         </div>
-        <el-button
-          text
-          :disabled="!unreadCount"
-          @click="handleMarkAllRead"
-        >{{ t('notifications.markAllRead') }}</el-button>
+        <el-button text :disabled="!unreadCount" @click="handleMarkAllRead">{{
+          t("notifications.markAllRead")
+        }}</el-button>
       </header>
 
-      <p class="notification-center__range">{{ t('dataScope.alertHint') }}</p>
-      <div class="notification-center__summary" aria-live="polite">
-        <span class="notification-center__summary-item is-critical">
-          <i aria-hidden="true"></i>{{ levelLabel('critical') }} {{ summary.critical }}
-        </span>
-        <span class="notification-center__summary-item is-warning">
-          <i aria-hidden="true"></i>{{ levelLabel('warning') }} {{ summary.warning }}
-        </span>
-        <span class="notification-center__summary-item is-notice">
-          <i aria-hidden="true"></i>{{ levelLabel('notice') }} {{ summary.notice }}
-        </span>
-      </div>
-
-      <div v-if="showingLimitedAlerts" class="notification-center__range" aria-live="polite">
-        {{ t('notifications.showingFirst', { shown: alerts.length, total: summary.total }) }}
-      </div>
-
-      <div v-if="loading" class="notification-center__state">
-        {{ t('common.loadingData') }}
-      </div>
-      <div v-else-if="error" class="notification-center__state is-error">
-        <span>{{ error }}</span>
-        <el-button text @click="loadNotifications(true)">{{ t('common.retry') }}</el-button>
-      </div>
-      <div v-else-if="alerts.length" class="notification-center__list">
+      <div v-if="tasks" class="notification-center__tabs">
         <el-button
-          v-for="alert in alerts"
-          :key="alert.id"
-          class="notification-center__item"
-          :class="[`is-${alert.level}`, { 'is-read': isRead(alert.id) }]"
+          v-if="can('dashboard.view')"
           text
-          :aria-label="alertAccessibleLabel(alert)"
-          :title="alertActionLabel(alert)"
-          @click="handleSelect(alert)"
+          :type="activeTab === 'alerts' ? 'primary' : undefined"
+          @click="activeTab = 'alerts'"
+          >{{ t("jobs.businessAlerts") }}</el-button
         >
-          <span class="notification-center__item-content">
-            <i class="notification-center__item-dot" aria-hidden="true"></i>
-            <span class="notification-center__item-body">
-              <strong>{{ alertTitle(alert) }}</strong>
-              <span class="notification-center__item-subject" :title="alertSubject(alert)">{{ alertSubject(alert) }}</span>
-              <span v-if="alertContext(alert)" class="notification-center__item-context">{{ alertContext(alert) }}</span>
-            </span>
-            <span class="notification-center__item-meta">{{ alertMeta(alert) }}</span>
+        <el-button
+          text
+          :type="activeTab === 'operations' ? 'primary' : undefined"
+          @click="activeTab = 'operations'"
+          >{{ t("jobs.operationResults") }}</el-button
+        >
+      </div>
+      <div
+        v-if="activeTab === 'operations' && tasks"
+        class="notification-center__operations"
+      >
+        <p v-if="operationError">{{ operationError }}</p>
+        <p v-else-if="operationLoading">{{ t("common.loadingData") }}</p>
+        <p v-else-if="!operationIds.length">{{ t("jobs.empty") }}</p>
+        <router-link
+          v-for="id in operationIds"
+          :key="id"
+          :to="jobLocation(tasks.records.value[id]!)"
+          class="notification-center__operation"
+          :class="{
+            'is-read': tasks.readIds.value.has(
+              jobAttemptKey(tasks.records.value[id]!),
+            ),
+          }"
+          @click="openOperation(id)"
+        >
+          <strong>{{ t(`jobs.kinds.${tasks.records.value[id]!.kind}`) }}</strong
+          ><span
+            >{{ t(`jobs.status.${tasks.records.value[id]!.status}`) }} ·
+            {{
+              formatSystemDateTime(tasks.records.value[id]!.created_at)
+            }}</span
+          >
+        </router-link>
+        <div class="notification-center__tabs">
+          <el-button
+            text
+            :disabled="!operationOffset || operationLoading"
+            @click="operationPage(-30)"
+            >{{ t("jobs.previous") }}</el-button
+          ><span
+            >{{ Math.min(operationOffset + 30, operationCount) }} /
+            {{ operationCount }}</span
+          ><el-button
+            text
+            :disabled="
+              operationOffset + 30 >= operationCount || operationLoading
+            "
+            @click="operationPage(30)"
+            >{{ t("jobs.next") }}</el-button
+          >
+        </div>
+      </div>
+      <template v-else>
+        <p class="notification-center__range">{{ t("dataScope.alertHint") }}</p>
+        <div class="notification-center__summary" aria-live="polite">
+          <span class="notification-center__summary-item is-critical">
+            <i aria-hidden="true"></i>{{ levelLabel("critical") }}
+            {{ summary.critical }}
           </span>
-        </el-button>
-      </div>
-      <div v-else class="notification-center__state">
-        {{ t('notifications.noAlerts') }}
-      </div>
+          <span class="notification-center__summary-item is-warning">
+            <i aria-hidden="true"></i>{{ levelLabel("warning") }}
+            {{ summary.warning }}
+          </span>
+          <span class="notification-center__summary-item is-notice">
+            <i aria-hidden="true"></i>{{ levelLabel("notice") }}
+            {{ summary.notice }}
+          </span>
+        </div>
 
+        <div
+          v-if="showingLimitedAlerts"
+          class="notification-center__range"
+          aria-live="polite"
+        >
+          {{
+            t("notifications.showingFirst", {
+              shown: alerts.length,
+              total: summary.total,
+            })
+          }}
+        </div>
+
+        <div v-if="loading" class="notification-center__state">
+          {{ t("common.loadingData") }}
+        </div>
+        <div v-else-if="error" class="notification-center__state is-error">
+          <span>{{ error }}</span>
+          <el-button text @click="loadNotifications(true)">{{
+            t("common.retry")
+          }}</el-button>
+        </div>
+        <div v-else-if="alerts.length" class="notification-center__list">
+          <el-button
+            v-for="alert in alerts"
+            :key="alert.id"
+            class="notification-center__item"
+            :class="[`is-${alert.level}`, { 'is-read': isRead(alert.id) }]"
+            text
+            :aria-label="alertAccessibleLabel(alert)"
+            :title="alertActionLabel(alert)"
+            @click="handleSelect(alert)"
+          >
+            <span class="notification-center__item-content">
+              <i class="notification-center__item-dot" aria-hidden="true"></i>
+              <span class="notification-center__item-body">
+                <strong>{{ alertTitle(alert) }}</strong>
+                <span
+                  class="notification-center__item-subject"
+                  :title="alertSubject(alert)"
+                  >{{ alertSubject(alert) }}</span
+                >
+                <span
+                  v-if="alertContext(alert)"
+                  class="notification-center__item-context"
+                  >{{ alertContext(alert) }}</span
+                >
+              </span>
+              <span class="notification-center__item-meta">{{
+                alertMeta(alert)
+              }}</span>
+            </span>
+          </el-button>
+        </div>
+        <div v-else class="notification-center__state">
+          {{ t("notifications.noAlerts") }}
+        </div>
+      </template>
       <footer class="notification-center__footer">
-        <span v-if="generatedAt">{{ t('notifications.updatedAt', { time: formatDate(generatedAt) }) }}</span>
-        <el-button text :icon="Refresh" :loading="loading" @click="loadNotifications(true)">
-          {{ t('notifications.refresh') }}
+        <span v-if="generatedAt">{{
+          t("notifications.updatedAt", { time: formatDate(generatedAt) })
+        }}</span>
+        <el-button
+          text
+          :icon="Refresh"
+          :loading="activeTab === 'operations' ? operationLoading : loading"
+          @click="
+            activeTab === 'operations'
+              ? loadOperations()
+              : loadNotifications(true)
+          "
+        >
+          {{ t("notifications.refresh") }}
         </el-button>
       </footer>
     </section>
@@ -246,6 +447,33 @@ onMounted(() => {
 </template>
 
 <style scoped>
+.notification-center__tabs {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.notification-center__operations {
+  max-height: 440px;
+  overflow: auto;
+}
+.notification-center__operation {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 10px;
+  color: var(--el-text-color-primary);
+  text-decoration: none;
+  border-bottom: 1px solid var(--el-border-color-lighter);
+}
+.notification-center__operation span {
+  font-size: 12px;
+  color: var(--el-text-color-secondary);
+}
+.notification-center__operation.is-read {
+  opacity: 0.7;
+}
+
 :global(.notification-center__popover) {
   box-sizing: border-box;
   max-width: calc(100vw - 24px);

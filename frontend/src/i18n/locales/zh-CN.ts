@@ -18,6 +18,8 @@ export default {
   "allUsage": "全部用件"
 },
   jobs: {
+  "kind": "任务类型",
+  "submitter": "提交账号",
   "actions": "操作",
   "otherFilter": "其他条件",
   "submittedAt": "提交时间",
