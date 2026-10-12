@@ -4,11 +4,11 @@ This document explains the behavior of the Infrix installer beyond the
 command examples in the [Rocky Linux installation guide](INSTALL_VM.md). For
 the Chinese version, see [安装流程说明](INSTALLER_WORKFLOW.zh-CN.md).
 
-## Runtime dependencies and account scopes
+## Runtime dependencies
 
 The backend installation entry remains `backend/requirements.txt`, which includes the exact versions and PyPI source in `backend/requirements.lock`. Version ranges remain in `backend/requirements.in`; update the lock alongside dependency changes. The frontend retains `package-lock.json`. Release packages must include the lock; offline installation continues to use the installer's prepared wheel directory.
 
-After migration `0009_user_data_scope`, system administrators retain global access. Other accounts have no business data scope until explicitly granted centers or unlocated-asset access in the application. Assign grants before opening the system to ordinary users. Admin access is limited to system administrators and business records remain read-only. See the [data scope policy](DATA-SCOPE.zh-CN.md).
+Create the system administrator and assign the required data scopes before opening the deployment to ordinary users.
 
 ## First installation
 
@@ -209,9 +209,10 @@ Nginx configuration artifacts. Built-in Backup & Restore supports production
 MariaDB only and is described in the [automatic installation guide](INSTALL_VM.md)
 and [manual deployment guide](MANUAL_DEPLOYMENT.md).
 
-The installer does not schedule backups or apply retention. Use the built-in
-page or the shared `check_backup`, `create_backup`, and `restore_backup`
-management commands after loading the service environment. Restore requires
+The installer does not schedule backups or apply retention. The page provides
+archive creation, restoration, listing, download, and deletion. The
+`check_backup`, `create_backup`, and `restore_backup` management commands are also available after
+loading the service environment. Restore requires
 `RESTORE INFRIX`, creates a safety backup first, and never runs migrations
 automatically.
 
@@ -243,6 +244,6 @@ For detailed database, LDAP, SMTP, reverse-proxy, backup, and security
 procedures, continue with the language-specific installation guide or the
 [manual deployment guide](MANUAL_DEPLOYMENT.md).
 
-## Repair round upgrade
+## Background worker
 
-Stage 3A adds migration 0015. Reopening a completed repair creates a new empty round and returns a new ID. Existing repairs and attachments remain; old part usages retain an unconfirmed round rather than an inferred link. Stop Web, the worker and the digest timer before the normal backup/migration procedure, deploy the matching frontend, then restart. Database migrations do not roll back automatically. See [repair round behavior and compatibility](REPAIR-ROUNDS.zh-CN.md).
+The installer provisions `infrix-worker.service` with the same account, environment file, database, and runtime directories as Web. Confirm that it is active after deployment. See [manual worker deployment](MANUAL_DEPLOYMENT.md#background-worker-service) for troubleshooting, permissions, file cleanup, and maintenance requirements.

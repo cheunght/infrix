@@ -165,18 +165,6 @@ python3 -c 'import base64, os; print(base64.urlsafe_b64encode(os.urandom(32)).de
 
 SMTP 是可选项，不会阻止应用启动。在“系统设置 → SMTP”中配置并测试；如需每日摘要，在“系统设置 → 通知”中明确启用，配置收件人和邮件链接使用的公网 HTTPS 地址。
 
-### 人员和资产使用人
-
-“组织权限”页签按用户账号、人员管理、部门、角色、LDAP / AD 的顺序显示。当前账号能看到哪些页签，由权限决定。
-
-人员记录可以没有登录账号。姓名必填，员工编号、所属部门、单位、联系方式和启用状态可选。创建本地账号时，管理员可以关联一个尚未绑定账号的人员；如果不选择，创建账号时系统会自动建立人员记录。
-
-资产可以没有使用人，也只能有一个当前使用人。新建或编辑资产时可以选择人员，也可以在资产详情中执行指定、转交和归还。只有启用人员可以被指定。转交会写入使用历史，资产状态保持不变。人员所属部门只是人员资料，不是资产归属字段。
-
-资产台账支持管理员批量指定或批量转交当前页选中的资产，每批最多 100 项。每项都会返回处理结果；成功项取消选中，失败项保留选中，修正后可以重试。
-
-资产导入中的 `assigned_person_employee_no`、`assigned_person_name`、`assigned_person_department` 和 `assignment_reason` 用于匹配已有人员，导入不会自动创建人员。资产导出会包含使用人姓名、员工编号、部门、单位和联系方式。
-
 ## 7. 生产配置检查
 
 启动应用前执行只读配置检查：
@@ -191,7 +179,7 @@ SMTP 是可选项，不会阻止应用启动。在“系统设置 → SMTP”中
 
 ## 8. 初始化数据库和静态文件
 
-新数据库必须确认为空；已有安装在迁移前创建并验证受限数据库备份：
+首次部署必须使用空数据库。已有部署执行迁移前，先确认迁移记录与当前安装包一致，并创建、验证受限数据库备份：
 
 ```bash
 cd /opt/infrix/backend
@@ -214,6 +202,47 @@ cd /opt/infrix/backend
 ```
 
 Gunicorn 必须以专用非 root 账号运行，只绑定 loopback 或其他受保护接口。systemd 单元应使用必需的 `EnvironmentFile=/etc/infrix/infrix.env`，不要使用带前导短横线的可选环境文件形式。
+
+### 后台任务服务
+
+Web 之外需要常驻 `infrix-worker.service`，否则导入、导出和邮件摘要会持续排队。自动安装器会创建并启动该服务；手工部署将以下配置保存为 `/etc/systemd/system/infrix-worker.service`：
+
+```ini
+[Unit]
+Description=Infrix background worker
+After=network-online.target mariadb.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=infrix
+Group=infrix
+WorkingDirectory=/opt/infrix/backend
+EnvironmentFile=/etc/infrix/infrix.env
+ExecStart=/opt/infrix/backend/.venv/bin/python manage.py work_jobs
+Restart=always
+RestartSec=5
+PrivateTmp=true
+NoNewPrivileges=true
+
+[Install]
+WantedBy=multi-user.target
+```
+
+worker 与 Web 必须使用同一服务账号、环境文件、数据库、媒体目录和独立维护目录。当前协调方式仅支持单机；Nginx 不得直接公开媒体目录。`MEDIA_ROOT/job-files/` 保存任务文件，目录权限为 `700`、文件为 `600`，需要纳入媒体备份和磁盘容量监控。
+
+```bash
+sudo systemctl daemon-reload
+sudo systemctl enable --now infrix-worker.service
+sudo systemctl status infrix-worker.service --no-pager
+sudo journalctl -u infrix-worker.service -n 100 --no-pager
+# 仅执行一个可用任务后退出，用于服务器排障
+sudo -u infrix /opt/infrix/backend/run.sh work_jobs --once
+# 默认保留 30 天，建议按运维计划定期执行
+sudo -u infrix /opt/infrix/backend/run.sh clean_jobs --days 30
+```
+
+升级前停止 Web、worker、`infrix-notification-digest.timer` 和 `infrix-notification-digest.service`，等待进程结束，再执行迁移并启动服务。备份恢复时 worker 参与维护屏障，无需手工修改任务状态或删除锁文件；维护解除后继续处理。恢复当天自动邮件摘要暂停，次日恢复。
 
 ### 每日通知摘要
 
@@ -365,7 +394,7 @@ sudo env BASE_URL=https://<hostname> bash deploy/verify-release.sh
 备份归档和包含 Fernet 密钥的环境文件都属于敏感数据，必须按同等级别保护。
 
 页面入口是“系统设置 → 系统维护 → 备份与恢复”，仅现有 `system.reset` 权限
-可用，保留查看、下载、校验和删除功能；创建和恢复仅通过服务器命令执行。
+可用，支持创建、恢复、查看、下载、校验和删除。
 系统只接受配置目录中已经存在的归档，不支持任意文件上传。命令行恢复必须输入
 准确的 `RESTORE INFRIX`，并校验 manifest、迁移状态、gzip 数据库导出和归档路径；
 恢复前会先创建 `pre-restore` 安全备份，不会自动执行迁移。恢复成功后会使已有登录
@@ -451,22 +480,18 @@ sudo nginx -t && sudo systemctl reload nginx
 
 随附自动安装器不会配置云防火墙、证书颁发机构或自定义编排系统等无关基础设施。
 
-### CLI maintenance window / 命令行维护窗口
+### 命令行维护窗口
 
-备份和恢复仅通过服务器命令执行。网页保留查看、校验、下载和删除；旧的创建/恢复 HTTP 接口返回 `405 maintenance_cli_required`。
+备份和恢复可从网页或服务器命令执行。
 
 `INFRIX_MAINTENANCE_DIR` 默认 `/var/lib/infrix/maintenance`，由服务账号所有、权限 `700`，必须独立于应用、媒体、备份和静态目录。手工部署需先创建该目录。维护开始后 API 与 Admin 返回 `503 maintenance_in_progress` 和 `Retry-After: 30`，静态页面仍可访问。在途请求、流式下载及文件删除提交回调结束后才开始快照；默认最多等待 60 秒，超时则停止操作。
 
-新版格式 2 包含数据库引用媒体的路径、大小和 SHA-256；缺文件、复制后内容不符或归档校验失败不会返回备份成功。旧格式 1 标为“无媒体引用清单”，仍可识别；恢复后必须通过迁移状态和数据库引用文件验收。
+备份清单包含数据库引用媒体的路径、大小和 SHA-256。缺文件、复制后内容不符或归档校验失败时备份失败；恢复前确认程序与归档的迁移状态一致，恢复后通过数据库引用文件校验再开放服务。
 
-恢复修改数据后失败或进程被终止，系统保留维护状态。不要删除 `state.json` 来强行开放业务。确认原 CLI 与 MariaDB 客户端已经结束，读取维护目录 `state.json` 的 `safety_backup` 文件名，再加载原环境，以服务账号执行：
+恢复修改数据后失败或进程被终止，系统保留维护状态。不要删除 `state.json` 来强行开放业务。确认维护进程与 MariaDB 客户端已经结束，读取维护目录 `state.json` 的 `safety_backup` 文件名，再加载原环境，以服务账号执行：
 
 ```bash
 .venv/bin/python manage.py restore_backup <state.json中记录的安全备份文件名> --confirm-restore "RESTORE INFRIX" --recover
 ```
 
 该恢复流程不为部分恢复库重新创建安全备份，只接受状态中记录的原安全备份；再次失败继续保持维护，验收、会话失效及审计全部完成后才开放。网页请求不会自动重试写操作。直接 SQL、其他脚本、迁移和人工文件修改不参与请求屏障，维护期间不得执行；单机所有 worker 和运维命令必须使用同一环境与维护目录。多节点部署不支持此锁协议。
-
-## 后台作业 worker
-
-迁移 0014 后，Web 同时需要独立 `infrix-worker.service` 执行导入、导出和邮件摘要。安装器会创建、启用并检查该服务；手工升级先停止 worker 和摘要定时器，完成迁移后再启动。旧摘要命令仅提交队列。目录、命令、恢复和清理规则见[持久后台作业](BACKGROUND-JOBS.zh-CN.md)。

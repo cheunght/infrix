@@ -2,6 +2,7 @@ import { computed, getCurrentInstance, onBeforeUnmount, ref } from "vue";
 import { isAbortError } from "../api";
 import { normalizeApiError } from "../error-handling";
 import { i18n } from "../i18n";
+import { useBackupOperations, type BackupOperation } from "./useBackupOperations";
 import type { SystemMaintenanceDependencies } from "../page-context";
 import type { BackupEntry, BackupListResponse } from "../types";
 
@@ -21,6 +22,8 @@ export type SystemOperations = {
 
 export type MaintenanceOperation =
   | "backup:delete"
+  | "backup:create"
+  | "backup:restore"
   | "system:reset";
 
 const BACKUP_ERROR_KEYS: Record<string, string> = {
@@ -83,6 +86,11 @@ export function useSystemMaintenance(deps: SystemMaintenanceDependencies) {
   const resetConfirmation = ref("");
   const resetError = ref("");
   const uncertainOperation = ref(false);
+  const backupOperations = useBackupOperations();
+  const restoreDialogVisible = ref(false);
+  const restoreConfirmation = ref("");
+  const restoreError = ref("");
+  const restoreEntry = ref<BackupEntry | null>(null);
   const activeOperation = ref<MaintenanceOperation | null>(null);
   const statusGeneration = ref(0);
   let statusController: AbortController | null = null;
@@ -91,7 +99,9 @@ export function useSystemMaintenance(deps: SystemMaintenanceDependencies) {
   const systemOperationsBusy = computed(() => statusLoading.value);
   const backupDeleting = computed(() => activeOperation.value === "backup:delete");
   const systemResetSaving = computed(() => activeOperation.value === "system:reset");
-  const maintenanceBusy = computed(() => activeOperation.value !== null);
+  const backupCreating = computed(() => activeOperation.value === "backup:create");
+  const backupRestoring = computed(() => activeOperation.value === "backup:restore");
+  const maintenanceBusy = computed(() => activeOperation.value !== null || backupOperations.busy.value);
   const hasNonTransactionalTables = computed(() =>
     backups.value.some((entry) => Boolean(entry.transaction_consistency_warning)),
   );
@@ -116,7 +126,7 @@ export function useSystemMaintenance(deps: SystemMaintenanceDependencies) {
   }
 
   function beginOperation(operation: MaintenanceOperation): boolean {
-    if (activeOperation.value || !deps.can("system.reset")) return false;
+    if (maintenanceBusy.value || !deps.can("system.reset")) return false;
     activeOperation.value = operation;
     uncertainOperation.value = false;
     backupError.value = "";
@@ -182,6 +192,42 @@ export function useSystemMaintenance(deps: SystemMaintenanceDependencies) {
 
   function backupEndpoint(filename: string, suffix = "") {
     return `/system/backups/${encodeURIComponent(filename)}${suffix}`;
+  }
+
+  async function submitBackupOperation(kind: "backup" | "restore", filename = "") {
+    if (!beginOperation(kind === "backup" ? "backup:create" : "backup:restore")) return;
+    try {
+      const receipt = backupOperations.begin(kind, filename);
+      const result = await deps.request<{ operation: BackupOperation }>(
+        kind === "backup" ? "/system/backups/" : backupEndpoint(filename, "/restore/"), {
+          method: "POST", headers: { "Content-Type": "application/json", "X-Maintenance-Token": receipt.token },
+          body: JSON.stringify({ operation_id: receipt.id, ...(kind === "restore" ? { confirmation: restoreConfirmation.value } : {}) }),
+        },
+      );
+      backupOperations.accepted(result.operation); restoreDialogVisible.value = false;
+    } catch (error) {
+      const status = typeof error === "object" && error !== null && "status" in error ? Number(error.status) : 0;
+      if (status >= 400 && status < 500) backupOperations.clear();
+      else backupOperations.unconfirmed();
+      const message = errorText(error, kind === "backup" ? "settings.backupCreateFailed" : "settings.backupRestoreFailed");
+      backupError.value = message; restoreError.value = message;
+    } finally { finishOperation(); }
+  }
+
+  async function createBackup() {
+    if (maintenanceBusy.value || !deps.can("system.reset")) return;
+    if (await deps.confirmAction(t("settings.backupCreateConfirm"))) await submitBackupOperation("backup");
+  }
+  function openRestoreDialog(entry: BackupEntry) {
+    if (!entry.valid || maintenanceBusy.value || !deps.can("system.reset")) return;
+    restoreEntry.value = entry; restoreConfirmation.value = ""; restoreError.value = ""; restoreDialogVisible.value = true;
+  }
+  function closeRestoreDialog() { if (!backupRestoring.value) restoreDialogVisible.value = false; }
+  async function restoreBackup() {
+    if (restoreConfirmation.value !== "RESTORE INFRIX" || !restoreEntry.value) {
+      restoreError.value = t("settings.backupRestoreConfirmationRequired"); return;
+    }
+    await submitBackupOperation("restore", restoreEntry.value.filename);
   }
 
   async function downloadBackup(entry: BackupEntry) {
@@ -281,6 +327,16 @@ export function useSystemMaintenance(deps: SystemMaintenanceDependencies) {
     backupNotice,
     pendingFilename,
     backupDeleting,
+    backupCreating,
+    backupRestoring,
+    createBackup,
+    openRestoreDialog,
+    closeRestoreDialog,
+    restoreBackup,
+    restoreDialogVisible,
+    restoreConfirmation,
+    restoreError,
+    restoreEntry,
     hasNonTransactionalTables,
     resetDialogVisible,
     resetConfirmation,

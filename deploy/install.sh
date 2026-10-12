@@ -929,8 +929,63 @@ cd "$APP_DIR/backend"
 count_data() {
   "$APP_DIR/backend/.venv/bin/python" manage.py shell -c 'from django.db import connection; from assets.models import Asset,DataCenter,ServerRoom,Rack,RackUnitAllocation,FaultEvent,RepairRecord,SoftwareLicense,InventoryTask,InventoryItem,SparePart,SpareStock,SpareStockTransaction,CustomField,AssetCustomValue,Tag,AssetTag,AuditLog; models=[Asset,DataCenter,ServerRoom,Rack,RackUnitAllocation,FaultEvent,RepairRecord,SoftwareLicense,InventoryTask,InventoryItem,SparePart,SpareStock,SpareStockTransaction,CustomField,AssetCustomValue,Tag,AssetTag,AuditLog]; tables=set(connection.introspection.table_names()); missing_label="未迁移"; print("数据量："+" ".join(f"{model.__name__}={model.objects.count() if model._meta.db_table in tables else missing_label}" for model in models))'
 }
+count_data_raw() {
+  # This runs before Django migrations.  A table may already exist while the
+  # current model still expects columns that have not been added yet (for
+  # example assets_asset.archived_at).  Use a raw table count here so the
+  # diagnostic cannot query a stale schema through the current ORM manager.
+  "$APP_DIR/backend/.venv/bin/python" - <<'PY'
+import os
+
+os.environ.setdefault("DJANGO_SETTINGS_MODULE", "config.settings")
+import django
+
+django.setup()
+
+from django.db import connection
+from assets.models import (
+    Asset,
+    AssetCustomValue,
+    AssetTag,
+    AuditLog,
+    CustomField,
+    DataCenter,
+    FaultEvent,
+    InventoryItem,
+    InventoryTask,
+    Rack,
+    RackUnitAllocation,
+    RepairRecord,
+    ServerRoom,
+    SoftwareLicense,
+    SparePart,
+    SpareStock,
+    SpareStockTransaction,
+    Tag,
+)
+
+models = [
+    Asset, DataCenter, ServerRoom, Rack, RackUnitAllocation, FaultEvent,
+    RepairRecord, SoftwareLicense, InventoryTask, InventoryItem, SparePart,
+    SpareStock, SpareStockTransaction, CustomField, AssetCustomValue, Tag,
+    AssetTag, AuditLog,
+]
+tables = set(connection.introspection.table_names())
+counts = []
+with connection.cursor() as cursor:
+    for model in models:
+        table = model._meta.db_table
+        if table not in tables:
+            value = "未迁移"
+        else:
+            cursor.execute("SELECT COUNT(*) FROM " + connection.ops.quote_name(table))
+            value = cursor.fetchone()[0]
+        counts.append(f"{model.__name__}={value}")
+print("数据量（原始表计数）：" + " ".join(counts))
+PY
+}
 log "迁移前数据量核对"
-count_data
+count_data_raw
 if ! "$APP_DIR/backend/.venv/bin/python" manage.py migrate --noinput; then
   fail "Django 数据库迁移失败，请检查数据库连接、权限和当前安装包。"
 fi

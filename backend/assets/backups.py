@@ -657,10 +657,12 @@ def _create_backup_locked(
     return result
 
 
-def create_backup(*, request=None, actor=None) -> dict[str, object]:
+def create_backup(*, request=None, actor=None, before_operation=None) -> dict[str, object]:
     _require_mariadb()
     try:
         with backup_operation_lock(), maintenance_window("backup") as operation:
+            if before_operation is not None:
+                actor = before_operation(operation)
             operation.stage("creating_backup")
             return _create_backup_locked(request=request, actor=actor, kind="backup")
     except (MaintenanceUnavailable, OSError) as exc:
@@ -1380,12 +1382,14 @@ def _post_restore() -> tuple[int, list[str]]:
     return invalidated_sessions, warnings
 
 
-def restore_backup(identifier, *, confirmation, request=None, actor=None, recover=False):
+def restore_backup(identifier, *, confirmation, request=None, actor=None, recover=False, before_operation=None):
     if confirmation != BACKUP_CONFIRMATION:
         raise BackupServiceError("请输入准确的恢复确认文本：RESTORE INFRIX。", code="restore_confirmation_required")
     _require_mariadb()
     try:
         with backup_operation_lock(), maintenance_window("restore", recover=recover) as operation:
+            if before_operation is not None:
+                actor = before_operation(operation)
             if operation.recovering and identifier != operation.state.get("safety_backup"):
                 raise BackupServiceError("失败恢复必须使用维护状态中记录的安全备份。", code="recovery_backup_required", status_code=409)
             result = _restore_backup_locked(identifier, confirmation=confirmation, request=request, actor=actor, operation=operation)
@@ -1508,7 +1512,7 @@ def _restore_backup_locked(
     audit_recorded = True
     try:
         user_model = get_user_model()
-        audit_actor = user_model.objects.filter(pk=getattr(actor, "pk", None)).first() if actor else None
+        audit_actor = user_model.objects.filter(pk=actor.pk, username=actor.get_username()).first() if actor else None
         write_audit_log(
             None,
             actor=audit_actor,
@@ -1520,6 +1524,7 @@ def _restore_backup_locked(
                 "database_status": database_status,
                 "media_status": media_status,
                 "sessions_invalidated": sessions_invalidated,
+                "requested_by": {"id": actor.pk, "username": actor.get_username()} if actor else None,
             },
         )
     except Exception:

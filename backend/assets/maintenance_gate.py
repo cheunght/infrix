@@ -145,6 +145,8 @@ class MaintenanceOperation:
         self.state = {"operation": operation, "dirty": self.recovering, "stage": "draining", "started_at": time.time()}
         if previous and previous.get("safety_backup"):
             self.state["safety_backup"] = previous["safety_backup"]
+        if self.recovering and previous.get("web_operation_id"):
+            self.state["web_operation_id"] = previous["web_operation_id"]
 
     def stage(self, stage, **metadata):
         self.state.update(metadata, stage=stage)

@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { toRefs } from "vue";
-import { Delete, Download } from "@element-plus/icons-vue";
+import { Delete, Download, RefreshLeft } from "@element-plus/icons-vue";
 import { useI18n } from "vue-i18n";
 import type { SystemMaintenanceDependencies } from "../page-context";
 import type { BackupEntry } from "../types";
@@ -11,6 +11,7 @@ const props = defineProps<{
   backups: BackupEntry[];
   loading: boolean;
   deleting: boolean;
+  busy?: boolean;
   pendingFilename: string;
   error: string;
   notice: string;
@@ -20,6 +21,7 @@ const emit = defineEmits<{
   (event: "load"): void;
   (event: "download", value: BackupEntry): void;
   (event: "delete", value: BackupEntry): void;
+  (event: "restore", value: BackupEntry): void;
 }>();
 const { t } = useI18n();
 const context = props.context;
@@ -27,6 +29,7 @@ const {
   backups,
   loading,
   deleting,
+  busy,
   pendingFilename,
   error,
   notice,
@@ -70,9 +73,7 @@ function formatCreatedAt(value: string): string {
       :closable="false"
     />
 
-    <el-alert :title="t('settings.backupCliNotice')" type="info" :closable="false" />
-    <pre class="backup-cli-commands">python manage.py create_backup
-python manage.py restore_backup &lt;backup-file&gt; --confirm-restore "RESTORE INFRIX"</pre>
+    <el-alert :title="t('settings.backupWebNotice')" type="info" :closable="false" />
     <el-skeleton v-if="loading && !backups.length" :rows="5" animated />
     <el-empty v-else-if="!loading && !backups.length" :description="t('settings.noBackups')" />
     <div v-else class="backup-restore-results">
@@ -106,12 +107,13 @@ python manage.py restore_backup &lt;backup-file&gt; --confirm-restore "RESTORE I
             </el-tag>
           </template>
         </el-table-column>
-        <el-table-column :label="t('common.operation')" width="116" fixed="right">
+        <el-table-column :label="t('common.operation')" width="148" fixed="right">
           <template #default="{ row }">
             <div class="backup-restore-table__actions">
               <el-button-group>
-                <TableIconButton :icon="Download" :label="t('settings.downloadBackup')" type="primary" :disabled="pendingFilename !== '' || deleting || !row.valid" @click="emit('download', row)" />
-                <TableIconButton :icon="Delete" :label="t('settings.deleteBackup')" type="danger" :loading="pendingFilename === row.filename" :disabled="pendingFilename !== '' || deleting" @click="emit('delete', row)" />
+                <TableIconButton :icon="Download" :label="t('settings.downloadBackup')" type="primary" :disabled="pendingFilename !== '' || busy || !row.valid" @click="emit('download', row)" />
+                <TableIconButton :icon="RefreshLeft" :label="t('settings.restoreBackup')" type="warning" :disabled="pendingFilename !== '' || busy || !row.valid" @click="emit('restore', row)" />
+                <TableIconButton :icon="Delete" :label="t('settings.deleteBackup')" type="danger" :loading="pendingFilename === row.filename" :disabled="pendingFilename !== '' || busy" @click="emit('delete', row)" />
               </el-button-group>
             </div>
             <small v-if="!row.valid" class="backup-restore-table__error">{{ row.validation_error || t("settings.backupInvalid") }}</small>
@@ -136,8 +138,9 @@ python manage.py restore_backup &lt;backup-file&gt; --confirm-restore "RESTORE I
             <small v-if="!row.valid" class="backup-restore-list__error">{{ row.validation_error || t("settings.backupInvalid") }}</small>
             <div class="backup-restore-table__actions">
               <el-button-group>
-                <TableIconButton :icon="Download" :label="t('settings.downloadBackup')" type="primary" :disabled="pendingFilename !== '' || deleting || !row.valid" @click="emit('download', row)" />
-                <TableIconButton :icon="Delete" :label="t('settings.deleteBackup')" type="danger" :loading="pendingFilename === row.filename" :disabled="pendingFilename !== '' || deleting" @click="emit('delete', row)" />
+                <TableIconButton :icon="Download" :label="t('settings.downloadBackup')" type="primary" :disabled="pendingFilename !== '' || busy || !row.valid" @click="emit('download', row)" />
+                <TableIconButton :icon="RefreshLeft" :label="t('settings.restoreBackup')" type="warning" :disabled="pendingFilename !== '' || busy || !row.valid" @click="emit('restore', row)" />
+                <TableIconButton :icon="Delete" :label="t('settings.deleteBackup')" type="danger" :loading="pendingFilename === row.filename" :disabled="pendingFilename !== '' || busy" @click="emit('delete', row)" />
               </el-button-group>
             </div>
           </div>

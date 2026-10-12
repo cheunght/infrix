@@ -5,6 +5,7 @@ import { ElBadge } from "element-plus/es/components/badge/index.mjs";
 import { ElButton, ElButtonGroup } from "element-plus/es/components/button/index.mjs";
 import { ElConfigProvider } from "element-plus/es/components/config-provider/index.mjs";
 import { ElAside, ElContainer, ElHeader, ElMain } from "element-plus/es/components/container/index.mjs";
+import { ElDrawer } from "element-plus/es/components/drawer/index.mjs";
 import { ElDropdown, ElDropdownItem, ElDropdownMenu } from "element-plus/es/components/dropdown/index.mjs";
 import { ElForm, ElFormItem } from "element-plus/es/components/form/index.mjs";
 import { ElIcon } from "element-plus/es/components/icon/index.mjs";
@@ -82,6 +83,7 @@ const shellComponents: Record<string, Component> = {
   ElButtonGroup,
   ElConfigProvider,
   ElContainer,
+  ElDrawer,
   ElDropdown,
   ElDropdownItem,
   ElDropdownMenu,

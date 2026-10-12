@@ -82,8 +82,8 @@ def list_backups() -> list[BackupSummary]:
     return _list_backups()
 
 
-def create_backup(*, actor=None, request=None) -> BackupSummary:
-    return _create_backup(actor=actor, request=request)
+def create_backup(*, actor=None, request=None, before_operation=None) -> BackupSummary:
+    return _create_backup(actor=actor, request=request, before_operation=before_operation)
 
 
 def restore_backup(
@@ -93,6 +93,7 @@ def restore_backup(
     actor=None,
     recover=False,
     request=None,
+    before_operation=None,
 ) -> RestoreResult:
     return _restore_backup(
         backup_id,
@@ -100,6 +101,7 @@ def restore_backup(
         actor=actor,
         recover=recover,
         request=request,
+        before_operation=before_operation,
     )
 
 

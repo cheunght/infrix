@@ -83,8 +83,8 @@ def notification_digest_status(request):
     }, "deliveries": deliveries})
 
 
-@extend_schema(methods=["GET"], parameters=JOB_FILTER_PARAMETERS, responses=OpenApiTypes.OBJECT, description="查询本人后台作业。")
-@extend_schema(methods=["POST"], request=OpenApiTypes.OBJECT, responses=OpenApiTypes.OBJECT, description="提交本人后台作业。必须提供 Idempotency-Key；输入为 JSON 或带 kind、file 的 multipart。")
+@extend_schema(methods=["GET"], parameters=JOB_FILTER_PARAMETERS, responses=OpenApiTypes.OBJECT, operation_id="jobs_list", description="查询本人后台作业。")
+@extend_schema(methods=["POST"], request=OpenApiTypes.OBJECT, responses=OpenApiTypes.OBJECT, operation_id="jobs_submit", description="提交本人后台作业。必须提供 Idempotency-Key；输入为 JSON 或带 kind、file 的 multipart。")
 @api_view(["GET", "POST"])
 @scope_endpoint
 def jobs(request):
@@ -101,14 +101,14 @@ def jobs(request):
     return Response({"job": public_job(job, request.user)}, status=202)
 
 
-@extend_schema(responses=OpenApiTypes.OBJECT)
+@extend_schema(responses=OpenApiTypes.OBJECT, operation_id="job_retrieve")
 @api_view(["GET"])
 @scope_endpoint
 def job_detail(request, job_id):
     return Response(public_job(get_object_or_404(BackgroundJob, pk=job_id, submitter=request.user), request.user))
 
 
-@extend_schema(request=None, responses=OpenApiTypes.OBJECT, description="仅排队作业可取消，仅失败作业可重试；执行中取消返回 409。")
+@extend_schema(request=None, responses=OpenApiTypes.OBJECT, operation_id="job_action", description="仅排队作业可取消，仅失败作业可重试；执行中取消返回 409。")
 @api_view(["POST"])
 @scope_endpoint
 def job_action(request, job_id, action):
@@ -118,7 +118,7 @@ def job_action(request, job_id, action):
     return Response(public_job(transition(job_id, request.user, action), request.user))
 
 
-@extend_schema(responses=OpenApiTypes.BINARY, description="本人导出结果；重新校验账号、密码策略、功能和范围。授权或业务记录变化时必须重新导出。")
+@extend_schema(responses=OpenApiTypes.BINARY, operation_id="job_result", description="本人导出结果；重新校验账号、密码策略、功能和范围。授权或业务记录变化时必须重新导出。")
 @api_view(["GET"])
 @scope_endpoint
 def job_result(request, job_id):

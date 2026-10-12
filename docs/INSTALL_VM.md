@@ -314,38 +314,16 @@ optional integrations; configure them from the administration UI only after
 the base application is healthy. Keep the Fernet key available before saving
 LDAP or other protected passwords.
 
-### People and asset users
+### Background worker
 
-Under **Organization & Permissions**, the tabs appear in this order: Users,
-People, Departments, Roles, and LDAP / AD. A tab is shown only when the
-current account has the required permission.
+The installer starts `infrix-worker.service` for imports, exports, and notification digests. Check its status and logs:
 
-The People tab stores people who may use assets. A person does not need a
-login account. The record requires a name and can also contain a unique
-employee number, department, organization, contact details, and active status.
-Creating a local account can link an existing unlinked person. If no person is
-selected, Infrix creates a person record for the new account. Disabling or
-deleting a login account does not remove the person record or release the
-person's assigned assets.
+```bash
+sudo systemctl status infrix-worker.service --no-pager
+sudo journalctl -u infrix-worker.service -n 100 --no-pager
+```
 
-An asset can have one optional assigned person. You can choose that person in
-the asset form, or use the asset detail actions to assign, transfer, or return
-the asset. Only active people can be selected. Transferring an asset changes
-the assigned person and writes an assignment history entry; it does not
-change the asset status. The asset detail also shows the assignment history.
-The department belongs to the person's profile and is not an asset ownership
-field.
-
-From the asset ledger, administrators can batch assign or transfer the
-currently selected assets. A batch is limited to 100 assets and returns a
-per-asset result; successful items are cleared from the selection while failed
-items remain selected for correction and retry.
-
-Asset import accepts `assigned_person_employee_no`, `assigned_person_name`,
-`assigned_person_department`, and `assignment_reason`. The importer matches
-an existing person and does not create one automatically. Asset exports
-include the assigned person's name, employee number, department,
-organization, and contact details.
+See [worker deployment](MANUAL_DEPLOYMENT.md#background-worker-service) for directory permissions, cleanup, and maintenance requirements.
 
 ### Local Backup & Restore
 
@@ -357,7 +335,7 @@ static, and media directories. It is never served by Nginx.
 
 From **System Maintenance → Backup & Restore**, a system administrator with
 the existing `system.reset` capability can view, download, validate,
-or delete local archives. Creation and restoration use server commands only.
+or delete local archives. Creation and restoration are available from this page or the server commands below.
 Each archive contains `manifest.json`, a compressed
 MariaDB dump, and the complete `MEDIA_ROOT` tree when that directory exists.
 Archives may contain sensitive business data; protect them like the database
@@ -436,15 +414,15 @@ delete migration records or applied migration files to bypass an error.
 - Restrict database, certificate, private-key, log, and backup access.
 - Maintain tested backups of the database and environment file.
 
-### CLI maintenance window / 命令行维护窗口
+### Maintenance window
 
-Backup and restore now run only through server commands. The web page retains listing, validation, download and deletion; legacy create/restore HTTP routes return `405 maintenance_cli_required`.
+Create and restore backups from the web page or through server commands.
 
 Set `INFRIX_MAINTENANCE_DIR=/var/lib/infrix/maintenance`, owned by the service account with mode `700`, outside application, media, backup and static trees. Manual deployments must create this directory. All API/admin requests receive `503 maintenance_in_progress` and `Retry-After: 30` while maintenance drains admitted requests, streams and commit-time file callbacks (60 seconds maximum), then takes the snapshot. Static pages remain available.
 
-Format 2 includes paths, sizes and SHA-256 hashes for database-referenced media. Missing files or invalid content fail backup creation. Format 1 remains readable and is labeled as lacking a reference manifest; restored migration state and referenced files are verified before reopening.
+Backup manifests include paths, sizes, and SHA-256 hashes for database-referenced media. Missing files or invalid content fail backup creation. Confirm that the application and archive migration states match; restored references must pass validation before reopening.
 
-If restore fails after modifying data, or its process is killed, access stays closed. Do not delete `state.json` to reopen access. Wait for the CLI and its MariaDB client to exit, read `safety_backup` from the maintenance directory's `state.json`, load the same environment and run as the service account:
+If restore fails after modifying data, or its process is killed, access stays closed. Do not delete `state.json` to reopen access. Wait for the maintenance process and its MariaDB client to exit, read `safety_backup` from the maintenance directory's `state.json`, load the same environment and run as the service account:
 
 ```bash
 .venv/bin/python manage.py restore_backup <recorded-safety-backup> --confirm-restore "RESTORE INFRIX" --recover

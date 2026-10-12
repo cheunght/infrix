@@ -18,6 +18,7 @@ from rest_framework.response import Response
 from drf_spectacular.types import OpenApiTypes
 from drf_spectacular.utils import OpenApiParameter, extend_schema
 
+from .data_scope import global_endpoint
 from .permissions import CanManageSystemSettings
 from .system_settings import apply_branding_patch, read_system_settings
 
@@ -146,6 +147,7 @@ class BrandingUpdateSerializer(serializers.Serializer):
 @extend_schema(responses=OpenApiTypes.OBJECT, methods=["GET"])
 @api_view(["GET", "PATCH"])
 @permission_classes([CanManageSystemSettings])
+@global_endpoint
 def branding_configuration(request):
     if request.method == "GET":
         setting = read_system_settings()

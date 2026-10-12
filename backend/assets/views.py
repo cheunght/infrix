@@ -57,7 +57,7 @@ from .enum_contracts import (
     STOCK_OPERATION_TYPE_LABELS,
     STOCK_OPERATION_TYPE_VALUES,
 )
-from .serializers import AdminPasswordResetSerializer, ApiTokenCreateSerializer, ApiTokenSerializer, AssetAssignmentEventSerializer, AssetAssignmentReturnSerializer, AssetAssignmentTargetSerializer, AssetBatchAssignmentResponseSerializer, AssetBatchAssignmentSerializer, AssetBatchDeleteResponseSerializer, AssetBatchDeleteSerializer, AssetBulkEditResponseSerializer, AssetBulkEditSerializer, AssetDetailSerializer, AssetDisposalRequestSerializer, AssetListSerializer, AssetModelOptionSerializer, AssetModelSerializer, AssetSerializer, AssetTimelineSerializer, AssetWriteSerializer, AttachmentSerializer, AuditLogSerializer, BackupConfirmationSerializer, CurrentUserProfileSerializer, CustomFieldOptionSerializer, CustomFieldRuntimeSchemaSerializer, CustomFieldSerializer, CustomFieldSetItemsWriteSerializer, CustomFieldSetOptionSerializer, CustomFieldSetSerializer, DataCenterOptionSerializer, DataCenterSerializer, DepartmentOptionSerializer, DepartmentSerializer, DeviceTypeOptionSerializer, DeviceTypeSerializer, DictionaryOptionSerializer, FaultEventSerializer, InventoryBulkNormalResponseSerializer, InventoryBulkNormalSerializer, InventoryBulkResolutionResponseSerializer, InventoryBulkResolutionSerializer, InventoryInspectorSerializer, InventoryItemPageSerializer, InventoryItemSerializer, InventoryResolutionSerializer, InventoryScopePreviewQuerySerializer, InventoryScopePreviewSerializer, InventoryTaskSerializer, LdapConfigurationUpdateSerializer, NotificationDeliverySerializer, PersonOptionSerializer, PersonSerializer, RackOptionSerializer, RackSerializer, RepairPartUsageCreateSerializer, RepairPartUsageSerializer, RepairRecordSerializer, ServerRoomOptionSerializer, ServerRoomSerializer, SoftwareLicenseSerializer, SparePartDetailSerializer, SparePartOptionSerializer, SparePartSerializer, SpareStockOptionSerializer, SpareStockSerializer, SpareStockTransactionSerializer, SmtpTestEmailSerializer, SystemResetSerializer, SystemSettingsPatchSerializer, SystemSettingsSnapshotSerializer, TagOptionSerializer, TagSerializer, TwoFactorCodeSerializer, UserBatchStatusResponseSerializer, UserBatchStatusSerializer, UserSerializer, _default_references_option
+from .serializers import AdminPasswordResetSerializer, ApiTokenCreateSerializer, ApiTokenSerializer, AssetAssignmentEventSerializer, AssetAssignmentReturnSerializer, AssetAssignmentTargetSerializer, AssetBatchAssignmentResponseSerializer, AssetBatchAssignmentSerializer, AssetBatchDeleteResponseSerializer, AssetBatchDeleteSerializer, AssetBulkEditResponseSerializer, AssetBulkEditSerializer, AssetDetailSerializer, AssetDisposalRequestSerializer, AssetListSerializer, AssetModelOptionSerializer, AssetModelSerializer, AssetSerializer, AssetTimelineSerializer, AssetWriteSerializer, AttachmentSerializer, AuditLogSerializer, BackupConfirmationSerializer, CurrentUserProfileSerializer, CustomFieldOptionSerializer, CustomFieldRuntimeSchemaSerializer, CustomFieldSerializer, CustomFieldSetItemsWriteSerializer, CustomFieldSetOptionSerializer, CustomFieldSetSerializer, DataCenterOptionSerializer, DataCenterSerializer, DepartmentOptionSerializer, DepartmentSerializer, DeviceTypeOptionSerializer, DeviceTypeSerializer, DictionaryOptionSerializer, FaultEventSerializer, InventoryBulkNormalResponseSerializer, InventoryBulkNormalSerializer, InventoryBulkResolutionResponseSerializer, InventoryBulkResolutionSerializer, InventoryInspectorSerializer, InventoryItemPageSerializer, InventoryItemSerializer, InventoryResolutionSerializer, InventoryScopePreviewQuerySerializer, InventoryScopePreviewSerializer, InventoryTaskSerializer, LdapConfigurationUpdateSerializer, NotificationDeliverySerializer, PersonOptionSerializer, PersonSerializer, RackOptionSerializer, RackSerializer, RepairPartUsageCreateSerializer, RepairPartUsageSerializer, RepairRecordSerializer, RoleListResponseSerializer, ServerRoomOptionSerializer, ServerRoomSerializer, SoftwareLicenseSerializer, SparePartDetailSerializer, SparePartOptionSerializer, SparePartSerializer, SpareStockOptionSerializer, SpareStockSerializer, SpareStockTransactionSerializer, SmtpTestEmailSerializer, SystemResetSerializer, SystemSettingsPatchSerializer, SystemSettingsSnapshotSerializer, TagOptionSerializer, TagSerializer, TwoFactorCodeSerializer, UserBatchStatusResponseSerializer, UserBatchStatusSerializer, UserSerializer, _default_references_option
 from .stock import create_spare_part_with_stock, record_stock_transaction, record_repair_part_usage
 from .inventory_writes import resolve_inventory_item, record_inventory_observation, update_inventory_task, delete_inventory_task, change_inventory_task_status, submit_inventory_batch
 from .fieldsets import fieldset_items_queryset, replace_fieldset_items, resolve_fieldset
@@ -94,6 +94,7 @@ from .system_maintenance import (
     reset_system,
     restore_backup,
 )
+from .web_maintenance import submit_operation
 from .data_dictionary import (
     ManufacturerViewSet,
     SparePartCategoryViewSet,
@@ -1507,7 +1508,12 @@ class ServerRoomViewSet(AuditedModelViewSetMixin, ScopedModelViewSet):
                 raise DRFValidationError("机房仍有备件库存，无法停用，请先调出、出库或报废库存")
         super().perform_update(serializer)
 
+    @transaction.atomic
     def perform_destroy(self, instance):
+        # The initial object lookup is scoped, but a room can be reparented
+        # between that lookup and the delete. Lock the complete location graph
+        # and re-check the caller's write scope before evaluating constraints.
+        instance = lock_server_room_location(room_id=instance.pk)
         if instance.racks.exists():
             racks = list(instance.racks.values_list("code", flat=True)[:5])
             raise DRFValidationError(
@@ -1576,7 +1582,13 @@ class DataCenterViewSet(AuditedModelViewSetMixin, ScopedModelViewSet):
                 raise DRFValidationError("数据中心仍有备件库存，无法停用，请先调出、出库或报废库存")
         super().perform_update(serializer)
 
+    @transaction.atomic
     def perform_destroy(self, instance):
+        # Keep inactive centers addressable while still rechecking scope under
+        # the center lock. The inherited scoped lookup alone is not enough for
+        # a concurrent reparent or delete.
+        instance = DataCenter.objects.select_for_update().get(pk=instance.pk)
+        require_object(instance)
         if instance.rooms.exists():
             from rest_framework.exceptions import ValidationError as DRFValidationError
             rooms = list(instance.rooms.values_list("name", flat=True)[:5])
@@ -1596,19 +1608,6 @@ class DataCenterViewSet(AuditedModelViewSetMixin, ScopedModelViewSet):
                 if instance.spare_source_transactions.exists() or instance.spare_target_transactions.exists():
                     raise DRFValidationError("数据中心存在备件库存流水，不能删除") from exc
             raise
-
-    def destroy(self, request, *args, **kwargs):
-        # Resolve by primary key directly so an inactive data center is not
-        # hidden by the list filter during DELETE and turned into a 404.
-        from rest_framework.exceptions import NotFound
-        try:
-            instance = DataCenter.objects.get(pk=kwargs.get(self.lookup_field, kwargs.get("pk")))
-        except DataCenter.DoesNotExist as exc:
-            raise NotFound("数据中心不存在") from exc
-        self.perform_destroy(instance)
-        from rest_framework.response import Response
-        return Response(status=204)
-
 
 class DictionaryViewSet(SharedReferenceWriteMixin, AuditedModelViewSetMixin, ScopedModelViewSet):
     filter_backends = [DjangoFilterBackend, SearchFilter, OrderingFilter]
@@ -2148,6 +2147,7 @@ class SoftwareLicenseViewSet(SharedReferenceWriteMixin, AuditedModelViewSetMixin
 class GroupViewSet(viewsets.ViewSet):
     permission_classes = [IsSystemAdministrator]
 
+    @extend_schema(responses=RoleListResponseSerializer, operation_id="roles_list")
     def list(self, request):
         return Response({"results": list_role_definitions(request.user)})
 
@@ -3772,20 +3772,33 @@ def operational_status(request):
     return Response(read_status())
 
 
-@extend_schema(request=OpenApiTypes.NONE, responses={405: OpenApiTypes.OBJECT}, methods=["POST"], description="备份通过服务器 create_backup 命令执行；网页仅查看、下载和删除。")
+@extend_schema(request=OpenApiTypes.OBJECT, responses={202: OpenApiTypes.OBJECT}, methods=["POST"], description="提交独立维护进程创建备份，返回操作状态凭据。")
 @extend_schema(request=OpenApiTypes.NONE, responses=OpenApiTypes.OBJECT, methods=["GET"])
 @api_view(["GET", "POST"])
 @permission_classes([CanResetSystem])
+@global_endpoint
 def system_backups(request):
     if request.method == "GET":
         try:
             return Response({"results": list_backups()})
         except MaintenanceError as exc:
             return _backup_error_response(exc)
-    return Response({
-        "detail": "请在服务器执行 manage.py create_backup；备份期间系统进入维护窗口。",
-        "code": "maintenance_cli_required", "command": "python manage.py create_backup",
-    }, status=405, headers={"Allow": "GET, HEAD, OPTIONS"})
+    return _submit_web_maintenance(request, "backup")
+
+
+def _submit_web_maintenance(request, kind, filename=""):
+    if not isinstance(request.data, dict):
+        raise DRFValidationError({"detail": "请求必须是 JSON 对象。"})
+    try:
+        result = submit_operation(
+            user=request.user, kind=kind, filename=filename,
+            operation_id=request.data.get("operation_id"),
+            status_token=request.headers.get("X-Maintenance-Token"),
+            confirmation=request.data.get("confirmation", ""),
+        )
+        return Response(result, status=202, headers={"Cache-Control": "no-store"})
+    except MaintenanceError as exc:
+        return _backup_error_response(exc)
 
 
 @extend_schema(request=OpenApiTypes.NONE, responses=OpenApiTypes.BINARY)
@@ -3822,15 +3835,12 @@ def system_backup_delete(request, backup_id):
         return _backup_error_response(exc)
 
 
-@extend_schema(request=BackupConfirmationSerializer, responses={405: OpenApiTypes.OBJECT}, description="恢复通过服务器 restore_backup 命令执行，包含维护窗口和验收。")
+@extend_schema(request=OpenApiTypes.OBJECT, responses={202: OpenApiTypes.OBJECT}, description="确认后提交独立维护进程恢复备份，包含安全备份和验收。")
 @api_view(["POST"])
 @permission_classes([CanResetSystem])
+@global_endpoint
 def system_backup_restore(request, backup_id):
-    return Response({
-        "detail": "请在服务器执行 manage.py restore_backup；恢复期间系统暂停业务访问。",
-        "code": "maintenance_cli_required",
-        "command": 'python manage.py restore_backup <backup-file> --confirm-restore "RESTORE INFRIX"',
-    }, status=405, headers={"Allow": "OPTIONS"})
+    return _submit_web_maintenance(request, "restore", backup_id)
 
 
 @extend_schema(request=SystemResetSerializer, responses=OpenApiTypes.OBJECT)

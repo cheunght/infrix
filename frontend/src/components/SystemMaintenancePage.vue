@@ -33,6 +33,16 @@ const {
   backupNotice,
   pendingFilename,
   backupDeleting,
+  backupCreating,
+  backupRestoring,
+  createBackup,
+  openRestoreDialog,
+  closeRestoreDialog,
+  restoreBackup,
+  restoreDialogVisible,
+  restoreConfirmation,
+  restoreError,
+  restoreEntry,
   hasNonTransactionalTables,
   resetDialogVisible,
   resetConfirmation,
@@ -123,6 +133,7 @@ function changeMaintenanceTab(value: string) {
             @click="loadStatus"
           />
           <template v-else-if="maintenanceTab === 'backup' && context.can('system.reset')">
+            <el-button type="primary" :loading="backupCreating" :disabled="maintenanceBusy" @click="createBackup">{{ t('settings.createBackup') }}</el-button>
             <ToolbarIconButton :icon="Refresh" :label="t('common.refresh')" :loading="backupLoading" :disabled="backupLoading || maintenanceBusy" @click="loadBackups" />
           </template>
         </template>
@@ -143,6 +154,7 @@ function changeMaintenanceTab(value: string) {
           :backups="backups"
           :loading="backupLoading"
           :deleting="backupDeleting"
+          :busy="maintenanceBusy"
           :pending-filename="pendingFilename"
           :error="backupError"
           :notice="backupNotice"
@@ -150,6 +162,7 @@ function changeMaintenanceTab(value: string) {
           @load="loadBackups"
           @download="downloadBackup"
           @delete="deleteBackup"
+          @restore="openRestoreDialog"
         />
 
         <template v-if="maintenanceTab === 'reset' && context.can('system.reset')">
@@ -188,6 +201,22 @@ function changeMaintenanceTab(value: string) {
 
     </PageContent>
   </PageContainer>
+
+  <el-dialog v-model="restoreDialogVisible" :title="t('settings.restoreBackup')" width="520px" :close-on-click-modal="false" :close-on-press-escape="!backupRestoring" :show-close="!backupRestoring" @close="closeRestoreDialog">
+    <el-alert :title="t('settings.restoreBackupWarning')" type="warning" :closable="false" show-icon />
+    <p>{{ restoreEntry?.filename }}</p>
+    <el-alert v-if="restoreError" :title="restoreError" type="error" :closable="false" />
+    <el-form @submit.prevent="restoreBackup">
+      <el-form-item :label="t('settings.restoreConfirmationLabel')">
+        <el-input v-model="restoreConfirmation" :placeholder="t('settings.restoreConfirmationPlaceholder')" :disabled="backupRestoring" autocomplete="off" @keyup.enter="restoreBackup" />
+      </el-form-item>
+      <p>{{ t('settings.restoreConfirmationHelp') }}</p>
+    </el-form>
+    <template #footer>
+      <el-button :disabled="backupRestoring" @click="closeRestoreDialog">{{ t('common.cancel') }}</el-button>
+      <el-button type="danger" :loading="backupRestoring" :disabled="restoreConfirmation !== 'RESTORE INFRIX' || maintenanceBusy" @click="restoreBackup">{{ t('settings.restoreBackup') }}</el-button>
+    </template>
+  </el-dialog>
 
   <el-dialog
     v-model="resetDialogVisible"

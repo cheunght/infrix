@@ -2,13 +2,7 @@
 
 [English README](README.md) · [Rocky Linux 9 中文安装文档](docs/DEPLOYMENT.zh-CN.md)
 
-Infrix 是面向基础设施团队的 IT 资产管理平台，统一管理资产台账、位置、维修、软件许可、盘点、备件、通知和审计记录。
-
-## 产品预览
-
-<p align="center">
-  <img src="docs/assets/dashboard.png" alt="Infrix 仪表盘预览" width="1200">
-</p>
+Infrix 安装、部署和运行维护入口。
 
 ## 快速开始
 
@@ -37,16 +31,6 @@ sudo bash deploy/install.sh
 
 远程助手支持 `--config /服务器上的绝对路径` 和 `--non-interactive`。用于生产主机前，请先阅读安装文档。
 
-## 主要功能
-
-- 资产台账、标准资产型号、可复用字段集、自定义字段库、导入导出、标签、生命周期数据和可选使用人。
-- 数据中心、机房、机柜、U 位分配和容量视图。
-- 故障登记、维修流程、维修成本和维修历史。
-- 软件许可、盘点任务、备件、库存和库存流水。
-- 用户账号、人员、部门、角色、LDAP/Active Directory 集成和审计日志。
-- 语言、安全、SMTP、通知、品牌和系统维护设置。
-- 生产环境 MariaDB 备份与恢复、受保护配置密钥和部署诊断。
-
 ## 部署后验收
 
 使用随附安装器部署后，可执行完整的只读验收：
@@ -68,7 +52,6 @@ bash deploy/doctor.sh https://<hostname>
 - [安装向导、中断恢复、发布包和 HTTPS 验收](docs/INSTALLER_WORKFLOW.zh-CN.md)
 - [其他 Linux 发行版手工部署](docs/MANUAL_DEPLOYMENT.zh-CN.md)
 - [生产环境示例文件](deploy/infrix.env.example)
-- [变更记录](CHANGELOG.md)
 
 英文文档入口：[English Rocky installation guide](docs/INSTALL_VM.md)、
 [English installer workflow](docs/INSTALLER_WORKFLOW.md) 和

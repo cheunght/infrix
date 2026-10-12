@@ -102,6 +102,18 @@ class DataScopeSerializer(DataScopeBoundarySerializer):
     revision = serializers.IntegerField(read_only=True)
 
 
+class RoleDefinitionSerializer(serializers.Serializer):
+    code = serializers.CharField(read_only=True)
+    name = serializers.CharField(read_only=True)
+    description = serializers.CharField(read_only=True)
+    capabilities = serializers.ListField(child=serializers.CharField(), read_only=True)
+    user_count = serializers.IntegerField(read_only=True)
+
+
+class RoleListResponseSerializer(serializers.Serializer):
+    results = RoleDefinitionSerializer(many=True, read_only=True)
+
+
 class UserSerializer(serializers.ModelSerializer):
     revision = serializers.SerializerMethodField()
     display_name = serializers.SerializerMethodField()
@@ -370,6 +382,7 @@ class SystemSettingsSnapshotSerializer(serializers.Serializer):
     runtime = SystemSettingsRuntimeSerializer(read_only=True)
     definitions = serializers.SerializerMethodField()
 
+    @extend_schema_field(serializers.ListField(child=serializers.DictField()))
     def get_definitions(self, _obj):
         return system_setting_definitions()
 
@@ -3150,6 +3163,7 @@ class FaultEventSerializer(ResourceRevisionSerializerMixin, serializers.ModelSer
 class RepairRecordSerializer(ResourceRevisionSerializerMixin, serializers.ModelSerializer):
     is_current = serializers.SerializerMethodField()
 
+    @extend_schema_field(serializers.BooleanField())
     def get_is_current(self, obj):
         current = obj.fault.repair
         return bool(current and current.pk == obj.pk)

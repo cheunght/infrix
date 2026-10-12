@@ -47,6 +47,8 @@ import BusinessJobHistory from "./components/BusinessJobHistory.vue";
 import { useJobTasks, JobTasksKey } from "./composables/useJobTasks";
 import { routeJobKinds } from "./jobs";
 import NotificationCenter from "./components/NotificationCenter.vue";
+import BackupMaintenanceScreen from "./components/BackupMaintenanceScreen.vue";
+import { useBackupOperations } from "./composables/useBackupOperations";
 import LanguageSwitcher from "./components/LanguageSwitcher.vue";
 import { branding, brandingLogo, brandingMark, brandingImageFailed, loadBranding } from "./branding";
 import { statusLabel } from "./status";
@@ -129,6 +131,11 @@ const pageTitle = computed(() => {
 const loading = ref(false);
 const authChecked = ref(false);
 const authenticated = ref(false);
+const backupOperations = useBackupOperations();
+function finishBackupOperation() {
+  backupOperations.clear();
+  window.location.reload();
+}
 const bootstrapLoading = ref(false);
 const bootstrapError = ref(false);
 let bootstrapAttemptId = 0;
@@ -1961,11 +1968,13 @@ watch(
   { immediate: true },
 );
 onMounted(async () => {
+  backupOperations.start();
   void loadBranding();
   window.addEventListener("resize", updateViewportHeight);
   await runInitialBootstrap();
 });
 onBeforeUnmount(() => {
+  backupOperations.stop();
   window.removeEventListener("resize", updateViewportHeight);
   apiClient.dispose();
   resetBootstrapState();
@@ -2166,7 +2175,8 @@ watch(hasOpenGlobalOverlay, (isOpen) => {
 
 <template>
   <el-config-provider :locale="elementPlusLocale">
-  <div v-if="bootstrapError" class="loading-screen bootstrap-error-screen" role="alert">
+  <BackupMaintenanceScreen v-if="backupOperations.receipt.value && !backupOperations.submitting.value" :monitor="backupOperations" @continue="finishBackupOperation" />
+  <div v-else-if="bootstrapError" class="loading-screen bootstrap-error-screen" role="alert">
     <el-result icon="error" :title="t('auth.bootstrapFailed')" :sub-title="t('auth.bootstrapFailedDescription')">
       <template #extra>
         <el-button type="primary" :loading="bootstrapLoading" :disabled="bootstrapLoading" @click="retryBootstrap">

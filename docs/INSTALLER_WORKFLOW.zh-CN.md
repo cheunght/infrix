@@ -2,11 +2,11 @@
 
 本文档补充[Rocky Linux 安装文档](DEPLOYMENT.zh-CN.md)中的命令，说明安装器的实际行为。英文版本见[Installer Workflow](INSTALLER_WORKFLOW.md)。
 
-## 运行依赖与账号范围
+## 运行依赖
 
 后端安装入口仍为 `backend/requirements.txt`，它引用精确版本及 PyPI 来源锁 `backend/requirements.lock`；原版本范围保留在 `backend/requirements.in`，升级依赖时同时更新锁。前端使用 `package-lock.json`。发布包必须包含锁文件；离线安装继续使用安装器准备的 wheel 目录。
 
-迁移 `0009_user_data_scope` 后，原系统管理员拥有全局范围，普通账号默认没有业务数据范围。首次开放业务前，在主应用为账号配置中心或待归属授权。Admin 仅系统管理员可进入且业务记录只读。详见[数据中心范围授权](DATA-SCOPE.zh-CN.md)。
+首次开放业务前，创建系统管理员并为普通账号配置所需的数据范围授权。
 
 ## 首次安装
 
@@ -139,8 +139,8 @@ bash deploy/doctor.sh \
 内置备份与恢复仅支持生产环境 MariaDB，具体操作见[自动安装文档](DEPLOYMENT.zh-CN.md)
 和[中文手工部署文档](MANUAL_DEPLOYMENT.zh-CN.md)。
 
-安装器不会自动创建定时备份，也不会执行保留清理。安装完成后可在页面中操作，或
-加载服务环境后使用共用的 `check_backup`、`create_backup` 和 `restore_backup`
+安装器不会自动创建定时备份，也不会执行保留清理。页面提供备份创建、恢复、查看、下载和删除。
+加载服务环境后也可使用 `check_backup`、`create_backup` 和 `restore_backup`
 管理命令。恢复必须输入 `RESTORE INFRIX`，开始前会先创建安全备份，并且不会自动
 执行数据库迁移。
 
@@ -166,10 +166,6 @@ sudo env BASE_URL=https://<hostname> bash deploy/verify-release.sh
 
 数据库、LDAP、SMTP、反向代理、备份和生产安全的详细操作，请继续阅读本中文安装文档或[中文手工部署文档](MANUAL_DEPLOYMENT.zh-CN.md)。
 
-## 后台作业 worker
+## 后台任务服务
 
-迁移 0014 后，Web 同时需要独立 `infrix-worker.service` 执行导入、导出和邮件摘要。安装器会创建、启用并检查该服务；手工升级先停止 worker 和摘要定时器，完成迁移后再启动。旧摘要命令仅提交队列。目录、命令、恢复和清理规则见[持久后台作业](BACKGROUND-JOBS.zh-CN.md)。
-
-## 多轮维修升级
-
-阶段 3A 新增迁移 0015：一个故障可保留多个维修轮次，重开返回新的空白轮次 ID。旧维修和附件保留，旧用件的轮次归属不推测。升级前停止 Web、worker 和摘要定时器，按既有流程备份并迁移，发布同版本前端后再启动；数据库迁移不自动回滚。兼容接口、历史边界见[多轮维修](REPAIR-ROUNDS.zh-CN.md)。
+安装器创建并启动 `infrix-worker.service`，使用与 Web 相同的账号、环境文件、数据库和运行目录。部署后确认服务处于 active 状态；故障排查、目录权限、任务文件清理及维护要求见[手工部署说明](MANUAL_DEPLOYMENT.zh-CN.md#后台任务服务)。

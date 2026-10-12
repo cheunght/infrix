@@ -61,6 +61,9 @@ class MaintenanceAdmissionMiddleware:
     def __call__(self, request):
         if not request.path_info.startswith(("/api/", "/admin/")):
             return self.get_response(request)
+        from .web_maintenance import STATUS_PATH
+        if request.method == "GET" and STATUS_PATH.fullmatch(request.path_info):
+            return self.get_response(request)
         access = business_access()
         try:
             access.__enter__()

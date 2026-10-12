@@ -212,35 +212,6 @@ test it from **System Settings → SMTP**. If the daily digest is needed, enable
 it under **System Settings → Notifications**, configure the recipients, and set
 the public HTTPS application URL used in email links.
 
-### People and asset users
-
-The **Organization & Permissions** tabs are ordered as Users, People,
-Departments, Roles, and LDAP / AD. The available tabs depend on the current
-account's permissions.
-
-People records can exist without login accounts. Each record has a required
-name and optional employee number, department, organization, contact details,
-and active status. When creating a local account, an administrator can link an
-existing unlinked person. If no person is selected, the account creation flow
-creates a person record automatically.
-
-Assets have one optional assigned person. Select a person while creating or
-editing an asset, or use the asset detail actions to assign, transfer, or
-return it. Only active people can be assigned. A transfer writes an assignment
-history entry and leaves the asset status unchanged. The person's department
-is profile information and is not stored as an asset ownership field.
-
-Administrators can batch assign or transfer the currently selected assets from
-the asset ledger. Each batch accepts at most 100 assets and returns a result for
-each asset; successful items are unselected and failed items remain selected so
-they can be corrected and retried.
-
-The asset import fields `assigned_person_employee_no`,
-`assigned_person_name`, `assigned_person_department`, and `assignment_reason`
-match an existing person. Imports do not create people. Asset exports include
-the assigned person's name, employee number, department, organization, and
-contact details.
-
 ## 7. Production configuration check
 
 Run the configuration check before starting the application:
@@ -256,9 +227,9 @@ exposure.
 
 ## 8. Initialize the database and static files
 
-For a new database, confirm that the target is empty. For an existing
-installation, create and verify a restricted database backup before applying
-migrations.
+Use an empty database for the first deployment. Before migrating an existing
+deployment, confirm that its migration records match the installation package
+and create and verify a restricted database backup.
 
 Run the application migrations and initialization:
 
@@ -312,6 +283,47 @@ WantedBy=multi-user.target
 
 The environment file must be required. Do not use an optional
 `EnvironmentFile=-/etc/infrix/infrix.env` form.
+
+### Background worker service
+
+Run `infrix-worker.service` alongside Web. Imports, exports, and notification digests remain queued without it. The automatic installer provisions this service. For manual deployment, save the following as `/etc/systemd/system/infrix-worker.service`:
+
+```ini
+[Unit]
+Description=Infrix background worker
+After=network-online.target mariadb.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=infrix
+Group=infrix
+WorkingDirectory=/opt/infrix/backend
+EnvironmentFile=/etc/infrix/infrix.env
+ExecStart=/opt/infrix/backend/.venv/bin/python manage.py work_jobs
+Restart=always
+RestartSec=5
+PrivateTmp=true
+NoNewPrivileges=true
+
+[Install]
+WantedBy=multi-user.target
+```
+
+Use the same service account, environment file, database, media directory, and independent maintenance directory as Web. Coordination supports one host. Never serve the media directory directly through Nginx. Task files live in `MEDIA_ROOT/job-files/`, with directory mode `700` and file mode `600`; include them in media backups and disk-capacity monitoring.
+
+```bash
+sudo systemctl daemon-reload
+sudo systemctl enable --now infrix-worker.service
+sudo systemctl status infrix-worker.service --no-pager
+sudo journalctl -u infrix-worker.service -n 100 --no-pager
+# Process at most one available task for troubleshooting
+sudo -u infrix /opt/infrix/backend/run.sh work_jobs --once
+# Retain 30 days; schedule regular cleanup through operations
+sudo -u infrix /opt/infrix/backend/run.sh clean_jobs --days 30
+```
+
+Before upgrading, stop Web, the worker, `infrix-notification-digest.timer`, and `infrix-notification-digest.service`; wait for processes to exit, then migrate and restart. The worker joins the backup/restore maintenance barrier and resumes after reopening. Do not change task states or remove lock files manually. Automatic digests remain paused on the day of a restore and resume the next day.
 
 ### Daily notification digest
 
@@ -491,10 +503,10 @@ mode-`600` temporary defaults file and never puts the database password in a
 command argument or log. Treat archives and the environment file, including
 the Fernet key, as sensitive data.
 
-The web listing page is **System Settings → Maintenance → Backup & Restore** and is
+The web page is **System Settings → Maintenance → Backup & Restore** and is
 restricted to the existing `system.reset` capability. It accepts only archives
 already present in the configured directory; arbitrary uploads are not
-supported. Creation and restoration use server commands only.
+supported. Creation and restoration are available from this page or the server commands below.
 CLI restore requires the exact confirmation `RESTORE INFRIX`, validates
 the manifest, migration state, gzip dump, and archive paths, creates a
 pre-restore safety backup first, and never runs migrations automatically. A
@@ -593,15 +605,15 @@ The deployment administrator remains responsible for:
 The supplied automatic installer does not configure unrelated infrastructure
 such as cloud firewalls, certificate authorities, or custom orchestration systems.
 
-### CLI maintenance window / 命令行维护窗口
+### Maintenance window
 
-Backup and restore now run only through server commands. The web page retains listing, validation, download and deletion; legacy create/restore HTTP routes return `405 maintenance_cli_required`.
+Create and restore backups from the web page or through server commands.
 
 Set `INFRIX_MAINTENANCE_DIR=/var/lib/infrix/maintenance`, owned by the service account with mode `700`, outside application, media, backup and static trees. Manual deployments must create this directory. All API/admin requests receive `503 maintenance_in_progress` and `Retry-After: 30` while maintenance drains admitted requests, streams and commit-time file callbacks (60 seconds maximum), then takes the snapshot. Static pages remain available.
 
-Format 2 includes paths, sizes and SHA-256 hashes for database-referenced media. Missing files or invalid content fail backup creation. Format 1 remains readable and is labeled as lacking a reference manifest; restored migration state and referenced files are verified before reopening.
+Backup manifests include paths, sizes, and SHA-256 hashes for database-referenced media. Missing files or invalid content fail backup creation. Confirm that the application and archive migration states match; restored references must pass validation before reopening.
 
-If restore fails after modifying data, or its process is killed, access stays closed. Do not delete `state.json` to reopen access. Wait for the CLI and its MariaDB client to exit, read `safety_backup` from the maintenance directory's `state.json`, load the same environment and run as the service account:
+If restore fails after modifying data, or its process is killed, access stays closed. Do not delete `state.json` to reopen access. Wait for the maintenance process and its MariaDB client to exit, read `safety_backup` from the maintenance directory's `state.json`, load the same environment and run as the service account:
 
 ```bash
 .venv/bin/python manage.py restore_backup <recorded-safety-backup> --confirm-restore "RESTORE INFRIX" --recover
