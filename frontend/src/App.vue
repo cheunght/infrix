@@ -43,9 +43,6 @@ import { normalizeApiError, type ActionMessageType } from "./error-handling";
 import { useRoute, useRouter, type RouteLocationRaw } from "vue-router";
 import ApiErrorAlert from "./components/ApiErrorAlert.vue";
 import SearchField from "./components/SearchField.vue";
-import BusinessJobHistory from "./components/BusinessJobHistory.vue";
-import { useJobTasks, JobTasksKey } from "./composables/useJobTasks";
-import { routeJobKinds } from "./jobs";
 import NotificationCenter from "./components/NotificationCenter.vue";
 import BackupMaintenanceScreen from "./components/BackupMaintenanceScreen.vue";
 import { useBackupOperations } from "./composables/useBackupOperations";
@@ -191,19 +188,6 @@ const {
   request,
   download,
 } = apiClient;
-const jobTasks = useJobTasks({ request, download, account: username, enabled: computed(() => authenticated.value && !passwordChangeRequired.value) });
-provide(JobTasksKey, jobTasks);
-const currentJobKinds = computed(() => routeJobKinds(route.path, route.path === "/settings/organization" ? organizationTab.value : route.path === "/assets/configuration" ? assetConfigSection.value : route.query.tab));
-jobTasks.onCompleted(job => {
-  if (job.status === 'cancelled') return;
-  if (!currentJobKinds.value.includes(job.kind) && !(job.kind === 'notification_digest' && route.path === '/settings/system' && systemSettingsTab.value === 'notifications')) {
-    ElMessage({message: t('jobs.completedAway', {kind: t(`jobs.kinds.${job.kind}`)}), type: job.status === 'succeeded' ? 'success' : 'warning'});
-  }
-  if (job.status === 'succeeded' && job.kind === 'asset_import' && page.value === 'ledger') void assetsApi.loadAssets().then(ok => { if (!ok) ElMessage.warning(t('jobs.refreshFailed')); });
-  if (job.status === 'succeeded' && currentJobKinds.value.includes(job.kind) && (job.kind === 'people_import' || job.kind === 'department_import')) {
-    void Promise.all([organizationSettings.loadResponsibilityDirectory(), organizationSettings.loadDepartments()]).then(results => { if (results.some(ok => ok === false)) ElMessage.warning(t('jobs.refreshFailed')); });
-  }
-});
 
 const {
   dashboard,
@@ -255,7 +239,6 @@ const inventoryTaskId = ref<number | null>(null);
 const assetConfigSection = ref<AssetConfigSection>("models");
 const rackSection = ref<RackSection>("locations");
 const facilities = useFacilities({
-  jobs: jobTasks,
   request,
   can,
   beginLoad,
@@ -363,7 +346,6 @@ const settings = useSettings({
   customFieldSchemaVersion,
 });
 const organizationSettings = useOrganizationSettings({
-  jobs: jobTasks,
   request,
   beginLoad,
   isCurrentLoad,
@@ -651,7 +633,6 @@ const overlayAuth = {
   changePassword,
 };
 const assetsApi = useAssets({
-  jobs: jobTasks,
   can,
   request,
   download,
@@ -842,7 +823,6 @@ const {
 openAssetDetail = assetsApi.openAssetDetail;
 invalidateAssetDetail = assetsApi.invalidateDetail;
 const licensesApi = useLicenses({
-  jobs: jobTasks,
   can,
   request,
   download,
@@ -887,7 +867,6 @@ const {
   deleteLicense,
 } = licensesApi;
 const repairs = useRepairs({
-  jobs: jobTasks,
   can,
   request,
   download,
@@ -962,7 +941,6 @@ const {
   changeRepairPartUsagePage,
 } = repairs;
 const spares = useSpareParts({
-  jobs: jobTasks,
   request,
   download,
   beginLoad,
@@ -1984,12 +1962,10 @@ onBeforeUnmount(() => {
 // shell keeps ownership of authentication/navigation while page-specific
 // markup can evolve independently without changing API contracts.
 const pageContext = {
-  jobs: jobTasks,
   request,
   confirmAction,
   downloadFile: download,
   systemMaintenance: {
-    jobs: jobTasks,
     request,
     downloadFile: download,
     confirmAction,
@@ -2389,7 +2365,6 @@ watch(hasOpenGlobalOverlay, (isOpen) => {
             @search="lookupAsset"
           />
           <NotificationCenter
-            :tasks="jobTasks"
             :request="request"
             :can="can"
             :username="username"
@@ -2426,7 +2401,6 @@ watch(hasOpenGlobalOverlay, (isOpen) => {
       <el-main class="main ep-main" :class="{ 'dashboard-host': page === 'dashboard' }">
         <div class="app-route-shell" v-loading="loading" :aria-busy="loading ? 'true' : 'false'">
           <ApiErrorAlert :message="pageError" />
-          <BusinessJobHistory v-if="!accessDenied && currentJobKinds.length" :tasks="jobTasks" :kinds="currentJobKinds" :task-id="route.path === '/inventory' ? inventoryTaskId : null" />
           <div class="app-route-view">
             <el-result v-if="accessDenied" icon="403" :title="t('api.forbidden')" />
             <router-view v-else v-slot="{ Component }">

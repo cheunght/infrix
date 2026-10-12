@@ -2,13 +2,11 @@
 import { computed, ref } from "vue";
 import { useI18n } from "vue-i18n";
 import { Download, Upload } from "@element-plus/icons-vue";
-import JobResult from "./JobResult.vue";
 import FormDialogShell from "./FormDialogShell.vue";
 import type { PeopleImportPreview, PeopleImportRow } from "../types";
 
 const props = defineProps<{
   modelValue: boolean;
-  jobId?: string | null;
   file: File | null;
   preview: PeopleImportPreview | null;
   previewing: boolean;
@@ -27,8 +25,7 @@ const emit = defineEmits<{
 const { t } = useI18n();
 const fileInput = ref<HTMLInputElement | null>(null);
 const canCommit = computed(() => Boolean(
-  !props.jobId
-  && props.preview
+  props.preview
   && props.preview.error === 0
   && !props.previewing
   && !props.importing,
@@ -80,8 +77,7 @@ function rowErrors(row: PeopleImportRow): string {
     @update:model-value="emit('update:modelValue', $event)"
     @close="emit('close')"
   >
-    <JobResult v-if="jobId" :job-id="jobId" />
-    <div v-else class="people-import-dialog">
+    <div class="people-import-dialog">
       <input ref="fileInput" class="people-import-dialog__input" type="file" accept=".xlsx" @change="handleFileChange" />
       <div class="people-import-dialog__file-row">
         <el-button type="primary" plain :disabled="previewing || importing" @click="chooseFile">
@@ -138,8 +134,8 @@ function rowErrors(row: PeopleImportRow): string {
     </div>
 
     <template #footer>
-      <el-button :disabled="importing" @click="emit('update:modelValue', false)">{{ t(jobId ? "common.close" : "common.cancel") }}</el-button>
-      <el-button v-if="!jobId" type="primary" :loading="importing" :disabled="!canCommit" @click="emit('commit')">
+      <el-button :disabled="importing" @click="emit('update:modelValue', false)">{{ t("common.cancel") }}</el-button>
+      <el-button type="primary" :loading="importing" :disabled="!canCommit" @click="emit('commit')">
         {{ t("settings.peopleImportCommit") }}
       </el-button>
     </template>

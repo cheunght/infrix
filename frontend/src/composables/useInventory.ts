@@ -1067,7 +1067,7 @@ export function useInventory(context: InventoryContext) {
     const params = activeTask.value?.id === task.id ? itemQueryParams(false) : new URLSearchParams();
     const query = buildExportQuery(params);
     try {
-      await context.jobs.submitExport(
+      await context.downloadFile(
         `/inventory-tasks/${task.id}/export/${query ? `?${query}` : ""}`,
         String(i18n.global.t("inventory.exportFilename")),
       );

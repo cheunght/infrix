@@ -74,7 +74,6 @@ const {
   deleteDepartment,
   showDepartmentImportModal,
   departmentImportFile,
-  departmentImportJobId,
   departmentImportPreview,
   departmentImportPreviewing,
   departmentImporting,
@@ -389,7 +388,6 @@ function applyPeopleFilters() {
 
     <DepartmentImportDialog
       v-model="showDepartmentImportModal"
-      :job-id="departmentImportJobId"
       :file="departmentImportFile"
       :preview="departmentImportPreview"
       :previewing="departmentImportPreviewing"

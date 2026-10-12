@@ -203,47 +203,6 @@ cd /opt/infrix/backend
 
 Gunicorn 必须以专用非 root 账号运行，只绑定 loopback 或其他受保护接口。systemd 单元应使用必需的 `EnvironmentFile=/etc/infrix/infrix.env`，不要使用带前导短横线的可选环境文件形式。
 
-### 后台任务服务
-
-Web 之外需要常驻 `infrix-worker.service`，否则导入、导出和邮件摘要会持续排队。自动安装器会创建并启动该服务；手工部署将以下配置保存为 `/etc/systemd/system/infrix-worker.service`：
-
-```ini
-[Unit]
-Description=Infrix background worker
-After=network-online.target mariadb.service
-Wants=network-online.target
-
-[Service]
-Type=simple
-User=infrix
-Group=infrix
-WorkingDirectory=/opt/infrix/backend
-EnvironmentFile=/etc/infrix/infrix.env
-ExecStart=/opt/infrix/backend/.venv/bin/python manage.py work_jobs
-Restart=always
-RestartSec=5
-PrivateTmp=true
-NoNewPrivileges=true
-
-[Install]
-WantedBy=multi-user.target
-```
-
-worker 与 Web 必须使用同一服务账号、环境文件、数据库、媒体目录和独立维护目录。当前协调方式仅支持单机；Nginx 不得直接公开媒体目录。`MEDIA_ROOT/job-files/` 保存任务文件，目录权限为 `700`、文件为 `600`，需要纳入媒体备份和磁盘容量监控。
-
-```bash
-sudo systemctl daemon-reload
-sudo systemctl enable --now infrix-worker.service
-sudo systemctl status infrix-worker.service --no-pager
-sudo journalctl -u infrix-worker.service -n 100 --no-pager
-# 仅执行一个可用任务后退出，用于服务器排障
-sudo -u infrix /opt/infrix/backend/run.sh work_jobs --once
-# 默认保留 30 天，建议按运维计划定期执行
-sudo -u infrix /opt/infrix/backend/run.sh clean_jobs --days 30
-```
-
-升级前停止 Web、worker、`infrix-notification-digest.timer` 和 `infrix-notification-digest.service`，等待进程结束，再执行迁移并启动服务。备份恢复时 worker 参与维护屏障，无需手工修改任务状态或删除锁文件；维护解除后继续处理。恢复当天自动邮件摘要暂停，次日恢复。
-
 ### 每日通知摘要
 
 SMTP 配置完成后，在“系统设置 → 通知”中明确启用每日摘要、填写收件人和公网 HTTPS 地址。摘要以 `infrix` 账号运行，只在启用且有相关提醒时发送。
@@ -346,10 +305,10 @@ location / {
 1. 将新源码放入 staging 目录，不要覆盖正在运行的目录。
 2. 确认环境文件存在且包含原有密钥。
 3. 创建并验证受限数据库备份。
-4. 停止应用服务后替换源码或执行迁移。
+4. 停止应用服务及每日摘要定时器、摘要服务，再替换源码或执行迁移；若主机仍安装 `infrix-worker.service`，先用 `systemctl disable --now infrix-worker.service` 停用。
 5. 同步源码，安装依赖并重新构建前端。
 6. 执行 `manage.py migrate --noinput` 和 `manage.py check`。
-7. 启动服务并完成健康检查。
+7. 启动应用服务和每日摘要定时器，并完成健康检查。
 
 保留所有已经应用的迁移文件；如果数据库有迁移记录但源码缺少对应文件，应先恢复
 包含该迁移的源码或迁移路径，再修改数据库，不要删除 `django_migrations` 记录绕过检查。

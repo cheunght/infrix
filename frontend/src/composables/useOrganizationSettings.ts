@@ -1,4 +1,3 @@
-import type { JobTasks } from "./useJobTasks";
 import { useAccountEditor } from "./useAccountEditor";
 import { revisionHeaders } from "../revision";
 import { computed, ref, watch, type Ref } from "vue";
@@ -34,7 +33,6 @@ const tr = (key: string, params?: Record<string, unknown>): string =>
   String(params ? i18n.global.t(key, params) : i18n.global.t(key));
 
 export interface OrganizationSettingsDeps {
-  jobs: JobTasks;
   request: RequestFn;
   beginLoad: () => number;
   isCurrentLoad: (version: number) => boolean;
@@ -127,7 +125,6 @@ export function useOrganizationSettings(deps: OrganizationSettingsDeps) {
   const responsibilityDirectoryRequestId = ref(0);
   let responsibilityDirectoryController: AbortController | null = null;
   const showPeopleImportModal = ref(false);
-  const peopleImportJobId = ref<string | null>(null);
   const peopleImportFile = ref<File | null>(null);
   const peopleImportPreview = ref<PeopleImportPreview | null>(null);
   const peopleImportPreviewing = ref(false);
@@ -136,7 +133,6 @@ export function useOrganizationSettings(deps: OrganizationSettingsDeps) {
   const peopleImportRequestId = ref(0);
   let peopleImportController: AbortController | null = null;
   const showDepartmentImportModal = ref(false);
-  const departmentImportJobId = ref<string | null>(null);
   const departmentImportFile = ref<File | null>(null);
   const departmentImportPreview = ref<DepartmentImportPreview | null>(null);
   const departmentImportPreviewing = ref(false);
@@ -621,10 +617,9 @@ export function useOrganizationSettings(deps: OrganizationSettingsDeps) {
   watch(deps.currentUsername, () => {
     showPeopleImportModal.value = false; showDepartmentImportModal.value = false;
     resetPeopleImportState(); resetDepartmentImportState();
-  }, {flush: 'sync'});
+  }, {flush: "sync"});
 
   function resetPeopleImportState() {
-    peopleImportJobId.value = null;
     peopleImportController?.abort();
     peopleImportController = null;
     peopleImportRequestId.value += 1;
@@ -701,7 +696,7 @@ export function useOrganizationSettings(deps: OrganizationSettingsDeps) {
   }
 
   async function commitPeopleImport(): Promise<boolean> {
-    if (peopleImportJobId.value || peopleImporting.value) return false;
+    if (peopleImporting.value) return false;
     if (!deps.can("settings.manage")) return false;
     if (!peopleImportFile.value) {
       peopleImportError.value = tr("settings.peopleImportNoFile");
@@ -720,10 +715,25 @@ export function useOrganizationSettings(deps: OrganizationSettingsDeps) {
     peopleImporting.value = true;
     peopleImportError.value = "";
     try {
-      const job = await deps.jobs.submitImport('people_import', peopleImportFile.value!);
+      const result = await deps.request<PeopleImportResult>("/people/import/", {
+        method: "POST",
+        body: form,
+        signal: controller.signal,
+      });
       if (requestId !== peopleImportRequestId.value || controller.signal.aborted) return false;
-      peopleImportJobId.value = job.id;
-      setActionMessage(tr('jobs.queuedMessage'), 'success');
+      const refreshed = await loadResponsibilityDirectory();
+      if (requestId !== peopleImportRequestId.value || controller.signal.aborted) return false;
+      peopleImporting.value = false;
+      closePeopleImport();
+      const message = tr("settings.peopleImportSuccess", {
+        created: result.created,
+        updated: result.updated,
+        unchanged: result.unchanged,
+      });
+      setActionMessage(
+        refreshed ? message : `${message}；${tr("settings.peopleImportSuccessRefreshFailed")}`,
+        refreshed ? "success" : "error",
+      );
       return true;
     } catch (error) {
       if (isAbortError(error) || requestId !== peopleImportRequestId.value) return false;
@@ -752,7 +762,6 @@ export function useOrganizationSettings(deps: OrganizationSettingsDeps) {
   }
 
   function resetDepartmentImportState() {
-    departmentImportJobId.value = null;
     departmentImportController?.abort();
     departmentImportController = null;
     departmentImportRequestId.value += 1;
@@ -829,7 +838,7 @@ export function useOrganizationSettings(deps: OrganizationSettingsDeps) {
   }
 
   async function commitDepartmentImport(): Promise<boolean> {
-    if (departmentImportJobId.value || departmentImporting.value) return false;
+    if (departmentImporting.value) return false;
     if (!deps.can("settings.manage")) return false;
     if (!departmentImportFile.value) {
       departmentImportError.value = tr("settings.departmentImportNoFile");
@@ -848,10 +857,30 @@ export function useOrganizationSettings(deps: OrganizationSettingsDeps) {
     departmentImporting.value = true;
     departmentImportError.value = "";
     try {
-      const job = await deps.jobs.submitImport('department_import', departmentImportFile.value!);
+      const result = await deps.request<DepartmentImportResult>("/departments/import/", {
+        method: "POST",
+        body: form,
+        signal: controller.signal,
+      });
       if (requestId !== departmentImportRequestId.value || controller.signal.aborted) return false;
-      departmentImportJobId.value = job.id;
-      setActionMessage(tr('jobs.queuedMessage'), 'success');
+      const refreshVersion = deps.beginLoad();
+      const [departmentsRefreshed, peopleRefreshed] = await Promise.all([
+        loadDepartments(refreshVersion),
+        loadResponsibilityDirectory(refreshVersion),
+      ]);
+      if (requestId !== departmentImportRequestId.value || controller.signal.aborted) return false;
+      departmentImporting.value = false;
+      closeDepartmentImport();
+      const message = tr("settings.departmentImportSuccess", {
+        created: result.created,
+        updated: result.updated,
+        unchanged: result.unchanged,
+      });
+      const refreshed = departmentsRefreshed && peopleRefreshed;
+      setActionMessage(
+        refreshed ? message : `${message}; ${tr("settings.departmentImportSuccessRefreshFailed")}`,
+        refreshed ? "success" : "error",
+      );
       return true;
     } catch (error) {
       if (isAbortError(error) || requestId !== departmentImportRequestId.value) return false;
@@ -1401,14 +1430,12 @@ export function useOrganizationSettings(deps: OrganizationSettingsDeps) {
     showResponsibilitySubjectModal,
     showPeopleImportModal,
     peopleImportFile,
-    peopleImportJobId,
     peopleImportPreview,
     peopleImportPreviewing,
     peopleImporting,
     peopleImportError,
     showDepartmentImportModal,
     departmentImportFile,
-    departmentImportJobId,
     departmentImportPreview,
     departmentImportPreviewing,
     departmentImporting,

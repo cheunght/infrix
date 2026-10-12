@@ -243,7 +243,3 @@ sudo env BASE_URL=https://<hostname> bash deploy/verify-release.sh
 For detailed database, LDAP, SMTP, reverse-proxy, backup, and security
 procedures, continue with the language-specific installation guide or the
 [manual deployment guide](MANUAL_DEPLOYMENT.md).
-
-## Background worker
-
-The installer provisions `infrix-worker.service` with the same account, environment file, database, and runtime directories as Web. Confirm that it is active after deployment. See [manual worker deployment](MANUAL_DEPLOYMENT.md#background-worker-service) for troubleshooting, permissions, file cleanup, and maintenance requirements.

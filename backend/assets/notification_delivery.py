@@ -1,5 +1,6 @@
 """Daily, explicit-opt-in email digests; one durable record per recipient/day."""
 import hashlib
+import os
 from datetime import timedelta
 from django.db import transaction
 from django.utils import timezone
@@ -8,6 +9,18 @@ from .reporting.alerts import build_alerts_payload
 from .smtp import send_smtp_message, SmtpConfigurationError
 from .system_settings import get_notification_policy
 from .runtime_clock import system_now
+from .maintenance_gate import _root, _sync_directory
+
+
+def suppress_restored_notifications():
+    """Keep restore-day SMTP suppression outside the restored database."""
+    root = _root()
+    descriptor = os.open(root / "digest-suppressed-date", os.O_WRONLY | os.O_CREAT | os.O_TRUNC | os.O_NOFOLLOW, 0o600)
+    with os.fdopen(descriptor, "w") as handle:
+        handle.write(str(system_now().date()))
+        handle.flush()
+        os.fsync(handle.fileno())
+    _sync_directory(root)
 
 LABELS = {
     "zh-CN": {"maintenance": "维保到期", "license": "软件许可", "fault": "未关闭故障", "inventory": "逾期盘点", "spare": "备件低库存"},
@@ -67,6 +80,15 @@ def digest_recipients(setting):
 
 
 def send_digest():
+    marker = _root() / "digest-suppressed-date"
+    if marker.is_symlink():
+        raise OSError("Unsafe digest suppression marker")
+    try:
+        suppressed = marker.read_text().strip()
+    except FileNotFoundError:
+        suppressed = ""
+    if suppressed == str(system_now().date()):
+        return {"status": "suppressed", "sent": 0, "failed": 0}
     setting = get_notification_policy()
     if not setting.email_digest_enabled:
         return {"status": "disabled", "sent": 0, "failed": 0}

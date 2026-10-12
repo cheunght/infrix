@@ -1585,30 +1585,3 @@ class AuthThrottleState(Timestamped):
 
     def __str__(self):
         return f"{self.scope}:{self.key}"
-
-
-class BackgroundJob(Timestamped):
-    """Single-host durable work; payload files are served only through jobs API."""
-
-    id = models.UUIDField(primary_key=True, default=uuid4, editable=False)
-    submitter = models.ForeignKey(settings.AUTH_USER_MODEL, null=True, on_delete=models.PROTECT, related_name="background_jobs")
-    kind = models.CharField(max_length=40)
-    params = models.JSONField(default=dict)
-    idempotency_key = models.CharField(max_length=64, unique=True)
-    payload_hash = models.CharField(max_length=64)
-    authorization = models.CharField(max_length=64, blank=True)
-    status = models.CharField(max_length=16, default="queued", choices=[(value, value) for value in ("queued", "running", "succeeded", "failed", "cancelled")])
-    attempts = models.PositiveIntegerField(default=0)
-    progress = models.PositiveSmallIntegerField(default=0)
-    checkpoint = models.CharField(max_length=40, default="queued")
-    input_file = models.FileField(max_length=255, blank=True)
-    result_file = models.FileField(max_length=255, blank=True)
-    result = models.JSONField(default=dict)
-    result_epoch = models.CharField(max_length=80, blank=True)
-    error_code = models.CharField(max_length=80, blank=True)
-    started_at = models.DateTimeField(null=True)
-    finished_at = models.DateTimeField(null=True)
-
-    class Meta:
-        ordering = ["-created_at", "id"]
-        indexes = [models.Index(fields=["status", "created_at"], name="assets_job_queue_idx")]

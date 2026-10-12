@@ -236,17 +236,6 @@ sudo env INSTALL_MODE=upgrade bash deploy/install.sh
 
 登录后按提示完成密码变更，建立组织和位置，再配置资产和权限。LDAP/AD 和 SMTP 都是可选集成，基础应用健康后再从管理界面配置。保存 LDAP 或其他受保护密码前，必须确保 Fernet 密钥仍然可用。
 
-### 后台任务服务
-
-安装器同时启动 `infrix-worker.service`，用于处理导入、导出和邮件摘要。检查服务与日志：
-
-```bash
-sudo systemctl status infrix-worker.service --no-pager
-sudo journalctl -u infrix-worker.service -n 100 --no-pager
-```
-
-目录权限、清理命令及维护要求见[后台任务服务部署](MANUAL_DEPLOYMENT.zh-CN.md#后台任务服务)。
-
 ### 本机备份与恢复
 
 Infrix 内置备份功能仅支持生产环境 MariaDB。安装器默认将

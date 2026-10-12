@@ -1715,6 +1715,20 @@ body {
   vertical-align: middle;
 }
 
+/* Horizontal Element Plus groups float their buttons by default. Floats can
+   wrap even inside the no-wrap action wrapper when the column is compact. */
+.ep-main .ep-table-actions > .el-button-group {
+  display: inline-flex;
+  align-items: center;
+  flex-wrap: nowrap;
+  flex-shrink: 0;
+}
+
+.ep-main .ep-table-actions > .el-button-group > .el-button {
+  float: none;
+  flex-shrink: 0;
+}
+
 .el-dropdown-menu__item.infrix-dropdown-item--danger {
   color: var(--el-color-danger);
 }

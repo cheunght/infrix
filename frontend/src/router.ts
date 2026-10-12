@@ -17,7 +17,7 @@ export type SettingsSection =
 export type AssetConfigSection = "models" | "device-types" | "fieldsets" | "custom-fields" | "tags";
 export type OrganizationTab = "users" | "roles" | "ldap" | "departments" | "people";
 export type SystemSettingsTab = "general" | "security" | "smtp" | "notifications" | "branding";
-export type MaintenanceTab = "operations" | "jobs" | "backup" | "reset";
+export type MaintenanceTab = "operations" | "backup" | "reset";
 
 export type RackSection = "locations" | "view";
 export type LocationTypeFilter = "" | "data-center" | "room";

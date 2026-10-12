@@ -165,7 +165,3 @@ sudo env BASE_URL=https://<hostname> bash deploy/verify-release.sh
 ```
 
 数据库、LDAP、SMTP、反向代理、备份和生产安全的详细操作，请继续阅读本中文安装文档或[中文手工部署文档](MANUAL_DEPLOYMENT.zh-CN.md)。
-
-## 后台任务服务
-
-安装器创建并启动 `infrix-worker.service`，使用与 Web 相同的账号、环境文件、数据库和运行目录。部署后确认服务处于 active 状态；故障排查、目录权限、任务文件清理及维护要求见[手工部署说明](MANUAL_DEPLOYMENT.zh-CN.md#后台任务服务)。

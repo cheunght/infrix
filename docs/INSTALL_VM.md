@@ -314,17 +314,6 @@ optional integrations; configure them from the administration UI only after
 the base application is healthy. Keep the Fernet key available before saving
 LDAP or other protected passwords.
 
-### Background worker
-
-The installer starts `infrix-worker.service` for imports, exports, and notification digests. Check its status and logs:
-
-```bash
-sudo systemctl status infrix-worker.service --no-pager
-sudo journalctl -u infrix-worker.service -n 100 --no-pager
-```
-
-See [worker deployment](MANUAL_DEPLOYMENT.md#background-worker-service) for directory permissions, cleanup, and maintenance requirements.
-
 ### Local Backup & Restore
 
 Infrix's built-in backup feature supports production MariaDB only. The

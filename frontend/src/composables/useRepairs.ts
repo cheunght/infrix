@@ -1,4 +1,3 @@
-import type { JobTasks } from "./useJobTasks";
 import { useRepairLifecycle } from "./useRepairLifecycle";
 import { ref, watch, type Ref } from "vue";
 import { ElMessage } from "element-plus/es/components/message/index.mjs";
@@ -29,7 +28,6 @@ const tr = (key: string, params?: Record<string, unknown>): string =>
 
 export interface RepairsDeps {
   can: CapabilityFn;
-  jobs: JobTasks;
   request: RequestFn;
   download: (path: string, filename: string) => Promise<void>;
   beginLoad: () => number;
@@ -704,7 +702,7 @@ export function useRepairs(deps: RepairsDeps) {
     if (appliedRepairFilters.value.end) params.set("end", appliedRepairFilters.value.end);
     try {
       const query = buildExportQuery(params);
-      await deps.jobs.submitExport(`/reports/repairs/export/${query ? `?${query}` : ""}`, "maintenance-records.xlsx");
+      await deps.download(`/reports/repairs/export/${query ? `?${query}` : ""}`, "maintenance-records.xlsx");
     } catch (error) {
       const normalized = normalizeApiError(error);
       deps.actionMessageType.value = "error";

@@ -284,47 +284,6 @@ WantedBy=multi-user.target
 The environment file must be required. Do not use an optional
 `EnvironmentFile=-/etc/infrix/infrix.env` form.
 
-### Background worker service
-
-Run `infrix-worker.service` alongside Web. Imports, exports, and notification digests remain queued without it. The automatic installer provisions this service. For manual deployment, save the following as `/etc/systemd/system/infrix-worker.service`:
-
-```ini
-[Unit]
-Description=Infrix background worker
-After=network-online.target mariadb.service
-Wants=network-online.target
-
-[Service]
-Type=simple
-User=infrix
-Group=infrix
-WorkingDirectory=/opt/infrix/backend
-EnvironmentFile=/etc/infrix/infrix.env
-ExecStart=/opt/infrix/backend/.venv/bin/python manage.py work_jobs
-Restart=always
-RestartSec=5
-PrivateTmp=true
-NoNewPrivileges=true
-
-[Install]
-WantedBy=multi-user.target
-```
-
-Use the same service account, environment file, database, media directory, and independent maintenance directory as Web. Coordination supports one host. Never serve the media directory directly through Nginx. Task files live in `MEDIA_ROOT/job-files/`, with directory mode `700` and file mode `600`; include them in media backups and disk-capacity monitoring.
-
-```bash
-sudo systemctl daemon-reload
-sudo systemctl enable --now infrix-worker.service
-sudo systemctl status infrix-worker.service --no-pager
-sudo journalctl -u infrix-worker.service -n 100 --no-pager
-# Process at most one available task for troubleshooting
-sudo -u infrix /opt/infrix/backend/run.sh work_jobs --once
-# Retain 30 days; schedule regular cleanup through operations
-sudo -u infrix /opt/infrix/backend/run.sh clean_jobs --days 30
-```
-
-Before upgrading, stop Web, the worker, `infrix-notification-digest.timer`, and `infrix-notification-digest.service`; wait for processes to exit, then migrate and restart. The worker joins the backup/restore maintenance barrier and resumes after reopening. Do not change task states or remove lock files manually. Automatic digests remain paused on the day of a restore and resume the next day.
-
 ### Daily notification digest
 
 SMTP is optional. When it is configured, open **System Settings → Notifications** and
@@ -457,10 +416,10 @@ For an in-place upgrade:
 1. Put the new source in a staging directory; do not overwrite the live directory.
 2. Confirm `/etc/infrix/infrix.env` is present and contains the existing secret.
 3. Create and verify a restricted MariaDB backup.
-4. Stop the application service before replacing files or applying migrations.
+4. Stop the application service, daily digest timer, and digest service before replacing files or applying migrations. If `infrix-worker.service` is still installed, retire it with `systemctl disable --now infrix-worker.service`.
 5. Synchronize the source, install dependencies, and rebuild the frontend.
 6. Run `manage.py migrate --noinput` and `manage.py check`.
-7. Start the service and complete the deployment health checks.
+7. Start the application service and daily digest timer, then complete the deployment health checks.
 
 Keep every migration file that has already been applied. If the database
 contains a migration record whose file is absent from the application source,

@@ -1,4 +1,3 @@
-import type { JobTasks } from "./useJobTasks";
 import { revisionHeaders } from "../revision";
 import { computed, ref, watch, type Ref } from "vue";
 import type { LocationQuery } from "vue-router";
@@ -30,7 +29,6 @@ const LICENSE_FORM_FIELD_SET = new Set<string>(LICENSE_FORM_FIELDS);
 
 export interface LicensesDeps {
   can: CapabilityFn;
-  jobs: JobTasks;
   request: RequestFn;
   download: (path: string, filename?: string) => Promise<void>;
   beginLoad: () => number;
@@ -216,7 +214,7 @@ export function useLicenses(deps: LicensesDeps) {
     exportingLicenses.value = true;
     const query = buildExportQuery(licenseFilterParams());
     try {
-      await deps.jobs.submitExport(`/reports/licenses/export/${query ? `?${query}` : ""}`, "software-licenses.xlsx");
+      await deps.download(`/reports/licenses/export/${query ? `?${query}` : ""}`, "software-licenses.xlsx");
     } catch (error) {
       const normalized = normalizeApiError(error);
       deps.actionMessageType.value = "error";

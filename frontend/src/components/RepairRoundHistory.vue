@@ -36,7 +36,7 @@ onScopeDispose(()=>{++version;controller?.abort();});
    <p>{{t('repairRounds.openedBy')}}: {{round.opened_by_name || t('common.notAvailable')}} · {{t('repairRounds.completedBy')}}: {{round.completed_by_name || t('common.notAvailable')}}</p>
    <el-button link :disabled="loading || fault.repair?.id===round.id" @click="emit('select',round)">{{t('repairRounds.select')}}</el-button>
   </article>
-  <div v-if="total>10"><el-button :disabled="page===1||loading" @click="move(-1)">{{t('jobs.previous')}}</el-button> {{page}} / {{Math.ceil(total/10)}} <el-button :disabled="page*10>=total||loading" @click="move(1)">{{t('jobs.next')}}</el-button></div>
+  <div v-if="total>10"><el-button :disabled="page===1||loading" @click="move(-1)">{{t('common.previous')}}</el-button> {{page}} / {{Math.ceil(total/10)}} <el-button :disabled="page*10>=total||loading" @click="move(1)">{{t('common.next')}}</el-button></div>
   <p v-if="fault.repair">{{t('repairRounds.selected',{number:fault.repair.round_number || 1})}}</p>
  </section>
 </template>

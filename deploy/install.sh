@@ -551,8 +551,11 @@ sql_literal() {
 
 stop_existing_service_for_upgrade() {
   [[ ( "$INSTALL_MODE" == "upgrade" || "$resume_phase" == database-ready ) && -f "$SYSTEMD_UNIT_FILE" ]] || return 0
+  if systemctl cat infrix-worker.service >/dev/null 2>&1; then
+    systemctl disable --now infrix-worker.service || fail "无法停用旧任务服务，升级已停止。"
+  fi
   local background_unit
-  for background_unit in infrix-worker.service infrix-digest.timer infrix-digest.service; do
+  for background_unit in "$(basename -- "$DIGEST_TIMER_UNIT_FILE")" "$(basename -- "$DIGEST_SERVICE_UNIT_FILE")"; do
     if systemctl cat "$background_unit" >/dev/null 2>&1; then
       if systemctl is-active --quiet "$background_unit"; then
         upgrade_background_units+=("$background_unit")
@@ -1048,31 +1051,6 @@ WantedBy=multi-user.target
 EOF
 chmod 644 "$SYSTEMD_UNIT_FILE"
 
-log "写入后台作业 worker 服务"
-cat > /etc/systemd/system/infrix-worker.service <<EOF
-[Unit]
-Description=Infrix durable background jobs
-After=network-online.target mariadb.service
-Wants=network-online.target
-
-[Service]
-Type=simple
-User=$APP_USER
-Group=$APP_GROUP
-WorkingDirectory=$APP_DIR/backend
-EnvironmentFile=$ENV_FILE
-ExecStart=$APP_DIR/backend/.venv/bin/python manage.py work_jobs
-Restart=always
-RestartSec=5
-TimeoutStopSec=120
-PrivateTmp=true
-NoNewPrivileges=true
-
-[Install]
-WantedBy=multi-user.target
-EOF
-chmod 644 /etc/systemd/system/infrix-worker.service
-
 log "写入每日邮件摘要定时任务"
 cat > "$DIGEST_SERVICE_UNIT_FILE" <<EOF
 [Unit]
@@ -1344,6 +1322,7 @@ configure_selinux_for_reverse_proxy() {
 configure_selinux_for_reverse_proxy
 
 log "启动服务"
+rm -f /etc/systemd/system/infrix-worker.service
 systemctl daemon-reload
 systemctl enable infrix
 systemctl enable --now nginx
@@ -1362,8 +1341,6 @@ if [[ "$service_ready" -ne 1 ]]; then
   fail "Infrix 服务启动失败。"
 fi
 systemctl reload nginx
-systemctl enable --now infrix-worker.service
-systemctl is-active --quiet infrix-worker.service || fail "后台作业 worker 启动失败。"
 systemctl enable --now "$(basename -- "$DIGEST_TIMER_UNIT_FILE")"
 
 health_host="${DJANGO_ALLOWED_HOSTS%%,*}"
