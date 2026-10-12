@@ -84,7 +84,3 @@ export function routeJobKinds(path: string, tab?: unknown): string[] {
   };
   return kinds[path] || [];
 }
-
-export function announceJob(job: BackgroundJob) {
-  window.dispatchEvent(new CustomEvent('infrix-job-created', {detail:job}));
-}

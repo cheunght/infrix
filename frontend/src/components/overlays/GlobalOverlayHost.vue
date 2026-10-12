@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import JobResult from "../JobResult.vue";
 import RepairRoundHistory from "../RepairRoundHistory.vue";
 import { computed, ref } from "vue";
 import { Edit, Lock, Message, User } from "@element-plus/icons-vue";
@@ -128,6 +129,7 @@ const {
   assetListError,
   showImportDialog,
   importStep,
+  importJobId,
   importPreviewFilter,
   importPreviewError,
   importPreviewing,
@@ -1290,6 +1292,7 @@ function mapUnlinkedPerson(item: Record<string, unknown>): SearchableSelectOptio
       </el-table>
     </template>
 
+    <JobResult v-else-if="importStep === 'processing' && importJobId" :job-id="importJobId" />
     <template v-else>
       <section class="action-dialog__result">
         <el-result
@@ -1318,7 +1321,7 @@ function mapUnlinkedPerson(item: Record<string, unknown>): SearchableSelectOptio
     </template>
 
     <template #footer>
-      <el-button v-if="importStep !== 'result'" :disabled="importPreviewing || importing" @click="closeImportDialog">{{ t('common.cancel') }}</el-button>
+      <el-button v-if="importStep !== 'result'" :disabled="importPreviewing || importing" @click="closeImportDialog">{{ t(importJobId ? 'common.close' : 'common.cancel') }}</el-button>
       <el-button v-if="importStep === 'preview'" type="primary" :loading="importing" :disabled="!importPreview?.valid || !!importPreview?.invalid || importPreviewing" @click="confirmImportPreview">{{ t('overlay.confirmImport') }}</el-button>
       <el-button v-else-if="importStep === 'result'" type="primary" @click="closeImportDialog">{{ t('common.done') }}</el-button>
     </template>

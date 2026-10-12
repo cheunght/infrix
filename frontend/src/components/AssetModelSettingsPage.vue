@@ -1,7 +1,6 @@
 <script setup lang="ts">
-import { isQueuedJob, type QueuedJob } from "../jobs";
 import { revisionHeaders } from "../revision";
-import { computed, onMounted, proxyRefs, reactive, ref } from "vue";
+import { computed, onBeforeUnmount, onMounted, proxyRefs, reactive, ref } from "vue";
 import { useI18n } from "vue-i18n";
 import { CircleCheck, CircleClose, Delete, Download, Edit, Filter, Upload } from "@element-plus/icons-vue";
 import { ElMessage, type FormInstance, type FormRules } from "element-plus";
@@ -15,6 +14,7 @@ import PageToolbar from "./page/PageToolbar.vue";
 import SearchField from "./SearchField.vue";
 import PagedTable from "./PagedTable.vue";
 import StatusTag from "./StatusTag.vue";
+import JobResult from "./JobResult.vue";
 import FormDialogShell from "./FormDialogShell.vue";
 import TableIconButton from "./TableIconButton.vue";
 import ToolbarIconButton from "./page/ToolbarIconButton.vue";
@@ -26,6 +26,10 @@ type ModelImportPreview = { total: number; valid: number; invalid: number; rows:
 const props = defineProps<{ context: PageContext }>();
 const { t } = useI18n();
 const c = proxyRefs(props.context);
+const stopCompleted = c.jobs.onCompleted(job => {
+  if (job.kind === 'asset_model_import' && job.status === 'succeeded') void loadModels().catch(() => ElMessage.warning(t('jobs.refreshFailed')));
+});
+onBeforeUnmount(stopCompleted);
 
 type ModelForm = {
   name: string;
@@ -73,6 +77,7 @@ const manufacturers = ref<DictionaryItem[]>([]);
 const deviceTypes = ref<DictionaryItem[]>([]);
 const fieldsets = ref<CustomFieldSet[]>([]);
 const exporting = ref(false);
+const importJobId = ref<string | null>(null);
 const showImportModal = ref(false);
 const importFile = ref<File | null>(null);
 const importFileInput = ref<HTMLInputElement>();
@@ -325,6 +330,7 @@ async function deleteModel(model: AssetModel) {
 }
 
 function openImport() {
+  importJobId.value = null;
   importFile.value = null;
   importPreview.value = null;
   importError.value = "";
@@ -364,17 +370,15 @@ async function chooseImportFile(event: Event) {
 }
 
 async function confirmImport() {
+  if (importJobId.value) return;
   if (!importFile.value || !importPreview.value?.valid || importPreview.value.invalid || importing.value) return;
   const body = new FormData();
   body.append("file", importFile.value);
   importing.value = true;
   importError.value = "";
   try {
-    const result = await c.request<{ created: number } | QueuedJob>("/asset-models/import/", { method: "POST", body });
-    showImportModal.value = false;
-    if (isQueuedJob(result)) { ElMessage.success(t("jobs.queuedMessage")); return; }
-    ElMessage.success(t("assetModel.importSuccess", { count: result.created }));
-    await loadModels();
+    const job = await c.jobs.submitImport('asset_model_import', importFile.value!);
+    importJobId.value = job.id;
   } catch (commitError) {
     importError.value = importRequestErrorText(commitError, t("assetModel.importFailed"));
   } finally {
@@ -400,7 +404,7 @@ async function exportModels() {
   if (filterDeviceType.value) params.set("device_type", filterDeviceType.value);
   if (filterFieldset.value) params.set("fieldset", filterFieldset.value);
   try {
-    await c.downloadFile(`/reports/asset-models/export/${params.size ? `?${params}` : ""}`, "infrix-asset-models.xlsx");
+    await c.jobs.submitExport(`/reports/asset-models/export/${params.size ? `?${params}` : ""}`, "infrix-asset-models.xlsx");
   } catch (exportError) {
     error.value = normalizeApiError(exportError).message || t("assetModel.exportFailed");
   } finally {
@@ -538,7 +542,8 @@ onMounted(() => void loadAll());
   </FormDialogShell>
 
   <FormDialogShell v-model="showImportModal" :title="t('assetModel.importTitle')" :description="t('assetModel.importHint')" size="medium" :saving="importing || importPreviewing" :close-disabled="importing || importPreviewing">
-    <div class="asset-model-import">
+    <JobResult v-if="importJobId" :job-id="importJobId" />
+    <div v-else class="asset-model-import">
       <input ref="importFileInput" class="asset-model-import__input" type="file" accept=".xlsx" @change="chooseImportFile" />
       <div class="asset-model-import__actions">
         <el-button :loading="importPreviewing" :disabled="importing" @click="importFileInput?.click()">{{ t('assetModel.chooseFile') }}</el-button>
@@ -555,7 +560,7 @@ onMounted(() => void loadAll());
         </div>
       </template>
     </div>
-    <template #footer><el-button :disabled="importing || importPreviewing" @click="showImportModal = false">{{ t('common.cancel') }}</el-button><el-button type="primary" :loading="importing" :disabled="!importPreview?.valid || !!importPreview.invalid || importPreviewing" @click="confirmImport">{{ t('assetModel.import') }}</el-button></template>
+    <template #footer><el-button :disabled="importing || importPreviewing" @click="showImportModal = false">{{ t('common.cancel') }}</el-button><el-button v-if="!importJobId" type="primary" :loading="importing" :disabled="!importPreview?.valid || !!importPreview.invalid || importPreviewing" @click="confirmImport">{{ t('assetModel.import') }}</el-button></template>
   </FormDialogShell>
 </template>
 

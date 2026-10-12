@@ -21,6 +21,7 @@ export type ElementPlusComponentName =
   | "ElAvatar"
   | "ElBadge"
   | "ElButton"
+  | "ElButtonGroup"
   | "ElCard"
   | "ElCheckbox"
   | "ElCollapse"
@@ -98,6 +99,7 @@ const shellComponents: Record<string, Component> = {
 };
 
 const componentLoaders: Partial<Record<ElementPlusComponentName, () => Promise<Component>>> = {
+  ElButtonGroup: () => import("element-plus/es/components/button/index.mjs").then((module) => module.ElButtonGroup),
   ElCard: () => import("element-plus/es/components/card/index.mjs").then((module) => module.ElCard),
   ElCheckbox: () => import("element-plus/es/components/checkbox/index.mjs").then((module) => module.ElCheckbox),
   ElCollapse: () => import("element-plus/es/components/collapse/index.mjs").then((module) => module.ElCollapse),

@@ -2,11 +2,13 @@
 import { computed, ref } from "vue";
 import { useI18n } from "vue-i18n";
 import { Download, Upload } from "@element-plus/icons-vue";
+import JobResult from "./JobResult.vue";
 import FormDialogShell from "./FormDialogShell.vue";
 import type { DepartmentImportPreview, DepartmentImportRow } from "../types";
 
 const props = defineProps<{
   modelValue: boolean;
+  jobId?: string | null;
   file: File | null;
   preview: DepartmentImportPreview | null;
   previewing: boolean;
@@ -25,7 +27,8 @@ const emit = defineEmits<{
 const { t } = useI18n();
 const fileInput = ref<HTMLInputElement | null>(null);
 const canCommit = computed(() => Boolean(
-  props.preview
+  !props.jobId
+  && props.preview
   && props.preview.error === 0
   && !props.previewing
   && !props.importing,
@@ -77,7 +80,8 @@ function rowErrors(row: DepartmentImportRow): string {
     @update:model-value="emit('update:modelValue', $event)"
     @close="emit('close')"
   >
-    <div class="department-import-dialog">
+    <JobResult v-if="jobId" :job-id="jobId" />
+    <div v-else class="department-import-dialog">
       <input ref="fileInput" class="department-import-dialog__input" type="file" accept=".xlsx" @change="handleFileChange" />
       <div class="department-import-dialog__file-row">
         <el-button type="primary" plain :disabled="previewing || importing" @click="chooseFile">
@@ -135,8 +139,8 @@ function rowErrors(row: DepartmentImportRow): string {
     </div>
 
     <template #footer>
-      <el-button :disabled="importing" @click="emit('update:modelValue', false)">{{ t("common.cancel") }}</el-button>
-      <el-button type="primary" :loading="importing" :disabled="!canCommit" @click="emit('commit')">
+      <el-button :disabled="importing" @click="emit('update:modelValue', false)">{{ t(jobId ? "common.close" : "common.cancel") }}</el-button>
+      <el-button v-if="!jobId" type="primary" :loading="importing" :disabled="!canCommit" @click="emit('commit')">
         {{ t("settings.departmentImportCommit") }}
       </el-button>
     </template>

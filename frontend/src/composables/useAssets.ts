@@ -1,4 +1,4 @@
-import { isQueuedJob, type QueuedJob } from "../jobs";
+import type { JobTasks } from "./useJobTasks";
 import { useAssetLifecycle } from "./useAssetLifecycle";
 import { computed, reactive, ref, watch, type Ref } from "vue";
 import type { LocationQuery } from "vue-router";
@@ -162,7 +162,7 @@ export type ImportResult = {
   total: number;
   errors: Array<{ line: number; detail: unknown }>;
 };
-export type ImportStep = "upload" | "preview" | "result";
+export type ImportStep = "upload" | "preview" | "processing" | "result";
 
 const IMPORT_FIELD_LABEL_KEYS: Record<string, string> = {
   asset_no: "asset.code",
@@ -298,6 +298,7 @@ function normalizeImportPreview(preview: ImportPreview): ImportPreview {
 
 export interface AssetsDeps {
   can: CapabilityFn;
+  jobs: JobTasks;
   request: RequestFn;
   download: (path: string, filename?: string) => Promise<void>;
   beginLoad: () => number;
@@ -708,6 +709,7 @@ export function useAssets(deps: AssetsDeps) {
 
   const importFile = ref<File | null>(null);
   const showImportDialog = ref(false);
+  const importJobId = ref<string | null>(null);
   const importStep = ref<ImportStep>("upload");
   const importPreview = ref<ImportPreview | null>(null);
   const importPreviewFilter = ref<"all" | "errors">("all");
@@ -2187,7 +2189,7 @@ export function useAssets(deps: AssetsDeps) {
     exportParams.set("locale", currentLocale.value);
     const query = buildExportQuery(exportParams);
     try {
-      await deps.download(`/reports/assets/export/${query ? `?${query}` : ""}`, tr("asset.exportFilename"));
+      await deps.jobs.submitExport(`/reports/assets/export/${query ? `?${query}` : ""}`, tr("asset.exportFilename"));
     } catch (error) {
       setActionError(error, tr("asset.exportFailed"));
     } finally {
@@ -2289,7 +2291,12 @@ export function useAssets(deps: AssetsDeps) {
 
   function importErrorText(detail: unknown) { return formatImportError(detail); }
 
+  watch(deps.authenticated, active => {
+    if (!active) { showImportDialog.value = false; resetImportState(); }
+  }, {flush: 'sync'});
+
   function resetImportState() {
+    importJobId.value = null;
     importController?.abort();
     importController = null;
     importFile.value = null;
@@ -2357,7 +2364,7 @@ export function useAssets(deps: AssetsDeps) {
   });
   async function confirmImportPreview() {
     if (!deps.can("assets.manage")) return;
-    if (!importPreview.value?.valid || importPreview.value.invalid || !importFile.value || importing.value) return;
+    if (!importPreview.value?.valid || importPreview.value.invalid || !importFile.value || importing.value || importJobId.value) return;
     const form = new FormData();
     form.append("file", importFile.value);
     importController?.abort();
@@ -2365,22 +2372,10 @@ export function useAssets(deps: AssetsDeps) {
     importing.value = true;
     importPreviewError.value = "";
     try {
-      const result = await deps.request<ImportResult | QueuedJob>("/assets/import/", { method: "POST", body: form, signal: importController.signal });
-      if (isQueuedJob(result)) {
-        showImportDialog.value = false;
-        setActionMessage(tr("jobs.queuedMessage"), "success");
-        return;
-      }
-      importResult.value = result;
-      importStep.value = "result";
-      const importMessage = result.errors.length
-        ? tr("overlay.importCreatedWithErrors", { created: result.created, failed: result.errors.length })
-        : tr("asset.importSuccess", { count: result.created });
-      const refreshed = await loadAssets();
-      setActionMessage(
-        refreshed ? importMessage : `${importMessage}；${tr("common.refreshFailed")}，${tr("common.retry")}`,
-        result.errors.length || !refreshed ? "error" : "success",
-      );
+      const job = await deps.jobs.submitImport('asset_import', importFile.value!);
+      importJobId.value = job.id;
+      importStep.value = 'processing';
+      setActionMessage(tr('jobs.queuedMessage'), 'success');
     } catch (error) {
       if (isAbortError(error)) return;
       const details = error instanceof ApiError ? error.details : null;
@@ -2763,6 +2758,7 @@ export function useAssets(deps: AssetsDeps) {
     importFile,
     showImportDialog,
     importStep,
+    importJobId,
     importPreviewFilter,
     importPreviewError,
     importPreviewing,

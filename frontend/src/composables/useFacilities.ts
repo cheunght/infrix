@@ -1,3 +1,4 @@
+import type { JobTasks } from "./useJobTasks";
 import { revisionHeaders } from "../revision";
 import { computed, ref, watch, type Ref } from "vue";
 import { isAbortError } from "../api";
@@ -29,6 +30,7 @@ const tr = (key: string, params?: Record<string, unknown>): string =>
   String(params ? i18n.global.t(key, params) : i18n.global.t(key));
 
 export interface FacilitiesApi {
+  jobs: JobTasks;
   request: RequestFn;
   beginLoad: () => number;
   isCurrentLoad: (version: number) => boolean;
@@ -799,7 +801,7 @@ export function useFacilities(deps: FacilitiesDeps) {
       if (selectedRoom.value !== null) params.set("room", String(selectedRoom.value));
       const query = params.toString();
       const exportPath = query ? `/reports/racks/export/?${query}` : "/reports/racks/export/";
-      await deps.download(exportPath, "rack-layout.xlsx");
+      await deps.jobs.submitExport(exportPath, "rack-layout.xlsx");
     } catch (error) {
       setActionError(error, tr("facility.rackLayoutExportFailed"));
     } finally {

@@ -1,3 +1,4 @@
+import type { JobTasks } from "./composables/useJobTasks";
 import type { ComputedRef, Ref } from "vue";
 import type { BusinessOption } from "./business-enums";
 import type { ActionMessageType } from "./error-handling";
@@ -604,6 +605,7 @@ export interface SpareContext {
 }
 
 export interface InventoryContext {
+  jobs: JobTasks;
   request: RequestFn;
   downloadFile: (path: string, filename?: string) => Promise<void>;
   can: CapabilityFn;
@@ -620,6 +622,7 @@ export interface InventoryContext {
 }
 
 export interface SystemMaintenanceDependencies {
+  jobs: JobTasks;
   request: RequestFn;
   downloadFile: (path: string, filename?: string) => Promise<void>;
   confirmAction: (message: string) => Promise<boolean>;
@@ -629,6 +632,7 @@ export interface SystemMaintenanceDependencies {
 }
 
 export interface SettingsContext extends CustomFieldContext, TagContext {
+  jobs: JobTasks;
   request: RequestFn;
   downloadFile: (path: string, filename?: string) => Promise<void>;
   actionMessage: Ref<string>;

@@ -185,12 +185,12 @@ async function exportAuditLogs() {
   params.set("locale", currentLocale.value);
   const query = params.toString();
   try {
-    await context.downloadFile(
+    await context.jobs.submitExport(
       `/audit-logs/export/${query ? `?${query}` : ""}`,
       "audit-logs.xlsx",
     );
     context.actionMessageType.value = "success";
-    context.actionMessage.value = t("settings.auditExported");
+    context.actionMessage.value = t("jobs.queuedMessage");
   } catch (error) {
     const normalized = normalizeApiError(error);
     context.actionMessageType.value = "error";

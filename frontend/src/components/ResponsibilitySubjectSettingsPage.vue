@@ -31,6 +31,7 @@ const {
   showResponsibilitySubjectModal: showModal,
   showPeopleImportModal: showPeopleImport,
   peopleImportFile: importFile,
+  peopleImportJobId: importJobId,
   peopleImportPreview: importPreview,
   peopleImportPreviewing: importPreviewing,
   peopleImporting: importing,
@@ -215,6 +216,7 @@ function clearFilters() {
 
     <PeopleImportDialog
       v-model="showPeopleImport"
+      :job-id="importJobId"
       :file="importFile"
       :preview="importPreview"
       :previewing="importPreviewing"

@@ -1,3 +1,4 @@
+import type { JobTasks } from "./useJobTasks";
 import { useSpareStockOperations } from "./useSpareStockOperations";
 import { revisionHeaders } from "../revision";
 import { ref, watch, type Ref } from "vue";
@@ -35,6 +36,7 @@ const SPARE_PART_FORM_FIELDS = [
 export type { SpareOperationLocation } from "./useSpareStockOperations";
 
 export interface SparePartsDeps {
+  jobs: JobTasks;
   request: RequestFn;
   download: (path: string, filename?: string) => Promise<void>;
   beginLoad: () => number;
@@ -316,7 +318,7 @@ export function useSpareParts(deps: SparePartsDeps) {
     exportingSpares.value = true;
     const query = buildExportQuery(listParams(false));
     try {
-      await deps.download(`/reports/spare-parts/export/${query ? `?${query}` : ""}`, "spare-parts.xlsx");
+      await deps.jobs.submitExport(`/reports/spare-parts/export/${query ? `?${query}` : ""}`, "spare-parts.xlsx");
     } catch (error) {
       const normalized = normalizeApiError(error);
       deps.actionMessageType.value = "error";
@@ -338,7 +340,7 @@ export function useSpareParts(deps: SparePartsDeps) {
     if (spareTransactionFilters.value.end) params.set("end", spareTransactionFilters.value.end);
     const query = buildExportQuery(params);
     try {
-      await deps.download(`/reports/spare-transactions/export/${query ? `?${query}` : ""}`, "spare-transactions.xlsx");
+      await deps.jobs.submitExport(`/reports/spare-transactions/export/${query ? `?${query}` : ""}`, "spare-transactions.xlsx");
     } catch (error) {
       const normalized = normalizeApiError(error);
       deps.actionMessageType.value = "error";

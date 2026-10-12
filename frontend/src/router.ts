@@ -48,6 +48,9 @@ const pageComponents: Partial<Record<Page, () => Promise<Component>>> = {
     "ElTag",
   ]),
   ledger: lazyPage(() => import("./components/AssetLedgerPage.vue"), [
+    "ElButtonGroup",
+    "ElRadioGroup",
+    "ElRadioButton",
     "ElCard",
     "ElCheckbox",
     "ElDialog",
