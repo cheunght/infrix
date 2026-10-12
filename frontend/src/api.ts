@@ -85,6 +85,7 @@ export function flattenError(value: unknown): string {
 export class ApiError extends Error {
   status: number;
   details: unknown;
+  retryAfterMs = 0;
 
   constructor(status: number, message: string, details?: unknown) {
     super(message);
@@ -135,7 +136,10 @@ export async function downloadFile(path: string, options: DownloadOptions = {}):
     } else if (response.status === 503 && errorCode(details) === "maintenance_in_progress") {
       message = tr("api.maintenanceInProgress");
     }
-    throw new ApiError(response.status, message, details);
+    const failure = new ApiError(response.status, message, details);
+    const retryAfter = response.headers.get("Retry-After");
+    failure.retryAfterMs = retryAfter ? (/^\d+$/.test(retryAfter) ? Number(retryAfter) * 1000 : Math.max(0, Date.parse(retryAfter) - Date.now())) : 0;
+    throw failure;
   }
   const blob = await response.blob();
   const disposition = response.headers.get("Content-Disposition") || "";
@@ -238,7 +242,10 @@ export async function apiRequest<T>(
       message = flattenError("detail" in details ? details.detail : details) || message;
     }
     if (response.status >= 400 && response.status < 500) completeMutation();
-    throw new ApiError(response.status, message, details);
+    const failure = new ApiError(response.status, message, details);
+    const retryAfter = response.headers.get("Retry-After");
+    failure.retryAfterMs = retryAfter ? (/^\d+$/.test(retryAfter) ? Number(retryAfter) * 1000 : Math.max(0, Date.parse(retryAfter) - Date.now())) : 0;
+    throw failure;
   }
   if (response.status === 204) {
     completeMutation();

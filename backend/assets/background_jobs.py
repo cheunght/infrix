@@ -363,7 +363,15 @@ def transition(job_id, user, action):
 def public_job(job, user):
     current = job.authorization == authorization_fingerprint(user)
     fresh = job.result_epoch == data_epoch()
-    return {"id": str(job.pk), "kind": job.kind, "status": job.status, "progress": job.progress, "checkpoint": job.checkpoint, "attempts": job.attempts, "created_at": job.created_at, "started_at": job.started_at, "finished_at": job.finished_at, "error_code": job.error_code, "result": job.result if current and (job.status != "failed" or fresh) else {}, "result_available": bool(job.result_file and current and fresh)}
+    reason = ""
+    if job.kind in EXPORTS and job.status == "succeeded":
+        if not current:
+            reason = "job_authorization_changed"
+        elif not fresh:
+            reason = "job_result_stale"
+        elif not job.result_file or not _file_path(job.result_file.name).is_file():
+            reason = "job_result_missing"
+    return {"id": str(job.pk), "kind": job.kind, "status": job.status, "progress": job.progress, "checkpoint": job.checkpoint, "attempts": job.attempts, "created_at": job.created_at, "started_at": job.started_at, "finished_at": job.finished_at, "error_code": job.error_code, "result": job.result if current and (job.status != "failed" or fresh) else {}, "result_available": bool(job.result_file and current and fresh and not reason), "result_unavailable_reason": reason, "params": job.params if current and job.kind in EXPORTS else None, "task_id": job.params.get("task_id") if current and job.kind == "inventory_export" else None}
 
 
 def suppress_restored_notifications():
