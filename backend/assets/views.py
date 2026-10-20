@@ -1337,7 +1337,7 @@ class RackViewSet(AuditedModelViewSetMixin, ScopedModelViewSet):
         restricted = not scope_for(request.user).full_department_access(center_id=rack.room.data_center_id)
         accepts = rack.is_active and rack.status == "in_use" and rack.room.is_active and rack.room.data_center.is_active
         ranges = rack_position_ranges(rack.allocations.all(), rack.total_u, exclude_asset_id=asset_id)
-        return Response({"total_u": rack.total_u, "occupancy_restricted": restricted, "accepts_assets": accepts,
+        return Response({"total_u": rack.total_u, "data_center_id": rack.room.data_center_id, "server_room_id": rack.room_id, "occupancy_restricted": restricted, "accepts_assets": accepts,
                          "available_ranges": None if restricted else ranges["available_ranges"] if accepts else [],
                          "gap_ranges": None if restricted else ranges["gap_ranges"]})
 

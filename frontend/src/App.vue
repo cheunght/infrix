@@ -259,6 +259,7 @@ const facilities = useFacilities({
   confirmAction,
 });
 const {
+  focusRackDetail,
   dataCenters,
   serverRooms,
   racks,
@@ -2050,6 +2051,7 @@ const pageContext = {
   changeRoomFilter, changeRackFilter, selectedRoom,
   roomOptions, selectedRack, hasRackFilters, selectedRackDeviceTypeId, deviceTypes,
   resetRackFilters, retryRackView, exportRackLayout, displayedRacks,
+  loadRackView, focusRackDetail,
   rackUtilization, rackUtilizationColor, rackUsedU, focusedRackId, focusedRack, visibleRacks, selectRack,
   rackBodyStyle,
   rackAllocationStyle, rackGapUnavailable, openRackAssetDetail,

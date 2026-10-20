@@ -1,9 +1,12 @@
 <script setup lang="ts">
+import { inject } from "vue";
+import { RackOperationsKey } from "../composables/useRackOperations";
 import { useI18n } from "vue-i18n";
 import type { RackCanvasContext } from "../page-context";
 const { t } = useI18n();
 const props = defineProps<{ context: RackCanvasContext }>();
 const context = props.context;
+const operations = inject(RackOperationsKey, null);
 const {
   focusedRack,
   displayedRacks,
@@ -88,9 +91,13 @@ function isMajorUnit(totalU: number, rowIndex: number) {
               >{{ rackUnitLabel(rack.total_u, u) }}</span>
             </div>
             <div class="rack-slot-area" :aria-label="`${rack.code} ${t('rack.uPosition')}`">
-              <div class="rack-slot-grid" aria-hidden="true">
-                <span
+              <div class="rack-slot-grid">
+                <button
                   v-for="u in rack.total_u"
+                  type="button"
+                  :disabled="!operations || !props.context.can?.('assets.manage') || !props.context.can?.('assets.view') || rack.status !== 'in_use' || rack.is_active === false || rackGapUnavailable(rack, rackUnitNumber(rack.total_u, u)) || rack.allocations.some(item => rackUnitNumber(rack.total_u, u) >= item.start_u && rackUnitNumber(rack.total_u, u) <= item.end_u)"
+                  :aria-label="t('rackOps.mountAt', { u: rackUnitNumber(rack.total_u, u) })"
+                  @click="operations?.open('mount', null, rack, rackUnitNumber(rack.total_u, u))"
                   :key="u"
                   class="rack-slot-row"
                   :class="{
@@ -117,7 +124,7 @@ function isMajorUnit(totalU: number, rowIndex: number) {
                         class="device"
                         :class="{ 'device-selected': detailAsset?.id === allocation.asset, 'rack-device--one-u': allocation.units === 1 }"
                         :aria-label="`${allocationPrimary(allocation)}，${allocationMeta(allocation)}`"
-                        @click.stop="openRackAssetDetail(allocation.asset, rack.id)"
+                        @click.stop="operations ? operations.locate(allocation.asset) : openRackAssetDetail(allocation.asset, rack.id)"
                       >
                         <span class="rack-device__content">
                           <span class="rack-device__primary">{{ allocationPrimary(allocation) }}</span>

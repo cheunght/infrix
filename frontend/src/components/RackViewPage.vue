@@ -1,5 +1,8 @@
 <script setup lang="ts">
-import { computed } from "vue";
+import { computed, provide } from "vue";
+import { useRoute, useRouter } from "vue-router";
+import { useRackOperations, RackOperationsKey } from "../composables/useRackOperations";
+import RackOperationDialogs from "./RackOperationDialogs.vue";
 import { useI18n } from "vue-i18n";
 import { Download } from "@element-plus/icons-vue";
 import RackAssetInspector from "./RackAssetInspector.vue";
@@ -21,6 +24,8 @@ import { rackStatusValue } from "../business-enums";
 const props = defineProps<{ context: RackSharedContext }>();
 const { t } = useI18n();
 const context = props.context;
+const operations = useRackOperations(context, useRoute(), useRouter());
+provide(RackOperationsKey, operations);
 const rackSection = context.rackSection;
 const serverRooms = context.serverRooms;
 const can = context.can;
@@ -211,6 +216,8 @@ function deleteCurrentRack() {
             </div>
           </template>
           <template v-if="rackSection === 'view'" #actions>
+            <el-button v-if="can('assets.view')" @click="operations.openSearch">{{ t('rackOps.findAsset') }}</el-button>
+            <el-button v-if="can('assets.view') && can('assets.manage')" :disabled="operations.busy.value" @click="operations.open('mount')">{{ t('rackOps.mount') }}</el-button>
             <ToolbarIconButton
               v-if="can('racks.export')"
               :icon="Download"
@@ -236,6 +243,10 @@ function deleteCurrentRack() {
       </PageContent>
 
       <PageContent v-else min-height="0">
+        <el-alert v-if="operations.locateError.value" :title="operations.locateError.value" type="warning" :closable="false" />
+        <el-alert v-if="operations.locatedAsset.value && !operations.locatedAsset.value.rack_allocation" :title="`${operations.locatedAsset.value.asset_no} · ${operations.mountedLocation(operations.locatedAsset.value)}`" type="info" :closable="false">
+          <el-button v-if="can('assets.manage') && operations.locatedAsset.value.status !== 'retired'" link type="primary" @click="operations.open('mount', operations.locatedAsset.value)">{{ t('rackOps.mount') }}</el-button>
+        </el-alert>
         <section
           class="resource-workspace resource-workspace--rack"
           :aria-label="t('rack.locationWorkspace')"
@@ -320,5 +331,6 @@ function deleteCurrentRack() {
     </PageContainer>
 
     <RackFormDialog :context="context" />
+    <RackOperationDialogs :context="context" :operations="operations" />
   </div>
 </template>

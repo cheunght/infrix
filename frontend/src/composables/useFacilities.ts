@@ -56,6 +56,11 @@ export function useFacilities(deps: FacilitiesDeps) {
   const dataCenters = ref<DataCenter[]>([]);
   const serverRooms = ref<ServerRoom[]>([]);
   const racks = ref<Rack[]>([]);
+  const locatedRack = ref<Rack | null>(null);
+  function focusRackDetail(rack: Rack | null) {
+    locatedRack.value = rack;
+    if (rack) focusedRackId.value = rack.id;
+  }
   const facilitySummary = ref<FacilitySummary | null>(null);
   const locationManagementLoading = ref(false);
   const locationManagementError = ref("");
@@ -841,7 +846,7 @@ export function useFacilities(deps: FacilitiesDeps) {
   }
 
   const visibleRacks = computed(() =>
-    racks.value.filter(
+    [...(locatedRack.value && !racks.value.some(rack => rack.id === locatedRack.value?.id) ? [locatedRack.value] : []), ...racks.value].filter(
       (rack) =>
         selectedRoom.value === null || String(rack.room) === String(selectedRoom.value),
     ),
@@ -927,6 +932,7 @@ export function useFacilities(deps: FacilitiesDeps) {
     });
   }
   function selectRack(rack: Rack) {
+    if (focusedRackId.value !== rack.id) deps.updateRouteQuery?.({ rack: String(rack.id), rack_asset: undefined });
     if (rackDetailOpen.value && focusedRackId.value !== rack.id) deps.closeAssetDetail();
     focusRack(rack);
   }
@@ -950,6 +956,7 @@ export function useFacilities(deps: FacilitiesDeps) {
     clearRackSelection();
     rackPage.value = 1;
     if (deps.updateRouteQuery?.({
+      rack_asset: undefined,
       data_center: selectedDataCenter.value === null ? undefined : String(selectedDataCenter.value),
       room: selectedRoom.value === null ? undefined : String(selectedRoom.value),
       rack: undefined,
@@ -962,6 +969,7 @@ export function useFacilities(deps: FacilitiesDeps) {
     clearRackSelection();
     rackPage.value = 1;
     if (deps.updateRouteQuery?.({
+      rack_asset: undefined,
       data_center: selectedDataCenter.value === null ? undefined : String(selectedDataCenter.value),
       room: selectedRoom.value === null ? undefined : String(selectedRoom.value),
       rack: undefined,
@@ -974,6 +982,7 @@ export function useFacilities(deps: FacilitiesDeps) {
     clearRackSelection();
     rackPage.value = 1;
     if (deps.updateRouteQuery?.({
+      rack_asset: undefined,
       data_center: selectedDataCenter.value === null ? undefined : String(selectedDataCenter.value),
       room: selectedRoom.value === null ? undefined : String(selectedRoom.value),
       rack: undefined,
@@ -989,7 +998,7 @@ export function useFacilities(deps: FacilitiesDeps) {
     selectedRackDeviceTypeId.value = "";
     clearRackSelection();
     rackPage.value = 1;
-    if (deps.clearRouteQuery?.(["data_center", "room", "rack", "rack_code", "device_type"])) return;
+    if (deps.clearRouteQuery?.(["data_center", "room", "rack", "rack_code", "device_type", "rack_asset"])) return;
     void deps.reload();
   }
   function changeRackPage(pageNumber: number) {
@@ -1052,6 +1061,7 @@ export function useFacilities(deps: FacilitiesDeps) {
     loadDataCenters,
     loadRackManagement,
     loadRackView,
+    focusRackDetail,
     openDataCenterModal,
     saveDataCenter,
     updateDataCenterStatus,

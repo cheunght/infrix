@@ -337,6 +337,9 @@ export interface RackManagementContext {
 }
 
 export interface RackSharedContext extends RackFiltersContext, RackListContext, RackCanvasContext, RackInspectorContext, RackManagementContext {
+  currentUsername: Ref<string>;
+  loadRackView: () => Promise<boolean | undefined>;
+  focusRackDetail: (rack: Rack | null) => void;
   rackSection: Ref<RackSection>;
   racks: Ref<Rack[]>;
   facilitySummary: Ref<FacilitySummary | null>;
@@ -401,6 +404,7 @@ export interface RackListContext {
 }
 
 export interface RackCanvasContext {
+  can?: CapabilityFn;
   focusedRack: ComputedRef<Rack | null>;
   displayedRacks: ComputedRef<Rack[]>;
   deviceTypes: Ref<DictionaryItem[]>;

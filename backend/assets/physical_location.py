@@ -265,6 +265,11 @@ def place_asset(*, asset_id: int, rack_id: int, start_u: int, end_u: int) -> boo
         ) if visible else "所选 U 位无法使用，请联系设施管理员"
         raise ValidationError({"configuration": message})
 
+    current = RackUnitAllocation.objects.filter(asset_id=locked_asset.pk).first()
+    if (current and current.rack_id == rack.pk and current.start_u == start_u and current.end_u == end_u
+            and locked_asset.asset_data_center_id == rack.room.data_center_id):
+        return False
+
     ranges = rack_position_ranges(rack.allocations.all(), rack.total_u, exclude_asset_id=locked_asset.pk)
     if any(start_u <= gap["end_u"] and end_u >= gap["start_u"] for gap in ranges["gap_ranges"]):
         scope = serialization_scope()
