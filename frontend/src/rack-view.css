@@ -1151,5 +1151,14 @@ button.rack-slot-row:enabled:hover, button.rack-slot-row:focus-visible { backgro
 .rack-operation-field { display: flex; min-width: 0; flex-direction: column; gap: 6px; }
 .rack-operation-field .el-input-number { width: 100%; }
 .rack-operation-full { grid-column: 1 / -1; }
-.rack-asset-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 12px; }
 @media(max-width: 600px) { .rack-operation-form { grid-template-columns: minmax(0,1fr); } }
+.rack-placement-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-bottom: 16px;
+}
+
+.rack-placement-actions .el-button + .el-button {
+  margin-left: 0;
+}

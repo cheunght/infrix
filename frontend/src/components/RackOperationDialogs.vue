@@ -169,6 +169,7 @@ const availableLabel = computed(
         <label class="rack-operation-field"
           ><span>{{ t("location.room") }}</span
           ><SearchableSelect
+            :key="`placement-room-${o.centerId}`"
             :model-value="o.roomId"
             :request="context.request"
             endpoint="/server-rooms/"
@@ -183,6 +184,7 @@ const availableLabel = computed(
         <label class="rack-operation-field rack-operation-full"
           ><span>{{ t("asset.rack") }}</span
           ><SearchableSelect
+            :key="`placement-rack-${o.roomId}`"
             v-model="o.rackId"
             :request="context.request"
             endpoint="/racks/"

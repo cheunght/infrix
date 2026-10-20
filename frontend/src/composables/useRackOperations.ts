@@ -286,7 +286,9 @@ export function useRackOperations(
     u = 1,
   ) {
     if (!c.can("assets.manage") || busy.value) return;
-    ++prepareVersion;
+    const operationVersion = ++prepareVersion;
+    preparing.value = false;
+    reconciling.value = false;
     mode.value = operation;
     dialogOpen.value = true;
     error.value = "";
@@ -303,7 +305,7 @@ export function useRackOperations(
     rackId.value = rack?.id || null;
     if (source) {
       preparing.value = true;
-      const version = ++prepareVersion;
+      const version = operationVersion;
       try {
         const detail = await read<AssetDetail>(`/assets/${source.id}/`);
         if (alive && version === prepareVersion) {
@@ -327,7 +329,8 @@ export function useRackOperations(
         if (version === prepareVersion) preparing.value = false;
       }
     }
-    await loadOptions();
+    if (alive && dialogOpen.value && operationVersion === prepareVersion)
+      await loadOptions();
   }
   function close() {
     if (busy.value) return;
@@ -336,13 +339,15 @@ export function useRackOperations(
     ++optionVersion;
     asset.value = null;
     preparing.value = false;
+    reconciling.value = false;
     optionsLoading.value = false;
   }
-  async function refreshAfterWrite(detail: AssetDetail) {
+  async function refreshAfterWrite(detail: AssetDetail, account: string, write: number) {
+    const current = () => alive && write === writeVersion && account === c.currentUsername.value;
     const version = locateVersion;
     c.closeAssetDetail();
     const refreshed = await c.loadRackView();
-    if (!alive) return;
+    if (!current()) return;
     if (detail.rack_allocation) {
       await router.replace({
         path: "/racks/view",
@@ -353,13 +358,13 @@ export function useRackOperations(
           rack_asset: String(detail.id),
         },
       });
-      if (version === locateVersion) await restoreLocation();
+      if (current() && version === locateVersion) await restoreLocation();
     } else {
       await router.replace({
         path: "/racks/view",
         query: { ...route.query, rack_asset: undefined },
       });
-      locatedAsset.value = detail;
+      if (current()) locatedAsset.value = detail;
     }
     if (refreshed === false) throw new Error(tr("common.refreshFailed"));
   }
@@ -406,9 +411,10 @@ export function useRackOperations(
       dialogOpen.value = false;
       ElMessage.success(tr("rackOps.saved"));
       try {
-        await refreshAfterWrite(detail);
+        await refreshAfterWrite(detail, account, version);
       } catch {
-        ElMessage.warning(tr("rackOps.refreshFailed"));
+        if (alive && version === writeVersion && account === c.currentUsername.value)
+          ElMessage.warning(tr("rackOps.refreshFailed"));
       }
     } catch (cause) {
       if (
@@ -430,7 +436,8 @@ export function useRackOperations(
       if (cause instanceof ApiError && cause.status === 409) {
         uncertain.value = true;
       }
-      if (!uncertain.value) await loadOptions();
+      if (!uncertain.value && !(cause instanceof ApiError && cause.status === 503))
+        await loadOptions();
     } finally {
       if (version === writeVersion) busy.value = false;
     }
@@ -468,6 +475,16 @@ export function useRackOperations(
     dialogOpen.value = false;
     findOpen.value = false;
     asset.value = null;
+    targetRack.value = null;
+    centerId.value = null;
+    roomId.value = null;
+    rackId.value = null;
+    search.value = "";
+    searchPage.value = 1;
+    searchTotal.value = 0;
+    error.value = "";
+    searchError.value = "";
+    note.value = "";
     results.value = [];
     options.value = null;
     busy.value = false;

@@ -384,6 +384,9 @@ def _meaningful_changes(
                 "after": _safe_payload(new_value),
             })
 
+    extra = _extra(payload)
+    if log.resource_type == "asset" and extra.get("source") == "rack_placement" and extra.get("note"):
+        changes.append({"field": "note", "label": None, "before": None, "after": _safe_payload(extra["note"])})
     return changes[:_MAX_COLLECTION_ITEMS]
 
 

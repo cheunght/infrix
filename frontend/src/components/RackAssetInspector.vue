@@ -1,13 +1,15 @@
 <script setup lang="ts">
-import { ref, watch } from "vue";
+import { inject, ref, watch } from "vue";
 import { useI18n } from "vue-i18n";
 import { Close } from "@element-plus/icons-vue";
 import AssetDetailContent from "./AssetDetailContent.vue";
 import type { AssetDetail } from "../types";
 import type { RackInspectorContext } from "../page-context";
+import { RackOperationsKey } from "../composables/useRackOperations";
 
 const props = defineProps<{ context: RackInspectorContext }>();
 const { t } = useI18n();
+const operations = inject(RackOperationsKey, null);
 const { rackDetailOpen, detailAsset, detailLoading, detailError, retryAssetDetail, closeAssetDetail } = props.context;
 const displayedAsset = ref<AssetDetail | null>(detailAsset.value);
 
@@ -39,6 +41,23 @@ watch(rackDetailOpen, (open) => {
         />
       </div>
     </template>
+    <div
+      v-if="operations?.canManage.value && detailAsset?.rack_allocation && !detailLoading && !detailError"
+      class="rack-placement-actions"
+    >
+      <el-button
+        :disabled="operations.busy.value || detailAsset.status === 'retired'"
+        @click="operations.open('adjust', detailAsset)"
+      >{{ t('rackOps.adjust') }}</el-button>
+      <el-button
+        :disabled="operations.busy.value || detailAsset.status === 'retired'"
+        @click="operations.open('move', detailAsset)"
+      >{{ t('rackOps.move') }}</el-button>
+      <el-button
+        :disabled="operations.busy.value"
+        @click="operations.open('unmount', detailAsset)"
+      >{{ t('rackOps.unmount') }}</el-button>
+    </div>
     <AssetDetailContent
       variant="rack"
       :asset="displayedAsset"
