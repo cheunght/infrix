@@ -7,10 +7,11 @@ import StatusTag from "./StatusTag.vue";
 import ResourceState from "./ResourceState.vue";
 import { rackStatusLabel, rackStatusTone, rackStatusValue } from "../business-enums";
 
-const props = defineProps<{ context: RackListContext & {
+const props = defineProps<{ comparisonIds?: number[]; comparisonLimit?: number; context: RackListContext & {
   selectedRack?: { value: string };
   selectedRoom?: { value: number | null };
 } }>();
+const emit = defineEmits<{ compare: [id: number] }>();
 const { t } = useI18n();
 const context = props.context;
 const {
@@ -61,9 +62,17 @@ function rackStatus(rack: Rack) {
           @retry="retryRackView"
         >
           <div class="rack-list-rows" v-loading="rackListLoading" :aria-label="t('rack.list')">
+            <div v-for="rack in visibleRacks" :key="rack.id" class="rack-list-choice">
+              <input
+                v-if="comparisonIds"
+                type="checkbox"
+                class="rack-comparison-checkbox"
+                :checked="comparisonIds.includes(rack.id)"
+                :disabled="!comparisonIds.includes(rack.id) && comparisonIds.length >= (comparisonLimit || 4)"
+                :aria-label="t('rackCompare.select', { rack: rack.code })"
+                @change="emit('compare', rack.id)"
+              />
             <button
-              v-for="rack in visibleRacks"
-              :key="rack.id"
               type="button"
               class="rack-list-row"
               :class="{ 'is-current': focusedRack?.id === rack.id }"
@@ -84,6 +93,7 @@ function rackStatus(rack: Rack) {
                 <span class="rack-list-row__utilization">{{ rack.occupancy_restricted ? "" : `${rackUtilization(rack)}%` }}</span>
               </span>
             </button>
+            </div>
           </div>
         </ResourceState>
       </div>

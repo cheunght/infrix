@@ -1,4 +1,21 @@
 export default {
+  rackCompare: {
+    title: "Compare racks",
+    selectionHint: "Select racks to compare ({count}/{limit}, at least 2; across pages and rooms)",
+    select: "Compare rack {rack}",
+    remove: "Remove rack {rack} from comparison",
+    clear: "Clear comparison",
+    invalid: "Invalid comparison link. Select 2–4 different racks, or clear the selection and try again.",
+    unavailable: "Unable to read this rack. It may have been removed, access may have changed, or the network may be unavailable. Remove it or refresh to try again.",
+    previewHint: "Capacity covers the whole rack. Used U includes blocked 1U gaps between devices. Previews do not reserve space; placement is checked again on submission.",
+    largest: "Largest free span",
+    gaps: "Blocked 1U gaps",
+    cannotReceive: "This rack or its parent location is disabled, or the rack is reserved. It cannot receive devices.",
+    source: "Device to move",
+    chooseSource: "Find or click a device, then choose its destination rack.",
+    moveHere: "Move here",
+    maintenance: "Maintenance is in progress. Wait for the indicated delay, then refresh manually.",
+  },
   rackOps: {
     "findAsset": "Find device",
     "searchPlaceholder": "Asset number, serial number or IP",

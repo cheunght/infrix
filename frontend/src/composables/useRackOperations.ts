@@ -33,6 +33,7 @@ export function useRackOperations(
     finding = ref(false),
     busy = ref(false),
     preparing = ref(false);
+  const placementRevision = ref(0);
   const search = ref(""),
     searchPage = ref(1),
     searchTotal = ref(0),
@@ -185,6 +186,7 @@ export function useRackOperations(
       const rack = await read<Rack>(`/racks/${placement.rack}/`);
       if (!alive || version !== locateVersion) return;
       const query = {
+        compare: route.query.compare,
         data_center: String(placement.data_center_id),
         room: String(rack.room),
         rack: String(rack.id),
@@ -352,6 +354,7 @@ export function useRackOperations(
       await router.replace({
         path: "/racks/view",
         query: {
+          compare: route.query.compare,
           data_center: String(detail.rack_allocation.data_center_id),
           room: String(detail.rack_allocation.server_room_id),
           rack: String(detail.rack_allocation.rack),
@@ -409,6 +412,7 @@ export function useRackOperations(
       )
         return;
       dialogOpen.value = false;
+      placementRevision.value += 1;
       ElMessage.success(tr("rackOps.saved"));
       try {
         await refreshAfterWrite(detail, account, version);
@@ -451,6 +455,7 @@ export function useRackOperations(
       if (!alive || version !== prepareVersion) return;
       asset.value = detail;
       uncertain.value = false;
+      placementRevision.value += 1;
       error.value = tr("rackOps.reconciled");
       await loadOptions();
     } catch (cause) {
@@ -500,6 +505,7 @@ export function useRackOperations(
     reset();
   });
   return {
+    placementRevision,
     canManage: computed(() => c.can("assets.manage")),
     findOpen,
     dialogOpen,

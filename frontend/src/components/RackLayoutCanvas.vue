@@ -1,10 +1,11 @@
 <script setup lang="ts">
-import { inject } from "vue";
+import { computed, inject } from "vue";
 import { RackOperationsKey } from "../composables/useRackOperations";
 import { useI18n } from "vue-i18n";
 import type { RackCanvasContext } from "../page-context";
+import type { Rack } from "../types";
 const { t } = useI18n();
-const props = defineProps<{ context: RackCanvasContext }>();
+const props = defineProps<{ context: RackCanvasContext; racks?: Rack[]; previewOnly?: boolean }>();
 const context = props.context;
 const operations = inject(RackOperationsKey, null);
 const {
@@ -23,6 +24,7 @@ const {
   resetRackFilters,
   retryRackView,
 } = context;
+const canvasRacks = computed(() => props.racks ?? displayedRacks.value);
 
 function allocationPrimary(allocation: RackCanvasContext["displayedRacks"]["value"][number]["allocations"][number]) {
   return allocation.asset_no?.trim() || allocation.asset_name?.trim() || t("asset.unlisted");
@@ -52,20 +54,20 @@ function isMajorUnit(totalU: number, rowIndex: number) {
 
 <template>
   <section class="rack-layout-panel">
-    <div v-if="rackCanvasLoading" class="rack-panel-state" role="status" aria-live="polite">
+    <div v-if="!props.racks && rackCanvasLoading" class="rack-panel-state" role="status" aria-live="polite">
       <el-skeleton :rows="8" animated />
     </div>
-    <div v-else-if="rackCanvasError" class="rack-panel-state rack-panel-error" role="alert">
+    <div v-else-if="!props.racks && rackCanvasError" class="rack-panel-state rack-panel-error" role="alert">
       <strong>{{ t('rack.rackLoadFailed') }}</strong>
       <span>{{ rackCanvasError }}</span>
       <el-button type="primary" plain @click="retryRackView">{{ t('common.retry') }}</el-button>
     </div>
     <div
-      v-else-if="displayedRacks.length"
+      v-else-if="canvasRacks.length"
       class="rack-u-stage"
     >
       <el-card
-        v-for="rack in displayedRacks"
+        v-for="rack in canvasRacks"
         :id="`rack-view-${rack.id}`"
         :key="rack.id"
         class="rack-u-card"
@@ -95,7 +97,7 @@ function isMajorUnit(totalU: number, rowIndex: number) {
                 <button
                   v-for="u in rack.total_u"
                   type="button"
-                  :disabled="!operations || !props.context.can?.('assets.manage') || !props.context.can?.('assets.view') || rack.status !== 'in_use' || rack.is_active === false || rackGapUnavailable(rack, rackUnitNumber(rack.total_u, u)) || rack.allocations.some(item => rackUnitNumber(rack.total_u, u) >= item.start_u && rackUnitNumber(rack.total_u, u) <= item.end_u)"
+                  :disabled="previewOnly || rack.occupancy_restricted || !operations || !props.context.can?.('assets.manage') || !props.context.can?.('assets.view') || rack.status !== 'in_use' || rack.is_active === false || rackGapUnavailable(rack, rackUnitNumber(rack.total_u, u)) || rack.allocations.some(item => rackUnitNumber(rack.total_u, u) >= item.start_u && rackUnitNumber(rack.total_u, u) <= item.end_u)"
                   :aria-label="t('rackOps.mountAt', { u: rackUnitNumber(rack.total_u, u) })"
                   @click="operations?.open('mount', null, rack, rackUnitNumber(rack.total_u, u))"
                   :key="u"

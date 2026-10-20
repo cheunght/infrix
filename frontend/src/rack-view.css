@@ -1162,3 +1162,32 @@ button.rack-slot-row:enabled:hover, button.rack-slot-row:focus-visible { backgro
 .rack-placement-actions .el-button + .el-button {
   margin-left: 0;
 }
+
+.rack-list-choice { display: flex; align-items: center; gap: 8px; }
+.rack-list-choice .rack-list-row { flex: 1; min-width: 0; }
+.rack-comparison-checkbox { flex: 0 0 auto; width: 16px; height: 16px; margin: 0 0 0 4px; accent-color: var(--el-color-primary); cursor: pointer; }
+.rack-comparison-selection { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; padding-block: 8px; font-size: 12px; color: var(--el-text-color-secondary); }
+.rack-comparison-selection .el-button + .el-button { margin-left: 0; }
+.rack-comparison-heading, .rack-comparison-card-heading, .rack-comparison-source { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.rack-comparison-content { min-width: 0; min-height: 0; padding: 12px; overflow: auto; }
+.rack-comparison-hint, .rack-comparison-location { margin: 0 0 10px; color: var(--el-text-color-secondary); font-size: 12px; overflow-wrap: anywhere; }
+.rack-comparison-source { margin-block: 12px; font-size: 13px; }
+.rack-comparison-columns { display: flex; align-items: stretch; gap: 12px; overflow-x: auto; padding-bottom: 12px; }
+.rack-comparison-column { display: flex; flex: 1 0 250px; flex-direction: column; min-width: 0; max-width: 360px; padding: 12px; border: 1px solid var(--el-border-color-light); border-radius: var(--el-border-radius-base); }
+.rack-comparison-card-heading { font-size: 15px; }
+.rack-comparison-card-heading strong { overflow-wrap: anywhere; }
+.rack-comparison-location { min-height: 32px; }
+.rack-comparison-metrics { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-block: 12px; }
+.rack-comparison-metrics div { min-width: 0; }
+.rack-comparison-metrics dt { color: var(--el-text-color-secondary); font-size: 11px; }
+.rack-comparison-metrics dd { margin: 3px 0 0; font-size: 18px; font-weight: 600; font-variant-numeric: tabular-nums; }
+.rack-comparison-map { height: 320px; min-height: 320px; }
+.rack-comparison-map .rack-u-card { width: 100%; }
+.rack-comparison-ranges { overflow-wrap: anywhere; font-size: 12px; }
+.rack-comparison-ranges p { margin-block: 10px; }
+.rack-comparison-move { width: 100%; margin-top: 10px; }
+.rack-comparison-content > .rack-asset-inspector { margin-top: 12px; max-height: 320px; overflow: auto; }
+@media (max-width: 600px) {
+  .rack-comparison-source { align-items: flex-start; flex-direction: column; }
+  .rack-comparison-column { flex-basis: 240px; }
+}

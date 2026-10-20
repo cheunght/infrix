@@ -3,6 +3,8 @@ import { computed, provide } from "vue";
 import { useRoute, useRouter } from "vue-router";
 import { useRackOperations, RackOperationsKey } from "../composables/useRackOperations";
 import RackOperationDialogs from "./RackOperationDialogs.vue";
+import RackComparisonPanel from "./RackComparisonPanel.vue";
+import { useRackComparison, RACK_COMPARE_LIMIT } from "../composables/useRackComparison";
 import { useI18n } from "vue-i18n";
 import { Download } from "@element-plus/icons-vue";
 import RackAssetInspector from "./RackAssetInspector.vue";
@@ -25,6 +27,7 @@ const props = defineProps<{ context: RackSharedContext }>();
 const { t } = useI18n();
 const context = props.context;
 const operations = useRackOperations(context, useRoute(), useRouter());
+const comparison = useRackComparison(context, useRoute(), useRouter(), operations.placementRevision);
 provide(RackOperationsKey, operations);
 const rackSection = context.rackSection;
 const serverRooms = context.serverRooms;
@@ -243,6 +246,12 @@ function deleteCurrentRack() {
       </PageContent>
 
       <PageContent v-else min-height="0">
+        <div class="rack-comparison-selection">
+          <span>{{ t('rackCompare.selectionHint', { count: comparison.ids.value.length, limit: RACK_COMPARE_LIMIT }) }}</span>
+          <el-button v-for="entry in comparison.entries.value" :key="entry.id" size="small" :aria-label="t('rackCompare.remove', { rack: entry.rack?.code || `#${entry.id}` })" @click="comparison.toggle(entry.id)">{{ entry.rack?.code || `#${entry.id}` }} ×</el-button>
+          <el-button v-if="comparison.ids.value.length || comparison.invalid.value" link @click="comparison.clear">{{ t('rackCompare.clear') }}</el-button>
+        </div>
+        <el-alert v-if="comparison.invalid.value" :title="t('rackCompare.invalid')" type="warning" :closable="false" />
         <el-alert v-if="operations.locateError.value" :title="operations.locateError.value" type="warning" :closable="false" />
         <el-alert v-if="operations.locatedAsset.value && !operations.locatedAsset.value.rack_allocation" :title="`${operations.locatedAsset.value.asset_no} · ${operations.mountedLocation(operations.locatedAsset.value)}`" type="info" :closable="false">
           <el-button v-if="can('assets.manage') && operations.locatedAsset.value.status !== 'retired'" link type="primary" @click="operations.open('mount', operations.locatedAsset.value)">{{ t('rackOps.mount') }}</el-button>
@@ -251,9 +260,11 @@ function deleteCurrentRack() {
           class="resource-workspace resource-workspace--rack"
           :aria-label="t('rack.locationWorkspace')"
         >
-          <RackListPanel :context="context" />
+          <RackListPanel :context="context" :comparison-ids="comparison.ids.value" :comparison-limit="RACK_COMPARE_LIMIT" @compare="comparison.toggle" />
 
-          <el-card class="resource-panel resource-detail-panel resource-rack-detail" shadow="never">
+          <RackComparisonPanel v-if="comparison.active.value" :context="context" :comparison="comparison" :operations="operations" />
+
+          <el-card v-else class="resource-panel resource-detail-panel resource-rack-detail" shadow="never">
             <template #header>
               <div class="resource-detail-header">
                 <div class="resource-detail-title">

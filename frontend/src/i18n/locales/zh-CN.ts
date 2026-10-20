@@ -1,4 +1,21 @@
 export default {
+  rackCompare: {
+    title: "机柜对比",
+    selectionHint: "勾选机柜进行对比（已选 {count}/{limit}，至少 2 个，支持跨页和跨机房）",
+    select: "对比机柜 {rack}",
+    remove: "移除对比机柜 {rack}",
+    clear: "清空对比",
+    invalid: "对比链接无效：请选择 2–4 个不同机柜，或清空后重新选择。",
+    unavailable: "机柜无法读取：记录可能已删除、权限变化或网络异常。请移除或刷新重试。",
+    previewHint: "容量按完整机柜计算，已用 U 数包含设备间不可用的 1U 间隙。预览不锁定位置，提交时重新校验。",
+    largest: "最大连续可用",
+    gaps: "设备间禁用 1U",
+    cannotReceive: "机柜或上级位置已停用，或机柜已预留，当前不能接收设备。",
+    source: "移柜设备",
+    chooseSource: "先查找或点击设备，再选择目标机柜。",
+    moveHere: "移入此柜",
+    maintenance: "系统维护中，请等待维护提示的时间后手动刷新。",
+  },
   rackOps: {
     "findAsset": "查找设备",
     "searchPlaceholder": "资产编号、序列号或 IP",
