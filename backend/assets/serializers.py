@@ -3246,3 +3246,22 @@ class RepairPartUsageCreateSerializer(serializers.Serializer):
     def validate(self, attrs):
         from .stock import validate_repair_usage
         return validate_repair_usage(attrs)
+
+
+class AssetPlacementSerializer(serializers.Serializer):
+    rack_id = serializers.IntegerField(min_value=1, allow_null=True)
+    start_u = serializers.IntegerField(min_value=1, required=False)
+    end_u = serializers.IntegerField(min_value=1, required=False)
+    note = serializers.CharField(max_length=1000, required=False, allow_blank=True, default="")
+
+    def validate(self, attrs):
+        if attrs["rack_id"] is None:
+            if "start_u" in attrs or "end_u" in attrs:
+                raise serializers.ValidationError({"rack_id": "下架不应携带 U 位"})
+        elif "start_u" not in attrs or "end_u" not in attrs:
+            raise serializers.ValidationError({"start_u": "上架必须指定完整的起止 U 位"})
+        return attrs
+
+
+class RackPlacementOptionsSerializer(serializers.Serializer):
+    asset_id = serializers.IntegerField(min_value=1, required=False)

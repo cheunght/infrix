@@ -614,3 +614,36 @@ def restore_asset(*, asset_id, request):
         write_audit_log(request, action="restore", resource_type="asset", resource_id=asset.pk,
                         before=before, after=asset_audit_snapshot(asset.pk))
     return asset
+
+
+@transaction.atomic
+def change_asset_placement(*, asset_id, rack_id, start_u=None, end_u=None, note="", request):
+    """Change physical placement only; never replay an entire asset edit form."""
+    _require_manager(request.user)
+    from .physical_location import place_asset, unrack_asset
+    try:
+        if rack_id is not None:
+            get_object_or_404(Rack, pk=rack_id)
+        lock_asset_location(asset_id=asset_id, target_rack_id=rack_id)
+        asset = active_asset_for_update(asset_id)
+        check_asset_revision(asset, request)
+        before = asset_audit_snapshot(asset.pk)
+        previous_revision = asset.revision
+        current = RackUnitAllocation.objects.filter(asset_id=asset.pk).first()
+        same = (current is None and rack_id is None) or (current is not None and
+                current.rack_id == rack_id and current.start_u == start_u and current.end_u == end_u)
+        if same:
+            return asset
+        if rack_id is None:
+            unrack_asset(asset_id=asset.pk)
+        else:
+            place_asset(asset_id=asset.pk, rack_id=rack_id, start_u=start_u, end_u=end_u)
+        asset.refresh_from_db()
+        if asset.revision == previous_revision:
+            asset.save(update_fields=["updated_at"])
+        write_audit_log(request, action="update", resource_type="asset", resource_id=asset.pk,
+                        before=before, after=asset_audit_snapshot(asset.pk),
+                        extra={"source": "rack_placement", "note": note})
+        return asset
+    except ValidationError as exc:
+        raise DRFValidationError(getattr(exc, "message_dict", {"configuration": exc.messages})) from exc

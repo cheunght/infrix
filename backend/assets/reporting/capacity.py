@@ -11,14 +11,11 @@ def rack_effective_used_u(allocations, total_u=None):
     devices is the only implicit unavailable space, matching the existing
     capacity rule used by the U-position canvas.
     """
-    ordered = sorted(
-        allocations,
-        key=lambda allocation: (allocation.start_u, allocation.end_u),
-    )
-    used_u = sum(allocation.units for allocation in ordered)
-    for previous, current in zip(ordered, ordered[1:]):
-        if current.start_u - previous.end_u - 1 == 1:
-            used_u += 1
+    from ..physical_location import rack_position_ranges
+    rows = list(allocations)
+    ceiling = total_u if total_u is not None else max((row.end_u for row in rows), default=0)
+    ranges = rack_position_ranges(rows, ceiling)
+    used_u = sum(row.units for row in rows) + len(ranges["gap_ranges"])
     return min(used_u, total_u) if total_u is not None else used_u
 
 

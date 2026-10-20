@@ -191,6 +191,23 @@ def lock_server_room_location(
     ).get(pk=room_id)
 
 
+
+def rack_position_ranges(allocations, total_u, *, exclude_asset_id=None):
+    """One capacity rule for presentation, preview and locked placement writes."""
+    rows = sorted((row for row in allocations if row.asset_id != exclude_asset_id), key=lambda row: (row.start_u, row.end_u))
+    occupied = [{"start_u": row.start_u, "end_u": row.end_u} for row in rows]
+    gaps = [{"start_u": left.end_u + 1, "end_u": left.end_u + 1}
+            for left, right in zip(rows, rows[1:]) if right.start_u - left.end_u == 2]
+    available, cursor = [], 1
+    for span in sorted(occupied + gaps, key=lambda span: span["start_u"]):
+        if cursor < span["start_u"]:
+            available.append({"start_u": cursor, "end_u": min(total_u, span["start_u"] - 1)})
+        cursor = max(cursor, span["end_u"] + 1)
+    if cursor <= total_u:
+        available.append({"start_u": cursor, "end_u": total_u})
+    return {"occupied_ranges": occupied, "gap_ranges": gaps, "available_ranges": available}
+
+
 @transaction.atomic
 def place_asset(*, asset_id: int, rack_id: int, start_u: int, end_u: int) -> bool:
     """Place an asset in a rack using the canonical placement rules."""
@@ -247,6 +264,12 @@ def place_asset(*, asset_id: int, rack_id: int, start_u: int, end_u: int) -> boo
             f"{conflict.asset.asset_no}（U{conflict.start_u}-U{conflict.end_u}）冲突"
         ) if visible else "所选 U 位无法使用，请联系设施管理员"
         raise ValidationError({"configuration": message})
+
+    ranges = rack_position_ranges(rack.allocations.all(), rack.total_u, exclude_asset_id=locked_asset.pk)
+    if any(start_u <= gap["end_u"] and end_u >= gap["start_u"] for gap in ranges["gap_ranges"]):
+        scope = serialization_scope()
+        visible = scope is None or scope.full_department_access(center_id=rack.room.data_center_id)
+        raise ValidationError({"rack_start_u": "所选 U 位包含不可用的设备间 1U 间隙" if visible else "所选 U 位无法使用，请联系设施管理员"})
 
     allocation = (
         RackUnitAllocation.objects.select_for_update()

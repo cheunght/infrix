@@ -1,3 +1,6 @@
+from .serializers import AssetPlacementSerializer, RackPlacementOptionsSerializer
+from .asset_writes import change_asset_placement
+from .physical_location import rack_position_ranges
 from .identity_writes import update_own_profile, change_own_password
 from .reference_writes import SharedReferenceWriteMixin, edit_fieldset_items
 from .identity_writes import (_user_audit_snapshot, _security_profile, _locked_security_profile, edit_account, reset_account_password, delete_account, batch_account_status, account_scope_snapshot, replace_account_scope)
@@ -613,6 +616,7 @@ class AssetViewSet(AuditedModelViewSetMixin, ScopedModelViewSet):
 
     @extend_schema(
         parameters=[
+            OpenApiParameter("rack_mounted", OpenApiTypes.BOOL, description="true 筛选已上架；false 筛选未上架资产。"),
             OpenApiParameter("archived", OpenApiTypes.BOOL, description="true 查看已归档资产；默认仅当前台账。"),
             OpenApiParameter(
                 name="custom_columns",
@@ -681,9 +685,25 @@ class AssetViewSet(AuditedModelViewSetMixin, ScopedModelViewSet):
     def partial_update(self, request, *args, **kwargs):
         return super().partial_update(request, *args, **kwargs)
 
+    @extend_schema(request=AssetPlacementSerializer, responses=AssetDetailSerializer,
+                   parameters=[OpenApiParameter("If-Match", str, location=OpenApiParameter.HEADER, required=True)])
+    @action(detail=True, methods=["put"], url_path="placement")
+    @transaction.atomic
+    def placement(self, request, pk=None):
+        self.get_object()
+        serializer = AssetPlacementSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        asset = change_asset_placement(asset_id=pk, request=request, **serializer.validated_data)
+        return Response(AssetDetailSerializer(asset, context=self.get_serializer_context()).data)
+
     def get_queryset(self):
         queryset = super().get_queryset()
         queryset = visible_assets(self.request, queryset)
+        if "rack_mounted" in self.request.query_params:
+            mounted = self.request.query_params["rack_mounted"].lower()
+            if mounted not in {"true", "false"}:
+                raise DRFValidationError({"rack_mounted": "必须为 true 或 false"})
+            queryset = queryset.filter(rack_allocation__isnull=mounted == "false")
         if not scope_for(self.request.user).full_directory_access():
             self.search_fields = [field for field in self.search_fields if not field.startswith("assigned_person__")]
         manufacturer = self.request.query_params.get("manufacturer", "").strip()
@@ -1302,6 +1322,24 @@ class RackViewSet(AuditedModelViewSetMixin, ScopedModelViewSet):
     filter_backends = [DjangoFilterBackend, SearchFilter]
     filterset_fields = ["room", "room__data_center", "code", "status"]
     search_fields = ["code", "name", "rack_type", "owner_name", "room__name", "room__data_center__name"]
+
+    @extend_schema(parameters=[OpenApiParameter("asset_id", int)], responses=OpenApiTypes.OBJECT)
+    @action(detail=True, methods=["get"], url_path="placement-options")
+    def placement_options(self, request, pk=None):
+        rack = self.get_object()
+        query = RackPlacementOptionsSerializer(data=request.query_params)
+        query.is_valid(raise_exception=True)
+        asset_id = query.validated_data.get("asset_id")
+        if asset_id is not None:
+            if not can(request.user, "assets.view"):
+                raise PermissionDenied("没有读取资产的权限")
+            get_object_or_404(scoped(Asset.objects.all(), user=request.user), pk=asset_id)
+        restricted = not scope_for(request.user).full_department_access(center_id=rack.room.data_center_id)
+        accepts = rack.is_active and rack.status == "in_use" and rack.room.is_active and rack.room.data_center.is_active
+        ranges = rack_position_ranges(rack.allocations.all(), rack.total_u, exclude_asset_id=asset_id)
+        return Response({"total_u": rack.total_u, "occupancy_restricted": restricted, "accepts_assets": accepts,
+                         "available_ranges": None if restricted else ranges["available_ranges"] if accepts else [],
+                         "gap_ranges": None if restricted else ranges["gap_ranges"]})
 
     def get_serializer_class(self):
         if self.action == "list" and _compact_requested(self.request):
@@ -4810,13 +4848,12 @@ def rack_layout_export(request):
                         sheet.cell(unit_start_row + offset, start_col + 1, "无权限")
                     continue
                 ordered_allocations = sorted(rack.allocations.all(), key=lambda allocation: (allocation.start_u, allocation.end_u))
-                for previous, current in zip(ordered_allocations, ordered_allocations[1:]):
-                    if current.start_u - previous.end_u - 1 == 1:
-                        gap_row = rack_top + 3 + (rack.total_u - (previous.end_u + 1))
-                        for col in range(start_col + 1, end_col):
-                            gap_cell = sheet.cell(gap_row, col)
-                            gap_cell.fill = PatternFill("solid", fgColor="AEB8C8")
-                            gap_cell.font = Font(size=9, color="69778C", italic=True)
+                for span in rack_position_ranges(ordered_allocations, rack.total_u)["gap_ranges"]:
+                    gap_row = rack_top + 3 + (rack.total_u - span["start_u"])
+                    for col in range(start_col + 1, end_col):
+                        gap_cell = sheet.cell(gap_row, col)
+                        gap_cell.fill = PatternFill("solid", fgColor="AEB8C8")
+                        gap_cell.font = Font(size=9, color="69778C", italic=True)
                 for allocation in rack.allocations.all():
                     top_row = rack_top + 3 + (rack.total_u - allocation.end_u)
                     bottom_row = rack_top + 3 + (rack.total_u - allocation.start_u)
