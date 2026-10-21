@@ -63,6 +63,7 @@ for model in [
     AssetCustomValue,
     AssetTag,
     RackUnitAllocation,
+    RackUnitReservation,
     ProcurementRecord,
     MaintenanceContract,
     FaultEvent,

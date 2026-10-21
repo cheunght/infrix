@@ -113,6 +113,27 @@ class Rack(RevisionedTimestamped):
         return self.code
 
 
+class RackUnitReservation(RevisionedTimestamped):
+    rack = models.ForeignKey(Rack, on_delete=models.CASCADE, related_name="unit_reservations")
+    start_u = models.PositiveSmallIntegerField()
+    end_u = models.PositiveSmallIntegerField()
+    purpose = models.CharField(max_length=200)
+    status = models.CharField(max_length=16, choices=[("active", "预留中"), ("released", "已释放"), ("consumed", "已使用")], default="active")
+    created_by = models.ForeignKey(settings.AUTH_USER_MODEL, null=True, on_delete=models.SET_NULL, related_name="rack_reservations")
+    closed_by = models.ForeignKey(settings.AUTH_USER_MODEL, null=True, blank=True, on_delete=models.SET_NULL, related_name="closed_rack_reservations")
+    closed_at = models.DateTimeField(null=True, blank=True)
+    consumed_asset = models.ForeignKey("Asset", null=True, blank=True, on_delete=models.SET_NULL, related_name="consumed_rack_reservations")
+
+    class Meta:
+        ordering = ["-id"]
+        indexes = [models.Index(fields=["rack", "status"], name="assets_rack_res_status_idx")]
+        constraints = [models.CheckConstraint(condition=models.Q(start_u__gte=1, end_u__gte=models.F("start_u")), name="rack_res_valid_u_range")]
+
+    @property
+    def units(self):
+        return self.end_u - self.start_u + 1
+
+
 class Manufacturer(RevisionedTimestamped):
     name = models.CharField(max_length=120, unique=True)
     code = models.CharField(max_length=80, unique=True, null=True, blank=True)

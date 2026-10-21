@@ -1201,3 +1201,39 @@ button.rack-slot-row:enabled:hover, button.rack-slot-row:focus-visible { backgro
   .rack-comparison-source { align-items: flex-start; flex-direction: column; }
   .rack-comparison-column { flex-basis: 240px; }
 }
+
+/* Amber hatching distinguishes durable holds from mounted devices. */
+.rack-u-reservation {
+  grid-column: 1;
+  pointer-events: auto;
+  min-width: 0;
+  min-height: 0;
+  height: 100%;
+  margin: 0 4px;
+  padding: 2px 8px;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  gap: 3px;
+  overflow: hidden;
+  border: 1px dashed #b7791f;
+  border-radius: 4px;
+  background: repeating-linear-gradient(135deg, #fff5da, #fff5da 8px, #ffedbf 8px, #ffedbf 16px);
+  color: #795015;
+  text-align: left;
+  cursor: pointer;
+}
+.rack-u-reservation span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.rack-u-reservation:focus-visible {
+  outline: 2px solid var(--el-color-primary);
+  outline-offset: 1px;
+}
+.rack-reservation-legend {
+  margin: 0 0 10px;
+  color: #795015;
+  font-size: 12px;
+}

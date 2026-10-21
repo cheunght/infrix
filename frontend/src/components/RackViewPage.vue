@@ -2,6 +2,8 @@
 import { computed, provide } from "vue";
 import { useRoute, useRouter } from "vue-router";
 import { useRackOperations, RackOperationsKey } from "../composables/useRackOperations";
+import { useRackReservations, RackReservationsKey } from "../composables/useRackReservations";
+import RackReservationDialog from "./RackReservationDialog.vue";
 import RackOperationDialogs from "./RackOperationDialogs.vue";
 import RackComparisonPanel from "./RackComparisonPanel.vue";
 import RackCapacityPlanner from "./RackCapacityPlanner.vue";
@@ -29,6 +31,8 @@ const props = defineProps<{ context: RackSharedContext }>();
 const { t } = useI18n();
 const context = props.context;
 const operations = useRackOperations(context, useRoute(), useRouter());
+const reservations = useRackReservations(context, operations.placementRevision);
+provide(RackReservationsKey, reservations);
 const comparison = useRackComparison(context, useRoute(), useRouter(), operations.placementRevision);
 const planningRackIds = computed(() => comparison.invalid.value ? [] : comparison.ids.value.length ? comparison.ids.value : context.focusedRack.value ? [context.focusedRack.value.id] : []);
 const planning = useRackCapacityPlanning(context, planningRackIds, operations.placementRevision);
@@ -99,10 +103,10 @@ const viewRoom = computed(() =>
 );
 const currentRack = context.focusedRack;
 const currentRackHasAssets = computed(() => Boolean(
-  currentRack.value?.assets_count || currentRack.value?.allocations?.length,
+  currentRack.value?.assets_count || currentRack.value?.allocations?.length || currentRack.value?.reservations?.length,
 ));
 
-const rackDeleteHint = computed(() => t("rack.rackOccupiedDeleteHint"));
+const rackDeleteHint = computed(() => t(currentRack.value?.reservations?.length ? "rackReserve.deleteHint" : "rack.rackOccupiedDeleteHint"));
 
 function rackStatusCode(rack: Rack): RackStatus {
   return rackStatusValue(rack.status, rack.is_active);
@@ -281,33 +285,36 @@ function deleteCurrentRack() {
                   <span v-if="currentRack">{{ rackLocationLabel(currentRack) }}</span>
                   <span v-else>{{ t('rack.selectRackHint') }}</span>
                 </div>
-                <div v-if="currentRack && can('racks.view') && can('racks.manage')" class="resource-detail-actions">
-                  <el-button
-                    link
-                    type="primary"
-                    :disabled="deletingRackId === currentRack.id || updatingRackId === currentRack.id"
-                    @click="context.openRackModal(currentRack, viewRoom || undefined)"
-                  >{{ t('common.edit') }}</el-button>
-                  <el-button
-                    link
-                    :loading="updatingRackId === currentRack.id"
-                    :disabled="deletingRackId === currentRack.id || updatingRackId === currentRack.id || exportingRackLayout"
-                    @click="updateCurrentRackStatus"
-                  >{{ rackStatusActionLabel(currentRack) }}</el-button>
-                  <el-button
-                    link
-                    :loading="updatingRackId === currentRack.id"
-                    :disabled="deletingRackId === currentRack.id || updatingRackId === currentRack.id || exportingRackLayout"
-                    @click="updateCurrentRackReservation"
-                  >{{ rackReservationActionLabel(currentRack) }}</el-button>
-                  <el-button
-                    link
-                    type="danger"
-                    :loading="deletingRackId === currentRack.id"
-                    :disabled="currentRackHasAssets || deletingRackId === currentRack.id || updatingRackId === currentRack.id || exportingRackLayout"
-                    :title="currentRackHasAssets ? rackDeleteHint : undefined"
-                    @click="deleteCurrentRack"
-                  >{{ t('common.delete') }}</el-button>
+                <div v-if="currentRack && can('racks.view')" class="resource-detail-actions">
+                  <el-button :disabled="currentRack.occupancy_restricted || reservations.busy.value || operations.busy.value" @click="reservations.open(currentRack)">{{ t('rackReserve.title') }}</el-button>
+                  <template v-if="can('racks.manage')">
+                    <el-button
+                      link
+                      type="primary"
+                      :disabled="deletingRackId === currentRack.id || updatingRackId === currentRack.id"
+                      @click="context.openRackModal(currentRack, viewRoom || undefined)"
+                    >{{ t('common.edit') }}</el-button>
+                    <el-button
+                      link
+                      :loading="updatingRackId === currentRack.id"
+                      :disabled="deletingRackId === currentRack.id || updatingRackId === currentRack.id || exportingRackLayout"
+                      @click="updateCurrentRackStatus"
+                    >{{ rackStatusActionLabel(currentRack) }}</el-button>
+                    <el-button
+                      link
+                      :loading="updatingRackId === currentRack.id"
+                      :disabled="deletingRackId === currentRack.id || updatingRackId === currentRack.id || exportingRackLayout"
+                      @click="updateCurrentRackReservation"
+                    >{{ rackReservationActionLabel(currentRack) }}</el-button>
+                    <el-button
+                      link
+                      type="danger"
+                      :loading="deletingRackId === currentRack.id"
+                      :disabled="currentRackHasAssets || deletingRackId === currentRack.id || updatingRackId === currentRack.id || exportingRackLayout"
+                      :title="currentRackHasAssets ? rackDeleteHint : undefined"
+                      @click="deleteCurrentRack"
+                    >{{ t('common.delete') }}</el-button>
+                  </template>
                 </div>
               </div>
             </template>
@@ -350,6 +357,7 @@ function deleteCurrentRack() {
       </PageContent>
     </PageContainer>
 
+    <RackReservationDialog :manager="reservations" :operations="operations" :context="context" />
     <RackFormDialog :context="context" />
     <RackOperationDialogs :context="context" :operations="operations" />
     <RackCapacityPlanner :planning="planning" :rack-ids="planningRackIds" :rack-label="planningRackLabel" />

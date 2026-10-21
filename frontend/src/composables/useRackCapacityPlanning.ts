@@ -10,6 +10,7 @@ export type RackCapacityPlan = {
   planned_quantity: number;
   placements: Array<PositionRange & { sequence: number }>;
   total_u: number;
+  reserved_u?: number;
   used_u_before: number;
   free_u_before: number;
   used_u_after: number;

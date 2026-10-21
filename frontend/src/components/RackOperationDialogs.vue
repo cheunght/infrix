@@ -196,6 +196,13 @@ const availableLabel = computed(
             "
             :aria-label="t('asset.rack')"
         /></label>
+        <label v-if="context.can('racks.manage') && o.targetRack?.reservations?.length" class="rack-operation-field rack-operation-full">
+          <span>{{ t('rackReserve.use') }}</span>
+          <el-select :model-value="o.reservationId" clearable :disabled="o.busy || o.uncertain || o.optionsLoading" :aria-label="t('rackReserve.use')" @update:model-value="o.selectReservation($event || null)">
+            <el-option v-for="row in o.targetRack.reservations" :key="row.id" :value="row.id" :label="`U${row.start_u}–U${row.end_u} · ${row.purpose}`" />
+          </el-select>
+        </label>
+        <p v-if="o.reservationId" class="rack-operation-full">{{ t('rackReserve.consumeHint') }}</p>
         <label class="rack-operation-field"
           ><span>{{ t("asset.startU") }}</span
           ><el-input-number
@@ -203,7 +210,7 @@ const availableLabel = computed(
             :min="1"
             :max="o.options?.total_u || 32767"
             :precision="0"
-            :disabled="o.busy || o.uncertain"
+            :disabled="o.busy || o.uncertain || !!o.reservationId"
             :aria-label="t('asset.startU')"
         /></label>
         <label class="rack-operation-field"
@@ -213,7 +220,7 @@ const availableLabel = computed(
             :min="1"
             :max="o.options?.total_u || 32767"
             :precision="0"
-            :disabled="o.busy || o.uncertain"
+            :disabled="o.busy || o.uncertain || !!o.reservationId"
             :aria-label="t('rackOps.height')"
         /></label>
       </template>

@@ -895,7 +895,7 @@ export function useFacilities(deps: FacilitiesDeps) {
   }
   function rackUsedU(rack: Rack) {
     if (rack.used_u != null) return rack.used_u;
-    const allocations = [...rack.allocations].sort(
+    const allocations = [...rack.allocations, ...(rack.reservations || [])].sort(
       (a, b) => a.start_u - b.start_u || a.end_u - b.end_u,
     );
     const occupied = allocations.reduce((sum, allocation) => sum + allocation.units, 0);
@@ -906,7 +906,7 @@ export function useFacilities(deps: FacilitiesDeps) {
     return Math.min(rack.total_u, occupied + singleUnitGaps);
   }
   function rackGapUnavailable(rack: Rack, u: number) {
-    const allocations = [...rack.allocations].sort(
+    const allocations = [...rack.allocations, ...(rack.reservations || [])].sort(
       (a, b) => a.start_u - b.start_u || a.end_u - b.end_u,
     );
     return allocations.slice(1).some((allocation, index) => {

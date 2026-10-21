@@ -32,6 +32,7 @@ from .enum_contracts import (
     STOCK_OPERATION_TYPE_LABELS,
 )
 from .license_status import LICENSE_STATUS_LABELS, license_status_value
+from .models import RackUnitReservation
 from .resource_revision import ResourceRevisionSerializerMixin
 from .reporting.capacity import rack_effective_used_u
 from .physical_location import RoomReparentBlocked, lock_inventory_scope, lock_asset_location, update_rack, update_server_room
@@ -2952,6 +2953,28 @@ class InventoryTaskSerializer(ResourceRevisionSerializerMixin, serializers.Model
         read_only_fields = ["id", "data_center_name", "server_room_name", "inspector_name", "status", "completed_at", "summary", "can_delete", "created_at", "updated_at"]
 
 
+class RackUnitReservationSerializer(serializers.ModelSerializer):
+    created_by_name = serializers.CharField(source="created_by.username", read_only=True, allow_null=True)
+    closed_by_name = serializers.CharField(source="closed_by.username", read_only=True, allow_null=True)
+    units = serializers.IntegerField(read_only=True)
+
+    class Meta:
+        model = RackUnitReservation
+        fields = ["id", "revision", "rack", "start_u", "end_u", "units", "purpose", "status", "created_by_name", "closed_by_name", "created_at", "closed_at"]
+        read_only_fields = fields
+
+
+class RackUnitReservationInputSerializer(serializers.Serializer):
+    start_u = serializers.IntegerField(min_value=1, max_value=32767)
+    end_u = serializers.IntegerField(min_value=1, max_value=32767)
+    purpose = serializers.CharField(max_length=200, trim_whitespace=True)
+
+    def validate(self, attrs):
+        if attrs["end_u"] < attrs["start_u"]:
+            raise serializers.ValidationError({"end_u": "结束 U 位不能小于起始 U 位"})
+        return attrs
+
+
 class RackSerializer(ResourceRevisionSerializerMixin, serializers.ModelSerializer):
     allocations = RackUnitAllocationSerializer(many=True, read_only=True)
     data_center_name = serializers.CharField(source="room.data_center.name", read_only=True)
@@ -2960,6 +2983,16 @@ class RackSerializer(ResourceRevisionSerializerMixin, serializers.ModelSerialize
     used_u = serializers.SerializerMethodField()
     free_u = serializers.SerializerMethodField()
     status_label = serializers.SerializerMethodField()
+    reservations = serializers.SerializerMethodField()
+    reserved_u = serializers.SerializerMethodField()
+
+    def get_reservations(self, obj):
+        from .physical_location import active_rack_reservations
+        return RackUnitReservationSerializer(active_rack_reservations(obj), many=True).data
+
+    def get_reserved_u(self, obj):
+        from .physical_location import active_rack_reservations
+        return sum(row.units for row in active_rack_reservations(obj))
 
     def to_representation(self, instance):
         from .data_scope import serialization_scope, scoped
@@ -2971,7 +3004,8 @@ class RackSerializer(ResourceRevisionSerializerMixin, serializers.ModelSerialize
             request = self.context.get("request")
             readable = set(scoped(Asset.all_objects.filter(pk__in=[row["asset"] for row in data["allocations"]]), user=request.user if request is not None else None).values_list("pk", flat=True))
             data["allocations"] = [row for row in data["allocations"] if row["asset"] in readable]
-            for key in ("assets_count", "used_u", "free_u"):
+            data["reservations"] = []
+            for key in ("assets_count", "used_u", "free_u", "reserved_u"):
                 data[key] = None
         return data
 
@@ -2979,7 +3013,8 @@ class RackSerializer(ResourceRevisionSerializerMixin, serializers.ModelSerialize
         return len(obj.allocations.all())
 
     def get_used_u(self, obj) -> int | None:
-        return rack_effective_used_u(obj.allocations.all(), obj.total_u or 0)
+        from .physical_location import active_rack_reservations
+        return rack_effective_used_u(obj.allocations.all(), obj.total_u or 0, reservations=active_rack_reservations(obj))
 
     def get_free_u(self, obj) -> int | None:
         return max((obj.total_u or 0) - self.get_used_u(obj), 0)
@@ -2992,7 +3027,7 @@ class RackSerializer(ResourceRevisionSerializerMixin, serializers.ModelSerialize
         fields = [
             "id", "created_at", "updated_at", "room", "code", "name", "rack_type",
             "owner_name", "notes", "total_u", "is_active", "status", "status_label",
-            "data_center_name", "server_room_name", "assets_count", "used_u", "free_u", "allocations",
+            "data_center_name", "server_room_name", "assets_count", "used_u", "free_u", "allocations", "reservations", "reserved_u",
         ]
         read_only_fields = ["id", "created_at", "updated_at", "data_center_name", "server_room_name", "assets_count", "used_u", "free_u", "status_label", "allocations"]
 
@@ -3012,6 +3047,9 @@ class RackSerializer(ResourceRevisionSerializerMixin, serializers.ModelSerialize
             highest_u = self.instance.allocations.order_by("-end_u").values_list("end_u", flat=True).first() or 0
             if total_u < highest_u:
                 raise serializers.ValidationError({"total_u": f"机柜已有设备占用到 U{highest_u}，容量不能小于该位置"})
+            reservation_end = self.instance.unit_reservations.filter(status="active").order_by("-end_u").values_list("end_u", flat=True).first() or 0
+            if total_u < reservation_end:
+                raise serializers.ValidationError({"total_u": f"机柜仍有 U{reservation_end} 的有效预留，请先释放预留"})
         if total_u < 1:
             raise serializers.ValidationError({"total_u": "机柜总 U 位数必须大于等于 1"})
         if queryset.exists():
@@ -3253,10 +3291,11 @@ class AssetPlacementSerializer(serializers.Serializer):
     start_u = serializers.IntegerField(min_value=1, required=False)
     end_u = serializers.IntegerField(min_value=1, required=False)
     note = serializers.CharField(max_length=1000, required=False, allow_blank=True, default="")
+    reservation_id = serializers.IntegerField(min_value=1, required=False)
 
     def validate(self, attrs):
         if attrs["rack_id"] is None:
-            if "start_u" in attrs or "end_u" in attrs:
+            if "start_u" in attrs or "end_u" in attrs or "reservation_id" in attrs:
                 raise serializers.ValidationError({"rack_id": "下架不应携带 U 位"})
         elif "start_u" not in attrs or "end_u" not in attrs:
             raise serializers.ValidationError({"start_u": "上架必须指定完整的起止 U 位"})
@@ -3265,6 +3304,7 @@ class AssetPlacementSerializer(serializers.Serializer):
 
 class RackPlacementOptionsSerializer(serializers.Serializer):
     asset_id = serializers.IntegerField(min_value=1, required=False)
+    reservation_id = serializers.IntegerField(min_value=1, required=False)
 
 
 class RackCapacityPlanQuerySerializer(serializers.Serializer):

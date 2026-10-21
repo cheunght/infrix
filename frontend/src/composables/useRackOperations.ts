@@ -1,7 +1,7 @@
 import { computed, onBeforeUnmount, ref, watch, type InjectionKey } from "vue";
 import type { RouteLocationNormalizedLoaded, Router } from "vue-router";
 import { ElMessage } from "element-plus";
-import type { Asset, AssetDetail, Rack } from "../types";
+import type { Asset, AssetDetail, Rack, RackUnitReservation } from "../types";
 import type { RackSharedContext } from "../page-context";
 import { ApiError, isAbortError, pageItems, pageTotal } from "../api";
 import { revisionHeaders } from "../revision";
@@ -17,6 +17,7 @@ export type PlacementOptions = {
   accepts_assets: boolean;
   available_ranges: PositionRange[] | null;
   gap_ranges: PositionRange[] | null;
+  reserved_ranges?: PositionRange[] | null;
 };
 const tr = (key: string, args?: Record<string, unknown>) =>
   String(args ? i18n.global.t(key, args) : i18n.global.t(key));
@@ -34,6 +35,7 @@ export function useRackOperations(
     busy = ref(false),
     preparing = ref(false);
   const placementRevision = ref(0);
+  const reservationId = ref<number | null>(null);
   const search = ref(""),
     searchPage = ref(1),
     searchTotal = ref(0),
@@ -56,6 +58,12 @@ export function useRackOperations(
   const options = ref<PlacementOptions | null>(null),
     optionsLoading = ref(false);
   const endU = computed(() => startU.value + height.value - 1);
+  const selectedReservation = computed(
+    () =>
+      targetRack.value?.reservations?.find(
+        (row) => row.id === reservationId.value && row.status === "active",
+      ) || null,
+  );
   let alive = true,
     locateVersion = 0,
     searchVersion = 0,
@@ -106,6 +114,14 @@ export function useRackOperations(
       startU.value < 1 ||
       height.value < 1 ||
       endU.value > options.value.total_u
+    )
+      return false;
+    if (
+      reservationId.value &&
+      (!c.can("racks.manage") ||
+        !selectedReservation.value ||
+        startU.value !== selectedReservation.value.start_u ||
+        endU.value !== selectedReservation.value.end_u)
     )
       return false;
     return (
@@ -227,12 +243,16 @@ export function useRackOperations(
     optionsLoading.value = false;
     if (rackId.value == null || mode.value === "unmount") return;
     const selected = rackId.value;
+    const query = new URLSearchParams();
+    if (asset.value) query.set("asset_id", String(asset.value.id));
+    if (reservationId.value)
+      query.set("reservation_id", String(reservationId.value));
     optionsLoading.value = true;
     try {
       const [rack, data] = await Promise.all([
         read<Rack>(`/racks/${selected}/`),
         read<PlacementOptions>(
-          `/racks/${selected}/placement-options/${asset.value ? `?asset_id=${asset.value.id}` : ""}`,
+          `/racks/${selected}/placement-options/?${query}`,
         ),
       ]);
       if (!alive || version !== optionVersion) return;
@@ -247,7 +267,22 @@ export function useRackOperations(
       if (version === optionVersion) optionsLoading.value = false;
     }
   }
-  watch([rackId, () => asset.value?.id], () => {
+  watch(
+    rackId,
+    () => {
+      reservationId.value = null;
+    },
+    { flush: "sync" },
+  );
+  function selectReservation(id: number | null) {
+    const row = targetRack.value?.reservations?.find((item) => item.id === id);
+    reservationId.value = row?.id || null;
+    if (row) {
+      startU.value = row.start_u;
+      height.value = row.units;
+    }
+  }
+  watch([rackId, reservationId, () => asset.value?.id], () => {
     if (dialogOpen.value) void loadOptions();
   });
   function setCenter(value: number | null) {
@@ -286,6 +321,7 @@ export function useRackOperations(
     source: AssetDetail | null = null,
     rack: Rack | null = c.focusedRack.value,
     u = 1,
+    reservation: RackUnitReservation | null = null,
   ) {
     if (!c.can("assets.manage") || busy.value) return;
     const operationVersion = ++prepareVersion;
@@ -305,6 +341,7 @@ export function useRackOperations(
       source?.rack_allocation?.data_center_id || c.selectedDataCenter.value;
     roomId.value = rack?.room || null;
     rackId.value = rack?.id || null;
+    reservationId.value = reservation?.id || null;
     if (source) {
       preparing.value = true;
       const version = operationVersion;
@@ -331,8 +368,13 @@ export function useRackOperations(
         if (version === prepareVersion) preparing.value = false;
       }
     }
-    if (alive && dialogOpen.value && operationVersion === prepareVersion)
+    if (alive && dialogOpen.value && operationVersion === prepareVersion) {
+      if (reservation) {
+        startU.value = reservation.start_u;
+        height.value = reservation.units;
+      }
       await loadOptions();
+    }
   }
   function close() {
     if (busy.value) return;
@@ -344,8 +386,13 @@ export function useRackOperations(
     reconciling.value = false;
     optionsLoading.value = false;
   }
-  async function refreshAfterWrite(detail: AssetDetail, account: string, write: number) {
-    const current = () => alive && write === writeVersion && account === c.currentUsername.value;
+  async function refreshAfterWrite(
+    detail: AssetDetail,
+    account: string,
+    write: number,
+  ) {
+    const current = () =>
+      alive && write === writeVersion && account === c.currentUsername.value;
     const version = locateVersion;
     c.closeAssetDetail();
     const refreshed = await c.loadRackView();
@@ -396,6 +443,9 @@ export function useRackOperations(
               start_u: startU.value,
               end_u: endU.value,
               note: note.value,
+              ...(reservationId.value
+                ? { reservation_id: reservationId.value }
+                : {}),
             };
       const detail = await c.request<AssetDetail>(
         `/assets/${source.id}/placement/`,
@@ -417,7 +467,11 @@ export function useRackOperations(
       try {
         await refreshAfterWrite(detail, account, version);
       } catch {
-        if (alive && version === writeVersion && account === c.currentUsername.value)
+        if (
+          alive &&
+          version === writeVersion &&
+          account === c.currentUsername.value
+        )
           ElMessage.warning(tr("rackOps.refreshFailed"));
       }
     } catch (cause) {
@@ -440,7 +494,10 @@ export function useRackOperations(
       if (cause instanceof ApiError && cause.status === 409) {
         uncertain.value = true;
       }
-      if (!uncertain.value && !(cause instanceof ApiError && cause.status === 503))
+      if (
+        !uncertain.value &&
+        !(cause instanceof ApiError && cause.status === 503)
+      )
         await loadOptions();
     } finally {
       if (version === writeVersion) busy.value = false;
@@ -481,6 +538,7 @@ export function useRackOperations(
     findOpen.value = false;
     asset.value = null;
     targetRack.value = null;
+    reservationId.value = null;
     centerId.value = null;
     roomId.value = null;
     rackId.value = null;
@@ -506,6 +564,9 @@ export function useRackOperations(
   });
   return {
     placementRevision,
+    reservationId,
+    selectedReservation,
+    selectReservation,
     canManage: computed(() => c.can("assets.manage")),
     findOpen,
     dialogOpen,

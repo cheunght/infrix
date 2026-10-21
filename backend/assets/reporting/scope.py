@@ -5,6 +5,7 @@ from dataclasses import dataclass, field
 from django.db.models import Q
 
 from ..models import Asset, DataCenter, Rack, ServerRoom
+from ..physical_location import active_reservations_prefetch
 from ..data_scope import scoped
 
 
@@ -161,7 +162,7 @@ def resolve_dashboard_scope(request):
         rack_queryset = rack_queryset.filter(room_id=selected_server_room.id)
     racks = list(
         rack_queryset.select_related("room__data_center")
-        .prefetch_related("allocations")
+        .prefetch_related("allocations", active_reservations_prefetch())
         .order_by("room__data_center__name", "room__name", "code")
     )
 

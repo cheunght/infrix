@@ -1,5 +1,6 @@
 <script setup lang="ts">
-import { computed, proxyRefs } from "vue";
+import { computed, inject, proxyRefs } from "vue";
+import { RackReservationsKey } from "../composables/useRackReservations";
 import { useI18n } from "vue-i18n";
 import type { RackSharedContext } from "../page-context";
 import type {
@@ -18,6 +19,7 @@ const props = defineProps<{
   operations: RackOperations;
 }>();
 const { t } = useI18n();
+const reservations = inject(RackReservationsKey, null);
 const comparison = proxyRefs(props.comparison);
 const source = computed(() => {
   const asset = props.context.detailAsset.value;
@@ -142,6 +144,7 @@ function gaps(entry: RackComparisonEntry) {
               :tone="rackStatusTone(entry.rack.status, entry.rack.is_active)"
               size="small"
             />
+            <el-button v-if="reservations" :disabled="restricted(entry) || reservations.busy.value || operations.busy.value || comparison.coolingDown" @click="reservations.open(entry.rack)">{{ t('rackReserve.title') }}</el-button>
             <el-button
               v-if="context.can('assets.manage') && context.can('assets.view')"
               class="rack-comparison-move"
@@ -182,6 +185,7 @@ function gaps(entry: RackComparisonEntry) {
                   <dt>{{ t("rackCompare.largest") }}</dt>
                   <dd>{{ longest(entry) }}U</dd>
                 </div>
+                <div><dt>{{ t('rackReserve.reservedU') }}</dt><dd>{{ entry.rack.reserved_u ?? 0 }}U</dd></div>
               </dl>
               <div class="rack-comparison-map">
                 <RackLayoutCanvas

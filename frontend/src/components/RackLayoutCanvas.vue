@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed, inject } from "vue";
+import { RackReservationsKey } from "../composables/useRackReservations";
 import { RackOperationsKey } from "../composables/useRackOperations";
 import { useI18n } from "vue-i18n";
 import type { RackCanvasContext } from "../page-context";
@@ -8,6 +9,7 @@ const { t } = useI18n();
 const props = defineProps<{ context: RackCanvasContext; racks?: Rack[]; previewOnly?: boolean }>();
 const context = props.context;
 const operations = inject(RackOperationsKey, null);
+const reservations = inject(RackReservationsKey, null);
 const {
   focusedRack,
   displayedRacks,
@@ -82,6 +84,7 @@ function isMajorUnit(totalU: number, rowIndex: number) {
             </span>
           </div>
         </template>
+        <p v-if="rack.reserved_u" class="rack-reservation-legend">{{ t('rackReserve.legend', { count: rack.reserved_u }) }}</p>
         <div class="rack-body-scroll">
           <div class="rack-body" :style="rackBodyStyle(rack)">
             <div class="rack-u-scale" aria-hidden="true">
@@ -97,7 +100,7 @@ function isMajorUnit(totalU: number, rowIndex: number) {
                 <button
                   v-for="u in rack.total_u"
                   type="button"
-                  :disabled="previewOnly || rack.occupancy_restricted || !operations || !props.context.can?.('assets.manage') || !props.context.can?.('assets.view') || rack.status !== 'in_use' || rack.is_active === false || rackGapUnavailable(rack, rackUnitNumber(rack.total_u, u)) || rack.allocations.some(item => rackUnitNumber(rack.total_u, u) >= item.start_u && rackUnitNumber(rack.total_u, u) <= item.end_u)"
+                  :disabled="previewOnly || rack.occupancy_restricted || !operations || !props.context.can?.('assets.manage') || !props.context.can?.('assets.view') || rack.status !== 'in_use' || rack.is_active === false || rackGapUnavailable(rack, rackUnitNumber(rack.total_u, u)) || rack.reservations?.some(item => rackUnitNumber(rack.total_u, u) >= item.start_u && rackUnitNumber(rack.total_u, u) <= item.end_u) || rack.allocations.some(item => rackUnitNumber(rack.total_u, u) >= item.start_u && rackUnitNumber(rack.total_u, u) <= item.end_u)"
                   :aria-label="t('rackOps.mountAt', { u: rackUnitNumber(rack.total_u, u) })"
                   @click="operations?.open('mount', null, rack, rackUnitNumber(rack.total_u, u))"
                   :key="u"
@@ -109,6 +112,9 @@ function isMajorUnit(totalU: number, rowIndex: number) {
                 />
               </div>
               <div class="rack-device-layer">
+                <button v-for="row in rack.reservations || []" :key="`reservation-${row.id}`" type="button" class="rack-u-reservation" :style="{ gridRow: `${rack.total_u - row.end_u + 1} / span ${row.units}` }" :aria-label="`${t('rackReserve.active')} U${row.start_u}–U${row.end_u} · ${row.purpose}`" :title="`${t('rackReserve.active')} U${row.start_u}–U${row.end_u} · ${row.purpose}`" :disabled="!reservations || reservations.busy.value || operations?.busy.value" @click="reservations?.open(rack)">
+                  <span>{{ t('rackReserve.active') }} · {{ row.purpose }}</span><small v-if="row.units >= 2">U{{ row.start_u }}–U{{ row.end_u }}</small>
+                </button>
                 <div
                   v-for="allocation in rack.allocations"
                   :key="allocation.asset"

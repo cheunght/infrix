@@ -4,18 +4,16 @@ from ..enum_contracts import RACK_STATUS_LABELS
 from ..models import Rack
 
 
-def rack_effective_used_u(allocations, total_u=None):
-    """Return allocated U plus one-U gaps between adjacent devices.
-
-    General cooling space is not reserved. A one-U gap between two adjacent
-    devices is the only implicit unavailable space, matching the existing
-    capacity rule used by the U-position canvas.
-    """
+def rack_effective_used_u(allocations, total_u=None, *, reservations=()):
+    """Count mounted devices, active holds and their blocked one-U gaps."""
     from ..physical_location import rack_position_ranges
     rows = list(allocations)
     ceiling = total_u if total_u is not None else max((row.end_u for row in rows), default=0)
-    ranges = rack_position_ranges(rows, ceiling)
-    used_u = sum(row.units for row in rows) + len(ranges["gap_ranges"])
+    holds = list(reservations)
+    if total_u is None:
+        ceiling = max(ceiling, max((row.end_u for row in holds), default=0))
+    ranges = rack_position_ranges(rows, ceiling, reservations=holds)
+    used_u = ceiling - sum(span["end_u"] - span["start_u"] + 1 for span in ranges["available_ranges"])
     return min(used_u, total_u) if total_u is not None else used_u
 
 
@@ -26,7 +24,9 @@ def build_rack_capacity_rows(racks, include_status=False):
     for rack in racks:
         allocations = list(rack.allocations.all())
         total_u = rack.total_u or 0
-        used_u = rack_effective_used_u(allocations, rack.total_u)
+        from ..physical_location import active_rack_reservations
+        holds = active_rack_reservations(rack)
+        used_u = rack_effective_used_u(allocations, rack.total_u, reservations=holds)
         free_u = max(total_u - used_u, 0)
         row = {
             "id": rack.id,
@@ -37,6 +37,7 @@ def build_rack_capacity_rows(racks, include_status=False):
             "server_room_id": rack.room_id,
             "total_u": total_u,
             "used_u": used_u,
+            "reserved_u": sum(row.units for row in holds),
             "free_u": free_u,
             "utilization": round(used_u / total_u * 100, 1) if total_u else 0,
             "device_count": len(allocations),
@@ -199,7 +200,7 @@ def redact_capacity(payload, *, restricted):
     payload["capacity_restricted"] = restricted
     if not restricted:
         return payload
-    hidden = {"used_u", "free_u", "utilization", "device_count", "assets_count"}
+    hidden = {"used_u", "free_u", "reserved_u", "utilization", "device_count", "assets_count"}
     def redact(value):
         if isinstance(value, dict):
             for key in value:

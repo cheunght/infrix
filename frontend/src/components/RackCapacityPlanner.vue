@@ -119,6 +119,7 @@ const ranges = (spans: PositionRange[]) =>
               <dt>{{ t("rackPlan.utilizationAfter") }}</dt>
               <dd>{{ plan.utilization_after }}%</dd>
             </div>
+            <div v-if="plan.reserved_u"><dt>{{ t('rackReserve.reservedU') }}</dt><dd>{{ plan.reserved_u }}U</dd></div>
           </dl>
           <details v-if="plan.placements.length" open>
             <summary>{{ t("rackPlan.positions") }}</summary>

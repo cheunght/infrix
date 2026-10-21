@@ -1000,6 +1000,11 @@ export type RackFormState = {
   total_u: number;
   status: RackStatus;
 };
+export type RackUnitReservation = {
+  id: number; revision: number; rack: number; start_u: number; end_u: number; units: number;
+  purpose: string; status: "active" | "released" | "consumed";
+  created_by_name: string | null; closed_by_name: string | null; created_at: string; closed_at: string | null;
+};
 export type Rack = { revision?: number;
   id: number;
   code: string;
@@ -1020,6 +1025,8 @@ export type Rack = { revision?: number;
   assets_count?: number | null;
   used_u?: number | null;
   free_u?: number | null;
+  reserved_u?: number | null;
+  reservations?: RackUnitReservation[];
   allocations: Array<{ asset: number; start_u: number; end_u: number; units: number; asset_no: string; asset_name: string; device_type_name?: string | null; device_type_color?: string | null; manufacturer_name?: string | null; model_name?: string | null; serial_number?: string | null; status: string }>;
 };
 export type ServerRoom = { revision?: number; id: number; data_center: number; data_center_name: string; name: string; is_active: boolean; owner_name?: string; contact_phone?: string; notes?: string; racks_count: number; assets_count: number | null; created_at?: string; updated_at?: string };

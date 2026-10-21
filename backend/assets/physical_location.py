@@ -1,7 +1,7 @@
 """Deep module for asset placement and physical-location corrections.
 
 The physical location graph is locked in one deterministic order:
-data center -> server room -> rack -> rack allocation -> asset.
+data center -> server room -> rack -> rack allocation -> asset -> U reservation.
 
 ``RackUnitAllocation`` is the source of truth for a mounted asset's rack and
 U coordinates.  ``Asset.asset_data_center`` is a denormalized copy that is
@@ -192,20 +192,44 @@ def lock_server_room_location(
 
 
 
-def rack_position_ranges(allocations, total_u, *, exclude_asset_id=None):
+def lock_rack_capacity(rack_id):
+    """Serialize capacity holds with location writes without writing asset records.
+
+    The caller must keep its transaction open through the capacity change.
+    """
+    centers, rooms = _rack_location_ids([rack_id])
+    _lock_physical_location_graph(data_center_ids=centers, room_ids=rooms, rack_ids=[rack_id])
+    return Rack.objects.select_for_update().select_related("room__data_center").get(pk=rack_id)
+
+
+def active_reservations_prefetch():
+    from django.db.models import Prefetch
+    from .models import RackUnitReservation
+    return Prefetch("unit_reservations", queryset=RackUnitReservation.objects.filter(status="active").select_related("created_by", "closed_by"))
+
+
+def active_rack_reservations(rack):
+    # Filter the prefetched collection in memory; do not issue per-statistic queries.
+    return [row for row in rack.unit_reservations.all() if row.status == "active"]
+
+
+def rack_position_ranges(allocations, total_u, *, exclude_asset_id=None, reservations=()):
     """One capacity rule for presentation, preview and locked placement writes."""
-    rows = sorted((row for row in allocations if row.asset_id != exclude_asset_id), key=lambda row: (row.start_u, row.end_u))
-    occupied = [{"start_u": row.start_u, "end_u": row.end_u} for row in rows]
+    devices = [row for row in allocations if row.asset_id != exclude_asset_id]
+    holds = [row for row in reservations if row.status == "active"]
+    rows = sorted(devices + holds, key=lambda row: (row.start_u, row.end_u))
+    occupied = [{"start_u": row.start_u, "end_u": row.end_u} for row in devices]
+    reserved = [{"start_u": row.start_u, "end_u": row.end_u} for row in holds]
     gaps = [{"start_u": left.end_u + 1, "end_u": left.end_u + 1}
             for left, right in zip(rows, rows[1:]) if right.start_u - left.end_u == 2]
     available, cursor = [], 1
-    for span in sorted(occupied + gaps, key=lambda span: span["start_u"]):
+    for span in sorted(occupied + reserved + gaps, key=lambda span: span["start_u"]):
         if cursor < span["start_u"]:
             available.append({"start_u": cursor, "end_u": min(total_u, span["start_u"] - 1)})
         cursor = max(cursor, span["end_u"] + 1)
     if cursor <= total_u:
         available.append({"start_u": cursor, "end_u": total_u})
-    return {"occupied_ranges": occupied, "gap_ranges": gaps, "available_ranges": available}
+    return {"occupied_ranges": occupied, "reserved_ranges": reserved, "gap_ranges": gaps, "available_ranges": available}
 
 
 @transaction.atomic
@@ -244,6 +268,10 @@ def place_asset(*, asset_id: int, rack_id: int, start_u: int, end_u: int) -> boo
     if end_u > rack.total_u:
         raise ValidationError({"rack_end_u": f"结束 U 位不能超过机柜容量 U{rack.total_u}"})
 
+    holds = active_rack_reservations(rack)
+    if any(start_u <= hold.end_u and end_u >= hold.start_u for hold in holds):
+        raise ValidationError({"configuration": "所选 U 位无法使用，请检查预留或联系设施管理员"})
+
     conflicts = (
         RackUnitAllocation.objects.select_for_update()
         .select_related("asset")
@@ -270,7 +298,7 @@ def place_asset(*, asset_id: int, rack_id: int, start_u: int, end_u: int) -> boo
             and locked_asset.asset_data_center_id == rack.room.data_center_id):
         return False
 
-    ranges = rack_position_ranges(rack.allocations.all(), rack.total_u, exclude_asset_id=locked_asset.pk)
+    ranges = rack_position_ranges(rack.allocations.all(), rack.total_u, exclude_asset_id=locked_asset.pk, reservations=holds)
     if any(start_u <= gap["end_u"] and end_u >= gap["start_u"] for gap in ranges["gap_ranges"]):
         scope = serialization_scope()
         visible = scope is None or scope.full_department_access(center_id=rack.room.data_center_id)

@@ -41,6 +41,7 @@ from .models import (
     ProcurementRecord,
     Rack,
     RackUnitAllocation,
+    RackUnitReservation,
     RepairRecord,
     RepairPartUsage,
     ServerRoom,
@@ -114,6 +115,7 @@ def _clear_mutable_data(preserved_user_ids):
     _delete_queryset(counts, "fault_events", FaultEvent.objects.all())
     _delete_queryset(counts, "asset_assignment_events", AssetAssignmentEvent.objects.all())
     _delete_queryset(counts, "rack_allocations", RackUnitAllocation.objects.all())
+    _delete_queryset(counts, "rack_reservations", RackUnitReservation.objects.all())
     _delete_queryset(counts, "asset_network_addresses", AssetNetworkAddress.objects.all())
     _delete_queryset(counts, "asset_custom_values", AssetCustomValue.objects.all())
     _delete_queryset(counts, "asset_tags", AssetTag.objects.all())

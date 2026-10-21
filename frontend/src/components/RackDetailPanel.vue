@@ -44,6 +44,7 @@ function formatDate(value?: string) {
       <el-descriptions-item :label="t('common.type')">{{ displayValue(rack.rack_type) }}</el-descriptions-item>
       <el-descriptions-item :label="t('rack.totalU')">{{ rack.total_u }} U</el-descriptions-item>
       <el-descriptions-item :label="t('rack.usedU')">{{ rack.occupancy_restricted ? t('dataScope.notAuthorized') : `${usedU} U` }}</el-descriptions-item>
+      <el-descriptions-item :label="t('rackReserve.reservedU')">{{ rack.occupancy_restricted ? t('dataScope.notAuthorized') : `${rack.reserved_u ?? 0} U` }}</el-descriptions-item>
       <el-descriptions-item :label="t('rack.availableU')">{{ rack.occupancy_restricted ? t('dataScope.notAuthorized') : `${freeU} U` }}</el-descriptions-item>
       <el-descriptions-item :label="t('rack.utilization')">
         <span v-if="rack.occupancy_restricted">{{ t('dataScope.notAuthorized') }}</span>

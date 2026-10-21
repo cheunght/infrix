@@ -1,6 +1,6 @@
-from .serializers import AssetPlacementSerializer, RackPlacementOptionsSerializer, RackCapacityPlanQuerySerializer
+from .serializers import AssetPlacementSerializer, RackPlacementOptionsSerializer, RackCapacityPlanQuerySerializer, RackUnitReservationSerializer, RackUnitReservationInputSerializer
 from .asset_writes import change_asset_placement
-from .physical_location import rack_position_ranges
+from .physical_location import rack_position_ranges, active_rack_reservations, active_reservations_prefetch
 from .identity_writes import update_own_profile, change_own_password
 from .reference_writes import SharedReferenceWriteMixin, edit_fieldset_items
 from .identity_writes import (_user_audit_snapshot, _security_profile, _locked_security_profile, edit_account, reset_account_password, delete_account, batch_account_status, account_scope_snapshot, replace_account_scope)
@@ -1303,6 +1303,7 @@ class AttachmentViewSet(ResourceRevisionViewSetMixin, ScopedModelViewSet):
 
 class RackViewSet(AuditedModelViewSetMixin, ScopedModelViewSet):
     queryset = Rack.objects.select_related("room", "room__data_center").prefetch_related(
+        active_reservations_prefetch(),
         Prefetch(
             "allocations",
             queryset=RackUnitAllocation.objects.select_related(
@@ -1323,6 +1324,12 @@ class RackViewSet(AuditedModelViewSetMixin, ScopedModelViewSet):
     filterset_fields = ["room", "room__data_center", "code", "status"]
     search_fields = ["code", "name", "rack_type", "owner_name", "room__name", "room__data_center__name"]
 
+    def filter_queryset(self, queryset):
+        # Nested resources have their own query contract (notably status).
+        if self.action in {"reservations", "release_reservation", "placement_options"}:
+            return queryset
+        return super().filter_queryset(queryset)
+
     @extend_schema(parameters=[RackCapacityPlanQuerySerializer], responses=OpenApiTypes.OBJECT)
     @action(detail=False, methods=["get"], url_path="capacity-plan")
     @transaction.atomic
@@ -1332,7 +1339,7 @@ class RackViewSet(AuditedModelViewSetMixin, ScopedModelViewSet):
         query.is_valid(raise_exception=True)
         inputs = query.validated_data
         racks = {rack.pk: rack for rack in scoped(
-            Rack.objects.filter(pk__in=inputs["rack_ids"]).select_related("room__data_center").prefetch_related("allocations"),
+            Rack.objects.filter(pk__in=inputs["rack_ids"]).select_related("room__data_center").prefetch_related("allocations", active_reservations_prefetch()),
             user=request.user,
         )}
         if len(racks) != len(inputs["rack_ids"]):
@@ -1350,7 +1357,7 @@ class RackViewSet(AuditedModelViewSetMixin, ScopedModelViewSet):
                 plans.append({"rack_id": rack_id, "status": "unavailable"})
                 excluded += 1
                 continue
-            plan = plan_rack_capacity(rack.allocations.all(), rack.total_u, inputs["height_u"], remaining)
+            plan = plan_rack_capacity(rack.allocations.all(), rack.total_u, inputs["height_u"], remaining, reservations=active_rack_reservations(rack))
             for placement in plan["placements"]:
                 sequence += 1
                 placement["sequence"] = sequence
@@ -1363,7 +1370,7 @@ class RackViewSet(AuditedModelViewSetMixin, ScopedModelViewSet):
             "generated_at": timezone.now().isoformat(), "plans": plans,
         }, headers={"Cache-Control": "no-store"})
 
-    @extend_schema(parameters=[OpenApiParameter("asset_id", int)], responses=OpenApiTypes.OBJECT)
+    @extend_schema(parameters=[OpenApiParameter("asset_id", int), OpenApiParameter("reservation_id", int)], responses=OpenApiTypes.OBJECT)
     @action(detail=True, methods=["get"], url_path="placement-options")
     def placement_options(self, request, pk=None):
         rack = self.get_object()
@@ -1376,10 +1383,54 @@ class RackViewSet(AuditedModelViewSetMixin, ScopedModelViewSet):
             get_object_or_404(scoped(Asset.objects.all(), user=request.user), pk=asset_id)
         restricted = not scope_for(request.user).full_department_access(center_id=rack.room.data_center_id)
         accepts = rack.is_active and rack.status == "in_use" and rack.room.is_active and rack.room.data_center.is_active
-        ranges = rack_position_ranges(rack.allocations.all(), rack.total_u, exclude_asset_id=asset_id)
+        holds = active_rack_reservations(rack)
+        reservation_id = query.validated_data.get("reservation_id")
+        if reservation_id is not None:
+            from .rack_reservations import require_reservation_access
+            require_reservation_access(rack, request, write=True)
+            if not any(row.pk == reservation_id for row in holds):
+                raise NotFound("预留已结束或不属于目标机柜")
+            holds = [row for row in holds if row.pk != reservation_id]
+        ranges = rack_position_ranges(rack.allocations.all(), rack.total_u, exclude_asset_id=asset_id, reservations=holds)
         return Response({"total_u": rack.total_u, "data_center_id": rack.room.data_center_id, "server_room_id": rack.room_id, "occupancy_restricted": restricted, "accepts_assets": accepts,
                          "available_ranges": None if restricted else ranges["available_ranges"] if accepts else [],
-                         "gap_ranges": None if restricted else ranges["gap_ranges"]})
+                         "gap_ranges": None if restricted else ranges["gap_ranges"],
+                         "reserved_ranges": None if restricted else ranges["reserved_ranges"]})
+
+    @extend_schema(methods=["post"], request=RackUnitReservationInputSerializer, responses={201: RackUnitReservationSerializer},
+                   parameters=[OpenApiParameter("If-Match", str, location=OpenApiParameter.HEADER, required=True)])
+    @extend_schema(methods=["get"], responses=RackUnitReservationSerializer(many=True),
+                   parameters=[OpenApiParameter("status", str, enum=["active", "released", "consumed", "all"])])
+    @action(detail=True, methods=["get", "post"], url_path="reservations")
+    @transaction.atomic
+    def reservations(self, request, pk=None):
+        from .models import RackUnitReservation
+        from .rack_reservations import require_reservation_access, reserve_units
+        rack = self.get_object()
+        require_reservation_access(rack, request, write=request.method == "POST")
+        if request.method == "POST":
+            serializer = RackUnitReservationInputSerializer(data=request.data)
+            serializer.is_valid(raise_exception=True)
+            row = reserve_units(rack_id=rack.pk, request=request, **serializer.validated_data)
+            return Response(RackUnitReservationSerializer(row).data, status=201)
+        state = request.query_params.get("status", "all")
+        if state not in {"all", "active", "released", "consumed"}:
+            raise DRFValidationError({"status": "预留状态无效"})
+        rows = RackUnitReservation.objects.filter(rack=rack).select_related("created_by", "closed_by")
+        if state != "all":
+            rows = rows.filter(status=state)
+        page = self.paginate_queryset(rows)
+        serializer = RackUnitReservationSerializer(page if page is not None else rows, many=True)
+        return self.get_paginated_response(serializer.data) if page is not None else Response(serializer.data)
+
+    @extend_schema(request=None, responses=RackUnitReservationSerializer,
+                   parameters=[OpenApiParameter("If-Match", str, location=OpenApiParameter.HEADER, required=True)])
+    @action(detail=True, methods=["post"], url_path=r"reservations/(?P<reservation_id>[0-9]+)/release")
+    def release_reservation(self, request, pk=None, reservation_id=None):
+        from .rack_reservations import release_units
+        self.get_object()
+        row = release_units(rack_id=pk, reservation_id=reservation_id, request=request)
+        return Response(RackUnitReservationSerializer(row).data)
 
     def get_serializer_class(self):
         if self.action == "list" and _compact_requested(self.request):
@@ -1434,7 +1485,7 @@ class RackViewSet(AuditedModelViewSetMixin, ScopedModelViewSet):
                 )
             ).distinct()
         active = self.request.query_params.get("is_active", "true").strip().lower()
-        if self.action in {"retrieve", "update", "partial_update", "destroy"}:
+        if self.action in {"retrieve", "update", "partial_update", "destroy", "reservations", "release_reservation", "placement_options"}:
             return queryset.order_by("room__data_center__name", "room__name", "code")
         if active in {"true", "false"}:
             queryset = queryset.filter(is_active=active == "true")
@@ -1478,6 +1529,8 @@ class RackViewSet(AuditedModelViewSetMixin, ScopedModelViewSet):
         from django.db.models.deletion import ProtectedError
 
         instance = lock_rack_location(rack_id=instance.pk)
+        if instance.unit_reservations.filter(status="active").exists():
+            raise DRFValidationError("机柜仍有有效 U 位预留，请先释放预留")
         if instance.allocations.exists():
             raise DRFValidationError("机柜仍有资产占用，不能删除，请先迁移资产或停用机柜")
         try:
@@ -4655,7 +4708,7 @@ def facilities_summary(request):
         is_active=True,
         room__is_active=True,
         room__data_center__is_active=True,
-    ).select_related("room__data_center").prefetch_related("allocations")
+    ).select_related("room__data_center").prefetch_related("allocations", active_reservations_prefetch())
     room_ids = list(rooms.values_list("id", flat=True))
     rack_rows, totals = build_rack_capacity_rows(
         list(racks.order_by("room__data_center__name", "room__name", "code")),
@@ -4794,6 +4847,7 @@ RACK_LAYOUT_DEFAULT_DEVICE_FILL = "D9EAF7"
 @scope_endpoint
 def rack_layout_export(request):
     rack_queryset = Rack.objects.select_related("room__data_center").prefetch_related(
+        active_reservations_prefetch(),
         "allocations__asset__asset_model__device_type",
         "allocations__asset__standalone_device_type",
     ).order_by("room__data_center__name", "code")
@@ -4858,8 +4912,9 @@ def rack_layout_export(request):
                 header.alignment = Alignment(horizontal="center")
                 sheet.merge_cells(start_row=rack_top + 1, start_column=start_col, end_row=rack_top + 1, end_column=end_col)
                 occupancy_restricted = not scope_for(request.user).full_department_access(center_id=rack.room.data_center_id)
-                effective_used_u = rack_effective_used_u(list(rack.allocations.all()), rack.total_u)
-                meta_text = f"{rack.room.name} | {rack.total_u} U | 占用信息：无权限" if occupancy_restricted else f"{rack.room.name} | {rack.total_u} U | 已用 {effective_used_u} U | 可用 {rack.total_u - effective_used_u} U"
+                holds = active_rack_reservations(rack)
+                effective_used_u = rack_effective_used_u(list(rack.allocations.all()), rack.total_u, reservations=holds)
+                meta_text = f"{rack.room.name} | {rack.total_u} U | 占用信息：无权限" if occupancy_restricted else f"{rack.room.name} | {rack.total_u} U | 已用 {effective_used_u} U（预留 {sum(row.units for row in holds)} U） | 可用 {rack.total_u - effective_used_u} U"
                 meta = sheet.cell(rack_top + 1, start_col, meta_text)
                 meta.font = Font(size=9, color="44546A")
                 meta.alignment = Alignment(horizontal="center")
@@ -4888,12 +4943,21 @@ def rack_layout_export(request):
                         sheet.cell(unit_start_row + offset, start_col + 1, "无权限")
                     continue
                 ordered_allocations = sorted(rack.allocations.all(), key=lambda allocation: (allocation.start_u, allocation.end_u))
-                for span in rack_position_ranges(ordered_allocations, rack.total_u)["gap_ranges"]:
+                for span in rack_position_ranges(ordered_allocations, rack.total_u, reservations=holds)["gap_ranges"]:
                     gap_row = rack_top + 3 + (rack.total_u - span["start_u"])
                     for col in range(start_col + 1, end_col):
                         gap_cell = sheet.cell(gap_row, col)
                         gap_cell.fill = PatternFill("solid", fgColor="AEB8C8")
                         gap_cell.font = Font(size=9, color="69778C", italic=True)
+                for hold in holds:
+                    top = unit_start_row + rack.total_u - hold.end_u
+                    bottom = unit_start_row + rack.total_u - hold.start_u
+                    for row in range(top, bottom + 1):
+                        sheet.cell(row, start_col + 1).fill = PatternFill("solid", fgColor="FFF1CC")
+                    if top != bottom:
+                        sheet.merge_cells(start_row=top, start_column=start_col + 1, end_row=bottom, end_column=start_col + 1)
+                    cell = sheet.cell(top, start_col + 1, f"预留：{hold.purpose}")
+                    cell.alignment = Alignment(horizontal="center", vertical="center", wrap_text=True)
                 for allocation in rack.allocations.all():
                     top_row = rack_top + 3 + (rack.total_u - allocation.end_u)
                     bottom_row = rack_top + 3 + (rack.total_u - allocation.start_u)

@@ -17,7 +17,7 @@ class _PlannedAllocation:
         return self.end_u - self.start_u + 1
 
 
-def plan_rack_capacity(allocations, total_u, height_u, quantity):
+def plan_rack_capacity(allocations, total_u, height_u, quantity, *, reservations=()):
     """Pack beside occupied edges so each suggested single-asset write is legal.
 
     A bounded free span must retain its last U when placing 1U devices:
@@ -25,7 +25,8 @@ def plan_rack_capacity(allocations, total_u, height_u, quantity):
     At the bottom edge, pack downwards from the existing device instead.
     """
     rows = list(allocations)
-    before = rack_position_ranges(rows, total_u)
+    reservations = list(reservations)
+    before = rack_position_ranges(rows, total_u, reservations=reservations)
     maximum, placements = 0, []
     for span in before["available_ranges"]:
         length = span["end_u"] - span["start_u"] + 1
@@ -43,14 +44,15 @@ def plan_rack_capacity(allocations, total_u, height_u, quantity):
             placements.append({"start_u": start_u, "end_u": end_u})
 
     after_rows = rows + [_PlannedAllocation(-index, **placement) for index, placement in enumerate(placements, 1)]
-    after = rack_position_ranges(after_rows, total_u)
-    used_before = rack_effective_used_u(rows, total_u)
-    used_after = rack_effective_used_u(after_rows, total_u)
+    after = rack_position_ranges(after_rows, total_u, reservations=reservations)
+    used_before = rack_effective_used_u(rows, total_u, reservations=reservations)
+    used_after = rack_effective_used_u(after_rows, total_u, reservations=reservations)
     return {
         "capacity": maximum,
         "planned_quantity": len(placements),
         "placements": placements,
         "total_u": total_u,
+        "reserved_u": sum(row.units for row in reservations if row.status == "active"),
         "used_u_before": used_before,
         "free_u_before": max(0, total_u - used_before),
         "used_u_after": used_after,

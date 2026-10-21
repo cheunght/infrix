@@ -617,7 +617,7 @@ def restore_asset(*, asset_id, request):
 
 
 @transaction.atomic
-def change_asset_placement(*, asset_id, rack_id, start_u=None, end_u=None, note="", request):
+def change_asset_placement(*, asset_id, rack_id, start_u=None, end_u=None, note="", reservation_id=None, request):
     """Change physical placement only; never replay an entire asset edit form."""
     _require_manager(request.user)
     from .physical_location import place_asset, unrack_asset
@@ -632,8 +632,12 @@ def change_asset_placement(*, asset_id, rack_id, start_u=None, end_u=None, note=
         current = RackUnitAllocation.objects.filter(asset_id=asset.pk).first()
         same = (current is None and rack_id is None) or (current is not None and
                 current.rack_id == rack_id and current.start_u == start_u and current.end_u == end_u)
-        if same:
+        if same and reservation_id is None:
             return asset
+        if reservation_id is not None:
+            from .rack_reservations import consume_units
+            consume_units(rack_id=rack_id, reservation_id=reservation_id, asset_id=asset.pk,
+                          start_u=start_u, end_u=end_u, request=request)
         if rack_id is None:
             unrack_asset(asset_id=asset.pk)
         else:
@@ -643,7 +647,7 @@ def change_asset_placement(*, asset_id, rack_id, start_u=None, end_u=None, note=
             asset.save(update_fields=["updated_at"])
         write_audit_log(request, action="update", resource_type="asset", resource_id=asset.pk,
                         before=before, after=asset_audit_snapshot(asset.pk),
-                        extra={"source": "rack_placement", "note": note})
+                        extra={"source": "rack_placement", "note": note, **({"reservation_id": reservation_id} if reservation_id is not None else {})})
         return asset
     except ValidationError as exc:
         raise DRFValidationError(getattr(exc, "message_dict", {"configuration": exc.messages})) from exc
