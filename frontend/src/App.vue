@@ -1916,12 +1916,18 @@ watch(
 );
 watch(
   () => route.fullPath,
-  () => {
+  (_fullPath, previousPath) => {
+    const previousRoute = previousPath ? router.resolve(previousPath) : null;
+    // Rack/device selection changes the URL without invalidating the rack list.
+    const rackSelectionOnly = route.name === "racks-view"
+      && previousRoute?.name === "racks-view"
+      && rackViewQueryKey({ ...route.query, rack: undefined })
+        === rackViewQueryKey({ ...previousRoute.query, rack: undefined });
     const queryNormalized = syncRouteState();
-    closeTransientUi();
+    if (!rackSelectionOnly) closeTransientUi();
     if (!authenticated.value || !ensureRouteAccess()) return;
     if (!sidebarCollapsed.value) openActiveSidebarSubmenu();
-    if (queryNormalized) return;
+    if (queryNormalized || rackSelectionOnly) return;
     void load();
     resetMainScroll();
   },

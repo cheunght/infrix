@@ -230,7 +230,11 @@ export function useRackOperations(
     }
   }
   watch(
-    [() => route.fullPath, c.rackListLoading],
+    [
+      () => JSON.stringify([route.query.rack_asset, route.query.data_center, route.query.room,
+        route.query.rack, route.query.rack_code, route.query.device_type]),
+      c.rackListLoading,
+    ],
     () => {
       void restoreLocation();
     },
