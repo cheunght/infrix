@@ -6,16 +6,7 @@ the Chinese version, see [安装流程说明](INSTALLER_WORKFLOW.zh-CN.md).
 
 ## Runtime dependencies
 
-The backend installation entry remains `backend/requirements.txt`, which includes the exact versions in `backend/requirements.lock`. Version ranges remain in `backend/requirements.in`; update the lock alongside dependency changes. Downloads follow pip configuration and `PIP_INDEX_URL`, defaulting to PyPI when neither specifies an index. The frontend retains `package-lock.json`. Release packages must include the lock; offline installation continues to use the installer's prepared wheel directory.
-
-If the server cannot reliably reach PyPI, select a site-approved HTTPS mirror for this installation, such as the [Tsinghua mirror](https://mirrors.tuna.tsinghua.edu.cn/help/pypi/):
-
-```bash
-sudo env PIP_INDEX_URL=https://pypi.tuna.tsinghua.edu.cn/simple \
-  bash deploy/install.sh
-```
-
-Keep any original `--config` argument. Do not change pinned versions or disable certificate verification. For a corporate proxy with a private CA, provide its CA file through `PIP_CERT`.
+The backend installation entry remains `backend/requirements.txt`, which includes the exact versions in `backend/requirements.lock`. Version ranges remain in `backend/requirements.in`; update the lock alongside dependency changes. The frontend retains `package-lock.json`. Release packages must include the lock; offline installation continues to use the installer's prepared wheel directory.
 
 Create the system administrator and assign the required data scopes before opening the deployment to ordinary users.
 

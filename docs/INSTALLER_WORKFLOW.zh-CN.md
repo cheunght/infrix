@@ -4,16 +4,7 @@
 
 ## 运行依赖
 
-后端安装入口仍为 `backend/requirements.txt`，它引用精确版本锁 `backend/requirements.lock`；原版本范围保留在 `backend/requirements.in`，升级依赖时同时更新锁。下载源遵守 pip 配置和 `PIP_INDEX_URL`，未配置时使用 PyPI。前端使用 `package-lock.json`。发布包必须包含锁文件；离线安装继续使用安装器准备的 wheel 目录。
-
-服务器无法稳定连接 PyPI 时，可在本次安装中指定站点认可的 HTTPS 镜像，例如[清华镜像](https://mirrors.tuna.tsinghua.edu.cn/help/pypi/)：
-
-```bash
-sudo env PIP_INDEX_URL=https://pypi.tuna.tsinghua.edu.cn/simple \
-  bash deploy/install.sh
-```
-
-原命令使用了 `--config` 时继续保留该参数。无需修改锁定版本或关闭证书校验；企业代理使用自有 CA 时，通过 `PIP_CERT` 指定 CA 文件。
+后端安装入口仍为 `backend/requirements.txt`，它引用精确版本锁 `backend/requirements.lock`；原版本范围保留在 `backend/requirements.in`，升级依赖时同时更新锁。前端使用 `package-lock.json`。发布包必须包含锁文件；离线安装继续使用安装器准备的 wheel 目录。
 
 首次开放业务前，创建系统管理员并为普通账号配置所需的数据范围授权。
 
