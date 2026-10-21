@@ -205,12 +205,13 @@ def lock_rack_capacity(rack_id):
 def active_reservations_prefetch():
     from django.db.models import Prefetch
     from .models import RackUnitReservation
-    return Prefetch("unit_reservations", queryset=RackUnitReservation.objects.filter(status="active").select_related("created_by", "closed_by"))
+    return Prefetch("unit_reservations", queryset=RackUnitReservation.objects.filter(status="active").select_related("created_by"), to_attr="active_unit_reservations")
 
 
 def active_rack_reservations(rack):
-    # Filter the prefetched collection in memory; do not issue per-statistic queries.
-    return [row for row in rack.unit_reservations.all() if row.status == "active"]
+    if hasattr(rack, "active_unit_reservations"):
+        return rack.active_unit_reservations
+    return list(rack.unit_reservations.filter(status="active"))
 
 
 def rack_position_ranges(allocations, total_u, *, exclude_asset_id=None, reservations=()):

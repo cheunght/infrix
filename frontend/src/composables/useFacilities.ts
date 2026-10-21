@@ -358,11 +358,13 @@ export function useFacilities(deps: FacilitiesDeps) {
       focusedRackId.value = racks.value.find((rack) => rack.id === requestedFocusedRackId)?.id
         || racks.value[0]?.id
         || null;
+      return true;
     } catch (error) {
       if (!deps.isCurrentLoad(version) || requestId !== rackViewRequestId.value || isAbortError(error)) return;
       const message = requestErrorMessage(error, tr("facility.rackLoadFailed"));
       rackListError.value = message;
       rackCanvasError.value = message;
+      return false;
     } finally {
       if (deps.isCurrentLoad(version) && requestId === rackViewRequestId.value) {
         rackListLoading.value = false;
@@ -695,7 +697,7 @@ export function useFacilities(deps: FacilitiesDeps) {
   async function refreshRackDataAfterMutation() {
     if (deps.page.value === "racks" && deps.rackSection.value === "view") {
       const previousFocusedRackId = focusedRackId.value;
-      await loadRackView();
+      if (await loadRackView() === false) throw new Error(tr("facility.resourceRefreshFailed"));
       if (previousFocusedRackId && racks.value.some((rack) => rack.id === previousFocusedRackId)) {
         focusedRackId.value = previousFocusedRackId;
       }

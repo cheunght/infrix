@@ -112,6 +112,7 @@ export function useRackReservations(
       rows.value = pageItems(history);
       total.value = pageTotal(history);
       uncertain.value = false;
+      return detail;
     } catch (cause) {
       if (alive && version === generation && !isAbortError(cause)) {
         error.value = cause instanceof Error ? cause.message : String(cause);
@@ -156,6 +157,7 @@ export function useRackReservations(
     )
       return;
     const id = rack.value.id,
+      focusedRackId = c.focusedRack.value?.id,
       account = c.currentUsername.value,
       version = ++writeGeneration;
     const current = () =>
@@ -192,19 +194,14 @@ export function useRackReservations(
         status.value = "active";
       }
       try {
-        const [loaded, detail] = await Promise.all([
-          c.loadRackView(),
-          c.request<Rack>(`/racks/${id}/`),
-        ]);
-        if (current() && c.focusedRack.value?.id === id)
-          c.focusRackDetail(detail);
-        if (loaded === false) throw new Error();
+        if (await c.loadRackView() === false) throw new Error();
       } catch {
         if (current()) ElMessage.warning(tr("rackOps.refreshFailed"));
       }
       if (current() && visible.value) {
         busy.value = false;
-        await refresh();
+        const detail = await refresh();
+        if (current() && detail && focusedRackId === id) c.focusRackDetail(detail);
       }
     } catch (cause) {
       if (!current()) return;
