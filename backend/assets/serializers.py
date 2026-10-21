@@ -3265,3 +3265,19 @@ class AssetPlacementSerializer(serializers.Serializer):
 
 class RackPlacementOptionsSerializer(serializers.Serializer):
     asset_id = serializers.IntegerField(min_value=1, required=False)
+
+
+class RackCapacityPlanQuerySerializer(serializers.Serializer):
+    rack_ids = serializers.CharField(max_length=80)
+    height_u = serializers.IntegerField(min_value=1, max_value=32767)
+    quantity = serializers.IntegerField(min_value=1, max_value=500)
+
+    def validate_rack_ids(self, value):
+        import re
+        parts = value.split(",")
+        if not 1 <= len(parts) <= 4 or any(not re.fullmatch(r"[1-9][0-9]*", part) for part in parts):
+            raise serializers.ValidationError("请选择 1–4 个不同机柜")
+        ids = [int(part) for part in parts]
+        if len(set(ids)) != len(ids) or any(value > 9223372036854775807 for value in ids):
+            raise serializers.ValidationError("机柜编号无效或重复")
+        return ids

@@ -1,4 +1,4 @@
-from .serializers import AssetPlacementSerializer, RackPlacementOptionsSerializer
+from .serializers import AssetPlacementSerializer, RackPlacementOptionsSerializer, RackCapacityPlanQuerySerializer
 from .asset_writes import change_asset_placement
 from .physical_location import rack_position_ranges
 from .identity_writes import update_own_profile, change_own_password
@@ -32,7 +32,7 @@ from rest_framework.decorators import action, api_view, permission_classes, pars
 from rest_framework.parsers import MultiPartParser, FormParser, JSONParser
 from rest_framework.permissions import AllowAny, IsAdminUser, IsAuthenticated
 from rest_framework.response import Response
-from rest_framework.exceptions import APIException, MethodNotAllowed, PermissionDenied, ValidationError as DRFValidationError
+from rest_framework.exceptions import APIException, MethodNotAllowed, NotFound, PermissionDenied, ValidationError as DRFValidationError
 from drf_spectacular.types import OpenApiTypes
 from drf_spectacular.utils import OpenApiParameter, extend_schema
 from django.http import FileResponse, HttpResponse, QueryDict
@@ -1322,6 +1322,46 @@ class RackViewSet(AuditedModelViewSetMixin, ScopedModelViewSet):
     filter_backends = [DjangoFilterBackend, SearchFilter]
     filterset_fields = ["room", "room__data_center", "code", "status"]
     search_fields = ["code", "name", "rack_type", "owner_name", "room__name", "room__data_center__name"]
+
+    @extend_schema(parameters=[RackCapacityPlanQuerySerializer], responses=OpenApiTypes.OBJECT)
+    @action(detail=False, methods=["get"], url_path="capacity-plan")
+    @transaction.atomic
+    def capacity_plan(self, request):
+        from .rack_planning import plan_rack_capacity
+        query = RackCapacityPlanQuerySerializer(data=request.query_params)
+        query.is_valid(raise_exception=True)
+        inputs = query.validated_data
+        racks = {rack.pk: rack for rack in scoped(
+            Rack.objects.filter(pk__in=inputs["rack_ids"]).select_related("room__data_center").prefetch_related("allocations"),
+            user=request.user,
+        )}
+        if len(racks) != len(inputs["rack_ids"]):
+            raise NotFound("机柜不存在或当前账号无权读取")
+        scope = scope_for(request.user)
+        remaining, sequence, excluded = inputs["quantity"], 0, 0
+        plans = []
+        for rack_id in inputs["rack_ids"]:
+            rack = racks[rack_id]
+            if not scope.full_department_access(center_id=rack.room.data_center_id):
+                plans.append({"rack_id": rack_id, "status": "restricted"})
+                excluded += 1
+                continue
+            if not (rack.is_active and rack.status == "in_use" and rack.room.is_active and rack.room.data_center.is_active):
+                plans.append({"rack_id": rack_id, "status": "unavailable"})
+                excluded += 1
+                continue
+            plan = plan_rack_capacity(rack.allocations.all(), rack.total_u, inputs["height_u"], remaining)
+            for placement in plan["placements"]:
+                sequence += 1
+                placement["sequence"] = sequence
+            remaining -= plan["planned_quantity"]
+            plans.append({"rack_id": rack_id, "status": "ready", **plan})
+        return Response({
+            "height_u": inputs["height_u"], "quantity": inputs["quantity"],
+            "allocated_quantity": inputs["quantity"] - remaining, "unallocated_quantity": remaining,
+            "excluded_racks": excluded, "available_capacity": sum(plan.get("capacity", 0) for plan in plans),
+            "generated_at": timezone.now().isoformat(), "plans": plans,
+        }, headers={"Cache-Control": "no-store"})
 
     @extend_schema(parameters=[OpenApiParameter("asset_id", int)], responses=OpenApiTypes.OBJECT)
     @action(detail=True, methods=["get"], url_path="placement-options")

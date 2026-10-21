@@ -1186,6 +1186,16 @@ button.rack-slot-row:enabled:hover, button.rack-slot-row:focus-visible { backgro
 .rack-comparison-ranges { overflow-wrap: anywhere; font-size: 12px; }
 .rack-comparison-ranges p { margin-block: 10px; }
 .rack-comparison-move { width: 100%; margin-top: 10px; }
+.rack-capacity-candidates { overflow-wrap: anywhere; font-weight: 600; }
+.rack-capacity-policy { margin-top: 12px; line-height: 1.6; }
+.rack-capacity-results { margin-top: 20px; }
+.rack-capacity-result { margin-top: 16px; padding: 12px; border: 1px solid var(--el-border-color-light); border-radius: var(--el-border-radius-base); overflow-wrap: anywhere; }
+.rack-capacity-result h3 { margin: 0 0 8px; font-size: 15px; }
+.rack-capacity-metrics { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+.rack-capacity-metrics dd { font-size: 16px; }
+.rack-capacity-positions { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 6px 12px; padding: 8px 0; max-height: 200px; overflow-y: auto; list-style: none; font-size: 13px; }
+.rack-capacity-result summary { cursor: pointer; }
+@media (max-width: 520px) { .rack-capacity-metrics, .rack-capacity-positions { grid-template-columns: minmax(0, 1fr); } }
 .rack-comparison-content > .rack-asset-inspector { margin-top: 12px; max-height: 320px; overflow: auto; }
 @media (max-width: 600px) {
   .rack-comparison-source { align-items: flex-start; flex-direction: column; }

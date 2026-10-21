@@ -4,6 +4,8 @@ import { useRoute, useRouter } from "vue-router";
 import { useRackOperations, RackOperationsKey } from "../composables/useRackOperations";
 import RackOperationDialogs from "./RackOperationDialogs.vue";
 import RackComparisonPanel from "./RackComparisonPanel.vue";
+import RackCapacityPlanner from "./RackCapacityPlanner.vue";
+import { useRackCapacityPlanning } from "../composables/useRackCapacityPlanning";
 import { useRackComparison, RACK_COMPARE_LIMIT } from "../composables/useRackComparison";
 import { useI18n } from "vue-i18n";
 import { Download } from "@element-plus/icons-vue";
@@ -28,6 +30,12 @@ const { t } = useI18n();
 const context = props.context;
 const operations = useRackOperations(context, useRoute(), useRouter());
 const comparison = useRackComparison(context, useRoute(), useRouter(), operations.placementRevision);
+const planningRackIds = computed(() => comparison.invalid.value ? [] : comparison.ids.value.length ? comparison.ids.value : context.focusedRack.value ? [context.focusedRack.value.id] : []);
+const planning = useRackCapacityPlanning(context, planningRackIds, operations.placementRevision);
+function planningRackLabel(id: number) {
+  return comparison.entries.value.find(entry => entry.id === id)?.rack?.code
+    || context.visibleRacks.value.find(rack => rack.id === id)?.code || `#${id}`;
+}
 provide(RackOperationsKey, operations);
 const rackSection = context.rackSection;
 const serverRooms = context.serverRooms;
@@ -219,6 +227,7 @@ function deleteCurrentRack() {
             </div>
           </template>
           <template v-if="rackSection === 'view'" #actions>
+            <el-button :disabled="!planningRackIds.length" @click="planning.open">{{ t('rackPlan.title') }}</el-button>
             <el-button v-if="can('assets.view')" @click="operations.openSearch">{{ t('rackOps.findAsset') }}</el-button>
             <el-button v-if="can('assets.view') && can('assets.manage')" :disabled="operations.busy.value" @click="operations.open('mount')">{{ t('rackOps.mount') }}</el-button>
             <ToolbarIconButton
@@ -343,5 +352,6 @@ function deleteCurrentRack() {
 
     <RackFormDialog :context="context" />
     <RackOperationDialogs :context="context" :operations="operations" />
+    <RackCapacityPlanner :planning="planning" :rack-ids="planningRackIds" :rack-label="planningRackLabel" />
   </div>
 </template>
