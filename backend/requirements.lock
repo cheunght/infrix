@@ -1,6 +1,5 @@
 # Production dependency baseline, Python 3.10+ on Linux.
 # Update from requirements.in and verify the whole lock before release.
---index-url https://pypi.org/simple
 asgiref==3.12.1
 attrs==26.1.0
 cffi==2.1.1
