@@ -85,6 +85,7 @@ export function useSystemMaintenance(deps: SystemMaintenanceDependencies) {
   const resetDialogVisible = ref(false);
   const resetConfirmation = ref("");
   const resetError = ref("");
+  const resetOutcome = ref<"succeeded" | "failed" | "unknown" | null>(null);
   const uncertainOperation = ref(false);
   const backupOperations = useBackupOperations();
   const restoreDialogVisible = ref(false);
@@ -101,7 +102,7 @@ export function useSystemMaintenance(deps: SystemMaintenanceDependencies) {
   const systemResetSaving = computed(() => activeOperation.value === "system:reset");
   const backupCreating = computed(() => activeOperation.value === "backup:create" || backupOperations.receipt.value?.kind === "backup" && backupOperations.busy.value);
   const backupRestoring = computed(() => activeOperation.value === "backup:restore");
-  const maintenanceBusy = computed(() => activeOperation.value !== null || backupOperations.receipt.value !== null);
+  const maintenanceBusy = computed(() => activeOperation.value !== null || backupOperations.receipt.value !== null || resetOutcome.value === "unknown" || resetOutcome.value === "succeeded");
   const hasNonTransactionalTables = computed(() =>
     backups.value.some((entry) => Boolean(entry.transaction_consistency_warning)),
   );
@@ -271,6 +272,7 @@ export function useSystemMaintenance(deps: SystemMaintenanceDependencies) {
     if (!deps.can("system.reset") || maintenanceBusy.value) return;
     resetConfirmation.value = "";
     resetError.value = "";
+    resetOutcome.value = null;
     resetDialogVisible.value = true;
   }
 
@@ -278,30 +280,32 @@ export function useSystemMaintenance(deps: SystemMaintenanceDependencies) {
     if (systemResetSaving.value) return;
     resetDialogVisible.value = false;
     resetConfirmation.value = "";
-    resetError.value = "";
+    if (!resetOutcome.value) resetError.value = "";
   }
 
   async function resetSystem() {
+    if (maintenanceBusy.value) return;
     if (!deps.can("system.reset") || resetConfirmation.value !== systemResetConfirmationToken.value) {
       resetError.value = t("settings.resetConfirmationError", { token: systemResetConfirmationToken.value });
       return;
     }
     if (!beginOperation("system:reset")) return;
+    const confirmation = resetConfirmation.value;
+    resetDialogVisible.value = false;
+    resetConfirmation.value = "";
     try {
       await deps.request("/system/reset/", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ confirmation: resetConfirmation.value }),
+        body: JSON.stringify({ confirmation }),
       });
-      resetDialogVisible.value = false;
-      resetConfirmation.value = "";
-      resetError.value = "";
-      deps.reload();
+      resetOutcome.value = "succeeded";
     } catch (error) {
       const normalized = normalizeApiError(error);
-      uncertainOperation.value = normalized.kind === "network";
-      resetError.value = uncertainOperation.value
-        ? t("settings.maintenanceOperationUnknown")
+      const unknown = normalized.kind === "network" || normalized.kind === "unknown" || normalized.status === 502 || normalized.status === 504;
+      resetOutcome.value = unknown ? "unknown" : "failed";
+      resetError.value = unknown
+        ? t("settings.resetResultUnknown")
         : errorText(error, "settings.resetFailed");
     } finally {
       finishOperation();
@@ -341,6 +345,7 @@ export function useSystemMaintenance(deps: SystemMaintenanceDependencies) {
     resetDialogVisible,
     resetConfirmation,
     resetError,
+    resetOutcome,
     systemResetConfirmationToken,
     systemResetSaving,
     maintenanceBusy,

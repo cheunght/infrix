@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, ref, watch } from "vue";
-import { useRoute, useRouter } from "vue-router";
+import { onBeforeRouteLeave, onBeforeRouteUpdate, useRoute, useRouter } from "vue-router";
 import { useI18n } from "vue-i18n";
 import { Refresh } from "@element-plus/icons-vue";
 import type { SystemMaintenanceDependencies } from "../page-context";
@@ -13,6 +13,7 @@ import PageToolbar from "./page/PageToolbar.vue";
 import ToolbarIconButton from "./page/ToolbarIconButton.vue";
 import SystemOperations from "./SystemOperations.vue";
 import BackupRestorePage from "./BackupRestorePage.vue";
+import DetailSection from "./DetailSection.vue";
 import BackupMaintenanceScreen from "./BackupMaintenanceScreen.vue";
 import { useBackupOperations } from "../composables/useBackupOperations";
 
@@ -49,6 +50,7 @@ const {
   resetDialogVisible,
   resetConfirmation,
   resetError,
+  resetOutcome,
   systemResetConfirmationToken,
   systemResetSaving,
   maintenanceBusy,
@@ -63,10 +65,12 @@ const {
 } = maintenance;
 
 const maintenanceTab = ref<MaintenanceTab>("operations");
+onBeforeRouteLeave(() => !systemResetSaving.value);
+onBeforeRouteUpdate(() => !systemResetSaving.value);
 const maintenanceTabs = computed<PageTabItem[]>(() => [
-  { value: "operations", label: t("operations.statusTab") },
-  { value: "backup", label: t("settings.backupRestoreTab"), disabled: !context.can("system.reset") },
-  { value: "reset", label: t("operations.resetTab"), disabled: !context.can("system.reset") },
+  { value: "operations", label: t("operations.statusTab"), disabled: systemResetSaving.value },
+  { value: "backup", label: t("settings.backupRestoreTab"), disabled: systemResetSaving.value || !context.can("system.reset") },
+  { value: "reset", label: t("operations.resetTab"), disabled: systemResetSaving.value || !context.can("system.reset") },
 ]);
 
 function routeTab(): string | undefined {
@@ -131,6 +135,7 @@ watch(
 );
 
 function changeMaintenanceTab(value: string) {
+  if (systemResetSaving.value) return;
   if (value !== "operations" && value !== "backup" && value !== "reset") return;
   if ((value === "backup" || value === "reset") && !context.can("system.reset")) return;
   maintenanceTab.value = value;
@@ -195,29 +200,40 @@ function changeMaintenanceTab(value: string) {
           @restore="openRestoreDialog"
         />
 
-        <template v-if="maintenanceTab === 'reset' && context.can('system.reset')">
-          <el-alert
-            :title="t('settings.highRiskAction')"
-            type="warning"
-            show-icon
-            :closable="false"
-            :description="t('settings.systemResetDescription')"
-          />
-          <section class="settings-maintenance__section">
-            <div class="settings-maintenance__intro">
-              <h2>{{ t('settings.systemReset') }}</h2>
-              <p>{{ t('settings.systemResetIntro') }}</p>
-            </div>
+        <section v-if="maintenanceTab === 'reset' && context.can('system.reset')" class="settings-maintenance__section system-reset-page">
+          <div class="settings-maintenance__intro">
+            <h2>{{ t('settings.systemReset') }}</h2>
+            <p>{{ t('settings.systemResetDescription') }}</p>
+          </div>
+          <div class="system-reset-summary">
+            <div><h3>{{ t('settings.clearData') }}</h3><p>{{ t('settings.resetClearSummary') }}</p></div>
+            <div><h3>{{ t('settings.keepData') }}</h3><p>{{ t('settings.resetKeepSummary') }}</p></div>
+          </div>
+          <DetailSection :title="t('settings.resetScopeDetails')" collapsible>
             <el-descriptions :column="1" border>
               <el-descriptions-item :label="t('settings.clearData')">{{ t('settings.resetClears') }}</el-descriptions-item>
+              <el-descriptions-item :label="t('settings.resetConfiguration')">{{ t('settings.resetConfigurationDetails') }}</el-descriptions-item>
               <el-descriptions-item :label="t('settings.keepData')">{{ t('settings.resetKeeps') }}</el-descriptions-item>
               <el-descriptions-item :label="t('settings.willNotExecute')">{{ t('settings.resetDoesNot') }}</el-descriptions-item>
             </el-descriptions>
-            <div class="settings-maintenance__action">
-              <el-button type="danger" :disabled="maintenanceBusy" @click="openSystemResetDialog">{{ t('settings.systemReset') }}</el-button>
-            </div>
-          </section>
-        </template>
+          </DetailSection>
+          <div v-if="systemResetSaving || resetOutcome" class="system-reset-status" role="status" aria-live="polite" :aria-busy="systemResetSaving">
+            <el-alert
+              :title="t(systemResetSaving ? 'settings.resetRunning' : resetOutcome === 'succeeded' ? 'settings.resetCompleted' : resetOutcome === 'unknown' ? 'settings.resetUnconfirmed' : 'settings.resetRequestFailed')"
+              :description="systemResetSaving ? t('settings.resetRunningHelp') : resetOutcome === 'succeeded' ? t('settings.resetCompletedHelp') : resetError"
+              :type="systemResetSaving ? 'info' : resetOutcome === 'succeeded' ? 'success' : resetOutcome === 'unknown' ? 'warning' : 'error'"
+              show-icon
+              :closable="false"
+            />
+          </div>
+          <div class="system-reset-action">
+            <el-button v-if="resetOutcome === 'succeeded'" type="primary" @click="context.reload">{{ t('settings.resetReload') }}</el-button>
+            <template v-else>
+              <span>{{ t('settings.resetBackupReminder') }}</span>
+              <el-button type="danger" :loading="systemResetSaving" :disabled="maintenanceBusy" @click="openSystemResetDialog">{{ t('settings.systemReset') }}</el-button>
+            </template>
+          </div>
+        </section>
       </div>
 
       <el-alert
@@ -267,7 +283,6 @@ function changeMaintenanceTab(value: string) {
             autocomplete="off"
             :placeholder="systemResetConfirmationToken"
             :disabled="systemResetSaving"
-            @keyup.enter="resetSystem"
           />
         </el-form-item>
       </el-form>
@@ -277,10 +292,10 @@ function changeMaintenanceTab(value: string) {
       <el-button
         type="danger"
         :loading="systemResetSaving"
-        :disabled="resetConfirmation !== systemResetConfirmationToken"
+        :disabled="resetConfirmation !== systemResetConfirmationToken || maintenanceBusy"
         @click="resetSystem"
       >
-        {{ t('settings.confirmReset') }}
+        {{ t('settings.systemReset') }}
       </el-button>
     </template>
   </el-dialog>
