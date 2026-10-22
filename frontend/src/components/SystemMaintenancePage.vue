@@ -96,9 +96,13 @@ function loadCurrentTab() {
 }
 
 async function finishBackupOperation() {
-  if (backupOperations.submitting.value || (backupOperations.busy.value && !backupOperations.notFound.value) || backupOperations.operation.value?.maintenance_closed) return;
+  if (backupOperations.submitting.value || (backupOperations.busy.value && !backupOperations.notFound.value) || backupOperations.operation.value?.maintenance_closed || backupOperations.operation.value?.recovery_required) return;
   const completed = backupOperations.operation.value;
   backupOperations.clear();
+  if (completed?.kind === "restore" && completed.status === "succeeded") {
+    context.reload();
+    return;
+  }
   const refreshed = await loadBackups();
   if (completed?.status === "succeeded" && !backupOperations.receipt.value) {
     backupNotice.value = t(refreshed ? "settings.backupCreated" : "settings.backupCreatedRefreshFailed", {
@@ -162,7 +166,7 @@ function changeMaintenanceTab(value: string) {
 
       <div class="settings-maintenance">
         <BackupMaintenanceScreen
-          v-if="backupOperations.receipt.value?.kind === 'backup' && context.can('system.reset')"
+          v-if="backupOperations.receipt.value && context.can('system.reset')"
           :monitor="backupOperations"
           inline
           @continue="finishBackupOperation"

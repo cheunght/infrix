@@ -35,8 +35,8 @@ const stage = computed(() => {
           <p v-if="success && operation?.kind === 'restore'">{{ t('settings.backupRestoreSessionInvalidated') }}</p>
           <div class="backup-maintenance-actions">
             <el-button v-if="monitor.readFailed.value" @click="monitor.poll()">{{ t('common.refresh') }}</el-button>
-            <el-button v-if="(!monitor.busy.value && !operation?.maintenance_closed) || monitor.notFound.value" type="primary" @click="emit('continue')">
-              {{ t(inline ? 'settings.backupOperationRefresh' : success && operation?.kind === 'restore' ? 'settings.backupOperationLogin' : 'settings.backupOperationReturn') }}
+            <el-button v-if="!monitor.submitting.value && !operation?.maintenance_closed && !operation?.recovery_required && (!monitor.busy.value || monitor.notFound.value)" type="primary" @click="emit('continue')">
+              {{ t(success && operation?.kind === 'restore' ? 'settings.backupOperationLogin' : inline ? 'settings.backupOperationRefresh' : 'settings.backupOperationReturn') }}
             </el-button>
           </div>
         </template>

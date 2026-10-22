@@ -2159,7 +2159,7 @@ watch(hasOpenGlobalOverlay, (isOpen) => {
 
 <template>
   <el-config-provider :locale="elementPlusLocale">
-  <BackupMaintenanceScreen v-if="backupOperations.receipt.value && !backupOperations.submitting.value && (backupOperations.receipt.value.kind === 'restore' || !authenticated)" :monitor="backupOperations" @continue="finishBackupOperation" />
+  <BackupMaintenanceScreen v-if="backupOperations.receipt.value && !backupOperations.submitting.value && !authenticated" :monitor="backupOperations" inline @continue="finishBackupOperation" />
   <div v-else-if="bootstrapError" class="loading-screen bootstrap-error-screen" role="alert">
     <el-result icon="error" :title="t('auth.bootstrapFailed')" :sub-title="t('auth.bootstrapFailedDescription')">
       <template #extra>
