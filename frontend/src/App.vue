@@ -2061,7 +2061,7 @@ const pageContext = {
   rackUtilization, rackUtilizationColor, rackUsedU, focusedRackId, focusedRack, visibleRacks, selectRack,
   rackBodyStyle,
   rackAllocationStyle, rackGapUnavailable, openRackAssetDetail,
-  rackDetailOpen, detailAsset, detailLoading, detailError, retryAssetDetail, closeAssetDetail,
+  rackDetailOpen, detailAsset, detailLoading, detailError, retryAssetDetail, invalidateAssetDetail, closeAssetDetail,
   assetAuditItems, assetAuditLoading, assetAuditError, assetAuditCanView,
   assetAuditPage, assetAuditPageSize, assetAuditTotal, retryAssetAudit,
   changeAssetAuditPage, changeAssetAuditPageSize,

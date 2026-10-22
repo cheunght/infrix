@@ -455,6 +455,7 @@ export interface RackInspectorContext extends AssetInventoryHistoryContext, Asse
   detailLoading: Ref<boolean>;
   detailError: Ref<string>;
   retryAssetDetail: () => void | Promise<void>;
+  invalidateAssetDetail: () => void;
   closeAssetDetail: () => void;
 }
 

@@ -171,6 +171,12 @@ export function useRackOperations(
       query: { ...route.query, rack_asset: String(id) },
     });
   }
+  function closeDetail() {
+    ++locateVersion;
+    c.closeAssetDetail();
+    c.detailLoading.value = false;
+    void router.replace({ query: { ...route.query, rack_asset: undefined } });
+  }
   async function restoreLocation() {
     const version = ++locateVersion;
     if (c.rackListLoading.value) return;
@@ -178,10 +184,13 @@ export function useRackOperations(
     if (!raw) {
       locatedAsset.value = null;
       locateError.value = "";
+      c.closeAssetDetail();
       c.focusRackDetail(null);
       return;
     }
-    c.closeAssetDetail();
+    c.invalidateAssetDetail();
+    c.detailLoading.value = true;
+    c.detailError.value = "";
     locatedAsset.value = null;
     locateError.value = "";
     try {
@@ -196,6 +205,7 @@ export function useRackOperations(
       if (detail.archived_at) throw new Error(tr("rackOps.linkUnavailable"));
       const placement = detail.rack_allocation;
       if (!placement) {
+        c.closeAssetDetail();
         locatedAsset.value = detail;
         return;
       }
@@ -227,6 +237,8 @@ export function useRackOperations(
         c.closeAssetDetail();
         locateError.value = tr("rackOps.linkUnavailable");
       }
+    } finally {
+      if (alive && version === locateVersion) c.detailLoading.value = false;
     }
   }
   watch(
@@ -584,6 +596,7 @@ export function useRackOperations(
     searchError,
     locateError,
     locatedAsset,
+    closeDetail,
     mode,
     asset,
     targetRack,
