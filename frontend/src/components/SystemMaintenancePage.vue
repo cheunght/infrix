@@ -210,7 +210,7 @@ function changeMaintenanceTab(value: string) {
             <div><h3>{{ t('settings.keepData') }}</h3><p>{{ t('settings.resetKeepSummary') }}</p></div>
           </div>
           <DetailSection :title="t('settings.resetScopeDetails')" collapsible>
-            <el-descriptions :column="1" border>
+            <el-descriptions :column="1" :label-width="120" border>
               <el-descriptions-item :label="t('settings.clearData')">{{ t('settings.resetClears') }}</el-descriptions-item>
               <el-descriptions-item :label="t('settings.resetConfiguration')">{{ t('settings.resetConfigurationDetails') }}</el-descriptions-item>
               <el-descriptions-item :label="t('settings.keepData')">{{ t('settings.resetKeeps') }}</el-descriptions-item>
