@@ -99,9 +99,9 @@ export function useSystemMaintenance(deps: SystemMaintenanceDependencies) {
   const systemOperationsBusy = computed(() => statusLoading.value);
   const backupDeleting = computed(() => activeOperation.value === "backup:delete");
   const systemResetSaving = computed(() => activeOperation.value === "system:reset");
-  const backupCreating = computed(() => activeOperation.value === "backup:create");
+  const backupCreating = computed(() => activeOperation.value === "backup:create" || backupOperations.receipt.value?.kind === "backup" && backupOperations.busy.value);
   const backupRestoring = computed(() => activeOperation.value === "backup:restore");
-  const maintenanceBusy = computed(() => activeOperation.value !== null || backupOperations.busy.value);
+  const maintenanceBusy = computed(() => activeOperation.value !== null || backupOperations.receipt.value !== null);
   const hasNonTransactionalTables = computed(() =>
     backups.value.some((entry) => Boolean(entry.transaction_consistency_warning)),
   );

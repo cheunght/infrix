@@ -55,13 +55,6 @@ function formatCreatedAt(value: string): string {
       <p class="backup-restore-page__description">{{ t("settings.backupRestoreDescription") }}</p>
     </header>
 
-    <el-alert
-      class="backup-restore-page__notice"
-      :title="t('settings.backupSafetyNotice')"
-      type="warning"
-      show-icon
-      :closable="false"
-    />
     <el-alert v-if="error" class="backup-restore-page__notice" :title="error" type="error" show-icon :closable="false" />
     <el-alert v-if="notice" class="backup-restore-page__notice" :title="notice" type="success" show-icon :closable="false" />
     <el-alert
@@ -73,7 +66,6 @@ function formatCreatedAt(value: string): string {
       :closable="false"
     />
 
-    <el-alert :title="t('settings.backupWebNotice')" type="info" :closable="false" />
     <el-skeleton v-if="loading && !backups.length" :rows="5" animated />
     <el-empty v-else-if="!loading && !backups.length" :description="t('settings.noBackups')" />
     <div v-else class="backup-restore-results">
@@ -147,9 +139,6 @@ function formatCreatedAt(value: string): string {
         </article>
       </div>
     </div>
-
-    <p class="backup-restore-page__help">{{ t("settings.backupRestoreHelp") }}</p>
-
 
   </section>
 </template>

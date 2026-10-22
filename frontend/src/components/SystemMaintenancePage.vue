@@ -13,6 +13,8 @@ import PageToolbar from "./page/PageToolbar.vue";
 import ToolbarIconButton from "./page/ToolbarIconButton.vue";
 import SystemOperations from "./SystemOperations.vue";
 import BackupRestorePage from "./BackupRestorePage.vue";
+import BackupMaintenanceScreen from "./BackupMaintenanceScreen.vue";
+import { useBackupOperations } from "../composables/useBackupOperations";
 
 const props = defineProps<{ context: SystemMaintenanceDependencies }>();
 const { t } = useI18n();
@@ -20,6 +22,7 @@ const route = useRoute();
 const router = useRouter();
 const context = props.context;
 const maintenance = useSystemMaintenance(context);
+const backupOperations = useBackupOperations();
 
 const {
   status,
@@ -89,7 +92,13 @@ function syncMaintenanceTabFromRoute() {
 
 function loadCurrentTab() {
   if (maintenanceTab.value === "operations") void loadStatus();
-  if (maintenanceTab.value === "backup" && context.can("system.reset")) void loadBackups();
+  if (maintenanceTab.value === "backup" && context.can("system.reset") && !backupOperations.receipt.value) void loadBackups();
+}
+
+async function finishBackupOperation() {
+  if ((backupOperations.busy.value && !backupOperations.notFound.value) || backupOperations.operation.value?.maintenance_closed) return;
+  backupOperations.clear();
+  await loadBackups();
 }
 
 watch(
@@ -136,6 +145,12 @@ function changeMaintenanceTab(value: string) {
       </PageToolbar>
 
       <div class="settings-maintenance">
+        <BackupMaintenanceScreen
+          v-if="backupOperations.receipt.value?.kind === 'backup' && context.can('system.reset')"
+          :monitor="backupOperations"
+          inline
+          @continue="finishBackupOperation"
+        />
         <SystemOperations
           v-show="maintenanceTab === 'operations'"
           :context="context"
