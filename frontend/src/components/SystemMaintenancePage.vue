@@ -96,10 +96,26 @@ function loadCurrentTab() {
 }
 
 async function finishBackupOperation() {
-  if ((backupOperations.busy.value && !backupOperations.notFound.value) || backupOperations.operation.value?.maintenance_closed) return;
+  if (backupOperations.submitting.value || (backupOperations.busy.value && !backupOperations.notFound.value) || backupOperations.operation.value?.maintenance_closed) return;
+  const completed = backupOperations.operation.value;
   backupOperations.clear();
-  await loadBackups();
+  const refreshed = await loadBackups();
+  if (completed?.status === "succeeded" && !backupOperations.receipt.value) {
+    backupNotice.value = t(refreshed ? "settings.backupCreated" : "settings.backupCreatedRefreshFailed", {
+      filename: completed.result?.filename || completed.filename,
+    });
+  }
 }
+
+watch(
+  [backupOperations.operation, backupOperations.submitting, () => context.can("system.reset")],
+  ([operation, submitting, allowed]) => {
+    if (allowed && !submitting && operation?.kind === "backup" && operation.status === "succeeded" && !operation.maintenance_closed) {
+      void finishBackupOperation();
+    }
+  },
+  { immediate: true },
+);
 
 watch(
   [() => route.query.tab, () => context.can("system.reset"), () => context.can("settings.manage")],
