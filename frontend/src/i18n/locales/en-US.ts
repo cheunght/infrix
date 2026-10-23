@@ -1303,6 +1303,8 @@ export default {
     fieldUnresolved: "Exceptions to review",
     fieldOnlyPending: "Unchecked only",
     fieldChooseAsset: "Select a device on this page",
+    fieldDeviceList: "Device list",
+    fieldKeyboardHint: "In the list: Alt + ↑ / ↓ to navigate · / to search · Alt + R to record. Press Enter to search; results are never saved automatically.",
     fieldExpectedLocation: "Expected task location",
     fieldLocationChanged: "The current ledger location has changed. Check the physical location.",
     fieldConfirmNext: "Confirm normal and continue",

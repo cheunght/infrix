@@ -1303,6 +1303,8 @@ export default {
     fieldUnresolved: "异常待处理",
     fieldOnlyPending: "仅看未盘点",
     fieldChooseAsset: "选择当前页设备",
+    fieldDeviceList: "设备清单",
+    fieldKeyboardHint: "清单内：Alt + ↑ / ↓ 切换设备 · / 查找 · Alt + R 记录结果。查找后按回车，不会自动保存。",
     fieldExpectedLocation: "任务预期位置",
     fieldLocationChanged: "当前台账位置已变化，请核对现场位置",
     fieldConfirmNext: "确认正常并继续",

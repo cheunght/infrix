@@ -268,15 +268,28 @@ export function useInventoryFieldwork(
     const page = itemPage.value + (step > 0 ? 1 : -1);
     if (page < 1 || page > Math.ceil(itemCount.value / itemPageSize.value))
       return;
+    await goToPage(page, step < 0);
+  }
+  async function goToPage(page: number, selectLast = false) {
+    if (
+      busy.value ||
+      !Number.isInteger(page) ||
+      page < 1 ||
+      page > Math.ceil(itemCount.value / itemPageSize.value)
+    )
+      return;
     const version = ++restoreVersion;
     navigationLoading.value = true;
+    selectedItem.value = null;
+    navigationError.value = "";
+    notice.value = "";
     try {
       itemPage.value = page;
       const loaded = await inventory.loadItems();
       if (version !== restoreVersion) return;
       if (loaded)
         selectItem(
-          (step > 0 ? items.value[0] : items.value[items.value.length - 1]) ||
+          (selectLast ? items.value[items.value.length - 1] : items.value[0]) ||
             null,
         );
       else {
@@ -457,6 +470,7 @@ export function useInventoryFieldwork(
     clearFilters,
     selectItem,
     move,
+    goToPage,
     capturePosition,
     afterSave,
     confirmAndNext,
