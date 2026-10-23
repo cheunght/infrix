@@ -16,7 +16,7 @@ and HTTPS diagnosis, see [Installer Workflow](INSTALLER_WORKFLOW.md).
 
 The reference deployment uses:
 
-- Python 3.10 or newer and a dedicated virtual environment.
+- Python 3.11 or newer and a dedicated virtual environment.
 - MariaDB or a compatible MySQL server.
 - Gunicorn serving the Django application.
 - Nginx serving the frontend and forwarding API requests.
@@ -40,7 +40,7 @@ runtime behavior. The deployment must provide:
 
 ### Python
 
-Use Python 3.10 or newer and create an isolated environment for Infrix:
+Use Python 3.11 or newer and create an isolated environment for Infrix:
 
 ```bash
 python3 -m venv /opt/infrix/backend/.venv
@@ -52,7 +52,7 @@ Do not install application requirements into the system Python or use
 
 ### Node.js and npm
 
-Node.js 18 or newer and npm are required to build the frontend from source:
+Building the frontend from source requires npm and Node.js 20, 22, or 24+:
 
 ```bash
 cd /opt/infrix/frontend

@@ -462,8 +462,8 @@ if [[ -z "$PYTHON_BIN" ]]; then
 fi
 
 command -v "$PYTHON_BIN" >/dev/null 2>&1 || fail "未找到 Python 解释器：$PYTHON_BIN"
-"$PYTHON_BIN" -c 'import sys; raise SystemExit(0 if sys.version_info >= (3, 10) else 1)' \
-  || fail "Python 版本必须 >= 3.10，当前为 $($PYTHON_BIN --version 2>&1)。"
+"$PYTHON_BIN" -c 'import sys; raise SystemExit(0 if sys.version_info >= (3, 11) else 1)' \
+  || fail "Python 版本必须 >= 3.11，当前为 $($PYTHON_BIN --version 2>&1)。"
 
 prebuilt_frontend=0
 if [[ -f "$SOURCE_DIR/frontend-release.json" ]]; then
@@ -475,15 +475,15 @@ node_major=0
 if command -v node >/dev/null 2>&1; then
   node_major="$(node --version | sed 's/^v//' | cut -d. -f1)"
 fi
-if [[ "$node_major" -lt 18 ]] || ! command -v npm >/dev/null 2>&1; then
+if [[ "$node_major" -ne 20 && "$node_major" -ne 22 && "$node_major" -lt 24 ]] || ! command -v npm >/dev/null 2>&1; then
   dnf module reset -y nodejs || true
-  if ! dnf module enable -y nodejs:20; then
-    dnf module enable -y nodejs:18 || true
+  if ! dnf module enable -y nodejs:22; then
+    dnf module enable -y nodejs:20 || true
   fi
   dnf install -y nodejs npm
 fi
 node_major="$(node --version | sed 's/^v//' | cut -d. -f1)"
-[[ "$node_major" -ge 18 ]] || fail "Node.js 版本必须 >= 18，当前为 $(node --version)。"
+[[ "$node_major" -eq 20 || "$node_major" -eq 22 || "$node_major" -ge 24 ]] || fail "Node.js 版本必须为 20、22 或 >= 24，当前为 $(node --version)。"
 command -v npm >/dev/null 2>&1 || fail "未找到 npm。"
 
 # 受限内存的 Rocky VM 可能让 Node.js 自动将 V8 堆上限压到约 512 MB，
@@ -912,7 +912,7 @@ fi
 
 log "创建 Python 虚拟环境并安装后端依赖"
 if [[ -x "$APP_DIR/backend/.venv/bin/python" ]] && \
-  ! "$APP_DIR/backend/.venv/bin/python" -c 'import sys; raise SystemExit(0 if sys.version_info >= (3, 10) else 1)'; then
+  ! "$APP_DIR/backend/.venv/bin/python" -c 'import sys; raise SystemExit(0 if sys.version_info >= (3, 11) else 1)'; then
   rm -rf "$APP_DIR/backend/.venv"
 fi
 "$PYTHON_BIN" -m venv "$APP_DIR/backend/.venv"

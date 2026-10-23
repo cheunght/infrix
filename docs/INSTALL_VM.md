@@ -43,9 +43,9 @@ The target host needs:
 
 For a source installation, keep the complete tree containing
 `backend/manage.py`, `backend/requirements.txt`, `frontend/package.json`, and
-`frontend/package-lock.json`. The installer can install Python 3.10+ and
-Node.js 18+ from Rocky repositories. The target of a release package still
-needs Python and system packages, but does not need Node.js or npm.
+`frontend/package-lock.json`. The installer can install Python 3.11+ and
+Node.js 20, 22, or 24+ from Rocky repositories. The target of a release
+package still needs Python and system packages, but does not need Node.js or npm.
 
 Choose the database and HTTPS mode before starting:
 

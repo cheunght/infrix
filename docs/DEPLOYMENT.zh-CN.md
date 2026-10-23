@@ -32,7 +32,7 @@
 - 已同步的系统时间、可用 DNS 和必要的网络路由。
 - 80、443、8001 端口未被无关程序占用，或已明确纳入现有部署管理。
 
-源码安装需要完整源码树，至少包含 `backend/manage.py`、`backend/requirements.txt`、`frontend/package.json` 和 `frontend/package-lock.json`。安装器可以从 Rocky 软件源安装 Python 3.10+ 和 Node.js 18+。发布包目标机仍需 Python 和系统软件包，但不需要 Node.js 或 npm。
+源码安装需要完整源码树，至少包含 `backend/manage.py`、`backend/requirements.txt`、`frontend/package.json` 和 `frontend/package-lock.json`。安装器可以从 Rocky 软件源安装 Python 3.11+ 和 Node.js 20、22 或 24+。发布包目标机仍需 Python 和系统软件包，但不需要 Node.js 或 npm。
 
 开始前选择数据库和 HTTPS 方式：
 

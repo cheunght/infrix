@@ -8,7 +8,7 @@ Rocky Linux 9.x 新部署优先使用[中文自动安装文档](DEPLOYMENT.zh-CN
 
 参考部署由以下组件组成：
 
-- Python 3.10+ 和独立虚拟环境。
+- Python 3.11+ 和独立虚拟环境。
 - MariaDB 或兼容的 MySQL 服务器。
 - 提供 Django 应用的 Gunicorn。
 - 提供前端并转发后端请求的 Nginx。
@@ -28,7 +28,7 @@ Rocky Linux 9.x 新部署优先使用[中文自动安装文档](DEPLOYMENT.zh-CN
 
 ### Python
 
-使用 Python 3.10 或更高版本，为 Infrix 建立独立虚拟环境：
+使用 Python 3.11 或更高版本，为 Infrix 建立独立虚拟环境：
 
 ```bash
 python3 -m venv /opt/infrix/backend/.venv
@@ -39,7 +39,7 @@ python3 -m venv /opt/infrix/backend/.venv
 
 ### Node.js 和 npm
 
-从源码构建前端需要 Node.js 18+ 和 npm：
+从源码构建前端需要 Node.js 20、22 或 24+ 和 npm：
 
 ```bash
 cd /opt/infrix/frontend
