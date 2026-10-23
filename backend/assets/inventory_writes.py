@@ -660,6 +660,8 @@ def create_inventory_task(*, validated_data, actor, request):
     active_ids = set(Asset.objects.select_for_update().filter(pk__in=[asset.pk for asset in assets]).order_by("pk").values_list("pk", flat=True))
     assets = list(get_inventory_scope_assets(center, room, scope=data["scope"]).filter(pk__in=active_ids))
     require_queryset(Asset.objects.filter(pk__in=[asset.pk for asset in assets]), user=actor)
+    if not assets:
+        raise DRFValidationError({"code": "inventory_scope_empty", "detail": "当前范围已无可盘点资产，请重新预览盘点范围"})
     data.setdefault("inspector", actor)
     task = InventoryTask.objects.create(**data)
     InventoryItem.objects.bulk_create([InventoryItem(task=task, asset=asset, system_snapshot=_inventory_snapshot(asset)) for asset in assets], batch_size=500)
@@ -745,10 +747,13 @@ def _inventory_error_message(error, fallback):
     return flatten(detail) or fallback
 
 
-def submit_inventory_batch(*, item_ids, action, note="", actor, request):
+def submit_inventory_batch(*, item_ids, action, note="", actor, request, revisions=None):
     """Each row commits independently; authorization failures reveal no identity."""
     _require_inventory_manager(actor)
-    if action != "normal": validate_inventory_resolution_request(action, note, bulk=True)
+    if action != "normal":
+        validate_inventory_resolution_request(action, note, bulk=True)
+        if revisions is None or set(revisions) != {str(item_id) for item_id in item_ids}:
+            raise DRFValidationError({"revisions": "请提供所选盘点项核对时的版本"})
     items = list(scoped(InventoryItem.objects.filter(pk__in=item_ids), user=actor, write=True).select_related("asset"))
     if len({item.task_id for item in items}) > 1:
         raise DRFValidationError({"item_ids":"所有盘点项必须属于同一个盘点任务"})
@@ -764,7 +769,7 @@ def submit_inventory_batch(*, item_ids, action, note="", actor, request):
                 result = confirm_inventory_item_normal(item_id=item_id, actor=actor, request=request, require_pending=True, source="inventory_bulk_confirm_normal")
             else:
                 result = resolve_inventory_item(item_id=item_id, action=action, note=note, actor=actor, request=request,
-                                                expected_item_revision=item.revision)
+                                                expected_item_revision=revisions[str(item_id)])
         except PermissionDenied:
             row = {"item_id":item_id,"asset_no":"","success":False,"reason":"盘点项不在完整任务写入范围内"}
         except (DRFValidationError, InventoryObservationConflict, ResourceRevisionConflict) as exc:

@@ -1359,6 +1359,7 @@ export default {
     scanTaskRequired: "Open an inventory task first.",
     scanLoadFailed: "The inventory details could not be loaded, so the asset cannot be located.",
     scanNotInTask: "This asset is not included in the current inventory task.",
+    scanIdentityUnconfirmed: "Cannot uniquely identify this device in the current task. Check the asset code or QR label.",
     scannedAssetLocated: "Located: {asset}",
     confirmScannedNormal: "Confirm normal",
     recordResult: "Record result",

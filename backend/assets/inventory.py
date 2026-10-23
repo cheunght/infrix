@@ -18,6 +18,11 @@ class InventoryLocationQuerySerializer(serializers.Serializer):
     placement = serializers.ChoiceField(choices=("mounted", "unmounted", "unlocated"), required=False)
 
 
+class InventoryIdentityQuerySerializer(serializers.Serializer):
+    asset_id = serializers.IntegerField(min_value=1, required=False)
+    asset_no = serializers.CharField(max_length=80, required=False)
+
+
 def filter_inventory_locations(queryset, params):
     query = InventoryLocationQuerySerializer(data=params)
     query.is_valid(raise_exception=True)

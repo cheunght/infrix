@@ -7,7 +7,6 @@ import { i18n } from "../i18n";
 import { formatSystemDateTime } from "../system-settings";
 import { buildExportQuery, pageItems, pageTotal, type PageResult } from "../api";
 import type {
-  Asset,
   InventoryBulkNormalResponse,
   InventoryBulkResolutionResponse,
   InventoryInspector,
@@ -230,6 +229,10 @@ export function useInventory(context: InventoryContext) {
     page: number;
   } | null = null;
   let initialDataLoaded = false;
+  let itemOpenRequestId = 0;
+  let scanController: AbortController | null = null;
+  let scanAssetId: number | null = null;
+  let scanSearch = "";
 
   const activeDataCenters = computed(() =>
     context.dataCenters.value.filter((item) => item.is_active !== false),
@@ -637,7 +640,8 @@ export function useInventory(context: InventoryContext) {
       params.set("page", String(itemPage.value));
       params.set("page_size", String(itemPageSize.value));
     }
-    if (itemSearch.value.trim()) params.set("search", itemSearch.value.trim());
+    if (scanAssetId != null && itemSearch.value.trim() === scanSearch) params.set("asset_id", String(scanAssetId));
+    else if (itemSearch.value.trim()) params.set("search", itemSearch.value.trim());
     if (itemStatus.value) params.set("status", itemStatus.value);
     if (itemResolutionStatus.value) params.set("resolution_status", itemResolutionStatus.value);
     if (itemDataCenter.value) params.set("data_center", itemDataCenter.value);
@@ -800,6 +804,9 @@ export function useInventory(context: InventoryContext) {
   }
 
   function resetScanState() {
+    scanController?.abort();
+    scanAssetId = null;
+    scanSearch = "";
     scannedItemId.value = null;
     scanError.value = "";
     scanFilterSnapshot = null;
@@ -807,6 +814,11 @@ export function useInventory(context: InventoryContext) {
 
   async function locateScannedAsset(rawValue: string): Promise<InventoryItem | null> {
     if (!context.can("inventory.view")) return null;
+    scanController?.abort();
+    const controller = new AbortController();
+    scanController = controller;
+    const taskId = activeTask.value?.id;
+    const itemReadVersion = itemRequestId;
     scanError.value = "";
     scannedItemId.value = null;
     if (!activeTask.value) {
@@ -823,18 +835,26 @@ export function useInventory(context: InventoryContext) {
       return null;
     }
 
-    let assetNo = parsed.assetNo;
-    if (!assetNo && parsed.assetId) {
-      try {
-        const asset = await context.request<Pick<Asset, "asset_no">>(`/assets/${parsed.assetId}/`);
-        assetNo = asset.asset_no?.trim() || "";
-      } catch {
-        scanError.value = i18n.global.t("inventory.invalidQr");
+    const identity = new URLSearchParams({ page: "1", page_size: "2" });
+    if (parsed.assetId) identity.set("asset_id", String(parsed.assetId));
+    if (parsed.assetNo) identity.set("asset_no", parsed.assetNo);
+    let matched: InventoryItem;
+    try {
+      const result = await context.request<PageResult<InventoryItem> | InventoryItem[]>(
+        `/inventory-tasks/${taskId}/items/?${identity}`, { signal: controller.signal },
+      );
+      if (controller.signal.aborted || activeTask.value?.id !== taskId || itemReadVersion !== itemRequestId) return null;
+      const rows = pageItems(result);
+      if (pageTotal(result) !== 1 || !rows[0] ||
+          (parsed.assetId != null && rows[0].asset !== parsed.assetId) ||
+          (parsed.assetNo && rows[0].asset_no !== parsed.assetNo && rows[0].current_asset?.asset_no !== parsed.assetNo)) {
+        scanError.value = i18n.global.t("inventory.scanIdentityUnconfirmed");
         return null;
       }
-    }
-    if (!assetNo) {
-      scanError.value = i18n.global.t("inventory.invalidQr");
+      matched = rows[0];
+    } catch {
+      if (!controller.signal.aborted && activeTask.value?.id === taskId)
+        scanError.value = i18n.global.t("inventory.scanLoadFailed");
       return null;
     }
 
@@ -846,18 +866,19 @@ export function useInventory(context: InventoryContext) {
         page: itemPage.value,
       };
     }
-    itemSearch.value = assetNo;
+    scanAssetId = matched.asset;
+    scanSearch = matched.asset_no;
+    itemSearch.value = matched.asset_no;
     itemStatus.value = "";
     itemResolutionStatus.value = "";
     itemPage.value = 1;
     const loaded = await loadItems();
+    if (controller.signal.aborted || activeTask.value?.id !== taskId) return null;
     if (!loaded || itemListError.value) {
       scanError.value = i18n.global.t("inventory.scanLoadFailed");
       return null;
     }
-    const found = items.value.find((item) => (
-      (parsed.assetId != null && item.asset === parsed.assetId) || item.asset_no === assetNo
-    ));
+    const found = items.value.find((item) => item.id === matched.id && item.asset === matched.asset);
     if (!found) {
       scanError.value = i18n.global.t("inventory.scanNotInTask");
       return null;
@@ -1135,11 +1156,12 @@ export function useInventory(context: InventoryContext) {
   }
 
   async function initializeItem(item: InventoryItem) {
+    const requestId = ++itemOpenRequestId;
     if (!canRecordInventory(item)) return false;
     if (item.system_rack_code && !racks.value.some((rack) => rack.code === item.system_rack_code)) {
       await loadRacks(item.system_rack_code);
     }
-    if (itemAuxError.value) return false;
+    if (requestId !== itemOpenRequestId || !canRecordInventory(item) || itemAuxError.value) return false;
     editingItem.value = {...item};
     const initialLocation =
       item.status === "normal"
@@ -1381,6 +1403,10 @@ export function useInventory(context: InventoryContext) {
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
             item_ids: itemIds,
+            revisions: Object.fromEntries(selectedItems.map(item => {
+              revisionHeaders(item);
+              return [String(item.id), item.revision];
+            })),
             action,
             note: bulkResolutionForm.value.note,
           }),
@@ -1767,12 +1793,22 @@ export function useInventory(context: InventoryContext) {
   );
 
   onBeforeUnmount(clearScopePreview);
+  onBeforeUnmount(() => scanController?.abort());
   watch(() => activeTask.value?.id, () => {
+    itemOpenRequestId++;
+    auxControllers.racks?.abort();
+    showItemDialog.value = false;
+    editingItem.value = null;
+    resetScanState();
     resolutionController?.abort();
     resolutionLoading.value = false;
     showResolutionDialog.value = false;
     resolutionItem.value = null;
     resolutionTargetId.value = null;
+  }, { flush: "sync" });
+  onBeforeUnmount(() => {
+    itemOpenRequestId++;
+    Object.values(auxControllers).forEach(controller => controller?.abort());
   });
   onBeforeUnmount(() => resolutionController?.abort());
 

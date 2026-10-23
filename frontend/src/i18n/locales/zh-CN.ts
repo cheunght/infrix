@@ -1359,6 +1359,7 @@ export default {
     scanTaskRequired: "请先打开一个盘点任务。",
     scanLoadFailed: "盘点明细加载失败，暂时无法定位资产。",
     scanNotInTask: "该资产不在当前盘点任务中。",
+    scanIdentityUnconfirmed: "无法在当前任务中唯一确认该设备，请核对编号或二维码。",
     scannedAssetLocated: "已定位：{asset}",
     confirmScannedNormal: "确认正常",
     recordResult: "记录结果",

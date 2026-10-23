@@ -256,7 +256,7 @@ export function useInventoryFieldwork(
       const version = ++restoreVersion;
       await loadSummary();
       if (version !== restoreVersion) return;
-      if (!selectedItem.value) selectItem(items.value[0] || null);
+      selectItem(items.value.find(row => row.id === selectedItem.value?.id) || items.value[0] || null);
     } else if (
       itemDataCenter.value ||
       itemRoom.value ||
@@ -467,7 +467,7 @@ export function useInventoryFieldwork(
   );
   watch(items, (rows) => {
     const latest = rows.find((row) => row.id === selectedItem.value?.id);
-    if (latest) selectedItem.value = latest;
+    selectedItem.value = latest || null;
   });
   onBeforeUnmount(() => {
     restoreVersion++;

@@ -37,6 +37,7 @@ function parseObject(value: unknown): ParsedAssetQrValue | null {
   if (!value || typeof value !== "object" || Array.isArray(value)) return null;
   const record = value as Record<string, unknown>;
   const assetId = positiveId(record.asset_id);
+  if (record.asset_id != null && !assetId) return null;
   const assetNo = String(record.asset_no ?? "").trim();
   return assetId || assetNo ? { assetId, assetNo } : null;
 }
@@ -62,6 +63,8 @@ export function parseAssetQrValue(rawValue: string): ParsedAssetQrValue | null {
     try {
       const url = new URL(raw, typeof window === "undefined" ? "http://localhost" : window.location.origin);
       const routeAssetId = positiveId(url.searchParams.get("asset_id"));
+      if ((url.searchParams.has("asset_id") && !routeAssetId) ||
+          url.searchParams.getAll("asset_id").length > 1 || url.searchParams.getAll("asset_no").length > 1) return null;
       const routeAssetNo = decoded(url.searchParams.get("asset_no"));
       if (routeAssetId || routeAssetNo) return { assetId: routeAssetId, assetNo: routeAssetNo };
       return null;

@@ -146,7 +146,8 @@ const originalItemForm = ref("");
 watch([showItemDialog, () => editingItem.value?.id], ([visible]) => {
   if (visible) originalItemForm.value = JSON.stringify(itemForm.value);
 });
-const itemFormDirty = computed(() => fieldMode.value && showItemDialog.value && JSON.stringify(itemForm.value) !== originalItemForm.value);
+const itemFormDirty = computed(() => showItemDialog.value && JSON.stringify(itemForm.value) !== originalItemForm.value);
+const inventoryWritePending = computed(() => itemSaving.value || scannedNormalSaving.value || resolutionSaving.value || bulkNormalSaving.value || bulkResolutionSaving.value);
 const originalResolutionForm = ref("");
 watch(showResolutionDialog, (visible) => {
   if (visible) originalResolutionForm.value = JSON.stringify(resolutionForm.value);
@@ -174,10 +175,9 @@ async function closeItemDialog() {
   if (await confirmItemClose()) showItemDialog.value = false;
 }
 async function leaveInventory() {
-  if (resolutionSaving.value || (fieldMode.value && (itemSaving.value || scannedNormalSaving.value))) return false;
+  if (inventoryWritePending.value) return false;
   if (!await confirmResolutionClose()) return false;
   closeResolutionDialog();
-  if (!fieldMode.value) return true;
   if (!await confirmItemClose()) return false;
   showItemDialog.value = false;
   return true;
@@ -185,7 +185,7 @@ async function leaveInventory() {
 onBeforeRouteLeave(leaveInventory);
 onBeforeRouteUpdate(leaveInventory);
 function warnUnsaved(event: BeforeUnloadEvent) {
-  if (itemFormDirty.value || resolutionFormDirty.value || resolutionSaving.value || (fieldMode.value && (itemSaving.value || scannedNormalSaving.value))) { event.preventDefault(); event.returnValue = ""; }
+  if (itemFormDirty.value || resolutionFormDirty.value || inventoryWritePending.value) { event.preventDefault(); event.returnValue = ""; }
 }
 onMounted(() => window.addEventListener("beforeunload", warnUnsaved));
 onBeforeUnmount(() => window.removeEventListener("beforeunload", warnUnsaved));

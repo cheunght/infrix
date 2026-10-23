@@ -2704,6 +2704,7 @@ class InventoryResolutionSerializer(serializers.Serializer):
 
 
 class InventoryBulkResolutionSerializer(serializers.Serializer):
+    revisions = serializers.DictField(child=serializers.IntegerField(min_value=1), help_text="每个盘点项核对时的 revision，键为 item_id。")
     item_ids = serializers.ListField(
         child=serializers.IntegerField(min_value=1),
         allow_empty=False,
@@ -2718,6 +2719,8 @@ class InventoryBulkResolutionSerializer(serializers.Serializer):
         return unique_ids
 
     def validate(self, attrs):
+        if set(attrs["revisions"]) != {str(item_id) for item_id in attrs["item_ids"]}:
+            raise serializers.ValidationError({"revisions": "必须提供每个所选盘点项的核对版本，不能包含其他记录"})
         validate_inventory_resolution_request(
             attrs.get("action"),
             attrs.get("note", ""),

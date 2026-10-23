@@ -1,7 +1,7 @@
 from .serializers import AssetPlacementSerializer, RackPlacementOptionsSerializer, RackCapacityPlanQuerySerializer, RackUnitReservationSerializer, RackUnitReservationInputSerializer
 from .asset_writes import change_asset_placement
 from .physical_location import rack_position_ranges, active_rack_reservations, active_reservations_prefetch
-from .inventory import InventoryLocationQuerySerializer, filter_inventory_locations, inventory_location_summary
+from .inventory import InventoryLocationQuerySerializer, InventoryIdentityQuerySerializer, filter_inventory_locations, inventory_location_summary
 from .identity_writes import update_own_profile, change_own_password
 from .reference_writes import SharedReferenceWriteMixin, edit_fieldset_items
 from .identity_writes import (_user_audit_snapshot, _security_profile, _locked_security_profile, edit_account, reset_account_password, delete_account, batch_account_status, account_scope_snapshot, replace_account_scope)
@@ -2460,10 +2460,23 @@ def _inventory_items_queryset(task, request, *, filtered=True):
     if not filtered:
         return queryset
     queryset = filter_inventory_locations(queryset, request.query_params)
+    identity = InventoryIdentityQuerySerializer(data=request.query_params)
+    identity.is_valid(raise_exception=True)
+    if "asset_id" in identity.validated_data:
+        queryset = queryset.filter(asset_id=identity.validated_data["asset_id"])
+    if "asset_no" in identity.validated_data:
+        number = identity.validated_data["asset_no"]
+        queryset = queryset.filter(Q(system_snapshot__asset_no=number) | Q(asset__asset_no=number))
     search = request.query_params.get("search", "").strip()
     if search:
         queryset = queryset.filter(
-            Q(asset__asset_no__icontains=search)
+            Q(system_snapshot__asset_no__icontains=search)
+            | Q(system_snapshot__name__icontains=search)
+            | Q(system_snapshot__serial_number__icontains=search)
+            | Q(system_snapshot__business_ip__icontains=search)
+            | Q(system_snapshot__management_ip__icontains=search)
+            | Q(system_snapshot__oob_ip__icontains=search)
+            | Q(asset__asset_no__icontains=search)
             | Q(asset__name__icontains=search)
             | Q(asset__serial_number__icontains=search)
             | Q(asset__network_addresses__address__icontains=search)
@@ -2593,7 +2606,7 @@ class InventoryTaskViewSet(AuditedModelViewSetMixin, ScopedModelViewSet):
         }
         return Response(InventoryScopePreviewSerializer(payload).data)
 
-    @extend_schema(parameters=[InventoryLocationQuerySerializer], responses=InventoryItemPageSerializer)
+    @extend_schema(parameters=[InventoryLocationQuerySerializer, InventoryIdentityQuerySerializer], responses=InventoryItemPageSerializer)
     @action(detail=True, methods=["get"], url_path="items")
     def items(self, request, pk=None):
         # ``get_object`` applies the list search backends to query parameters.
@@ -2629,6 +2642,7 @@ class InventoryTaskViewSet(AuditedModelViewSetMixin, ScopedModelViewSet):
     @extend_schema(
         parameters=[
             InventoryLocationQuerySerializer,
+            InventoryIdentityQuerySerializer,
             OpenApiParameter(name="search", type=OpenApiTypes.STR, required=False),
             OpenApiParameter(name="status", type=OpenApiTypes.STR, required=False, enum=INVENTORY_ITEM_STATUS_VALUES),
             OpenApiParameter(name="resolution_status", type=OpenApiTypes.STR, required=False, enum=INVENTORY_RESOLUTION_STATUS_VALUES),
@@ -2752,7 +2766,7 @@ class InventoryItemViewSet(ResourceRevisionViewSetMixin, ScopedModelViewSet):
         request_serializer = InventoryBulkResolutionSerializer(data=request.data)
         request_serializer.is_valid(raise_exception=True)
         data = request_serializer.validated_data
-        result = submit_inventory_batch(item_ids=data["item_ids"], action=request_serializer.validated_data["action"], note=data.get("note", ""), actor=request.user, request=request)
+        result = submit_inventory_batch(item_ids=data["item_ids"], action=data["action"], note=data.get("note", ""), revisions=data["revisions"], actor=request.user, request=request)
         return Response(InventoryBulkResolutionResponseSerializer(result).data)
 
     @extend_schema(
