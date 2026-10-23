@@ -34,6 +34,8 @@ import FormDialogShell from "./FormDialogShell.vue";
 import TableIconButton from "./TableIconButton.vue";
 import ToolbarIconButton from "./page/ToolbarIconButton.vue";
 import AssetQrScanner from "./AssetQrScanner.vue";
+import InventoryComparison from "./InventoryComparison.vue";
+import { inventoryLocationText } from "../inventory-location";
 import SearchableSelect, { type SearchableSelectOption } from "./SearchableSelect.vue";
 import { ElMessageBox } from "element-plus/es/components/message-box/index.mjs";
 import type { FormInstance, FormRules } from "element-plus";
@@ -106,10 +108,11 @@ function selectedOption<T extends Record<string, unknown>>(
 const inventory = useInventory(context);
 const fieldwork = useInventoryFieldwork(context, inventory, useRoute());
 const { fieldMode } = fieldwork;
+const fieldworkPanelRef = ref<{ focusSelected: () => Promise<void> } | null>(null);
 const {
   taskListLoading, taskListError, itemListLoading, itemListError, taskDetailLoading, taskDetailError,
   auxLoading, taskAuxError, itemAuxError, taskCreating, taskDeletingId, taskCompleting, taskReopening, itemSaving, resolutionSaving,
-  scannedNormalSaving,
+  scannedNormalSaving, resolutionLoading, resolutionNeedsReload,
   bulkResolutionSaving, bulkNormalSaving,
   taskDialogError, itemDialogError, resolutionDialogError, bulkResolutionDialogError, bulkNormalDialogError,
   taskFormErrors, itemFormErrors, resolutionFormErrors, bulkResolutionFormErrors,
@@ -135,7 +138,7 @@ const {
   openItem, changeItemStatus, changeItemPlacement, saveItem, saveItemAndNext, changeTaskPage, changeTaskPageSize,
   changeItemPage, changeItemPageSize, resetTaskFilters, resetItemFilters,
   locateScannedAsset, clearScannedAsset: clearScannedAssetState, confirmItemNormal,
-  retryTaskAuxData, retryRackAuxData, openResolution, closeResolutionDialog, saveResolution,
+  retryTaskAuxData, retryRackAuxData, openResolution, closeResolutionDialog, saveResolution, reloadResolution,
   openBulkResolution, closeBulkResolutionDialog, saveBulkResolution, openBulkNormal, closeBulkNormalDialog, saveBulkNormal,
 } = inventory;
 
@@ -144,6 +147,22 @@ watch([showItemDialog, () => editingItem.value?.id], ([visible]) => {
   if (visible) originalItemForm.value = JSON.stringify(itemForm.value);
 });
 const itemFormDirty = computed(() => fieldMode.value && showItemDialog.value && JSON.stringify(itemForm.value) !== originalItemForm.value);
+const originalResolutionForm = ref("");
+watch(showResolutionDialog, (visible) => {
+  if (visible) originalResolutionForm.value = JSON.stringify(resolutionForm.value);
+});
+const resolutionFormDirty = computed(() => showResolutionDialog.value && resolutionItem.value?.resolution_status !== "resolved" &&
+  JSON.stringify(resolutionForm.value) !== originalResolutionForm.value);
+async function confirmResolutionClose() {
+  if (resolutionSaving.value) return false;
+  if (!resolutionFormDirty.value) return true;
+  return Boolean(await ElMessageBox.confirm(t("inventory.reviewDiscardChanges"), t("common.confirm"), {
+    type: "warning", confirmButtonText: t("common.confirm"), cancelButtonText: t("common.cancel"),
+  }).catch(() => false));
+}
+async function cancelResolution() {
+  if (await confirmResolutionClose()) closeResolutionDialog();
+}
 async function confirmItemClose() {
   if (itemSaving.value) return false;
   if (!itemFormDirty.value) return true;
@@ -155,8 +174,10 @@ async function closeItemDialog() {
   if (await confirmItemClose()) showItemDialog.value = false;
 }
 async function leaveInventory() {
+  if (resolutionSaving.value || (fieldMode.value && (itemSaving.value || scannedNormalSaving.value))) return false;
+  if (!await confirmResolutionClose()) return false;
+  closeResolutionDialog();
   if (!fieldMode.value) return true;
-  if (itemSaving.value || scannedNormalSaving.value) return false;
   if (!await confirmItemClose()) return false;
   showItemDialog.value = false;
   return true;
@@ -164,7 +185,7 @@ async function leaveInventory() {
 onBeforeRouteLeave(leaveInventory);
 onBeforeRouteUpdate(leaveInventory);
 function warnUnsaved(event: BeforeUnloadEvent) {
-  if (itemFormDirty.value || (fieldMode.value && (itemSaving.value || scannedNormalSaving.value))) { event.preventDefault(); event.returnValue = ""; }
+  if (itemFormDirty.value || resolutionFormDirty.value || resolutionSaving.value || (fieldMode.value && (itemSaving.value || scannedNormalSaving.value))) { event.preventDefault(); event.returnValue = ""; }
 }
 onMounted(() => window.addEventListener("beforeunload", warnUnsaved));
 onBeforeUnmount(() => window.removeEventListener("beforeunload", warnUnsaved));
@@ -264,7 +285,7 @@ function applyItemFilters() {
 }
 
 const resolutionOptions = computed(() => resolutionActionOptions(resolutionItem.value));
-const resolutionReadOnly = computed(() => resolutionItem.value?.resolution_status === "resolved");
+const resolutionReadOnly = computed(() => !canResolveInventoryAnomaly(resolutionItem.value));
 const resolutionUpdateSelected = computed(() => resolutionForm.value.action === "update_asset");
 const resolutionLocationIncomplete = computed(() => Boolean(
   resolutionItem.value?.status === "location_mismatch" &&
@@ -274,7 +295,8 @@ const resolutionCanSave = computed(() => Boolean(
   resolutionItem.value?.resolution_status === "pending" &&
     canResolveInventoryAnomaly(resolutionItem.value) &&
     resolutionForm.value.action &&
-    !resolutionSaving.value,
+    !resolutionSaving.value && !resolutionLoading.value && !resolutionNeedsReload.value &&
+    (resolutionForm.value.action !== "update_asset" || Boolean(resolutionItem.value?.asset_revision)),
 ));
 const showBatchSelectionColumn = computed(() => Boolean(
   can("inventory.manage") &&
@@ -472,10 +494,16 @@ async function submitItemAndNext() {
   } else await saveItemAndNext();
 }
 
-async function submitResolution() {
+async function submitResolution(advance = false) {
   const valid = await resolutionFormRef.value?.validate().catch(() => false);
   if (valid === false) return;
-  await saveResolution();
+  const before = fieldwork.capturePosition();
+  if (await saveResolution()) {
+    if (fieldMode.value) {
+      await fieldwork.afterSave(before, advance);
+      await fieldworkPanelRef.value?.focusSelected();
+    }
+  }
 }
 async function submitBulkResolution() {
   const valid = await bulkResolutionFormRef.value?.validate().catch(() => false);
@@ -714,7 +742,7 @@ onMounted(async () => {
           <el-progress :percentage="activeTask.summary.completion_rate" :stroke-width="4" :show-text="false" />
         </section>
         <PageSection v-if="fieldMode" class="inventory-field-section" :title="t('inventory.fieldMode')">
-          <InventoryFieldworkPanel :inventory="inventory" :fieldwork="fieldwork" />
+          <InventoryFieldworkPanel ref="fieldworkPanelRef" :inventory="inventory" :fieldwork="fieldwork" />
         </PageSection>
         <PageSection v-else :title="t('inventory.inventoryDevices')">
           <PageToolbar>
@@ -1039,40 +1067,33 @@ onMounted(async () => {
       :title="t('inventory.processException')"
       :description="t('inventory.processExceptionDescription')"
       class="inventory-resolution-dialog"
-      size="medium"
+      size="large"
       :pending="resolutionSaving"
       :error="resolutionDialogError"
       :close-disabled="resolutionSaving"
+      :confirm-close="confirmResolutionClose"
       @close="closeResolutionDialog"
     >
-      <template v-if="resolutionItem">
+      <el-skeleton v-if="resolutionLoading" animated :rows="5" />
+      <template v-else-if="resolutionItem">
         <section class="action-dialog__summary inventory-resolution-summary">
           <div class="inventory-resolution-summary__header">
             <AssetSummary class="inventory-resolution-asset__main" :asset="resolutionItem" compact :show-status="false" />
-            <el-button link type="primary" @click="openAssetDetail(resolutionItem.asset)">{{ t('inventory.viewAssetDetails') }}</el-button>
+            <el-button v-if="can('assets.view')" link type="primary" @click="openAssetDetail(resolutionItem.asset)">{{ t('inventory.viewAssetDetails') }}</el-button>
           </div>
           <div class="inventory-resolution-summary__facts">
             <div>
               <span>{{ t('inventory.result') }}</span>
               <StatusTag :tone="statusTagType(resolutionItem.status)" :label="businessOptionLabel(INVENTORY_ITEM_STATUS_OPTIONS, resolutionItem.status)" />
             </div>
-            <div>
-              <span>{{ t('inventory.accountLocation') }}</span>
-              <strong>{{ locationText(resolutionItem) }}</strong>
-            </div>
-            <div v-if="resolutionItem.status !== 'not_found'">
-              <span>{{ t('inventory.actualLocation') }}</span>
-              <strong>{{ locationText(resolutionItem, true) }}</strong>
-              <el-tooltip v-if="resolutionItem.actual_location_snapshot?.source === 'legacy_backfill'" :content="t('inventory.legacyLocationExplanation')"><el-tag size="small" type="info">{{ t('inventory.legacyLocationSnapshot') }}</el-tag></el-tooltip>
-            </div>
-            <div class="inventory-resolution-summary__note">
-              <span>{{ t('inventory.inventoryNote') }}</span>
-              <strong>{{ resolutionItem.notes || t('inventory.noInventoryNote') }}</strong>
-            </div>
+            <div><span>{{ t('inventory.checkedAt') }}</span><strong>{{ resolutionItem.checked_by_name || '—' }} · {{ formatDateTime(resolutionItem.checked_at) }}</strong></div>
           </div>
         </section>
+        <InventoryComparison :item="resolutionItem" />
+        <el-alert v-if="resolutionItem.current_location?.changed" type="warning" :closable="false" :title="t('inventory.reviewLedgerChanged')" />
+        <el-alert v-if="resolutionItem.actual_location_snapshot?.source === 'legacy_backfill'" type="info" :closable="false" :title="t('inventory.legacyLocationExplanation')" />
 
-        <template v-if="resolutionReadOnly">
+        <template v-if="resolutionItem.resolution_status === 'resolved'">
           <section class="inventory-resolution-section inventory-resolution-readonly">
             <div class="inventory-resolution-section__title">{{ t('inventory.processResult') }}</div>
             <div class="inventory-resolution-readonly__grid">
@@ -1087,7 +1108,7 @@ onMounted(async () => {
         </template>
 
         <el-form
-          v-else
+          v-else-if="!resolutionReadOnly"
           ref="resolutionFormRef"
           :model="resolutionForm"
           :rules="resolutionRules"
@@ -1096,25 +1117,29 @@ onMounted(async () => {
           class="inventory-resolution-form"
         >
           <el-form-item :label="t('inventory.processMethod')" prop="action" :error="resolutionFormErrors.action">
-            <el-select v-model="resolutionForm.action" :placeholder="t('validation.selectRequired', { field: t('inventory.processMethod') })" :disabled="resolutionSaving">
+            <el-select v-model="resolutionForm.action" :placeholder="t('validation.selectRequired', { field: t('inventory.processMethod') })" :disabled="resolutionSaving || resolutionNeedsReload">
               <el-option v-for="option in resolutionOptions" :key="option.value" :label="option.label" :value="option.value" />
             </el-select>
           </el-form-item>
           <el-alert v-if="resolutionLocationIncomplete" type="info" :closable="false" :title="t('inventory.resolutionMissingLocation')" />
           <el-alert v-if="resolutionUpdateSelected" type="warning" :closable="false" :title="t('inventory.resolutionUpdateWarning')">
             <div class="inventory-resolution-change">
-              <div><span>{{ t('inventory.updateBefore') }}</span><strong>{{ locationText(resolutionItem) }}</strong></div>
+              <div><span>{{ t('inventory.updateBefore') }}</span><strong>{{ inventoryLocationText(resolutionItem, 'current') }}</strong></div>
               <div><span>{{ t('inventory.updateAfter') }}</span><strong>{{ locationText(resolutionItem, true) }}</strong></div>
             </div>
           </el-alert>
+          <el-alert v-else-if="resolutionForm.action" type="info" :closable="false" :title="t(resolutionForm.action === 'confirm_missing' ? 'inventory.confirmMissingNotice' : resolutionForm.action === 'ignore' ? 'inventory.ignoreNotice' : 'inventory.keepAssetNotice')" />
           <el-form-item :label="t('inventory.processNote')" prop="note" :error="resolutionFormErrors.note">
             <el-input v-model="resolutionForm.note" type="textarea" :rows="3" :disabled="resolutionSaving" :placeholder="t('inventory.processNotePlaceholder')" />
           </el-form-item>
         </el-form>
+        <el-alert v-else type="info" :closable="false" :title="t('inventory.fieldReadOnly')" />
       </template>
       <template #footer>
-        <el-button :disabled="resolutionSaving" @click="closeResolutionDialog">{{ resolutionReadOnly ? t('common.close') : t('common.cancel') }}</el-button>
-        <el-button v-if="!resolutionReadOnly" type="primary" :loading="resolutionSaving" :disabled="!resolutionCanSave" @click="submitResolution">{{ t('inventory.confirmProcess') }}</el-button>
+        <el-button :disabled="resolutionSaving" @click="cancelResolution">{{ resolutionReadOnly ? t('common.close') : t('common.cancel') }}</el-button>
+        <el-button v-if="resolutionNeedsReload" :loading="resolutionLoading" :disabled="resolutionSaving" @click="reloadResolution">{{ t('inventory.reviewReload') }}</el-button>
+        <el-button v-if="!resolutionReadOnly" :loading="resolutionSaving" :disabled="!resolutionCanSave" @click="submitResolution()">{{ t('inventory.confirmProcess') }}</el-button>
+        <el-button v-if="!resolutionReadOnly && fieldMode" type="primary" :loading="resolutionSaving" :disabled="!resolutionCanSave" @click="submitResolution(true)">{{ t('inventory.reviewProcessNext') }}</el-button>
       </template>
     </ActionDialogShell>
 

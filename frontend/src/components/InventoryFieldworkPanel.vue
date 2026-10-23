@@ -40,7 +40,7 @@ const {
   navigationError,
   notice,
   busy,
-  onlyPending,
+  queueFilter,
   rangeSummary,
   centers,
   rooms,
@@ -84,6 +84,9 @@ async function confirmAndNext() {
   await focusSelected();
 }
 watch(props.inventory.showItemDialog, (visible) => {
+  if (!visible) void focusSelected();
+});
+watch(props.inventory.showResolutionDialog, (visible) => {
   if (!visible) void focusSelected();
 });
 async function search(event?: Event) {
@@ -160,6 +163,7 @@ async function handleKeydown(event: KeyboardEvent) {
   }
 }
 const panel = ref<HTMLElement | null>(null);
+defineExpose({ focusSelected });
 watch(
   () => selectedItem.value?.id,
   async () => {
@@ -328,13 +332,44 @@ watch(
             }}</el-button></template
           >
         </el-input>
-        <el-checkbox
-          v-model="onlyPending"
+        <el-select
+          v-model="queueFilter"
+          class="inventory-fieldwork__queue-filter"
+          :aria-label="t('inventory.reviewQueueFilter')"
           :disabled="busy"
           @change="fieldwork.applyFilters()"
-          >{{ t("inventory.fieldOnlyPending") }}</el-checkbox
         >
+          <el-option value="all" :label="t('inventory.reviewAllDevices')" />
+          <el-option
+            value="unchecked"
+            :label="t('inventory.fieldOnlyPending')"
+          />
+          <el-option value="pending" :label="t('inventory.reviewPending')" />
+          <el-option value="resolved" :label="t('inventory.reviewResolved')" />
+          <el-option
+            v-for="option in inventory.itemStatusOptions.value.filter(
+              (row) => row.value !== 'pending',
+            )"
+            :key="option.value"
+            :value="`status:${option.value}`"
+            :label="option.label"
+          />
+        </el-select>
       </div>
+      <small
+        v-if="
+          inventory.itemResolutionStatus.value &&
+          inventory.itemStatus.value &&
+          inventory.itemStatus.value !== 'pending'
+        "
+        >{{ t("inventory.result") }}:
+        {{
+          businessOptionLabel(
+            INVENTORY_ITEM_STATUS_OPTIONS,
+            inventory.itemStatus.value,
+          )
+        }}</small
+      >
       <el-alert
         v-if="navigationError || itemListError"
         :title="navigationError || itemListError"
@@ -384,6 +419,9 @@ watch(
                     )
                   "
                 />
+                <small v-if="inventory.isExceptionStatus(item.status)">{{
+                  inventory.resolutionStatusLabel(item.resolution_status)
+                }}</small>
                 <span>{{ item.asset_name }}</span>
                 <small>{{ item.serial_number || "—" }}</small>
               </button>
@@ -463,6 +501,45 @@ watch(
               {{ selectedItem.notes }}
             </p>
             <div
+              v-if="inventory.isExceptionStatus(selectedItem.status)"
+              class="inventory-fieldwork__review"
+            >
+              <StatusTag
+                :tone="
+                  inventory.resolutionStatusTagType(
+                    selectedItem.resolution_status,
+                  )
+                "
+                :label="
+                  inventory.resolutionStatusLabel(
+                    selectedItem.resolution_status,
+                  )
+                "
+              />
+              <el-button
+                :disabled="
+                  busy ||
+                  Boolean(summaryError || navigationError || itemListError)
+                "
+                type="warning"
+                plain
+                @click="inventory.openResolution(selectedItem)"
+                >{{
+                  selectedItem.resolution_status === "resolved"
+                    ? t("inventory.viewResolution")
+                    : t(
+                        inventory.canResolveInventoryAnomaly(selectedItem)
+                          ? "inventory.reviewException"
+                          : "inventory.reviewComparison",
+                      )
+                }}</el-button
+              >
+              <small v-if="selectedItem.resolved_at"
+                >{{ selectedItem.resolved_by_name || "—" }} ·
+                {{ inventory.formatDateTime(selectedItem.resolved_at) }}</small
+              >
+            </div>
+            <div
               v-if="inventory.canRecordInventory(selectedItem)"
               class="inventory-fieldwork__actions"
             >
@@ -493,7 +570,7 @@ watch(
               >
             </div>
             <el-alert
-              v-else
+              v-else-if="!inventory.canResolveInventoryAnomaly(selectedItem)"
               type="info"
               :closable="false"
               :title="t('inventory.fieldReadOnly')"
@@ -596,6 +673,20 @@ watch(
 .inventory-fieldwork__search .el-input {
   flex: 1;
   min-width: 0;
+}
+.inventory-fieldwork__queue-filter {
+  width: 180px;
+  flex-shrink: 0;
+}
+.inventory-fieldwork__review {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 12px;
+  margin-bottom: 16px;
+}
+.inventory-fieldwork__review small {
+  color: var(--el-text-color-secondary);
 }
 .inventory-fieldwork__queue header > span {
   white-space: nowrap;

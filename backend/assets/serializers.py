@@ -2693,6 +2693,7 @@ class InventoryScopePreviewSerializer(serializers.Serializer):
 class InventoryResolutionSerializer(serializers.Serializer):
     action = serializers.ChoiceField(choices=tuple(INVENTORY_RESOLUTION_ACTION_LABELS.items()))
     note = serializers.CharField(required=False, allow_blank=True, trim_whitespace=True)
+    asset_revision = serializers.IntegerField(min_value=1, required=False, help_text="更新资产台账时必填：本次核对读取的 asset_revision。")
 
     def validate(self, attrs):
         validate_inventory_resolution_request(
@@ -2775,7 +2776,15 @@ class InventoryCurrentLocationSerializer(serializers.Serializer):
     changed = serializers.BooleanField()
 
 
+class InventoryCurrentAssetSerializer(serializers.Serializer):
+    asset_no = serializers.CharField()
+    name = serializers.CharField()
+    serial_number = serializers.CharField(allow_blank=True, allow_null=True)
+
+
 class InventoryItemSerializer(ResourceRevisionSerializerMixin, serializers.ModelSerializer):
+    asset_revision = serializers.IntegerField(source="asset.revision", read_only=True)
+    current_asset = InventoryCurrentAssetSerializer(source="asset", read_only=True)
     current_location = serializers.SerializerMethodField()
     actual_data_center_id = serializers.PrimaryKeyRelatedField(source="actual_data_center_ref", queryset=DataCenter.objects.all(), required=False, allow_null=True)
     task_name = serializers.CharField(source="task.name", read_only=True)
@@ -2886,7 +2895,7 @@ class InventoryItemSerializer(ResourceRevisionSerializerMixin, serializers.Model
     class Meta:
         model = InventoryItem
         fields = [
-            "id", "task", "task_name", "asset", "asset_no", "asset_name", "device_type_name", "serial_number", "current_location",
+            "id", "task", "task_name", "asset", "asset_no", "asset_name", "device_type_name", "serial_number", "current_location", "asset_revision", "current_asset",
             "system_data_center", "system_data_center_id", "system_server_room", "system_rack_code", "system_start_u", "system_end_u",
             "status", "status_label", "checked_at", "checked_by", "checked_by_name",
             "actual_rack", "actual_data_center", "actual_server_room", "actual_rack_code",

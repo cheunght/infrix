@@ -15,7 +15,7 @@ from .organization_access import can
 from .enum_contracts import INVENTORY_EXCEPTION_STATUS_VALUES, INVENTORY_RESOLUTION_ACTION_VALUES
 from .audit import model_snapshot, write_audit_log
 from .inventory import get_inventory_scope_assets
-from .resource_revision import check_resource_revision
+from .resource_revision import check_resource_revision, check_revision, ResourceRevisionConflict
 from . import operation_limits
 
 
@@ -219,7 +219,7 @@ def validate_inventory_resolution_request(action, note="", *, bulk=False):
 
 
 @transaction.atomic
-def resolve_inventory_item(*, item_id, action, note, actor, request):
+def resolve_inventory_item(*, item_id, action, note, actor, request, asset_revision=None, expected_item_revision=None):
     """Resolve one inventory exception with the canonical row-level rules."""
     _require_inventory_manager(actor)
     validate_inventory_resolution_request(action, note)
@@ -239,6 +239,9 @@ def resolve_inventory_item(*, item_id, action, note, actor, request):
     task = InventoryTask.objects.select_for_update().get(pk=admission["task_id"])
     require_object(task, user=actor)
     item = InventoryItem.objects.select_for_update().get(pk=item_id)
+    check_revision(item.revision, str(expected_item_revision) if expected_item_revision is not None else request.headers.get("If-Match"))
+    if action == "update_asset":
+        check_revision(asset.revision, str(asset_revision) if asset_revision is not None else None)
     if any(admission[field] != getattr(item, field) for field in observation_fields):
         raise InventoryObservationConflict({"code": "inventory_observation_changed", "detail": "现场位置已被修改，请重新读取盘点结果后处理"})
     if item.status not in INVENTORY_EXCEPTION_STATUSES:
@@ -760,10 +763,11 @@ def submit_inventory_batch(*, item_ids, action, note="", actor, request):
             if action == "normal":
                 result = confirm_inventory_item_normal(item_id=item_id, actor=actor, request=request, require_pending=True, source="inventory_bulk_confirm_normal")
             else:
-                result = resolve_inventory_item(item_id=item_id, action=action, note=note, actor=actor, request=request)
+                result = resolve_inventory_item(item_id=item_id, action=action, note=note, actor=actor, request=request,
+                                                expected_item_revision=item.revision)
         except PermissionDenied:
             row = {"item_id":item_id,"asset_no":"","success":False,"reason":"盘点项不在完整任务写入范围内"}
-        except (DRFValidationError, InventoryObservationConflict) as exc:
+        except (DRFValidationError, InventoryObservationConflict, ResourceRevisionConflict) as exc:
             row = {"item_id":item_id,"asset_no":item.asset.asset_no,"success":False,"reason":_inventory_error_message(exc,"批量标记正常失败" if action == "normal" else "盘点异常处理失败")}
         except InventoryItem.DoesNotExist:
             row = {"item_id":item_id,"asset_no":item.asset.asset_no,"success":False,"reason":"盘点项不存在"}

@@ -22,6 +22,7 @@ import type {
   ServerRoom,
 } from "../types";
 import { parseAssetQrValue } from "../asset-qr";
+import { inventoryLocationText } from "../inventory-location";
 import type { InventoryContext } from "../page-context";
 import {
   clearFieldError,
@@ -67,6 +68,10 @@ export function useInventory(context: InventoryContext) {
   const itemSaving = ref(false);
   const scannedNormalSaving = ref(false);
   const resolutionSaving = ref(false);
+  const resolutionLoading = ref(false);
+  const resolutionNeedsReload = ref(false);
+  const resolutionTargetId = ref<number | null>(null);
+  let resolutionController: AbortController | null = null;
   const bulkResolutionSaving = ref(false);
   const bulkNormalSaving = ref(false);
   const taskDialogError = ref("");
@@ -267,16 +272,7 @@ export function useInventory(context: InventoryContext) {
     return value ? formatSystemDateTime(value) || "—" : "—";
   }
   function locationText(item: InventoryItem, actual = false) {
-    if (actual && item.actual_placement === "unlocated") return i18n.global.t("inventory.placementUnlocated");
-    if (actual && !item.actual_placement && !item.actual_rack) return i18n.global.t("inventory.placementUnknown");
-    const dc = actual ? item.actual_data_center : item.system_data_center;
-    const room = actual ? item.actual_server_room : item.system_server_room;
-    const rack = actual ? item.actual_rack_code : item.system_rack_code;
-    const start = actual ? item.actual_start_u : item.system_start_u;
-    const end = actual ? item.actual_end_u : item.system_end_u;
-    const location = [dc, room, rack].filter(Boolean).join(" / ");
-    const u = start != null ? `U${start}–U${end}` : i18n.global.t("inventory.unmounted");
-    return location ? `${location} · ${u}` : u;
+    return inventoryLocationText(item, actual ? "observed" : "snapshot");
   }
   function statusTagType(status: string): StatusTone {
     return businessOptionTone(INVENTORY_ITEM_STATUS_OPTIONS, status, "info");
@@ -1174,24 +1170,55 @@ export function useInventory(context: InventoryContext) {
     await initializeItem(item);
   }
 
-  function openResolution(item: InventoryItem) {
+  async function openResolution(item: InventoryItem) {
     if (!isExceptionStatus(item.status)) return;
     if (activeTask.value?.id !== item.task) return;
-    if (item.resolution_status === "pending" && !canResolveInventoryAnomaly(item)) return;
-    if (item.resolution_status === "resolved" && !context.can("inventory.view")) return;
+    if (!context.can("inventory.view") || resolutionSaving.value) return;
     if (!["pending", "resolved"].includes(item.resolution_status)) return;
-    resolutionItem.value = item;
-    resolutionForm.value = {
-      action: item.resolution_action || "",
-      note: item.resolution_note || "",
-    };
+    resolutionTargetId.value = item.id;
+    resolutionItem.value = null;
+    resolutionForm.value = { action: "", note: "" };
     resolutionDialogError.value = "";
     resolutionFormErrors.value = {};
     showResolutionDialog.value = true;
+    await reloadResolution();
+  }
+
+  async function reloadResolution() {
+    const id = resolutionTargetId.value;
+    const taskId = activeTask.value?.id;
+    if (!id || !taskId || resolutionSaving.value) return;
+    resolutionController?.abort();
+    const controller = new AbortController();
+    resolutionController = controller;
+    resolutionLoading.value = true;
+    resolutionNeedsReload.value = true;
+    resolutionItem.value = null;
+    resolutionForm.value.action = "";
+    resolutionDialogError.value = "";
+    try {
+      const latest = await context.request<InventoryItem>(`/inventory-items/${id}/`, { signal: controller.signal });
+      if (controller.signal.aborted || activeTask.value?.id !== taskId || !showResolutionDialog.value) return;
+      if (latest.task !== taskId || !isExceptionStatus(latest.status)) {
+        resolutionDialogError.value = i18n.global.t("inventory.reviewChanged");
+        return;
+      }
+      resolutionItem.value = latest;
+      resolutionNeedsReload.value = false;
+    } catch (error) {
+      if (!controller.signal.aborted) {
+        resolutionDialogError.value = errorMessage(error, i18n.global.t("inventory.fieldLoadFailed"));
+      }
+    } finally {
+      if (resolutionController === controller) resolutionLoading.value = false;
+    }
   }
 
   function closeResolutionDialog() {
     if (resolutionSaving.value) return;
+    resolutionController?.abort();
+    resolutionLoading.value = false;
+    resolutionTargetId.value = null;
     showResolutionDialog.value = false;
     resolutionDialogError.value = "";
     resolutionFormErrors.value = {};
@@ -1202,7 +1229,7 @@ export function useInventory(context: InventoryContext) {
   async function saveResolution() {
     const item = resolutionItem.value;
     const action = resolutionForm.value.action;
-    if (!item || resolutionSaving.value) return false;
+    if (!item || resolutionSaving.value || resolutionLoading.value || resolutionNeedsReload.value) return false;
     resolutionDialogError.value = "";
     resolutionFormErrors.value = {};
     if (!context.can("inventory.manage")) {
@@ -1229,8 +1256,10 @@ export function useInventory(context: InventoryContext) {
     try {
       await context.request<InventoryItem>(`/inventory-items/${item.id}/resolve/`, {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ action, note: resolutionForm.value.note }),
+        headers: revisionHeaders(item),
+        body: JSON.stringify({ action, note: resolutionForm.value.note,
+          ...(action === "update_asset" ? { asset_revision: item.asset_revision } : {}),
+        }),
       });
       showResolutionDialog.value = false;
       resolutionItem.value = null;
@@ -1258,6 +1287,9 @@ export function useInventory(context: InventoryContext) {
       return true;
     } catch (error) {
       const normalized = normalizeApiError(error);
+      if (normalized.status === 409 || normalized.status === 428 || (normalized.status || 0) >= 500 || normalized.kind === "network") {
+        resolutionNeedsReload.value = true;
+      }
       const errorCode = normalized.code;
       if (errorCode === "inventory_item_already_resolved") {
         const [itemsLoaded, taskLoaded] = await Promise.all([
@@ -1735,6 +1767,14 @@ export function useInventory(context: InventoryContext) {
   );
 
   onBeforeUnmount(clearScopePreview);
+  watch(() => activeTask.value?.id, () => {
+    resolutionController?.abort();
+    resolutionLoading.value = false;
+    showResolutionDialog.value = false;
+    resolutionItem.value = null;
+    resolutionTargetId.value = null;
+  });
+  onBeforeUnmount(() => resolutionController?.abort());
 
   const {taskCompleting, taskReopening, completeTask, reopenTask} = useInventoryTaskActions({
     request: context.request, can: context.can, activeTask, itemListError, taskListError,
@@ -1760,6 +1800,8 @@ export function useInventory(context: InventoryContext) {
     itemSaving,
     scannedNormalSaving,
     resolutionSaving,
+    resolutionLoading,
+    resolutionNeedsReload,
     bulkResolutionSaving,
     bulkNormalSaving,
     taskDialogError,
@@ -1870,6 +1912,7 @@ export function useInventory(context: InventoryContext) {
     exportTask,
     openItem,
     openResolution,
+    reloadResolution,
     closeResolutionDialog,
     saveResolution,
     openBulkResolution,

@@ -898,6 +898,8 @@ export type InventoryBulkNormalResponse = {
   results: InventoryBulkNormalResult[];
 };
 export type InventoryItem = {
+  asset_revision?: number;
+  current_asset?: { asset_no: string; name: string; serial_number: string | null };
   current_location?: {
     data_center: string;
     server_room: string;

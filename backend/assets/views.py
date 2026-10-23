@@ -2719,6 +2719,8 @@ class InventoryItemViewSet(ResourceRevisionViewSetMixin, ScopedModelViewSet):
     @extend_schema(
         request=InventoryResolutionSerializer,
         responses=InventoryItemSerializer,
+        parameters=[OpenApiParameter("If-Match", OpenApiTypes.STR, location=OpenApiParameter.HEADER, required=True,
+            description="本次核对读取的盘点项 revision；更新资产台账还须提交 asset_revision。缺少 428，过期 409。")],
         description="处理盘点异常；盘点结果本身在任务完成后仍保持锁定。",
     )
     @action(detail=True, methods=["post"], url_path="resolve")
@@ -2736,6 +2738,7 @@ class InventoryItemViewSet(ResourceRevisionViewSetMixin, ScopedModelViewSet):
             note=note,
             actor=request.user,
             request=request,
+            asset_revision=request_serializer.validated_data.get("asset_revision"),
         )
         return Response(InventoryItemSerializer(resolved_item).data)
 

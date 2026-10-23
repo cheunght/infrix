@@ -47,12 +47,37 @@ export function useInventoryFieldwork(
       navigationLoading.value ||
       inventory.itemListLoading.value ||
       inventory.itemSaving.value ||
+      inventory.resolutionSaving.value ||
+      inventory.resolutionLoading.value ||
       inventory.scannedNormalSaving.value,
   );
   const onlyPending = computed({
     get: () => itemStatus.value === "pending",
     set: (value: boolean) => {
       itemStatus.value = value ? "pending" : "";
+      itemResolutionStatus.value = "";
+    },
+  });
+  const queueFilter = computed({
+    get: () =>
+      itemResolutionStatus.value ||
+      (itemStatus.value === "pending"
+        ? "unchecked"
+        : itemStatus.value
+          ? `status:${itemStatus.value}`
+          : "all"),
+    set: (value: string) => {
+      const status = value.startsWith("status:") ? value.slice(7) : "";
+      itemStatus.value =
+        value === "unchecked"
+          ? "pending"
+          : inventory.itemStatusOptions.value.some(
+                (option) => option.value === status,
+              )
+            ? (status as InventoryStatus)
+            : "";
+      itemResolutionStatus.value =
+        value === "pending" || value === "resolved" ? value : "";
     },
   });
 
@@ -459,6 +484,7 @@ export function useInventoryFieldwork(
     notice,
     busy,
     onlyPending,
+    queueFilter,
     rangeSummary,
     centers,
     rooms,
