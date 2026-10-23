@@ -565,31 +565,17 @@ onMounted(async () => {
         </PageToolbar>
       </template>
       <PageContent surface>
-        <ResourceState
-          :loading="taskListLoading && !tasks.length"
-          :error="taskListError && !tasks.length ? taskListError : ''"
-          :empty="!taskListLoading && !taskListError && !tasks.length"
-          :empty-text="taskHasFilters ? t('inventory.noMatchingTasks') : t('inventory.noTasks')"
-          @retry="() => loadTasks()"
-        >
-          <template #empty>
-            <el-empty :image-size="56" :description="taskHasFilters ? t('inventory.noMatchingTasks') : t('inventory.noTasks')">
-              <el-button v-if="taskHasFilters" link type="primary" @click="resetTaskFilters">{{ t('common.clearFilters') }}</el-button>
-            </el-empty>
-          </template>
-          <template #error="{ error }">
-            <el-alert :title="t('inventory.taskLoadFailed')" :description="error" type="error" show-icon :closable="false" />
-            <el-button link type="primary" @click="loadTasks">{{ t('inventory.retryTasks') }}</el-button>
-          </template>
           <el-alert v-if="taskListError" :title="taskListError" type="error" show-icon :closable="false" class="inventory-alert" />
           <div v-if="taskListError" class="inventory-retry-row">
             <el-button link type="primary" @click="() => loadTasks()">{{ t('inventory.retryTasks') }}</el-button>
           </div>
-          <el-table v-loading="taskListLoading" :data="tasks" table-layout="fixed">
+          <el-table v-loading="taskListLoading" :aria-busy="taskListLoading" :data="tasks" table-layout="fixed">
             <template #empty>
-              <el-empty :image-size="56" :description="taskHasFilters ? t('inventory.noMatchingTasks') : t('inventory.noTasks')">
+              <span v-if="taskListLoading">{{ t('common.loadingData') }}</span>
+              <el-empty v-else-if="!taskListError" :image-size="56" :description="taskHasFilters ? t('inventory.noMatchingTasks') : t('inventory.noTasks')">
                 <el-button v-if="taskHasFilters" link type="primary" @click="resetTaskFilters">{{ t('common.clearFilters') }}</el-button>
               </el-empty>
+              <span v-else />
             </template>
             <el-table-column prop="name" :label="t('inventory.taskName')" min-width="240">
               <template #default="{ row }">
@@ -648,7 +634,6 @@ onMounted(async () => {
             </el-table-column>
           </el-table>
           <PagedTable v-model:current-page="taskPage" v-model:page-size="taskPageSize" :total="taskCount" :page-sizes="[20, 50, 100]" @update:current-page="changeTaskPage" @update:page-size="changeTaskPageSize" />
-        </ResourceState>
       </PageContent>
     </PageContainer>
 
