@@ -2986,11 +2986,12 @@ class RackSerializer(ResourceRevisionSerializerMixin, serializers.ModelSerialize
     reservations = serializers.SerializerMethodField()
     reserved_u = serializers.SerializerMethodField()
 
+    @extend_schema_field(RackUnitReservationSerializer(many=True))
     def get_reservations(self, obj):
         from .physical_location import active_rack_reservations
         return RackUnitReservationSerializer(active_rack_reservations(obj), many=True).data
 
-    def get_reserved_u(self, obj):
+    def get_reserved_u(self, obj) -> int | None:
         from .physical_location import active_rack_reservations
         return sum(row.units for row in active_rack_reservations(obj))
 
