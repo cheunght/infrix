@@ -1,6 +1,7 @@
 from .serializers import AssetPlacementSerializer, RackPlacementOptionsSerializer, RackCapacityPlanQuerySerializer, RackUnitReservationSerializer, RackUnitReservationInputSerializer
 from .asset_writes import change_asset_placement
 from .physical_location import rack_position_ranges, active_rack_reservations, active_reservations_prefetch
+from .inventory import InventoryLocationQuerySerializer, filter_inventory_locations, inventory_location_summary
 from .identity_writes import update_own_profile, change_own_password
 from .reference_writes import SharedReferenceWriteMixin, edit_fieldset_items
 from .identity_writes import (_user_audit_snapshot, _security_profile, _locked_security_profile, edit_account, reset_account_password, delete_account, batch_account_status, account_scope_snapshot, replace_account_scope)
@@ -2443,15 +2444,22 @@ class RepairRecordViewSet(AuditedModelViewSetMixin, ScopedModelViewSet):
         return Response(RepairRecordSerializer(repair).data)
 
 
-def _inventory_items_queryset(task, request):
+def _inventory_items_queryset(task, request, *, filtered=True):
+    get_object_or_404(scoped(InventoryTask.objects.all(), user=request.user), pk=task.pk)
     queryset = InventoryItem.objects.filter(task=task).select_related(
+        "task",
         "asset",
+        "asset__asset_data_center",
+        "asset__rack_allocation__rack__room__data_center",
         "asset__asset_model__device_type",
         "asset__standalone_device_type",
         "checked_by",
         "resolved_by",
         "actual_rack__room__data_center",
     ).order_by("asset__asset_no", "id")
+    if not filtered:
+        return queryset
+    queryset = filter_inventory_locations(queryset, request.query_params)
     search = request.query_params.get("search", "").strip()
     if search:
         queryset = queryset.filter(
@@ -2585,6 +2593,7 @@ class InventoryTaskViewSet(AuditedModelViewSetMixin, ScopedModelViewSet):
         }
         return Response(InventoryScopePreviewSerializer(payload).data)
 
+    @extend_schema(parameters=[InventoryLocationQuerySerializer], responses=InventoryItemPageSerializer)
     @action(detail=True, methods=["get"], url_path="items")
     def items(self, request, pk=None):
         # ``get_object`` applies the list search backends to query parameters.
@@ -2598,6 +2607,12 @@ class InventoryTaskViewSet(AuditedModelViewSetMixin, ScopedModelViewSet):
         if page is not None:
             return self.get_paginated_response(serializer.data)
         return Response(serializer.data)
+
+    @extend_schema(responses=OpenApiTypes.OBJECT, description="按任务创建时的位置快照汇总全部盘点项，不受明细筛选影响。")
+    @action(detail=True, methods=["get"], url_path="location-summary")
+    def location_summary(self, request, pk=None):
+        task = get_object_or_404(InventoryTask, pk=pk)
+        return Response(inventory_location_summary(_inventory_items_queryset(task, request, filtered=False)))
 
     @action(detail=True, methods=["post"], url_path="complete")
     @transaction.atomic
@@ -2613,6 +2628,7 @@ class InventoryTaskViewSet(AuditedModelViewSetMixin, ScopedModelViewSet):
 
     @extend_schema(
         parameters=[
+            InventoryLocationQuerySerializer,
             OpenApiParameter(name="search", type=OpenApiTypes.STR, required=False),
             OpenApiParameter(name="status", type=OpenApiTypes.STR, required=False, enum=INVENTORY_ITEM_STATUS_VALUES),
             OpenApiParameter(name="resolution_status", type=OpenApiTypes.STR, required=False, enum=INVENTORY_RESOLUTION_STATUS_VALUES),
@@ -2678,6 +2694,8 @@ class InventoryItemViewSet(ResourceRevisionViewSetMixin, ScopedModelViewSet):
     queryset = InventoryItem.objects.select_related(
         "task",
         "asset",
+        "asset__asset_data_center",
+        "asset__rack_allocation__rack__room__data_center",
         "asset__asset_model__device_type",
         "asset__standalone_device_type",
         "checked_by",

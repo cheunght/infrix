@@ -898,6 +898,14 @@ export type InventoryBulkNormalResponse = {
   results: InventoryBulkNormalResult[];
 };
 export type InventoryItem = {
+  current_location?: {
+    data_center: string;
+    server_room: string;
+    rack_code: string;
+    start_u: number | null;
+    end_u: number | null;
+    changed: boolean;
+  };
   revision?: number;
   id: number;
   task: number;
@@ -950,6 +958,21 @@ export type InventorySummary = {
   resolution_pending: number;
   resolution_resolved: number;
   completion_rate: number;
+};
+export type InventoryLocationSummary = {
+  total: number;
+  locations: {
+    data_center_id: number | null;
+    data_center: string | null;
+    server_room_id: number | null;
+    server_room: string | null;
+    rack_id: number | null;
+    rack_code: string | null;
+    total: number;
+    checked: number;
+    pending: number;
+    resolution_pending: number;
+  }[];
 };
 export type InventoryTaskScope = "all_assets" | "data_center" | "server_room";
 export type InventoryTask = {

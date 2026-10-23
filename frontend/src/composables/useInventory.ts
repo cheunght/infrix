@@ -42,6 +42,7 @@ import {
 
 type AuxKey = "rooms" | "inspectors" | "racks";
 type BatchSelectionMode = "inventory" | "resolution";
+export const INVENTORY_FIELD_QUERY_KEYS = ["mode", "inv_center", "inv_room", "inv_rack", "inv_placement", "inv_status", "inv_resolution", "inv_search", "inv_page", "inv_size", "inv_item"];
 
 const INVENTORY_TASK_FORM_FIELDS = [
   "name", "data_center", "server_room", "inspector", "start_at", "end_at", "notes",
@@ -95,6 +96,10 @@ export function useInventory(context: InventoryContext) {
   const itemSearch = ref("");
   const itemStatus = ref<InventoryStatus | "">("");
   const itemResolutionStatus = ref<InventoryResolutionStatus | "">("");
+  const itemDataCenter = ref("");
+  const itemRoom = ref("");
+  const itemRack = ref("");
+  const itemPlacement = ref<"" | "mounted" | "unmounted" | "unlocated">("");
   const scannedItemId = ref<number | null>(null);
   const scanError = ref("");
   const selectedBatchItems = ref<InventoryItem[]>([]);
@@ -247,7 +252,8 @@ export function useInventory(context: InventoryContext) {
     Boolean(taskSearch.value.trim() || taskStatus.value || taskDataCenter.value || taskRoom.value),
   );
   const itemHasFilters = computed(() => Boolean(
-    itemSearch.value.trim() || itemStatus.value || itemResolutionStatus.value,
+    itemSearch.value.trim() || itemStatus.value || itemResolutionStatus.value ||
+    itemDataCenter.value || itemRoom.value || itemRack.value || itemPlacement.value,
   ));
   const taskAuxError = computed(() => auxErrors.value.rooms || auxErrors.value.inspectors || "");
   const itemAuxError = computed(() => auxErrors.value.racks || "");
@@ -638,6 +644,10 @@ export function useInventory(context: InventoryContext) {
     if (itemSearch.value.trim()) params.set("search", itemSearch.value.trim());
     if (itemStatus.value) params.set("status", itemStatus.value);
     if (itemResolutionStatus.value) params.set("resolution_status", itemResolutionStatus.value);
+    if (itemDataCenter.value) params.set("data_center", itemDataCenter.value);
+    if (itemRoom.value) params.set("server_room", itemRoom.value);
+    if (itemRack.value) params.set("rack", itemRack.value);
+    if (itemPlacement.value) params.set("placement", itemPlacement.value);
     return params;
   }
 
@@ -732,6 +742,11 @@ export function useInventory(context: InventoryContext) {
     taskDetailController = controller;
     taskDetailLoading.value = true;
     taskDetailError.value = "";
+    if (activeTask.value?.id !== task.id) {
+      activeTask.value = null;
+      items.value = [];
+      itemCount.value = 0;
+    }
     try {
       const result = await context.request<InventoryTask>(
         `/inventory-tasks/${task.id}/`,
@@ -744,6 +759,10 @@ export function useInventory(context: InventoryContext) {
       itemSearch.value = "";
       itemStatus.value = "";
       itemResolutionStatus.value = "";
+      itemDataCenter.value = "";
+      itemRoom.value = "";
+      itemRack.value = "";
+      itemPlacement.value = "";
       await loadItems();
       return true;
     } catch (error) {
@@ -752,7 +771,7 @@ export function useInventory(context: InventoryContext) {
         taskDetailError.value = message;
         if (context.inventoryTaskId.value === task.id) {
           taskListError.value = message;
-          context.clearRouteQuery?.(["task"]);
+          context.clearRouteQuery?.(["task", ...INVENTORY_FIELD_QUERY_KEYS]);
         }
       }
       return false;
@@ -776,7 +795,7 @@ export function useInventory(context: InventoryContext) {
     itemCount.value = 0;
     itemListError.value = "";
     taskDetailError.value = "";
-    context.clearRouteQuery?.(["task"]);
+    context.clearRouteQuery?.(["task", ...INVENTORY_FIELD_QUERY_KEYS]);
   }
 
   async function openTaskById(taskId: number): Promise<boolean> {
@@ -1683,6 +1702,10 @@ export function useInventory(context: InventoryContext) {
     itemSearch.value = "";
     itemStatus.value = "";
     itemResolutionStatus.value = "";
+    itemDataCenter.value = "";
+    itemRoom.value = "";
+    itemRack.value = "";
+    itemPlacement.value = "";
     itemPage.value = 1;
     void loadItems();
   }
@@ -1719,6 +1742,7 @@ export function useInventory(context: InventoryContext) {
   });
 
   return {
+    itemDataCenter, itemRoom, itemRack, itemPlacement,
     taskListLoading,
     taskListError,
     itemListLoading,

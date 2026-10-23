@@ -150,6 +150,7 @@ const pageComponents: Partial<Record<Page, () => Promise<Component>>> = {
     "ElTooltip",
   ]),
   inventory: lazyPage(() => import("./components/InventoryPage.vue"), [
+    "ElCheckbox",
     "ElCard",
     "ElDatePicker",
     "ElDialog",

@@ -2766,7 +2766,17 @@ class InventoryBulkNormalResponseSerializer(serializers.Serializer):
     results = InventoryBulkNormalResultSerializer(many=True)
 
 
+class InventoryCurrentLocationSerializer(serializers.Serializer):
+    data_center = serializers.CharField(allow_blank=True)
+    server_room = serializers.CharField(allow_blank=True)
+    rack_code = serializers.CharField(allow_blank=True)
+    start_u = serializers.IntegerField(allow_null=True)
+    end_u = serializers.IntegerField(allow_null=True)
+    changed = serializers.BooleanField()
+
+
 class InventoryItemSerializer(ResourceRevisionSerializerMixin, serializers.ModelSerializer):
+    current_location = serializers.SerializerMethodField()
     actual_data_center_id = serializers.PrimaryKeyRelatedField(source="actual_data_center_ref", queryset=DataCenter.objects.all(), required=False, allow_null=True)
     task_name = serializers.CharField(source="task.name", read_only=True)
     asset_no = serializers.SerializerMethodField()
@@ -2787,6 +2797,28 @@ class InventoryItemSerializer(ResourceRevisionSerializerMixin, serializers.Model
     resolution_status_label = serializers.SerializerMethodField()
     resolution_action_label = serializers.SerializerMethodField()
     resolved_by_name = serializers.SerializerMethodField()
+
+    @extend_schema_field(InventoryCurrentLocationSerializer)
+    def get_current_location(self, obj):
+        asset = obj.asset
+        allocation = getattr(asset, "rack_allocation", None)
+        rack = allocation.rack if allocation else None
+        center = rack.room.data_center if rack else asset.asset_data_center
+        snapshot = obj.system_snapshot or {}
+        return {
+            "data_center": center.name if center else "",
+            "server_room": rack.room.name if rack else "",
+            "rack_code": rack.code if rack else "",
+            "start_u": allocation.start_u if allocation else None,
+            "end_u": allocation.end_u if allocation else None,
+            "changed": any(snapshot.get(key) != value for key, value in {
+                "data_center_id": center.pk if center else None,
+                "server_room_id": rack.room_id if rack else None,
+                "rack_id": rack.pk if rack else None,
+                "start_u": allocation.start_u if allocation else None,
+                "end_u": allocation.end_u if allocation else None,
+            }.items()),
+        }
 
     def get_asset_no(self, obj) -> str:
         return self._snapshot(obj).get("asset_no", obj.asset.asset_no)
@@ -2854,7 +2886,7 @@ class InventoryItemSerializer(ResourceRevisionSerializerMixin, serializers.Model
     class Meta:
         model = InventoryItem
         fields = [
-            "id", "task", "task_name", "asset", "asset_no", "asset_name", "device_type_name", "serial_number",
+            "id", "task", "task_name", "asset", "asset_no", "asset_name", "device_type_name", "serial_number", "current_location",
             "system_data_center", "system_data_center_id", "system_server_room", "system_rack_code", "system_start_u", "system_end_u",
             "status", "status_label", "checked_at", "checked_by", "checked_by_name",
             "actual_rack", "actual_data_center", "actual_server_room", "actual_rack_code",

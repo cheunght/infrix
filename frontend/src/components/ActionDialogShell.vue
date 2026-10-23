@@ -17,6 +17,7 @@ const props = withDefaults(defineProps<{
   showClose?: boolean;
   closeDisabled?: boolean;
   destroyOnClose?: boolean;
+  confirmClose?: () => boolean | Promise<boolean>;
 }>(), {
   description: "",
   size: "medium",
@@ -51,8 +52,8 @@ function canClose() {
   return !props.closeDisabled && !busy.value;
 }
 
-function beforeClose(done: () => void) {
-  if (canClose()) done();
+async function beforeClose(done: () => void) {
+  if (canClose() && (!props.confirmClose || await props.confirmClose())) done();
 }
 
 function handleUpdate(value: boolean) {

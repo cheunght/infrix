@@ -1923,11 +1923,12 @@ watch(
       && previousRoute?.name === "racks-view"
       && rackViewQueryKey({ ...route.query, rack: undefined })
         === rackViewQueryKey({ ...previousRoute.query, rack: undefined });
+    const inventoryPositionOnly = route.name === "inventory" && previousRoute?.name === "inventory";
     const queryNormalized = syncRouteState();
-    if (!rackSelectionOnly) closeTransientUi();
+    if (!rackSelectionOnly && !inventoryPositionOnly) closeTransientUi();
     if (!authenticated.value || !ensureRouteAccess()) return;
     if (!sidebarCollapsed.value) openActiveSidebarSubmenu();
-    if (queryNormalized || rackSelectionOnly) return;
+    if (queryNormalized || rackSelectionOnly || inventoryPositionOnly) return;
     void load();
     resetMainScroll();
   },

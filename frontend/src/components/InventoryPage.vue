@@ -1,6 +1,9 @@
 <script setup lang="ts">
-import { computed, nextTick, onMounted, reactive, ref, watch } from "vue";
+import { computed, nextTick, onBeforeUnmount, onMounted, reactive, ref, watch } from "vue";
 import { useI18n } from "vue-i18n";
+import { onBeforeRouteLeave, onBeforeRouteUpdate, useRoute } from "vue-router";
+import InventoryFieldworkPanel from "./InventoryFieldworkPanel.vue";
+import { useInventoryFieldwork } from "../composables/useInventoryFieldwork";
 import {
   ArrowDown,
   CircleCheck,
@@ -100,6 +103,9 @@ function selectedOption<T extends Record<string, unknown>>(
   return row ? mapper(row) : null;
 }
 
+const inventory = useInventory(context);
+const fieldwork = useInventoryFieldwork(context, inventory, useRoute());
+const { fieldMode } = fieldwork;
 const {
   taskListLoading, taskListError, itemListLoading, itemListError, taskDetailLoading, taskDetailError,
   auxLoading, taskAuxError, itemAuxError, taskCreating, taskDeletingId, taskCompleting, taskReopening, itemSaving, resolutionSaving,
@@ -131,7 +137,37 @@ const {
   locateScannedAsset, clearScannedAsset: clearScannedAssetState, confirmItemNormal,
   retryTaskAuxData, retryRackAuxData, openResolution, closeResolutionDialog, saveResolution,
   openBulkResolution, closeBulkResolutionDialog, saveBulkResolution, openBulkNormal, closeBulkNormalDialog, saveBulkNormal,
-} = useInventory(context);
+} = inventory;
+
+const originalItemForm = ref("");
+watch([showItemDialog, () => editingItem.value?.id], ([visible]) => {
+  if (visible) originalItemForm.value = JSON.stringify(itemForm.value);
+});
+const itemFormDirty = computed(() => fieldMode.value && showItemDialog.value && JSON.stringify(itemForm.value) !== originalItemForm.value);
+async function confirmItemClose() {
+  if (itemSaving.value) return false;
+  if (!itemFormDirty.value) return true;
+  return Boolean(await ElMessageBox.confirm(t("inventory.fieldDiscardChanges"), t("common.confirm"), {
+    type: "warning", confirmButtonText: t("common.confirm"), cancelButtonText: t("common.cancel"),
+  }).catch(() => false));
+}
+async function closeItemDialog() {
+  if (await confirmItemClose()) showItemDialog.value = false;
+}
+async function leaveInventory() {
+  if (!fieldMode.value) return true;
+  if (itemSaving.value || scannedNormalSaving.value) return false;
+  if (!await confirmItemClose()) return false;
+  showItemDialog.value = false;
+  return true;
+}
+onBeforeRouteLeave(leaveInventory);
+onBeforeRouteUpdate(leaveInventory);
+function warnUnsaved(event: BeforeUnloadEvent) {
+  if (itemFormDirty.value || (fieldMode.value && (itemSaving.value || scannedNormalSaving.value))) { event.preventDefault(); event.returnValue = ""; }
+}
+onMounted(() => window.addEventListener("beforeunload", warnUnsaved));
+onBeforeUnmount(() => window.removeEventListener("beforeunload", warnUnsaved));
 
 const selectedTaskDataCenterOption = computed(() => selectedOption(
   activeDataCenters.value as unknown as Record<string, unknown>[],
@@ -421,13 +457,19 @@ async function submitTask() {
 async function submitItem() {
   const valid = await itemFormRef.value?.validate().catch(() => false);
   if (valid === false) return;
-  await saveItem();
+  const before = fieldwork.capturePosition();
+  if (await saveItem()) {
+    if (fieldMode.value) await fieldwork.afterSave(before);
+  }
 }
 
 async function submitItemAndNext() {
   const valid = await itemFormRef.value?.validate().catch(() => false);
   if (valid === false) return;
-  await saveItemAndNext();
+  if (fieldMode.value) {
+    const before = fieldwork.capturePosition();
+    if (await saveItem()) await fieldwork.afterSave(before, true);
+  } else await saveItemAndNext();
 }
 
 async function submitResolution() {
@@ -592,6 +634,7 @@ onMounted(async () => {
             <el-button link @click="closeTask">{{ t('common.back') }}</el-button>
           </template>
           <template #actions>
+            <el-button :disabled="fieldwork.busy.value" :type="fieldMode ? 'primary' : 'default'" :plain="fieldMode" @click="fieldwork.setMode(!fieldMode)">{{ t(fieldMode ? 'inventory.tableMode' : 'inventory.fieldMode') }}</el-button>
             <StatusTag :tone="statusTone(activeTask.status)" :label="taskStatusLabel(activeTask.status)" />
             <ToolbarIconButton
               v-if="can('inventory.export')"
@@ -628,12 +671,12 @@ onMounted(async () => {
           </template>
         </PageHeader>
       </template>
-      <PageContent v-loading="taskDetailLoading">
+      <PageContent>
         <el-alert v-if="taskDetailError" :title="taskDetailError" type="error" show-icon :closable="false" class="inventory-alert" />
         <div v-if="taskDetailError" class="inventory-retry-row">
           <el-button link type="primary" @click="retryActiveTask">{{ t('inventory.retryTask') }}</el-button>
         </div>
-        <PageSection :title="t('inventory.taskSummary')">
+        <PageSection v-if="!fieldMode" :title="t('inventory.taskSummary')">
           <section class="inventory-summary-strip" :aria-label="t('inventory.taskSummary')">
             <div class="inventory-summary-metric">
               <span>{{ t('inventory.totalAssets') }}</span>
@@ -665,7 +708,15 @@ onMounted(async () => {
             </div>
           </section>
         </PageSection>
-        <PageSection :title="t('inventory.inventoryDevices')">
+        <section v-else class="inventory-field-task-progress" :aria-label="t('inventory.taskSummary')">
+          <strong>{{ t('inventory.fieldTaskProgress') }} {{ activeTask.summary.checked }} / {{ activeTask.summary.total }}</strong>
+          <span>{{ t('inventory.unresolvedExceptions', { count: activeTask.summary.resolution_pending }) }}</span>
+          <el-progress :percentage="activeTask.summary.completion_rate" :stroke-width="4" :show-text="false" />
+        </section>
+        <PageSection v-if="fieldMode" class="inventory-field-section" :title="t('inventory.fieldMode')">
+          <InventoryFieldworkPanel :inventory="inventory" :fieldwork="fieldwork" />
+        </PageSection>
+        <PageSection v-else :title="t('inventory.inventoryDevices')">
           <PageToolbar>
             <template #search>
               <SearchField v-model="itemSearch" :placeholder="t('inventory.searchItems')" :aria-label="t('inventory.inventoryDevices')" @search="() => { itemPage = 1; loadItems(); }" />
@@ -958,6 +1009,7 @@ onMounted(async () => {
       :pending="itemSaving"
       :error="itemDialogError"
       :close-disabled="itemSaving"
+      :confirm-close="confirmItemClose"
     >
       <el-alert v-if="itemAuxError" :title="itemAuxError" type="error" show-icon :closable="false" class="inventory-alert">
         <template #default>
@@ -979,7 +1031,7 @@ onMounted(async () => {
           </div>
         <el-form-item :label="t('common.notes')" :error="itemFormErrors.notes"><el-input v-model="itemForm.notes" type="textarea" :rows="3" :placeholder="t('inventory.mismatchNotePlaceholder')" /></el-form-item>
       </el-form>
-      <template #footer><el-button :disabled="itemSaving" @click="showItemDialog = false">{{ t('common.cancel') }}</el-button><el-button :disabled="!itemCanSave" @click="submitItem">{{ t('common.save') }}</el-button><el-button type="primary" :loading="itemSaving" :disabled="!itemCanSave" @click="submitItemAndNext">{{ t('inventory.saveAndNext') }}</el-button></template>
+      <template #footer><el-button :disabled="itemSaving" @click="closeItemDialog">{{ t('common.cancel') }}</el-button><el-button :disabled="!itemCanSave" @click="submitItem">{{ t('common.save') }}</el-button><el-button type="primary" :loading="itemSaving" :disabled="!itemCanSave" @click="submitItemAndNext">{{ t('inventory.saveAndNext') }}</el-button></template>
     </ActionDialogShell>
 
     <ActionDialogShell
@@ -1183,6 +1235,13 @@ onMounted(async () => {
 </template>
 
 <style scoped>
+.inventory-field-task-progress { display: grid; grid-template-columns: 1fr auto; gap: 8px 12px; font-size: 12px; padding: 12px 0; }
+.inventory-field-task-progress > span { color: var(--el-text-color-secondary); }
+.inventory-field-task-progress > .el-progress { grid-column: 1 / -1; }
+@media (max-width: 760px) {
+  :deep(.inventory-field-section > .page-section__header) { display: none; }
+}
+
 :deep(.inventory-item-row--scanned > td) {
   background: var(--el-color-primary-light-9) !important;
 }

@@ -5,9 +5,52 @@ same location rules.  Keeping the query here prevents the two endpoints from
 drifting apart as the inventory workflow evolves.
 """
 
-from django.db.models import Q, QuerySet
+from django.db.models import Count, Q, QuerySet
+from rest_framework import serializers
 
 from .models import Asset, DataCenter, ServerRoom
+
+
+class InventoryLocationQuerySerializer(serializers.Serializer):
+    data_center = serializers.IntegerField(min_value=1, required=False)
+    server_room = serializers.IntegerField(min_value=1, required=False)
+    rack = serializers.IntegerField(min_value=1, required=False)
+    placement = serializers.ChoiceField(choices=("mounted", "unmounted", "unlocated"), required=False)
+
+
+def filter_inventory_locations(queryset, params):
+    query = InventoryLocationQuerySerializer(data=params)
+    query.is_valid(raise_exception=True)
+    for field in ("data_center", "server_room", "rack"):
+        if field in query.validated_data:
+            queryset = queryset.filter(**{f"system_snapshot__{field}_id": query.validated_data[field]})
+    # JSON null and absent keys both mean that the snapshot has no such location.
+    no_rack = Q(system_snapshot__rack_id=None) | Q(system_snapshot__rack_id__isnull=True)
+    no_center = Q(system_snapshot__data_center_id=None) | Q(system_snapshot__data_center_id__isnull=True)
+    placement = query.validated_data.get("placement")
+    if placement == "mounted":
+        queryset = queryset.exclude(no_rack)
+    elif placement == "unmounted":
+        queryset = queryset.filter(no_rack).exclude(no_center)
+    elif placement == "unlocated":
+        queryset = queryset.filter(no_rack, no_center)
+    return queryset
+
+
+def inventory_location_summary(queryset):
+    fields = ("data_center_id", "data_center", "server_room_id", "server_room", "rack_id", "rack_code")
+    rows = queryset.order_by().values(*(f"system_snapshot__{field}" for field in fields)).annotate(
+        total=Count("pk"), pending=Count("pk", filter=Q(status="pending")),
+        resolution_pending=Count("pk", filter=Q(resolution_status="pending")),
+    )
+    locations = []
+    for row in rows:
+        location = {field: row[f"system_snapshot__{field}"] for field in fields}
+        location.update(total=row["total"], checked=row["total"] - row["pending"],
+                        pending=row["pending"], resolution_pending=row["resolution_pending"])
+        locations.append(location)
+    locations.sort(key=lambda row: tuple(str(row[field] or "") for field in fields))
+    return {"total": sum(row["total"] for row in locations), "locations": locations}
 
 
 def get_inventory_scope_assets(
