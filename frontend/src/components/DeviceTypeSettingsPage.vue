@@ -162,7 +162,8 @@ onMounted(() => { void loadRows(); });
       <el-alert v-if="error" :title="error" type="error" show-icon :closable="false"><template #default><el-button link type="danger" @click="loadRows">{{ t('common.retry') }}</el-button></template></el-alert>
       <PagedTable v-else v-model:current-page="page" v-model:page-size="pageSize" :total="total" @update:current-page="(value) => { page = value; loadRows(); }" @update:page-size="(value) => { pageSize = value; page = 1; loadRows(); }">
         <el-table v-loading="loading" :data="rows" table-layout="fixed">
-          <template #empty><el-empty :image-size="56" :description="search || active ? t('settings.noMatchingDictionary', { item: t('settings.deviceType') }) : t('settings.noDictionary', { item: t('settings.deviceType') })" /></template>
+          <template #empty><span v-if="loading">{{ t('common.loadingData') }}</span>
+          <el-empty v-else :image-size="56" :description="search || active ? t('settings.noMatchingDictionary', { item: t('settings.deviceType') }) : t('settings.noDictionary', { item: t('settings.deviceType') })" /></template>
           <el-table-column prop="name" :label="t('settings.deviceType')" min-width="220" />
           <el-table-column :label="t('settings.color')" width="120"><template #default="{ row }"><span class="color-chip" :style="{ background: row.color || '#1677EF' }" />{{ row.color || '#1677EF' }}</template></el-table-column>
           <el-table-column prop="default_fieldset_name" :label="t('settings.defaultFieldset')" min-width="180"><template #default="{ row }">{{ row.default_fieldset_name || t('settings.noDefaultFieldset') }}</template></el-table-column>

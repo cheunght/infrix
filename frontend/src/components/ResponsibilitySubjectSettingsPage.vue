@@ -118,7 +118,8 @@ function clearFilters() {
     >
       <el-table v-loading="loading" :data="subjects" table-layout="fixed">
         <template #empty>
-          <el-empty :image-size="56" :description="hasFilters ? t('settings.noMatchingPeople') : t('settings.noPeople')">
+          <span v-if="loading">{{ t('common.loadingData') }}</span>
+          <el-empty v-else :image-size="56" :description="hasFilters ? t('settings.noMatchingPeople') : t('settings.noPeople')">
             <el-button v-if="hasFilters" link type="primary" @click="clearFilters">{{ t("common.clearFilters") }}</el-button>
           </el-empty>
         </template>

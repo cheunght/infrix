@@ -356,7 +356,8 @@ watch(showSpareOperationModal, (open, wasOpen) => { if (!open && wasOpen) refres
           <PagedTable v-model:current-page="sparePage" v-model:page-size="sparePageSize" :total="sparePartCount" @update:current-page="changeSparePage" @update:page-size="changeSparePageSize">
           <el-table class="spare-table" table-layout="fixed" v-loading="spareListLoading" :data="spareParts" row-key="id" @expand-change="handleExpandChange">
             <template #empty>
-              <el-empty :image-size="56" :description="hasSpareFilters ? t('spare.noMatchingSpares') : t('spare.noSpares')">
+              <span v-if="spareListLoading">{{ t('common.loadingData') }}</span>
+              <el-empty v-else :image-size="56" :description="hasSpareFilters ? t('spare.noMatchingSpares') : t('spare.noSpares')">
                 <el-button v-if="hasSpareFilters" link type="primary" @click="resetSpareFilters">{{ t('common.clearFilters') }}</el-button>
               </el-empty>
             </template>

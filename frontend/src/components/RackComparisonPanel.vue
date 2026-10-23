@@ -131,7 +131,7 @@ function gaps(entry: RackComparisonEntry) {
                 .join(" / ")
             }}
           </p>
-          <el-skeleton v-if="entry.loading" :rows="8" animated />
+          <el-skeleton v-if="entry.loading && (!entry.rack || !entry.options)" :rows="8" animated />
           <el-alert
             v-else-if="entry.failed"
             :title="t('rackCompare.unavailable')"
@@ -144,12 +144,13 @@ function gaps(entry: RackComparisonEntry) {
               :tone="rackStatusTone(entry.rack.status, entry.rack.is_active)"
               size="small"
             />
-            <el-button v-if="reservations" :disabled="restricted(entry) || reservations.busy.value || operations.busy.value || comparison.coolingDown" @click="reservations.open(entry.rack)">{{ t('rackReserve.title') }}</el-button>
+            <el-button v-if="reservations" :disabled="entry.loading || restricted(entry) || reservations.busy.value || operations.busy.value || comparison.coolingDown" @click="reservations.open(entry.rack)">{{ t('rackReserve.title') }}</el-button>
             <el-button
               v-if="context.can('assets.manage') && context.can('assets.view')"
               class="rack-comparison-move"
               :disabled="
                 !canMove ||
+                entry.loading ||
                 !entry.options.accepts_assets ||
                 comparison.coolingDown
               "

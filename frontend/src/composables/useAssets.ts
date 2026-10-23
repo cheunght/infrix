@@ -1599,6 +1599,7 @@ export function useAssets(deps: AssetsDeps) {
 
   async function openAssetDetail(assetId: number) {
     if (!deps.can("assets.view")) return;
+    const retainDetail = deps.showAssetDetail.value && deps.detailAsset.value?.id === assetId;
     // Asset details can be opened by a QR deep link while the routed page is
     // still loading its list. Keep this request independent from the page
     // load controller so a subsequent list refresh cannot cancel the detail.
@@ -1613,7 +1614,7 @@ export function useAssets(deps: AssetsDeps) {
     deps.showAssetDetail.value = true;
     deps.detailLoading.value = true;
     deps.detailError.value = "";
-    deps.detailAsset.value = null;
+    if (!retainDetail) deps.detailAsset.value = null;
     let detailLoaded = false;
     try {
       let asset: AssetDetail;
@@ -1631,6 +1632,7 @@ export function useAssets(deps: AssetsDeps) {
       }
     } catch (error) {
       if (requestId === detailRequestId.value && !isAbortError(error)) {
+        deps.detailAsset.value = null;
         deps.detailError.value = errorMessage(error, tr("asset.assetDetailLoadFailed"));
       }
     } finally {

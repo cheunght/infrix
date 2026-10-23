@@ -435,7 +435,8 @@ onMounted(() => void loadAll());
       <PagedTable v-else v-model:current-page="page" v-model:page-size="pageSize" :total="total" @update:current-page="changePage" @update:page-size="changePageSize">
         <el-table v-loading="loading" :data="rows" table-layout="fixed">
           <template #empty>
-            <el-empty :image-size="56" :description="search.trim() || active || filterManufacturer || filterDeviceType || filterFieldset ? t('assetModel.noMatch') : t('assetModel.empty')">
+            <span v-if="loading">{{ t('common.loadingData') }}</span>
+          <el-empty v-else :image-size="56" :description="search.trim() || active || filterManufacturer || filterDeviceType || filterFieldset ? t('assetModel.noMatch') : t('assetModel.empty')">
               <el-button v-if="search.trim() || active || filterManufacturer || filterDeviceType || filterFieldset" link type="primary" @click="search = ''; active = ''; filterManufacturer = ''; filterDeviceType = ''; filterFieldset = ''; searchModels">{{ t('common.clearFilters') }}</el-button>
             </el-empty>
           </template>

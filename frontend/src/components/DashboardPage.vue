@@ -25,7 +25,6 @@ import type {
   DashboardRecentChange,
   DashboardStatus,
   DashboardTypeDistribution,
-  DashboardOverview,
 } from "../types";
 import type { DashboardContext } from "../page-context";
 import StatusTag, { type StatusTagType } from "./StatusTag.vue";
@@ -53,9 +52,7 @@ const {
   dashboardDateTime,
 } = props.context;
 
-// The template only reaches the loaded branch after the null/error states
-// above. Keep this explicit cast so the template remains strongly typed.
-const dashboardData = computed(() => dashboard.value as DashboardOverview);
+const dashboardData = computed(() => dashboard.value);
 
 const statusItems = computed<DashboardStatus[]>(
   () => dashboard.value?.status_distribution || [],
@@ -217,9 +214,9 @@ function recentChangeLabel(action: string): string {
       </PageHeader>
     </template>
 
-    <div class="dashboard-body">
+    <div class="dashboard-body" :aria-busy="dashboardLoading">
       <el-alert
-        v-if="dashboardError && dashboard"
+        v-if="dashboardError"
         class="dashboard-error-banner"
         :title="t('dashboard.dataLoadFailed')"
         :description="dashboardError"
@@ -232,28 +229,6 @@ function recentChangeLabel(action: string): string {
         </template>
       </el-alert>
 
-      <el-skeleton
-        v-if="!dashboard && !dashboardError"
-        class="dashboard-skeleton"
-        :rows="10"
-        animated
-        role="status"
-        aria-live="polite"
-      />
-
-      <el-result
-        v-else-if="!dashboard && dashboardError"
-        class="dashboard-state dashboard-state--error"
-        icon="error"
-        :title="t('dashboard.dataLoadFailed')"
-        :sub-title="dashboardError"
-      >
-        <template #extra>
-          <el-button type="primary" plain :loading="dashboardLoading" @click="refreshDashboard">{{ t('common.retry') }}</el-button>
-        </template>
-      </el-result>
-
-      <template v-else>
         <section class="dashboard-kpi-grid" :aria-label="t('dashboard.assetCoreMetrics')">
           <el-card
             shadow="never"
@@ -269,11 +244,11 @@ function recentChangeLabel(action: string): string {
               <span class="dashboard-kpi-card__icon" aria-hidden="true"><Monitor /></span>
               <span>{{ t('dashboard.totalAssets') }}</span>
             </div>
-            <strong class="dashboard-kpi-card__value">{{ dashboardData.assets.total }}</strong>
+            <strong class="dashboard-kpi-card__value">{{ dashboardData?.assets.total ?? '—' }}</strong>
             <div class="dashboard-kpi-breakdown">
-              <span>{{ dashboardData.assets.in_use }} {{ t('dashboard.assetsInUse') }}</span>
-              <span>{{ dashboardData.assets.in_stock }} {{ t('dashboard.assetsInStock') }}</span>
-              <span>{{ dashboardData.assets.repair }} {{ t('dashboard.assetsInRepair') }}</span>
+              <span>{{ dashboardData?.assets.in_use ?? '—' }} {{ t('dashboard.assetsInUse') }}</span>
+              <span>{{ dashboardData?.assets.in_stock ?? '—' }} {{ t('dashboard.assetsInStock') }}</span>
+              <span>{{ dashboardData?.assets.repair ?? '—' }} {{ t('dashboard.assetsInRepair') }}</span>
             </div>
           </el-card>
 
@@ -291,8 +266,8 @@ function recentChangeLabel(action: string): string {
               <span class="dashboard-kpi-card__icon" aria-hidden="true"><CircleCheck /></span>
               <span>{{ t('dashboard.inUseRate') }}</span>
             </div>
-            <strong class="dashboard-kpi-card__value">{{ inUseRate.toFixed(1) }}%</strong>
-            <div class="dashboard-kpi-card__support">{{ dashboardData.assets.in_use }} {{ t('dashboard.assets') }} · {{ t('dashboard.currentlyInUse') }}</div>
+            <strong class="dashboard-kpi-card__value">{{ dashboardData ? `${inUseRate.toFixed(1)}%` : '—' }}</strong>
+            <div class="dashboard-kpi-card__support">{{ dashboardData?.assets.in_use ?? '—' }} {{ t('dashboard.assets') }} · {{ t('dashboard.currentlyInUse') }}</div>
           </el-card>
 
           <el-card
@@ -309,8 +284,8 @@ function recentChangeLabel(action: string): string {
               <span class="dashboard-kpi-card__icon" aria-hidden="true"><DataAnalysis /></span>
               <span>{{ t('dashboard.rackCapacity') }}</span>
             </div>
-            <strong class="dashboard-kpi-card__value">{{ dashboardData.capacity_restricted ? t('dataScope.notAuthorized') : `${rackUtilization.toFixed(1)}%` }}</strong>
-            <div v-if="!dashboardData.capacity_restricted" class="dashboard-kpi-card__support">{{ dashboardData.racks.used_u }} / {{ rackTotalU }} U · {{ dashboardData.racks.free_u }} {{ t('dashboard.freeCapacity') }}</div>
+            <strong class="dashboard-kpi-card__value">{{ dashboardData?.capacity_restricted ? t('dataScope.notAuthorized') : dashboardData ? `${rackUtilization.toFixed(1)}%` : '—' }}</strong>
+            <div v-if="!dashboardData?.capacity_restricted" class="dashboard-kpi-card__support">{{ dashboardData?.racks.used_u ?? '—' }} / {{ dashboardData ? rackTotalU : '—' }} U · {{ dashboardData?.racks.free_u ?? '—' }} {{ t('dashboard.freeCapacity') }}</div>
           </el-card>
 
           <el-card
@@ -327,8 +302,8 @@ function recentChangeLabel(action: string): string {
               <span class="dashboard-kpi-card__icon" aria-hidden="true"><OfficeBuilding /></span>
               <span>{{ t('dashboard.locations') }}</span>
             </div>
-            <strong class="dashboard-kpi-card__value">{{ dashboardData.data_centers?.total || 0 }}</strong>
-            <div class="dashboard-kpi-card__support">{{ dashboardData.racks.total }} {{ t('dashboard.racks') }} · {{ t('dashboard.activeInfrastructure') }}</div>
+            <strong class="dashboard-kpi-card__value">{{ dashboardData?.data_centers?.total ?? (dashboardData ? 0 : '—') }}</strong>
+            <div class="dashboard-kpi-card__support">{{ dashboardData?.racks.total ?? '—' }} {{ t('dashboard.racks') }} · {{ t('dashboard.activeInfrastructure') }}</div>
           </el-card>
         </section>
 
@@ -338,7 +313,7 @@ function recentChangeLabel(action: string): string {
           </div>
           <div class="dashboard-risk-grid">
             <button
-              v-if="can('faults.view') && dashboardData.alerts"
+              v-if="can('faults.view') && dashboardData?.alerts"
               type="button"
               class="dashboard-risk-item dashboard-risk-item--fault"
               @click="goToRepairs({ is_closed: 'false' })"
@@ -346,7 +321,7 @@ function recentChangeLabel(action: string): string {
               <span class="dashboard-risk-item__icon" aria-hidden="true"><Warning /></span>
               <span class="dashboard-risk-item__copy">
                 <small>{{ t('dashboard.openFaults') }}</small>
-                <strong>{{ dashboardData.alerts.open_faults }}</strong>
+                <strong>{{ dashboardData?.alerts.open_faults }}</strong>
               </span>
               <el-icon aria-hidden="true"><ArrowRight /></el-icon>
             </button>
@@ -373,8 +348,8 @@ function recentChangeLabel(action: string): string {
               <span class="dashboard-risk-item__icon" aria-hidden="true"><Timer /></span>
               <span class="dashboard-risk-item__copy">
                 <small>{{ t('dashboard.warrantyExpiring') }}</small>
-                <strong>{{ dashboardData.expiring.within_30_days }}</strong>
-                <span>{{ t('dashboard.expiredItems', { count: dashboardData.expiring.expired || 0 }) }}</span>
+                <strong>{{ dashboardData?.expiring.within_30_days ?? '—' }}</strong>
+                <span v-if="dashboardData">{{ t('dashboard.expiredItems', { count: dashboardData.expiring.expired || 0 }) }}</span>
               </span>
               <el-icon aria-hidden="true"><ArrowRight /></el-icon>
             </button>
@@ -408,12 +383,14 @@ function recentChangeLabel(action: string): string {
               </div>
             </template>
             <DashboardDonut
+              v-if="dashboard"
               :items="statusItems"
               :total="statusTotal"
               :center-label="t('dashboard.totalAssets')"
               :selectable="can('assets.view')"
               @select="openStatusDrilldown"
             />
+            <div v-else class="dashboard-state" role="status">{{ dashboardError ? t('dashboard.dataLoadFailed') : t('common.loadingData') }}</div>
           </el-card>
 
           <el-card shadow="never" class="dashboard-panel dashboard-panel--types">
@@ -422,7 +399,7 @@ function recentChangeLabel(action: string): string {
                 <strong>{{ t('dashboard.assetMixTitle') }}</strong>
               </div>
             </template>
-            <ResourceState :empty="!typeItems.length" :empty-text="t('dashboard.noTypeData')">
+            <ResourceState :loading="!dashboard && !dashboardError" :empty="Boolean(dashboard) && !typeItems.length" :empty-text="t('dashboard.noTypeData')">
               <div class="dashboard-type-list">
                 <div v-for="item in typeItems" :key="item.type || item.label" class="dashboard-type-row">
                   <div class="dashboard-type-row__label">
@@ -448,7 +425,7 @@ function recentChangeLabel(action: string): string {
                 </el-button>
               </div>
             </template>
-            <ResourceState :empty="!recentChangeItems.length" :empty-text="t('dashboard.noAssetChanges')">
+            <ResourceState :loading="!dashboard && !dashboardError" :empty="Boolean(dashboard) && !recentChangeItems.length" :empty-text="t('dashboard.noAssetChanges')">
               <div class="dashboard-activity-list">
                 <el-button
                   v-for="row in recentChangeItems"
@@ -483,7 +460,7 @@ function recentChangeLabel(action: string): string {
                 </el-button>
               </div>
             </template>
-            <ResourceState :empty="!recentFaultItems.length" :empty-text="t('dashboard.noOpenFaultList')">
+            <ResourceState :loading="!dashboard && !dashboardError" :empty="Boolean(dashboard) && !recentFaultItems.length" :empty-text="t('dashboard.noOpenFaultList')">
               <div class="dashboard-fault-list">
                 <el-button
                   v-for="row in recentFaultItems"
@@ -504,7 +481,6 @@ function recentChangeLabel(action: string): string {
             </ResourceState>
           </el-card>
         </section>
-      </template>
     </div>
   </PageContainer>
 </template>

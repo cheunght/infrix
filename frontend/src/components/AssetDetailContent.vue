@@ -723,11 +723,12 @@ function retryDetail() {
 <template>
   <div
     class="drawer-content asset-detail-content"
+    :aria-busy="loading"
     ref="contentRoot"
     :class="`asset-detail-content--${variant}`"
   >
     <div
-      v-if="loading"
+      v-if="loading && !asset"
       class="drawer-state asset-detail-state"
       role="status"
       aria-live="polite"

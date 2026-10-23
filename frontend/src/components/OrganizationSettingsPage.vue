@@ -339,7 +339,7 @@ function applyPeopleFilters() {
           </el-alert>
           <PagedTable v-else v-model:current-page="departmentPage" v-model:page-size="departmentPageSize" :total="departmentCount" :page-sizes="[20, 50, 100]" @update:current-page="changeDepartmentPage" @update:page-size="changeDepartmentPageSize">
             <el-table v-loading="departmentLoading" :data="departments" table-layout="fixed">
-              <template #empty><el-empty :image-size="56" :description="hasDepartmentSearch ? t('settings.noMatchingDepartments') : t('settings.noDepartments')"><el-button v-if="hasDepartmentSearch" link type="primary" @click="departmentSearch = ''; searchDepartments()">{{ t('common.clearFilters') }}</el-button></el-empty></template>
+              <template #empty><span v-if="departmentLoading">{{ t('common.loadingData') }}</span><el-empty v-else :image-size="56" :description="hasDepartmentSearch ? t('settings.noMatchingDepartments') : t('settings.noDepartments')"><el-button v-if="hasDepartmentSearch" link type="primary" @click="departmentSearch = ''; searchDepartments()">{{ t('common.clearFilters') }}</el-button></el-empty></template>
               <el-table-column prop="name" :label="t('settings.departmentName')" min-width="220" />
               <el-table-column prop="code" :label="t('settings.code')" min-width="150" />
               <el-table-column prop="parent_name" :label="t('settings.parentDepartment')" min-width="200"><template #default="{ row }">{{ row.parent_name || '—' }}</template></el-table-column>
@@ -351,7 +351,7 @@ function applyPeopleFilters() {
         <template v-else-if="organizationTab === 'users'">
           <el-alert v-if="userListError" :title="t('settings.userLoadFailed')" type="error" show-icon :closable="false"><template #default><span>{{ userListError }}</span><el-button link type="danger" :loading="organizationLoading" @click="retryUserList">{{ t('common.retry') }}</el-button></template></el-alert>
           <el-table ref="userTableRef" v-else v-loading="organizationLoading" :data="users" table-layout="fixed" @selection-change="handleUserSelection">
-            <template #empty><el-empty :image-size="56" :description="hasUserSearch ? t('settings.noMatchingUsers') : t('settings.noUsers')"><el-button v-if="hasUserSearch" link type="primary" @click="userSearch = ''; triggerUserSearch()">{{ t('common.clearFilters') }}</el-button></el-empty></template>
+            <template #empty><span v-if="organizationLoading">{{ t('common.loadingData') }}</span><el-empty v-else :image-size="56" :description="hasUserSearch ? t('settings.noMatchingUsers') : t('settings.noUsers')"><el-button v-if="hasUserSearch" link type="primary" @click="userSearch = ''; triggerUserSearch()">{{ t('common.clearFilters') }}</el-button></el-empty></template>
             <el-table-column type="selection" width="48" />
             <el-table-column prop="username" :label="t('settings.username')" min-width="180" />
             <el-table-column prop="display_name" :label="t('settings.name')" min-width="180" />
@@ -365,7 +365,7 @@ function applyPeopleFilters() {
         </template>
         <template v-else>
           <el-alert v-if="roleListError" :title="t('settings.roleLoadFailed')" type="error" show-icon :closable="false"><template #default><span>{{ roleListError }}</span><el-button link type="danger" :loading="organizationLoading" @click="retryOrganization">{{ t('common.retry') }}</el-button></template></el-alert>
-          <el-table v-else v-loading="organizationLoading && !roles.length" :data="roles" table-layout="fixed"><template #empty><el-empty :image-size="56" :description="t('settings.noRoles')" /></template><el-table-column :label="t('settings.roleName')" min-width="220"><template #default="{ row }">{{ roleLabel(row.code, row.name) }}</template></el-table-column><el-table-column :label="t('settings.permissionScope')" min-width="320"><template #default="{ row }">{{ roleDescription(row.code, row.description) }}</template></el-table-column><el-table-column prop="user_count" :label="t('settings.userCount')" width="120" /></el-table>
+          <el-table v-else v-loading="organizationLoading && !roles.length" :data="roles" table-layout="fixed"><template #empty><span v-if="organizationLoading">{{ t('common.loadingData') }}</span><el-empty v-else :image-size="56" :description="t('settings.noRoles')" /></template><el-table-column :label="t('settings.roleName')" min-width="220"><template #default="{ row }">{{ roleLabel(row.code, row.name) }}</template></el-table-column><el-table-column :label="t('settings.permissionScope')" min-width="320"><template #default="{ row }">{{ roleDescription(row.code, row.description) }}</template></el-table-column><el-table-column prop="user_count" :label="t('settings.userCount')" width="120" /></el-table>
           <p class="form-hint">{{ t('settings.roleHint') }}</p>
         </template>
       </PageContent>

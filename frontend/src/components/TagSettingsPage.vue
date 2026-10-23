@@ -83,7 +83,8 @@ function applyTagFilters() {
       >
         <el-table class="settings-tag-table" v-loading="c.tagListLoading" :data="c.tagTableItems" table-layout="fixed">
         <template #empty>
-          <el-empty :image-size="56" :description="c.tagSearch.trim() || c.tagActive ? t('tag.noMatching') : t('tag.noTags')">
+          <span v-if="c.tagListLoading">{{ t('common.loadingData') }}</span>
+          <el-empty v-else :image-size="56" :description="c.tagSearch.trim() || c.tagActive ? t('tag.noMatching') : t('tag.noTags')">
             <el-button v-if="c.tagSearch.trim() || c.tagActive" link type="primary" @click="c.tagSearch = ''; c.tagActive = ''; c.refreshTagList()">{{ t('common.clearFilters') }}</el-button>
           </el-empty>
         </template>

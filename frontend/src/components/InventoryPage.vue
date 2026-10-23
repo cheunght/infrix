@@ -839,18 +839,7 @@ onMounted(async () => {
               </template>
             </el-dropdown>
           </div>
-          <ResourceState
-            :loading="itemListLoading && !items.length"
-            :error="itemListError && !items.length ? itemListError : ''"
-            :empty="!itemListLoading && !itemListError && !items.length"
-            :empty-text="itemHasFilters ? t('inventory.noMatchingItems') : t('inventory.noItems')"
-            @retry="() => loadItems()"
-          >
-            <template #empty>
-              <el-empty :image-size="56" :description="itemHasFilters ? t('inventory.noMatchingItems') : t('inventory.noItems')">
-                <el-button v-if="itemHasFilters" link type="primary" @click="resetItemFilters">{{ t('common.clearFilters') }}</el-button>
-            </el-empty>
-            </template>
+          <ResourceState :error="itemListError && !items.length ? itemListError : ''" @retry="() => loadItems()">
             <template #error="{ error }">
               <el-alert :title="t('inventory.itemLoadFailed')" :description="error" type="error" show-icon :closable="false" />
               <el-button link type="primary" @click="loadItems">{{ t('inventory.retryItems') }}</el-button>
@@ -872,7 +861,8 @@ onMounted(async () => {
               @select-all="handleBatchSelectAll"
             >
             <template #empty>
-              <el-empty :image-size="56" :description="itemHasFilters ? t('inventory.noMatchingItems') : t('inventory.noItems')">
+              <span v-if="itemListLoading">{{ t('common.loadingData') }}</span>
+              <el-empty v-else :image-size="56" :description="itemHasFilters ? t('inventory.noMatchingItems') : t('inventory.noItems')">
                 <el-button v-if="itemHasFilters" link type="primary" @click="resetItemFilters">{{ t('common.clearFilters') }}</el-button>
             </el-empty>
             </template>

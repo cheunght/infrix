@@ -66,10 +66,13 @@ function formatCreatedAt(value: string): string {
       :closable="false"
     />
 
-    <el-skeleton v-if="loading && !backups.length" :rows="5" animated />
-    <el-empty v-else-if="!loading && !backups.length" :description="t('settings.noBackups')" />
-    <div v-else class="backup-restore-results">
-      <el-table class="backup-restore-table" :data="backups" row-key="id" table-layout="fixed">
+    <div class="backup-restore-results">
+      <el-table class="backup-restore-table" v-loading="loading" :aria-busy="loading" :data="backups" row-key="id" table-layout="fixed">
+        <template #empty>
+          <span v-if="loading">{{ t('common.loadingData') }}</span>
+          <el-empty v-else-if="!error" :description="t('settings.noBackups')" />
+          <span v-else />
+        </template>
         <el-table-column :label="t('settings.backupType')" width="82">
           <template #default="{ row }">
             {{ row.backup_type === "pre_restore" ? t("settings.backupPreRestore") : t("settings.backupManual") }}
@@ -114,6 +117,8 @@ function formatCreatedAt(value: string): string {
       </el-table>
 
       <div class="backup-restore-list" role="list">
+        <span v-if="loading && !backups.length" role="status">{{ t('common.loadingData') }}</span>
+        <el-empty v-else-if="!backups.length && !error" :description="t('settings.noBackups')" />
         <article v-for="row in backups" :key="row.id" class="backup-restore-list__item" role="listitem">
           <div class="backup-restore-list__heading">
             <strong class="backup-restore-list__filename">{{ row.filename }}</strong>

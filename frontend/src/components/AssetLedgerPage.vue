@@ -622,7 +622,8 @@ async function openAllQrDialog() {
             @sort-change="changeAssetSort"
           >
             <template #empty>
-              <el-empty :image-size="56" :description="hasAssetFilters ? t('asset.noMatchingAssets') : t('asset.noAssetsShort')">
+              <span v-if="assetListLoading">{{ t('common.loadingData') }}</span>
+              <el-empty v-else :image-size="56" :description="hasAssetFilters ? t('asset.noMatchingAssets') : t('asset.noAssetsShort')">
                 <el-button v-if="hasAssetFilters" link type="primary" @click="resetAssetFilters">{{ t('common.clearFilters') }}</el-button>
               </el-empty>
             </template>

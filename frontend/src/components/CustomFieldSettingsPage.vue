@@ -324,7 +324,8 @@ async function submitCustomFieldOption() {
       >
         <el-table class="settings-custom-field-table" v-loading="c.customFieldListLoading" :data="c.customFieldTableItems" table-layout="fixed">
         <template #empty>
-          <el-empty :image-size="56" :description="c.customFieldActive || c.customFieldSearch || c.customFieldType ? t('customField.noMatching') : t('customField.noFields')">
+          <span v-if="c.customFieldListLoading">{{ t('common.loadingData') }}</span>
+          <el-empty v-else :image-size="56" :description="c.customFieldActive || c.customFieldSearch || c.customFieldType ? t('customField.noMatching') : t('customField.noFields')">
             <el-button v-if="c.customFieldActive || c.customFieldSearch || c.customFieldType" link type="primary" @click="c.customFieldActive = ''; c.customFieldSearch = ''; c.customFieldType = ''; c.refreshCustomFieldList()">{{ t('common.clearFilters') }}</el-button>
           </el-empty>
         </template>

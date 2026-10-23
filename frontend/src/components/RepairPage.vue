@@ -116,21 +116,10 @@ function repairActionIcon(fault: FaultEvent) {
         </PageToolbar>
       </template>
       <PageContent surface>
-        <ResourceState
-          :loading="repairListLoading && !repairRows.length"
-          :error="repairListError && !repairRows.length ? repairListError : ''"
-          :empty="!repairListLoading && !repairListError && !repairRows.length"
-          :empty-text="hasRepairFilters ? t('repair.noMatching') : t('repair.noFaults')"
-          @retry="retryRepairList"
-        >
+        <ResourceState :error="repairListError && !repairRows.length ? repairListError : ''" @retry="retryRepairList">
           <template #error="{ error }">
             <el-alert :title="t('repair.faultLoadFailed')" :description="error" type="error" show-icon :closable="false" />
             <el-button link type="primary" @click="retryRepairList">{{ t('common.retry') }}</el-button>
-          </template>
-          <template #empty>
-            <el-empty :image-size="56" :description="hasRepairFilters ? t('repair.noMatching') : t('repair.noFaults')">
-              <el-button v-if="hasRepairFilters" link type="primary" @click="resetRepairFilters">{{ t('common.clearFilters') }}</el-button>
-            </el-empty>
           </template>
           <PagedTable
             v-model:current-page="repairPage"
@@ -152,6 +141,12 @@ function repairActionIcon(fault: FaultEvent) {
             </template>
           </el-alert>
           <el-table class="repair-table" v-loading="repairListLoading" :data="repairRows" table-layout="fixed">
+            <template #empty>
+              <span v-if="repairListLoading">{{ t('common.loadingData') }}</span>
+              <el-empty v-else :image-size="56" :description="hasRepairFilters ? t('repair.noMatching') : t('repair.noFaults')">
+                <el-button v-if="hasRepairFilters" link type="primary" @click="resetRepairFilters">{{ t('common.clearFilters') }}</el-button>
+              </el-empty>
+            </template>
             <el-table-column :label="t('repair.fault')" min-width="240">
               <template #default="{ row }">
                 <el-button link type="primary" class="repair-fault-link" :aria-label="t('repair.viewFaultAria', { summary: faultSummary(row) })" @click="openRepairModal(row)">

@@ -209,7 +209,8 @@ function handleRoomCommand(row: LocationTreeRow, command: string) {
         @row-click="toggleLocationRow"
       >
         <template #empty>
-          <el-empty :image-size="56" :description="emptyDescription">
+          <span v-if="locationManagementLoading">{{ t('common.loadingData') }}</span>
+          <el-empty v-else :image-size="56" :description="emptyDescription">
             <el-button v-if="hasLocationFilters" link type="primary" @click="context.resetLocationFilters">{{ t('common.clearFilters') }}</el-button>
           </el-empty>
         </template>

@@ -150,9 +150,9 @@ function formatLdapDiagnosticAt(value?: string | null) {
 </script>
 
 <template>
-  <section class="settings-ldap-panel settings-ldap-panel--page">
+  <section class="settings-ldap-panel settings-ldap-panel--page" :aria-busy="ldapConfigurationLoading">
     <slot name="notice" />
-    <el-skeleton v-if="ldapConfigurationLoading" :rows="8" animated />
+    <el-skeleton v-if="ldapConfigurationLoading && !ldapConfiguration" :rows="8" animated />
       <el-alert
         v-else-if="ldapConfigurationError"
         :title="t('settings.ldapConfigurationLoadFailed')"
@@ -197,6 +197,7 @@ function formatLdapDiagnosticAt(value?: string | null) {
             <div class="settings-ldap-panel__form-shell">
               <el-form
                 class="settings-ldap-panel__form"
+                :disabled="isBusy"
                 label-position="top"
                 @submit.prevent="saveLdapConfiguration"
               >
@@ -209,13 +210,13 @@ function formatLdapDiagnosticAt(value?: string | null) {
             </div>
             <div class="settings-ldap-panel__grid">
               <el-form-item :label="t('settings.ldapDirectoryType')" :error="ldapConfigurationFormErrors.directory_type">
-                <el-select v-model="ldapConfigurationForm.directory_type" class="settings-ldap-panel__control" :disabled="ldapConfigurationSaving || ldapConfiguration.identity_anchor_locked">
+                <el-select v-model="ldapConfigurationForm.directory_type" class="settings-ldap-panel__control" :disabled="isBusy || ldapConfiguration.identity_anchor_locked">
                   <el-option value="active_directory" :label="t('settings.ldapActiveDirectory')" />
                   <el-option value="generic_ldap" :label="t('settings.ldapGenericDirectory')" />
                 </el-select>
               </el-form-item>
               <el-form-item :label="t('settings.ldapSecurityMode')" :error="ldapConfigurationFormErrors.security_mode">
-                <el-select v-model="ldapConfigurationForm.security_mode" class="settings-ldap-panel__control" :disabled="ldapConfigurationSaving" @change="applyLdapSecurityDefaults">
+                <el-select v-model="ldapConfigurationForm.security_mode" class="settings-ldap-panel__control" @change="applyLdapSecurityDefaults">
                   <el-option value="ldaps" :label="ldapSecurityModeLabel('ldaps')" />
                   <el-option value="starttls" :label="ldapSecurityModeLabel('starttls')" />
                   <el-option value="none" :label="ldapSecurityModeLabel('none')" />
@@ -223,17 +224,17 @@ function formatLdapDiagnosticAt(value?: string | null) {
               </el-form-item>
               <el-form-item :label="t('settings.ldapPrimaryServer')" :error="ldapConfigurationFormErrors.primary_host">
                 <div class="settings-ldap-panel__host-port">
-                  <el-input v-model="ldapConfigurationForm.primary_host" :placeholder="t('settings.ldapHostPlaceholder')" :disabled="ldapConfigurationSaving" />
+                  <el-input v-model="ldapConfigurationForm.primary_host" :placeholder="t('settings.ldapHostPlaceholder')" />
                   <el-form-item :error="ldapConfigurationFormErrors.primary_port">
-                    <el-input-number v-model="ldapConfigurationForm.primary_port" :min="1" :max="65535" :controls="false" :disabled="ldapConfigurationSaving" @change="ldapPrimaryPortTouched = true" />
+                    <el-input-number v-model="ldapConfigurationForm.primary_port" :min="1" :max="65535" :controls="false" @change="ldapPrimaryPortTouched = true" />
                   </el-form-item>
                 </div>
               </el-form-item>
               <el-form-item :label="t('settings.ldapSecondaryServer')" :error="ldapConfigurationFormErrors.secondary_host">
                 <div class="settings-ldap-panel__host-port">
-                  <el-input v-model="ldapConfigurationForm.secondary_host" :placeholder="t('settings.ldapOptional')" :disabled="ldapConfigurationSaving" />
+                  <el-input v-model="ldapConfigurationForm.secondary_host" :placeholder="t('settings.ldapOptional')" />
                   <el-form-item :error="ldapConfigurationFormErrors.secondary_port">
-                    <el-input-number v-model="ldapConfigurationForm.secondary_port" :min="1" :max="65535" :controls="false" :disabled="ldapConfigurationSaving" @change="ldapSecondaryPortTouched = true" />
+                    <el-input-number v-model="ldapConfigurationForm.secondary_port" :min="1" :max="65535" :controls="false" @change="ldapSecondaryPortTouched = true" />
                   </el-form-item>
                 </div>
               </el-form-item>
@@ -249,7 +250,7 @@ function formatLdapDiagnosticAt(value?: string | null) {
             </div>
             <div class="settings-ldap-panel__grid">
               <el-form-item :label="t('settings.ldapBindAccount')" :error="ldapConfigurationFormErrors.bind_dn">
-                <el-input v-model="ldapConfigurationForm.bind_dn" :placeholder="t('settings.ldapBindAccountPlaceholder')" :disabled="ldapConfigurationSaving" />
+                <el-input v-model="ldapConfigurationForm.bind_dn" :placeholder="t('settings.ldapBindAccountPlaceholder')" />
                 <div class="settings-ldap-panel__help">{{ t("settings.ldapBindAccountHelp") }}</div>
               </el-form-item>
               <el-form-item :label="t('settings.ldapBindPassword')" :error="ldapConfigurationFormErrors.bind_password">
@@ -264,7 +265,7 @@ function formatLdapDiagnosticAt(value?: string | null) {
                   show-password
                   autocomplete="new-password"
                   :placeholder="t('settings.ldapPasswordPlaceholder')"
-                  :disabled="ldapConfigurationSaving"
+
                 />
                 <div class="settings-ldap-panel__help">{{ t("settings.ldapBindPasswordHelp") }}</div>
               </el-form-item>
@@ -280,18 +281,18 @@ function formatLdapDiagnosticAt(value?: string | null) {
             </div>
             <div class="settings-ldap-panel__grid">
               <el-form-item :label="t('settings.ldapBaseDn')" :error="ldapConfigurationFormErrors.base_dn">
-                <el-input v-model="ldapConfigurationForm.base_dn" :placeholder="t('settings.ldapBaseDnPlaceholder')" :disabled="ldapConfigurationSaving" />
+                <el-input v-model="ldapConfigurationForm.base_dn" :placeholder="t('settings.ldapBaseDnPlaceholder')" />
               </el-form-item>
               <el-form-item :label="t('settings.ldapUserSearchBase')" :error="ldapConfigurationFormErrors.user_search_base">
-                <el-input v-model="ldapConfigurationForm.user_search_base" :placeholder="t('settings.ldapUseBaseDn')" :disabled="ldapConfigurationSaving" />
+                <el-input v-model="ldapConfigurationForm.user_search_base" :placeholder="t('settings.ldapUseBaseDn')" />
               </el-form-item>
               <el-form-item class="settings-ldap-panel__attribute-field" :label="t('settings.ldapLoginAttribute')" :error="ldapConfigurationFormErrors.user_login_attribute">
-                <el-input v-model="ldapConfigurationForm.user_login_attribute" :disabled="ldapConfigurationSaving" />
+                <el-input v-model="ldapConfigurationForm.user_login_attribute" />
               </el-form-item>
               <el-form-item class="settings-ldap-panel__attribute-field" :label="t('settings.ldapIdentityAttribute')" :error="ldapConfigurationFormErrors.external_id_attribute">
                 <el-input
                   v-model="ldapConfigurationForm.external_id_attribute"
-                  :disabled="ldapConfigurationSaving || ldapConfiguration.identity_anchor_locked || ldapConfigurationForm.directory_type === 'active_directory'"
+                  :disabled="isBusy || ldapConfiguration.identity_anchor_locked || ldapConfigurationForm.directory_type === 'active_directory'"
                 />
                 <div class="settings-ldap-panel__help">
                   {{ ldapConfigurationForm.directory_type === 'active_directory'
@@ -302,7 +303,7 @@ function formatLdapDiagnosticAt(value?: string | null) {
                 </div>
               </el-form-item>
               <el-form-item class="settings-ldap-panel__span-2" :label="t('settings.ldapUserFilter')" :error="ldapConfigurationFormErrors.user_filter">
-                <el-input v-model="ldapConfigurationForm.user_filter" :disabled="ldapConfigurationSaving" />
+                <el-input v-model="ldapConfigurationForm.user_filter" />
                 <div class="settings-ldap-panel__help">{{ t("settings.ldapUserFilterHelp") }}</div>
               </el-form-item>
             </div>
@@ -313,28 +314,28 @@ function formatLdapDiagnosticAt(value?: string | null) {
               <div class="settings-ldap-panel__advanced-intro">{{ t("settings.ldapAdvancedDescription") }}</div>
               <div class="settings-ldap-panel__grid">
                 <el-form-item :label="t('settings.ldapEmailAttribute')" :error="ldapConfigurationFormErrors.email_attribute">
-                  <el-input v-model="ldapConfigurationForm.email_attribute" :disabled="ldapConfigurationSaving" />
+                  <el-input v-model="ldapConfigurationForm.email_attribute" />
                 </el-form-item>
                 <el-form-item :label="t('settings.ldapFirstNameAttribute')" :error="ldapConfigurationFormErrors.first_name_attribute">
-                  <el-input v-model="ldapConfigurationForm.first_name_attribute" :disabled="ldapConfigurationSaving" />
+                  <el-input v-model="ldapConfigurationForm.first_name_attribute" />
                 </el-form-item>
                 <el-form-item :label="t('settings.ldapLastNameAttribute')" :error="ldapConfigurationFormErrors.last_name_attribute">
-                  <el-input v-model="ldapConfigurationForm.last_name_attribute" :disabled="ldapConfigurationSaving" />
+                  <el-input v-model="ldapConfigurationForm.last_name_attribute" />
                 </el-form-item>
                 <el-form-item :label="t('settings.ldapAccountControlAttribute')" :error="ldapConfigurationFormErrors.account_control_attribute">
-                  <el-input v-model="ldapConfigurationForm.account_control_attribute" :disabled="ldapConfigurationSaving" />
+                  <el-input v-model="ldapConfigurationForm.account_control_attribute" />
                 </el-form-item>
                 <el-form-item :label="t('settings.ldapTlsServerName')" :error="ldapConfigurationFormErrors.tls_server_name">
-                  <el-input v-model="ldapConfigurationForm.tls_server_name" :placeholder="t('settings.ldapTlsServerNamePlaceholder')" :disabled="ldapConfigurationSaving" />
+                  <el-input v-model="ldapConfigurationForm.tls_server_name" :placeholder="t('settings.ldapTlsServerNamePlaceholder')" />
                 </el-form-item>
                 <el-form-item :label="t('settings.ldapCaCertFile')" :error="ldapConfigurationFormErrors.ca_cert_file">
-                  <el-input v-model="ldapConfigurationForm.ca_cert_file" :placeholder="t('settings.ldapCaCertFilePlaceholder')" :disabled="ldapConfigurationSaving" />
+                  <el-input v-model="ldapConfigurationForm.ca_cert_file" :placeholder="t('settings.ldapCaCertFilePlaceholder')" />
                 </el-form-item>
                 <el-form-item class="settings-ldap-panel__compact-field" :label="t('settings.ldapConnectTimeout')" :error="ldapConfigurationFormErrors.connect_timeout">
-                  <el-input-number v-model="ldapConfigurationForm.connect_timeout" :min="1" :max="300" controls-position="right" :disabled="ldapConfigurationSaving" />
+                  <el-input-number v-model="ldapConfigurationForm.connect_timeout" :min="1" :max="300" controls-position="right" />
                 </el-form-item>
                 <el-form-item class="settings-ldap-panel__compact-field" :label="t('settings.ldapOperationTimeout')" :error="ldapConfigurationFormErrors.operation_timeout">
-                  <el-input-number v-model="ldapConfigurationForm.operation_timeout" :min="1" :max="300" controls-position="right" :disabled="ldapConfigurationSaving" />
+                  <el-input-number v-model="ldapConfigurationForm.operation_timeout" :min="1" :max="300" controls-position="right" />
                 </el-form-item>
               </div>
             </el-collapse-item>

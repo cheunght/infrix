@@ -198,7 +198,8 @@ onMounted(() => {
           table-layout="fixed"
         >
           <template #empty>
-            <el-empty
+            <span v-if="dictionaryLoading">{{ t('common.loadingData') }}</span>
+          <el-empty v-else
               :image-size="56"
               :description="hasDictionaryFilters ? t('settings.noMatchingDictionary', { item: localizedDictionaryLabel }) : t('settings.noDictionary', { item: localizedDictionaryLabel })"
             >

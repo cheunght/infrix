@@ -51,8 +51,7 @@
   margin: calc(var(--space-md) * -1) 0 0;
 }
 
-.dashboard-state,
-.dashboard-skeleton {
+.dashboard-state {
   width: 100%;
 }
 

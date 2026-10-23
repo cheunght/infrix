@@ -95,6 +95,7 @@ const assetIdentityMeta = computed(() => {
             text
             type="primary"
             :icon="Edit"
+            :disabled="loading"
             @click="emit('edit')"
             >{{ t("common.edit") }}</el-button
           >
@@ -103,6 +104,7 @@ const assetIdentityMeta = computed(() => {
             text
             type="danger"
             :icon="Delete"
+            :disabled="loading"
             @click="emit('dispose')"
             >{{ t("asset.disposeAsset") }}</el-button
           >
@@ -110,6 +112,7 @@ const assetIdentityMeta = computed(() => {
             text
             type="primary"
             :icon="Grid"
+            :disabled="loading"
             @click="showQrDialog = true"
             >{{ t("asset.printLabels") }}</el-button
           >

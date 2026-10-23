@@ -225,7 +225,8 @@ onMounted(() => void loadAll());
       <el-alert v-if="error" :title="error" type="error" show-icon :closable="false"><template #default><el-button link type="danger" @click="loadAll">{{ t('common.retry') }}</el-button></template></el-alert>
       <PagedTable v-else v-model:current-page="page" v-model:page-size="pageSize" :total="total" @update:current-page="loadFieldsets" @update:page-size="page = 1; loadFieldsets()">
         <el-table v-loading="loading" :data="rows" table-layout="fixed">
-          <template #empty><el-empty :image-size="56" :description="t('customFieldSet.empty')" /></template>
+          <template #empty><span v-if="loading">{{ t('common.loadingData') }}</span>
+          <el-empty v-else :image-size="56" :description="t('customFieldSet.empty')" /></template>
           <el-table-column prop="name" :label="t('common.name')" min-width="180" />
           <el-table-column prop="description" :label="t('common.description')" min-width="220" show-overflow-tooltip />
           <el-table-column :label="t('customFieldSet.fieldsCount')" width="100"><template #default="{ row }">{{ row.items.length }}</template></el-table-column>

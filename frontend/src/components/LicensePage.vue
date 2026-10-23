@@ -218,7 +218,8 @@ function formatLicenseExpiry(value: string | null | undefined): string {
             </template>
           </el-table-column>
           <template #empty>
-            <el-empty :image-size="56" :description="licenseHasFilters ? t('license.noMatchingLicenses') : t('license.noLicenses')">
+            <span v-if="licenseListLoading">{{ t('common.loadingData') }}</span>
+            <el-empty v-else :image-size="56" :description="licenseHasFilters ? t('license.noMatchingLicenses') : t('license.noLicenses')">
               <el-button v-if="licenseHasFilters" link type="primary" @click="resetLicenseFilters">{{ t('common.clearFilters') }}</el-button>
             </el-empty>
           </template>

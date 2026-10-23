@@ -47,6 +47,7 @@ export function useRackComparison(
   let controller: AbortController | null = null;
   let cooldownTimer: ReturnType<typeof setTimeout> | null = null;
   let retryAt = 0;
+  let snapshotAccount = context.currentUsername.value;
 
   function stop() {
     ++generation;
@@ -56,6 +57,8 @@ export function useRackComparison(
     loading.value = false;
   }
   async function refresh() {
+    const previous = snapshotAccount === context.currentUsername.value ? entries.value : [];
+    snapshotAccount = context.currentUsername.value;
     stop();
     if (
       !alive ||
@@ -66,8 +69,8 @@ export function useRackComparison(
       return;
     entries.value = ids.value.map((id) => ({
       id,
-      rack: null,
-      options: null,
+      rack: previous.find((entry) => entry.id === id)?.rack || null,
+      options: previous.find((entry) => entry.id === id)?.options || null,
       loading: false,
       failed: false,
     }));
@@ -94,6 +97,8 @@ export function useRackComparison(
           entry.options = options;
         } catch (cause) {
           if (!alive || version !== generation || isAbortError(cause)) return;
+          entry.rack = null;
+          entry.options = null;
           entry.failed = true;
           if (cause instanceof ApiError && cause.status === 503) {
             coolingDown.value = true;

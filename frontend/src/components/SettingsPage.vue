@@ -270,7 +270,8 @@ function openAuditDetail(log: AuditLog) {
           <template v-else>
             <el-table class="audit-log-table" v-loading="auditListLoading" :data="auditLogs" table-layout="fixed">
               <template #empty>
-                <el-empty :image-size="56" :description="hasAuditFilters ? t('settings.noMatchingAudit') : t('settings.noAudit')">
+                <span v-if="auditListLoading">{{ t('common.loadingData') }}</span>
+          <el-empty v-else :image-size="56" :description="hasAuditFilters ? t('settings.noMatchingAudit') : t('settings.noAudit')">
                   <el-button v-if="hasAuditFilters" link type="primary" @click="clearAuditFilters">{{ t('common.clearFilters') }}</el-button>
                 </el-empty>
               </template>

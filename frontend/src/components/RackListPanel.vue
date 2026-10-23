@@ -55,13 +55,12 @@ function rackStatus(rack: Rack) {
     <div class="rack-list-paged-table">
       <div class="resource-list-area">
         <ResourceState
-          :loading="rackListLoading && !visibleRacks.length"
           :error="rackListError"
-          :empty="!visibleRacks.length"
-          :empty-text="emptyDescription"
           @retry="retryRackView"
         >
           <div class="rack-list-rows" v-loading="rackListLoading" :aria-label="t('rack.list')">
+            <span v-if="rackListLoading && !visibleRacks.length" role="status">{{ t('common.loadingData') }}</span>
+            <el-empty v-else-if="!visibleRacks.length" :image-size="56" :description="emptyDescription" />
             <div v-for="rack in visibleRacks" :key="rack.id" class="rack-list-choice">
               <input
                 v-if="comparisonIds"
