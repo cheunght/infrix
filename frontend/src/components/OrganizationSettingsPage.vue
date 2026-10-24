@@ -296,7 +296,7 @@ function applyPeopleFilters() {
       <PageContent v-else surface>
         <PageToolbar v-if="['users', 'departments', 'people'].includes(organizationTab)" :key="`organization-toolbar-${organizationTab}`" class="settings-list-toolbar">
           <template v-if="organizationTab === 'users'" #search>
-            <SearchField v-model="userSearch" :loading="organizationLoading" :disabled="organizationLoading" :placeholder="t('settings.userSearchPlaceholder')" :aria-label="t('settings.user')" @search="triggerUserSearch" />
+            <SearchField v-model="userSearch" :loading="organizationLoading" :placeholder="t('settings.userSearchPlaceholder')" :aria-label="t('settings.user')" @search="triggerUserSearch" />
           </template>
           <template v-if="organizationTab === 'users'" #primary>
             <div class="settings-user-primary-actions">
@@ -310,7 +310,7 @@ function applyPeopleFilters() {
             </div>
           </template>
           <template v-if="organizationTab === 'departments'" #search>
-            <SearchField v-model="departmentSearch" :loading="departmentLoading" :disabled="departmentLoading" :placeholder="t('settings.departmentName')" :aria-label="t('settings.departments')" @search="searchDepartments" />
+            <SearchField v-model="departmentSearch" :loading="departmentLoading" :placeholder="t('settings.departmentName')" :aria-label="t('settings.departments')" @search="searchDepartments" />
           </template>
           <template v-if="organizationTab === 'departments'" #primary>
             <el-button class="page-primary-action" type="primary" :loading="departmentSaving" :disabled="departmentSaving" @click="openDepartmentModal()">{{ t('settings.addDepartment') }}</el-button>
@@ -319,7 +319,7 @@ function applyPeopleFilters() {
             <ToolbarIconButton v-if="can('settings.manage')" :icon="Upload" :label="t('settings.departmentImport')" @click="openDepartmentImport" />
           </template>
           <template v-if="organizationTab === 'people'" #search>
-            <SearchField v-model="responsibilityDirectorySearch" :loading="responsibilityDirectoryLoading" :disabled="responsibilityDirectoryLoading" :placeholder="t('settings.personSearchPlaceholder')" :aria-label="t('settings.peopleTab')" @search="searchResponsibilityDirectory" />
+            <SearchField v-model="responsibilityDirectorySearch" :loading="responsibilityDirectoryLoading" :placeholder="t('settings.personSearchPlaceholder')" :aria-label="t('settings.peopleTab')" @search="searchResponsibilityDirectory" />
           </template>
           <template v-if="organizationTab === 'people'" #filters>
             <ToolbarIconButton :icon="Filter" :label="t('asset.moreFilters')" :badge="activePeopleFilterCount" @click="openPeopleFilters" />

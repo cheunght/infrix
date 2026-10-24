@@ -1323,7 +1323,8 @@ export function useOrganizationSettings(deps: OrganizationSettingsDeps) {
   async function searchUsers() {
     clearUserSelection();
     userPage.value = 1;
-    await loadUsers();
+    // A search can supersede the initial read, including its role options.
+    await loadOrganization();
   }
 
   return {
