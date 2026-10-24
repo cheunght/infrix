@@ -2285,21 +2285,25 @@ watch(hasOpenGlobalOverlay, (isOpen) => {
         :collapse="sidebarCollapsed"
         :collapse-transition="true"
         popper-effect="light"
+        popper-class="ep-sidebar-popup"
+        :popper-offset="12"
         @select="handleMenuSelect"
       >
-        <el-menu-item v-if="can('dashboard.view')" index="dashboard"
+        <el-menu-item v-if="can('dashboard.view')" index="dashboard" :aria-label="t('nav.dashboard')"
           ><el-icon><House /></el-icon
-          ><template #title>{{ t('nav.dashboard') }}</template></el-menu-item
+          ><template #title><span class="sidebar-menu-label">{{ t('nav.dashboard') }}</span></template></el-menu-item
         >
         <el-sub-menu
           v-if="can('assets.view') || can('custom_fields.view') || can('tags.view') || can('settings.view') || can('spares.view')"
           index="asset-menu"
+          :aria-label="t('nav.assets')"
           ><template #title><el-icon><Monitor /></el-icon><span>{{ t('nav.assets') }}</span></template
           ><el-menu-item v-if="can('assets.view')" index="asset-list">{{ t('nav.assetList') }}</el-menu-item
           ><el-menu-item v-if="can('spares.view')" index="spares">{{ t('nav.spareParts') }}</el-menu-item
           ><el-sub-menu
             v-if="can('custom_fields.view') || can('tags.view') || can('settings.view')"
             index="asset-config-menu"
+            :aria-label="t('nav.assetConfiguration')"
           >
             <template #title>{{ t('nav.assetConfiguration') }}</template>
             <el-menu-item v-if="can('settings.view')" index="asset-config-models"
@@ -2319,7 +2323,7 @@ watch(hasOpenGlobalOverlay, (isOpen) => {
             >
           </el-sub-menu>
         </el-sub-menu>
-        <el-sub-menu v-if="can('racks.view')" index="racks-menu">
+        <el-sub-menu v-if="can('racks.view')" index="racks-menu" :aria-label="t('nav.racks')">
           <template #title>
             <el-icon><OfficeBuilding /></el-icon>
             <span>{{ t('nav.racks') }}</span>
@@ -2327,21 +2331,22 @@ watch(hasOpenGlobalOverlay, (isOpen) => {
           <el-menu-item index="racks-locations">{{ t('nav.locations') }}</el-menu-item>
           <el-menu-item index="racks-view">{{ t('nav.rackView') }}</el-menu-item>
         </el-sub-menu>
-        <el-menu-item v-if="can('licenses.view')" index="licenses"
+        <el-menu-item v-if="can('licenses.view')" index="licenses" :aria-label="t('nav.licenses')"
           ><el-icon><Key /></el-icon
-          ><template #title>{{ t('nav.licenses') }}</template></el-menu-item
+          ><template #title><span class="sidebar-menu-label">{{ t('nav.licenses') }}</span></template></el-menu-item
         >
-        <el-menu-item v-if="can('inventory.view')" index="inventory"
+        <el-menu-item v-if="can('inventory.view')" index="inventory" :aria-label="t('nav.inventory')"
           ><el-icon><Checked /></el-icon
-          ><template #title>{{ t('nav.inventory') }}</template></el-menu-item
+          ><template #title><span class="sidebar-menu-label">{{ t('nav.inventory') }}</span></template></el-menu-item
         >
-        <el-menu-item v-if="can('faults.view')" index="repairs"
+        <el-menu-item v-if="can('faults.view')" index="repairs" :aria-label="t('nav.repairs')"
           ><el-icon><Warning /></el-icon
-          ><template #title>{{ t('nav.repairs') }}</template></el-menu-item
+          ><template #title><span class="sidebar-menu-label">{{ t('nav.repairs') }}</span></template></el-menu-item
         >
         <el-sub-menu
           v-if="can('settings.view') || can('organization.manage') || can('settings.manage') || can('audit.view') || can('system.reset')"
           index="settings"
+          :aria-label="t('nav.settings')"
           ><template #title
             ><el-icon><Setting /></el-icon><span>{{ t('nav.settings') }}</span></template
           ><el-menu-item v-if="can('settings.view')" index="settings-system"

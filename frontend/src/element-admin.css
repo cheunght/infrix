@@ -135,6 +135,55 @@ body {
   color: var(--el-color-primary);
   font-weight: 600;
 }
+/* Menu popups are teleported outside the sidebar, so scope their shared theme here. */
+.el-popper.ep-sidebar-popup {
+  --el-menu-text-color: var(--infrix-sidebar-text);
+  --el-menu-bg-color: var(--infrix-sidebar-bg);
+  --el-menu-hover-bg-color: var(--infrix-sidebar-hover);
+  --el-menu-hover-text-color: var(--infrix-primary-blue);
+  --el-menu-active-color: var(--infrix-primary-blue);
+  box-sizing: border-box;
+  min-width: 184px;
+  padding: 6px;
+  border: 1px solid var(--infrix-sidebar-border);
+  border-radius: 8px;
+  background: var(--infrix-sidebar-bg);
+  color: var(--infrix-sidebar-text);
+  box-shadow: var(--el-box-shadow-light);
+  font-family: inherit;
+  font-size: 14px;
+  line-height: 20px;
+}
+.el-popper.ep-sidebar-popup .el-popper__arrow {
+  display: none;
+}
+.el-popper.ep-sidebar-popup .el-menu--popup {
+  min-width: 170px;
+  padding: 0;
+  border-radius: 0;
+  box-shadow: none;
+}
+.el-popper.ep-sidebar-popup .el-menu-item,
+.el-popper.ep-sidebar-popup .el-sub-menu__title,
+.el-popper.ep-sidebar-popup .sidebar-menu-label {
+  box-sizing: border-box;
+  height: 40px;
+  padding: 0 12px;
+  border-radius: 6px;
+  font-family: inherit;
+  font-size: 14px;
+  font-weight: 400;
+  line-height: 40px;
+}
+.el-popper.ep-sidebar-popup .sidebar-menu-label {
+  display: block;
+  white-space: nowrap;
+}
+.el-popper.ep-sidebar-popup .el-menu-item.is-active {
+  background: var(--el-color-primary-light-9);
+  color: var(--el-color-primary);
+  font-weight: 600;
+}
 .ep-main {
   min-width: 0;
   padding: 0;
