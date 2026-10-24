@@ -2253,20 +2253,22 @@ watch(hasOpenGlobalOverlay, (isOpen) => {
       class="sidebar ep-sidebar"
     >
       <div class="sidebar-brand">
-        <img
-          v-show="sidebarCollapsed"
-          class="sidebar-brand-icon"
-          :src="brandingMark"
-          :alt="branding.display_name"
-          @error="brandingImageFailed('compact_logo')"
-        />
-        <img
-          v-show="!sidebarCollapsed"
-          class="sidebar-wordmark"
-          :src="brandingLogo"
-          :alt="branding.display_name"
-          @error="brandingImageFailed('logo')"
-        />
+        <div class="sidebar-brand-logos">
+          <img
+            v-show="sidebarCollapsed"
+            class="sidebar-brand-icon"
+            :src="brandingMark"
+            :alt="branding.display_name"
+            @error="brandingImageFailed('compact_logo')"
+          />
+          <img
+            v-show="!sidebarCollapsed"
+            class="sidebar-wordmark"
+            :src="brandingLogo"
+            :alt="branding.display_name"
+            @error="brandingImageFailed('logo')"
+          />
+        </div>
         <el-button
           class="ep-sidebar-collapse-button"
           text

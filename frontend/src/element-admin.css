@@ -93,7 +93,6 @@ body {
 }
 .shell.sidebar-collapsed > .ep-sidebar .sidebar-brand {
   box-sizing: border-box;
-  width: var(--sidebar-width-collapsed);
   justify-content: center;
   margin-right: 0;
   margin-left: 0;
@@ -121,6 +120,9 @@ body {
 /* Keep right-aligned arrows in place while the aside reveals the expanded menu. */
 .ep-sidebar-menu:not(.el-menu--collapse) {
   width: calc(var(--sidebar-width) - 1px);
+}
+.ep-sidebar-menu.el-menu--collapse {
+  width: calc(var(--sidebar-width-collapsed) - 1px);
 }
 .ep-sidebar-menu .el-menu-item,
 .ep-sidebar-menu .el-sub-menu__title {
@@ -1895,6 +1897,9 @@ body {
   font-size: 17px;
   font-weight: 700;
   letter-spacing: 0.01em;
+  transition:
+    padding var(--el-transition-duration) ease-in-out,
+    gap var(--el-transition-duration) ease-in-out;
 }
 
 .shell:not(.sidebar-collapsed) > .ep-sidebar .sidebar-brand {
@@ -1913,13 +1918,23 @@ body {
 
 .sidebar-wordmark {
   display: block;
-  flex: 0 1 150px;
+  flex: 0 0 150px;
   width: 150px !important;
   min-width: 0;
   height: 56px !important;
   object-fit: contain;
   background: transparent;
   border-radius: 0;
+}
+
+/* Reveal the fixed-size logo without squeezing it as the sidebar changes width. */
+.sidebar-brand-logos {
+  display: flex;
+  flex: 1;
+  min-width: 0;
+  height: 56px;
+  align-items: center;
+  overflow: hidden;
 }
 
 .ep-sidebar-collapse-button {
@@ -1942,10 +1957,9 @@ body {
 }
 
 .shell.sidebar-collapsed > .ep-sidebar .sidebar-brand {
-  width: 64px !important;
   height: 72px;
   padding: 0 !important;
-  gap: 4px;
+  gap: 2px;
   justify-content: center;
 }
 
