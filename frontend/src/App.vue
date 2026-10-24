@@ -47,7 +47,7 @@ import NotificationCenter from "./components/NotificationCenter.vue";
 import BackupMaintenanceScreen from "./components/BackupMaintenanceScreen.vue";
 import { useBackupOperations } from "./composables/useBackupOperations";
 import LanguageSwitcher from "./components/LanguageSwitcher.vue";
-import { branding, brandingLogo, brandingMark, brandingImageFailed, loadBranding } from "./branding";
+import { branding, brandingLogo, brandingImageFailed, loadBranding } from "./branding";
 import { statusLabel } from "./status";
 import { currentLocale, elementPlusLocale, setLocale, type Locale } from "./i18n";
 import { useI18n } from "vue-i18n";
@@ -2254,13 +2254,6 @@ watch(hasOpenGlobalOverlay, (isOpen) => {
     >
       <div class="sidebar-brand">
         <div class="sidebar-brand-logos">
-          <img
-            v-show="sidebarCollapsed"
-            class="sidebar-brand-icon"
-            :src="brandingMark"
-            :alt="branding.display_name"
-            @error="brandingImageFailed('compact_logo')"
-          />
           <img
             v-show="!sidebarCollapsed"
             class="sidebar-wordmark"

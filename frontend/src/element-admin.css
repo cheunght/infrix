@@ -533,22 +533,6 @@ body {
   color: var(--el-text-color-secondary);
   font-size: 11px;
 }
-/* Platform brand mark generated for the login screen and sidebar. */
-.sidebar-brand-icon {
-  display: block;
-  flex: 0 0 30px;
-  width: 30px;
-  height: 30px;
-  object-fit: contain;
-}
-
-.shell.sidebar-collapsed > .ep-sidebar .sidebar-brand-icon {
-  flex-basis: 30px;
-  width: 30px;
-  height: 30px;
-  margin: 0;
-}
-
 .import-error-list {
   max-height: 360px;
   margin-top: 14px;
@@ -1906,16 +1890,6 @@ body {
   padding: 0 8px 0 10px !important;
 }
 
-.sidebar-brand-icon {
-  display: block;
-  flex: 0 0 34px !important;
-  width: 34px !important;
-  height: 34px !important;
-  object-fit: contain;
-  background: transparent;
-  border-radius: 0;
-}
-
 .sidebar-wordmark {
   display: block;
   flex: 0 0 150px;
@@ -1958,16 +1932,9 @@ body {
 
 .shell.sidebar-collapsed > .ep-sidebar .sidebar-brand {
   height: 72px;
-  padding: 0 !important;
-  gap: 2px;
+  padding: 0 calc((var(--sidebar-width-collapsed) - 1px - 32px) / 2) !important;
+  gap: 0;
   justify-content: center;
-}
-
-.shell.sidebar-collapsed > .ep-sidebar .sidebar-brand-icon {
-  flex: 0 0 28px !important;
-  width: 28px !important;
-  height: 28px !important;
-  margin: 0 !important;
 }
 
 /* Login uses the same quiet light palette as the white sidebar. */
