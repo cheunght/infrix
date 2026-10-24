@@ -80,9 +80,7 @@ body {
     width var(--el-transition-duration) ease-in-out,
     flex-basis var(--el-transition-duration) ease-in-out;
 }
-/* Keep the shell width and the Element Plus menu collapse in the same layout
-   transition. The shell owns the aside geometry; el-menu owns its labels and
-   submenu collapse state. */
+/* The shell owns the width animation; el-menu switches its collapsed state immediately. */
 .shell:not(.sidebar-collapsed) > .ep-sidebar {
   width: var(--sidebar-width) !important;
   flex: 0 0 var(--sidebar-width);
