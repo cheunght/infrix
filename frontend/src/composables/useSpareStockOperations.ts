@@ -114,11 +114,17 @@ export function useSpareStockOperations(deps: StockOperationsDeps) {
       await deps.request("/spare-transactions/", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload) });
       const locationDataCenter = STOCK_SOURCE_OPERATION_VALUES.includes(operation) ? form.source_data_center : form.target_data_center;
       const locationServerRoom = STOCK_SOURCE_OPERATION_VALUES.includes(operation) ? form.source_server_room : form.target_server_room;
-      if (locationDataCenter) localStorage.setItem("infrix.spare.last_location", JSON.stringify({ data_center: Number(locationDataCenter), server_room: locationServerRoom ? Number(locationServerRoom) : null }));
+      try {
+        if (locationDataCenter) localStorage.setItem("infrix.spare.last_location", JSON.stringify({ data_center: Number(locationDataCenter), server_room: locationServerRoom ? Number(locationServerRoom) : null }));
+      } catch { /* Optional browser preferences must not change a committed transaction's outcome. */ }
       showSpareOperationModal.value = false;
       setActionMessage(tr("spare.transactionSaved"));
-      const refreshError = await deps.refresh();
-      if (refreshError) setActionMessage(tr("spare.transactionSavedRefreshFailed"), "error");
+      try {
+        const refreshError = await deps.refresh();
+        if (refreshError) setActionMessage(tr("spare.transactionSavedRefreshFailed"), "error");
+      } catch {
+        setActionMessage(tr("spare.transactionSavedRefreshFailed"), "error");
+      }
       return true;
     } catch (error) {
       const parsed = extractFormError(error, SPARE_OPERATION_FORM_FIELDS, tr("spare.operationFailed"));

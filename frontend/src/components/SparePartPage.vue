@@ -327,22 +327,22 @@ watch(showSpareOperationModal, (open, wasOpen) => { if (!open && wasOpen) refres
       <template #toolbar>
         <PageToolbar>
           <template #search>
-            <SearchField v-model="spareSearch" :placeholder="t('spare.searchPlaceholder')" :aria-label="t('spare.title')" :loading="spareListLoading" @search="searchSpareParts" />
+            <SearchField v-model="spareSearch" :placeholder="t('spare.listSearchPlaceholder')" :aria-label="t('spare.listSearchPlaceholder')" :loading="spareListLoading" @search="searchSpareParts" />
           </template>
           <template #filters>
             <ToolbarIconButton :icon="Filter" :label="t('asset.moreFilters')" :badge="activeSpareFilterCount" @click="openSpareFilters" />
           </template>
-          <template #actions>
-            <ToolbarIconButton
+          <template v-if="can('spares.export')" #actions>
+            <el-button
               v-if="can('spares.export')"
               :icon="Download"
-              :label="t('asset.exportData')"
+              :aria-label="t('asset.exportData')"
               :loading="exportingSpares"
               :disabled="exportingSpares"
               @click="exportSpareParts"
-            />
+            >{{ t('asset.exportData') }}</el-button>
           </template>
-          <template #primary>
+          <template v-if="can('spares.manage')" #primary>
             <el-button v-if="can('spares.manage')" class="page-primary-action" type="primary" @click="openSparePartModal()">{{ t('spare.addSpare') }}</el-button>
           </template>
         </PageToolbar>
@@ -364,7 +364,7 @@ watch(showSpareOperationModal, (open, wasOpen) => { if (!open && wasOpen) refres
             <el-table-column type="expand" width="46">
               <template #default="{ row }">
                 <div class="spare-location-panel">
-                  <div class="spare-location-header"><strong>{{ t('spare.stockLocation') }}</strong><span class="form-hint">{{ t('spare.stockLocationHint') }}</span></div>
+                  <div class="spare-location-header"><strong>{{ t('spare.stockLocation') }}</strong></div>
                   <el-skeleton v-if="stockLocationLoadingByPart[row.id]" :rows="2" animated />
                   <div v-else-if="stockLocationErrorByPart[row.id]" class="spare-inline-error" role="alert"><span>{{ t('spare.stockLocationLoadFailed') }}: {{ stockLocationErrorByPart[row.id] }}</span><el-button link type="primary" @click="stockLocationRetry(row.id)">{{ t('common.retry') }}</el-button></div>
                   <div v-else-if="stockLocationLoadedByPart[row.id] && stocksFor(row).length" class="spare-location-list">
@@ -494,7 +494,6 @@ watch(showSpareOperationModal, (open, wasOpen) => { if (!open && wasOpen) refres
     <FormDialogShell
       v-model="showSparePartModal"
       :title="editingSparePart ? t('spare.editSpare') : t('spare.addSpare')"
-      :description="t('spare.spareDescription')"
       size="medium"
       :saving="spareSaving"
       :error="sparePartFormError"
@@ -549,7 +548,6 @@ watch(showSpareOperationModal, (open, wasOpen) => { if (!open && wasOpen) refres
     <ActionDialogShell
       v-model="showSpareOperationModal"
       :title="`${spareOperationLabel(spareOperationType)}${t('spare.stockQuantity')}`"
-      :description="t('spare.operationTitle')"
       size="medium"
       :pending="spareOperationSaving"
       :error="spareOperationError"

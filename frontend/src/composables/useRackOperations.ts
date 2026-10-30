@@ -98,11 +98,15 @@ export function useRackOperations(
         ? `${targetRack.value.data_center_name} / ${targetRack.value.server_room_name} / ${targetRack.value.code} · U${startU.value}–U${endU.value}`
         : tr("rackOps.chooseRack"),
   );
+  const assetEligible = computed(() => {
+    const value = asset.value;
+    if (!value || value.archived_at || (value.status === "retired" && mode.value !== "unmount")) return false;
+    return mode.value === "mount" ? !value.rack_allocation : !!value.rack_allocation;
+  });
   const positionValid = computed(() => {
-    if (mode.value === "unmount") return !!asset.value?.rack_allocation;
+    if (!assetEligible.value) return false;
+    if (mode.value === "unmount") return true;
     if (
-      !asset.value ||
-      asset.value.status === "retired" ||
       !targetRack.value ||
       !options.value?.accepts_assets ||
       optionsLoading.value
@@ -166,6 +170,10 @@ export function useRackOperations(
   }
   async function locate(id: number) {
     findOpen.value = false;
+    if (route.query.rack_asset === String(id)) {
+      await restoreLocation();
+      return;
+    }
     await router.push({
       path: "/racks/view",
       query: { ...route.query, rack_asset: String(id) },
@@ -185,7 +193,7 @@ export function useRackOperations(
       locatedAsset.value = null;
       locateError.value = "";
       c.closeAssetDetail();
-      c.focusRackDetail(null);
+      if (String(c.focusedRack?.value?.id) !== String(route.query.rack)) c.focusRackDetail(null);
       return;
     }
     c.invalidateAssetDetail();
@@ -212,6 +220,7 @@ export function useRackOperations(
       const rack = await read<Rack>(`/racks/${placement.rack}/`);
       if (!alive || version !== locateVersion) return;
       const query = {
+        mode: route.query.mode,
         compare: route.query.compare,
         data_center: String(placement.data_center_id),
         room: String(rack.room),
@@ -374,8 +383,10 @@ export function useRackOperations(
             throw new Error(tr("rackOps.assetUnavailable"));
           asset.value = detail;
           height.value = detail.rack_allocation?.units || 1;
-          if (operation === "adjust")
-            startU.value = detail.rack_allocation?.start_u || 1;
+          if (operation === "adjust" && detail.rack_allocation) {
+            startU.value = detail.rack_allocation.start_u;
+            rackId.value = detail.rack_allocation.rack;
+          }
         }
       } catch (cause) {
         if (version === prepareVersion && !isAbortError(cause))
@@ -410,13 +421,19 @@ export function useRackOperations(
     const current = () =>
       alive && write === writeVersion && account === c.currentUsername.value;
     const version = locateVersion;
+    const location = route.fullPath;
     c.closeAssetDetail();
     const refreshed = await c.loadRackView();
     if (!current()) return;
+    if (route.fullPath !== location) {
+      if (refreshed === false) throw new Error(tr("common.refreshFailed"));
+      return;
+    }
     if (detail.rack_allocation) {
       await router.replace({
         path: "/racks/view",
         query: {
+          mode: route.query.mode,
           compare: route.query.compare,
           data_center: String(detail.rack_allocation.data_center_id),
           room: String(detail.rack_allocation.server_room_id),
@@ -529,7 +546,12 @@ export function useRackOperations(
       asset.value = detail;
       uncertain.value = false;
       placementRevision.value += 1;
-      error.value = tr("rackOps.reconciled");
+      if (mode.value === "adjust" && detail.rack_allocation) {
+        rackId.value = detail.rack_allocation.rack;
+        startU.value = detail.rack_allocation.start_u;
+        height.value = detail.rack_allocation.units;
+      }
+      error.value = tr(assetEligible.value ? "rackOps.reconciled" : "rackOps.operationUnavailable");
       await loadOptions();
     } catch (cause) {
       if (alive && version === prepareVersion && !isAbortError(cause))

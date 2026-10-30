@@ -52,7 +52,6 @@ export interface AuthDeps {
   lastLogin: Ref<string | null>;
   actionMessage: Ref<string>;
   actionMessageType: Ref<ActionMessageType | null>;
-  settingsSection: Ref<string>;
   locale: Ref<Locale>;
   setLocale: (value: unknown, persist?: boolean) => Locale;
 }
@@ -184,9 +183,6 @@ export function useAuth(deps: AuthDeps) {
       deps.syncRouteState();
       deps.ensureRouteAccess();
       if (deps.passwordChangeRequired.value) openPasswordModal();
-      if (!deps.can("organization.manage") && deps.settingsSection.value === "organization") {
-        deps.settingsSection.value = "system";
-      }
     } catch (error) {
       if (isAbortError(error)) return;
       // DRF's session authentication returns 403 when an unauthenticated
@@ -205,9 +201,6 @@ export function useAuth(deps: AuthDeps) {
     applyAuthPayload(user);
     deps.syncRouteState();
     deps.ensureRouteAccess();
-    if (!deps.can("organization.manage") && deps.settingsSection.value === "organization") {
-      deps.settingsSection.value = "system";
-    }
     deps.password.value = "";
     await deps.loadCsrf();
     if (deps.passwordChangeRequired.value) {

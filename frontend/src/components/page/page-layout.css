@@ -163,6 +163,7 @@ header.page-header.page-header--compact {
   align-items: center;
   justify-content: flex-start;
   gap: var(--page-toolbar-gap);
+  --page-toolbar-gap: 8px;
   width: 100%;
   min-height: var(--el-component-size);
   margin: 0;
@@ -171,12 +172,12 @@ header.page-header.page-header--compact {
 
 .page-toolbar__left {
   display: flex;
-  flex: 1 1 520px;
+  flex: 1 1 480px;
   flex-direction: row;
   flex-wrap: wrap;
   align-items: center;
   gap: var(--page-toolbar-gap);
-  min-width: 0;
+  min-width: min(100%, 480px);
   max-width: 100%;
 }
 
@@ -210,10 +211,7 @@ header.page-header.page-header--compact {
 
 .page-toolbar__left > .toolbar-filters {
   display: flex;
-  /* The filter rail shares the flexible portion of the left side.  Its
-     controls keep their semantic token widths, but can shrink as a group
-     before the toolbar ever needs a second desktop row. */
-  flex: 1 1 0;
+  flex: 0 1 auto;
   flex-direction: row;
   align-items: center;
   gap: var(--page-toolbar-gap);
@@ -235,7 +233,7 @@ header.page-header.page-header--compact {
   display: flex;
   flex: 0 1 auto;
   flex-direction: row;
-  flex-wrap: wrap;
+  flex-wrap: nowrap;
   width: auto;
   max-width: 100%;
   min-width: 0;
@@ -254,6 +252,8 @@ header.page-header.page-header--compact {
   min-width: 0;
   max-width: 100%;
 }
+
+.page-toolbar .el-button { white-space: nowrap; }
 
 .page-toolbar .el-button + .el-button,
 .page-toolbar .el-upload + .el-button,
@@ -404,56 +404,6 @@ header.page-header.page-header--compact {
 
 .page-section__content {
   min-width: 0;
-}
-
-/* A desktop toolbar should read as one deliberate action rail. The left rail
-   owns the flexible space and its controls can shrink to a readable minimum;
-   the right rail stays intact so actions never become a second toolbar row. */
-@media (min-width: 1100px) {
-  .page-toolbar,
-  .ep-main .page-toolbar,
-  .page-toolbar__left,
-  .page-toolbar__left > .toolbar-filters,
-  .page-toolbar__filter-group,
-  .page-toolbar__actions {
-    gap: var(--space-sm);
-    flex-wrap: nowrap;
-  }
-
-  .page-toolbar__left {
-    flex: 1 1 0;
-    min-width: 0;
-  }
-
-  .page-toolbar__left > .toolbar-search {
-    flex: 0 1 var(--toolbar-search-width);
-    width: min(100%, var(--toolbar-search-width));
-    min-width: min(var(--toolbar-search-min-width), 100%);
-  }
-
-  .page-toolbar__left > .toolbar-filters,
-  .page-toolbar__filter-group {
-    flex: 1 1 0;
-    min-width: 0;
-  }
-
-  .page-toolbar__right {
-    flex: 0 0 auto;
-    flex-shrink: 0;
-    gap: var(--space-sm);
-    max-width: none;
-    min-width: max-content;
-    white-space: nowrap;
-  }
-
-  .page-toolbar__right > .toolbar-slot,
-  .page-toolbar__actions {
-    flex: 0 0 auto;
-    flex-shrink: 0;
-    max-width: none;
-    min-width: max-content;
-    white-space: nowrap;
-  }
 }
 
 @media (max-width: 760px) {

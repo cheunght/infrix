@@ -533,6 +533,10 @@ function handleBatchSelectAll(rows: unknown[]) {
     selectionSyncing.value = false;
   });
 }
+watch([() => activeTask.value?.id, fieldMode], () => {
+  showItemFilters.value = false;
+});
+
 watch(items, () => {
   itemTableRef.value?.clearSelection();
   clearBatchSelection();
@@ -548,7 +552,7 @@ onMounted(async () => {
       <template #toolbar>
         <PageToolbar>
           <template #search>
-            <SearchField v-model="taskSearch" :placeholder="t('inventory.searchTasks')" :aria-label="t('inventory.title')" @search="() => { taskPage = 1; loadTasks(); }" />
+            <SearchField v-model="taskSearch" :placeholder="t('inventory.taskListSearchPlaceholder')" :aria-label="t('inventory.taskListSearchPlaceholder')" @search="() => { taskPage = 1; loadTasks(); }" />
           </template>
           <template #filters>
             <div class="page-toolbar__filter-group">
@@ -557,7 +561,7 @@ onMounted(async () => {
               </el-select>
             </div>
           </template>
-          <template #primary>
+          <template v-if="can('inventory.manage')" #primary>
             <el-button v-if="can('inventory.manage')" class="page-primary-action" type="primary" :loading="taskCreating" :disabled="taskCreating" @click="openNewTask">
               {{ t('inventory.addTask') }}
             </el-button>
@@ -649,14 +653,14 @@ onMounted(async () => {
           <template #actions>
             <el-button :disabled="fieldwork.busy.value" :type="fieldMode ? 'primary' : 'default'" :plain="fieldMode" @click="fieldwork.setMode(!fieldMode)">{{ t(fieldMode ? 'inventory.tableMode' : 'inventory.fieldMode') }}</el-button>
             <StatusTag :tone="statusTone(activeTask.status)" :label="taskStatusLabel(activeTask.status)" />
-            <ToolbarIconButton
+            <el-button
               v-if="can('inventory.export')"
               :icon="Download"
-              :label="t('common.export')"
+              :aria-label="t('common.export')"
               :loading="exportingTaskId === activeTask.id"
               :disabled="exportingTaskId !== null"
               @click="exportTask()"
-            />
+            >{{ t('common.export') }}</el-button>
             <el-button
               v-if="can('inventory.manage') && activeTask.status === 'in_progress'"
               type="primary"
@@ -732,19 +736,18 @@ onMounted(async () => {
         <PageSection v-else :title="t('inventory.inventoryDevices')">
           <PageToolbar>
             <template #search>
-              <SearchField v-model="itemSearch" :placeholder="t('inventory.searchItems')" :aria-label="t('inventory.inventoryDevices')" @search="() => { itemPage = 1; loadItems(); }" />
+              <SearchField v-model="itemSearch" :placeholder="t('inventory.taskAssetSearchPlaceholder')" :aria-label="t('inventory.taskAssetSearchPlaceholder')" @search="() => { itemPage = 1; loadItems(); }" />
             </template>
             <template #filters>
               <ToolbarIconButton :icon="Filter" :label="t('asset.moreFilters')" :badge="activeItemFilterCount" @click="openItemFilters" />
             </template>
-            <template #actions>
+            <template v-if="activeTask.status === 'in_progress'" #actions>
               <el-popover v-if="activeTask.status === 'in_progress'" v-model:visible="scanPopoverVisible" placement="bottom-end" :width="380" trigger="click" @show="focusAssetScanner">
                 <template #reference>
                   <el-button
                     :icon="Grid"
                     :aria-label="t('inventory.scanAsset')"
-                    :title="t('inventory.scanAsset')"
-                  />
+                  >{{ t('inventory.scanAsset') }}</el-button>
                 </template>
                 <AssetQrScanner
                   ref="scannerRef"
@@ -936,7 +939,6 @@ onMounted(async () => {
     <FormDialogShell
       v-model="showTaskDialog"
       :title="t('inventory.addTask')"
-      :description="t('inventory.taskDialogDescription')"
       size="medium"
       :loading="auxLoading || scopePreviewLoading"
       :saving="taskCreating"
@@ -1007,7 +1009,6 @@ onMounted(async () => {
     <ActionDialogShell
       v-model="showItemDialog"
       :title="t('inventory.confirmInventory')"
-      :description="t('inventory.confirmInventoryDescription')"
       size="medium"
       :pending="itemSaving"
       :error="itemDialogError"
@@ -1040,7 +1041,6 @@ onMounted(async () => {
     <ActionDialogShell
       v-model="showResolutionDialog"
       :title="t('inventory.processException')"
-      :description="t('inventory.processExceptionDescription')"
       class="inventory-resolution-dialog"
       size="large"
       :pending="resolutionSaving"
@@ -1121,7 +1121,6 @@ onMounted(async () => {
     <ActionDialogShell
       v-model="showBulkResolutionDialog"
       :title="t('inventory.bulkProcess')"
-      :description="t('inventory.bulkProcessDescription')"
       class="inventory-bulk-resolution-dialog"
       size="medium"
       :pending="bulkResolutionSaving"

@@ -32,7 +32,6 @@ const systemSettingsSaving = context.systemSettingsSaving;
       </el-form-item>
       <el-form-item :label="systemSettingLabel('login_lock_seconds', t)" :error="errors.login_lock_seconds">
         <el-input-number v-model="form.login_lock_seconds" :min="1" :max="86400" :step="60" :disabled="!context.can('settings.manage') || systemSettingsSaving" class="settings-system__control" />
-        <div class="settings-system__help">{{ systemSettingHelp('login_lock_seconds', t) }}</div>
       </el-form-item>
     </div>
   </section>

@@ -1,9 +1,10 @@
 import { computed, onBeforeUnmount, ref, watch, type Ref } from "vue";
-import type { RouteLocationNormalizedLoaded, Router } from "vue-router";
+import type { LocationQueryRaw, RouteLocationNormalizedLoaded, Router } from "vue-router";
 import type { RackSharedContext } from "../page-context";
 import type { Rack } from "../types";
 import type { PlacementOptions } from "./useRackOperations";
 import { ApiError, isAbortError } from "../api";
+import { i18n } from "../i18n";
 
 export const RACK_COMPARE_LIMIT = 4;
 export type RackComparisonEntry = {
@@ -37,7 +38,54 @@ export function useRackComparison(
   });
   const ids = computed(() => selection.value.ids);
   const invalid = computed(() => selection.value.invalid);
-  const active = computed(() => ids.value.length >= 2);
+  const selecting = computed(() => route.query.mode === "compare" || ids.value.length > 0 || invalid.value);
+  const active = computed(() => selecting.value && ids.value.length >= 2);
+  const leaving = ref(false);
+  const exitError = ref("");
+  let returnQuery: LocationQueryRaw | null = null;
+  function captureReturnPosition() {
+    returnQuery = { ...route.query, rack: route.query.rack || (context.focusedRack?.value ? String(context.focusedRack.value.id) : undefined), rack_asset: undefined, compare: undefined, mode: undefined };
+  }
+  watch(selecting, (selected) => { if (selected && !returnQuery) captureReturnPosition(); }, { immediate: true });
+  async function enter() {
+    if (!context.can("racks.view") || selecting.value) return;
+    captureReturnPosition();
+    await router.replace({ query: { ...route.query, mode: "compare" } });
+  }
+  async function exit() {
+    if (leaving.value || coolingDown.value) return;
+    leaving.value = true;
+    exitError.value = "";
+    const account = context.currentUsername.value;
+    try {
+      await selectionQueue;
+      const original = returnQuery || route.query;
+      const originalId = typeof original.rack === "string" && /^[1-9]\d*$/.test(original.rack) ? Number(original.rack) : null;
+      const candidates = [...new Set([originalId, ...(context.visibleRacks?.value || []).map(rack => rack.id)].filter((id): id is number => id !== null))];
+      let target: Rack | null = null;
+      for (const id of candidates) {
+        try { target = await context.request<Rack>(`/racks/${id}/`); }
+        catch (error) {
+          if (!(error instanceof ApiError) || ![403, 404, 410].includes(error.status)) throw error;
+        }
+        if (!alive || account !== context.currentUsername.value) return;
+        if (target) break;
+      }
+      if (!alive || account !== context.currentUsername.value) return;
+      const query = target?.id === originalId ? { ...original } : { ...route.query };
+      context.closeAssetDetail?.();
+      await router.replace({ query: { ...query, mode: undefined, compare: undefined, rack_asset: undefined, rack: target ? String(target.id) : undefined } });
+      if (!alive || account !== context.currentUsername.value) return;
+      context.focusRackDetail?.(target);
+      if (!target) await context.loadRackView?.();
+      returnQuery = null;
+    } catch (error) {
+      if (alive && account === context.currentUsername.value && !isAbortError(error)) {
+        exitError.value = error instanceof ApiError ? error.message : String(i18n.global.t("rackCompare.exitFailed"));
+        maintenanceCooldown(error);
+      }
+    } finally { leaving.value = false; }
+  }
   const entries = ref<RackComparisonEntry[]>([]);
   const loading = ref(false);
   const coolingDown = ref(false);
@@ -49,6 +97,22 @@ export function useRackComparison(
   let retryAt = 0;
   let snapshotAccount = context.currentUsername.value;
 
+  function maintenanceCooldown(error: unknown) {
+    if (error instanceof ApiError && error.status === 503) {
+      coolingDown.value = true;
+      const delay = Number.isFinite(error.retryAfterMs)
+        ? Math.max(1000, error.retryAfterMs)
+        : 1000;
+      retryAt = Math.max(retryAt, Date.now() + delay);
+      if (cooldownTimer) clearTimeout(cooldownTimer);
+      cooldownTimer = setTimeout(
+        () => {
+          coolingDown.value = false;
+        },
+        Math.min(2147483647, Math.max(0, retryAt - Date.now())),
+      );
+    }
+  }
   function stop() {
     ++generation;
     controller?.abort();
@@ -58,6 +122,7 @@ export function useRackComparison(
   }
   async function refresh() {
     const previous = snapshotAccount === context.currentUsername.value ? entries.value : [];
+    if (snapshotAccount !== context.currentUsername.value) returnQuery = null;
     snapshotAccount = context.currentUsername.value;
     stop();
     if (
@@ -100,20 +165,7 @@ export function useRackComparison(
           entry.rack = null;
           entry.options = null;
           entry.failed = true;
-          if (cause instanceof ApiError && cause.status === 503) {
-            coolingDown.value = true;
-            const delay = Number.isFinite(cause.retryAfterMs)
-              ? Math.max(1000, cause.retryAfterMs)
-              : 1000;
-            retryAt = Math.max(retryAt, Date.now() + delay);
-            if (cooldownTimer) clearTimeout(cooldownTimer);
-            cooldownTimer = setTimeout(
-              () => {
-                coolingDown.value = false;
-              },
-              Math.min(2147483647, Math.max(0, retryAt - Date.now())),
-            );
-          }
+          maintenanceCooldown(cause);
         } finally {
           if (alive && version === generation) entry.loading = false;
         }
@@ -125,6 +177,7 @@ export function useRackComparison(
     await router.replace({
       query: {
         ...route.query,
+        mode: "compare",
         compare: next.length ? next.join(",") : undefined,
       },
     });
@@ -134,7 +187,7 @@ export function useRackComparison(
     selectionQueue = selectionQueue
       .catch(() => {})
       .then(async () => {
-        if (!alive || account !== context.currentUsername.value) return;
+        if (!alive || account !== context.currentUsername.value || leaving.value) return;
         await setSelection(update(ids.value));
       });
     return selectionQueue;
@@ -168,9 +221,15 @@ export function useRackComparison(
     alive = false;
     stop();
     if (cooldownTimer) clearTimeout(cooldownTimer);
+    returnQuery = null;
   });
   return {
     ids,
+    selecting,
+    enter,
+    exit,
+    leaving,
+    exitError,
     invalid,
     active,
     entries,

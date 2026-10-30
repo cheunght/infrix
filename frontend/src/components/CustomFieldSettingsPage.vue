@@ -297,12 +297,12 @@ async function submitCustomFieldOption() {
     <template #toolbar>
       <PageToolbar class="settings-content-toolbar">
         <template #search>
-          <SearchField v-model="c.customFieldSearch" :loading="c.customFieldListLoading" :placeholder="t('customField.searchPlaceholder')" @search="c.refreshCustomFieldList" />
+          <SearchField :aria-label="t('customField.listSearchPlaceholder')" v-model="c.customFieldSearch" :loading="c.customFieldListLoading" :placeholder="t('customField.listSearchPlaceholder')" @search="c.refreshCustomFieldList" />
         </template>
         <template #filters>
           <ToolbarIconButton :icon="Filter" :label="t('asset.moreFilters')" :badge="activeCustomFieldFilterCount" @click="openCustomFieldFilters" />
         </template>
-        <template #primary>
+        <template v-if="c.can('custom_fields.manage')" #primary>
           <el-button v-if="c.can('custom_fields.manage')" class="page-primary-action" type="primary" :disabled="c.customFieldSaving" @click="openCreateCustomField">{{ t('customField.add') }}</el-button>
         </template>
       </PageToolbar>
@@ -380,7 +380,7 @@ async function submitCustomFieldOption() {
     </template>
   </el-drawer>
 
-  <FormDialogShell v-model="c.showCustomFieldModal" class="custom-field-dialog" :title="c.editingCustomField ? t('customField.editTitle') : t('customField.createTitle')" :description="t('customField.description')" size="large" :saving="c.customFieldSaving" :show-close="!c.customFieldSaving" :close-disabled="c.customFieldSaving" :close-on-click-modal="!c.customFieldSaving" :close-on-press-escape="!c.customFieldSaving">
+  <FormDialogShell v-model="c.showCustomFieldModal" class="custom-field-dialog" :title="c.editingCustomField ? t('customField.editTitle') : t('customField.createTitle')" size="large" :saving="c.customFieldSaving" :show-close="!c.customFieldSaving" :close-disabled="c.customFieldSaving" :close-on-click-modal="!c.customFieldSaving" :close-on-press-escape="!c.customFieldSaving">
     <el-form ref="customFieldFormRef" class="horizontal-form custom-field-form" :model="c.customFieldForm" :rules="customFieldFormRules" label-position="right" :validate-on-rule-change="false" @submit.prevent="submitCustomField">
       <section class="form-dialog__section custom-field-form-section custom-field-form-section--basic">
         <h3 class="form-dialog__section-title">{{ t('customField.definition') }}</h3>
@@ -437,7 +437,7 @@ async function submitCustomFieldOption() {
     <template #footer><el-button :disabled="c.customFieldSaving" @click="c.showCustomFieldModal = false">{{ t('common.cancel') }}</el-button><el-button type="primary" :loading="c.customFieldSaving" :disabled="c.customFieldSaving" @click="submitCustomField">{{ c.editingCustomField ? t('common.save') : t('common.create') }}</el-button></template>
   </FormDialogShell>
 
-  <FormDialogShell v-model="c.showCustomFieldOptionModal" class="custom-field-option-dialog" :title="t('customField.optionTitle') + (c.editingCustomField ? `: ${c.editingCustomField.name}` : '')" :description="t('customField.optionDescription')" size="medium" :saving="c.customFieldOptionSaving" :show-close="!c.customFieldOptionSaving" :close-disabled="c.customFieldOptionSaving" :close-on-click-modal="!c.customFieldOptionSaving" :close-on-press-escape="!c.customFieldOptionSaving">
+  <FormDialogShell v-model="c.showCustomFieldOptionModal" class="custom-field-option-dialog" :title="t('customField.optionTitle') + (c.editingCustomField ? `: ${c.editingCustomField.name}` : '')" size="medium" :saving="c.customFieldOptionSaving" :show-close="!c.customFieldOptionSaving" :close-disabled="c.customFieldOptionSaving" :close-on-click-modal="!c.customFieldOptionSaving" :close-on-press-escape="!c.customFieldOptionSaving">
     <section class="form-dialog__section">
       <h3 class="form-dialog__section-title">{{ t('customField.existingOptions') }}</h3>
       <el-alert v-if="c.customFieldOptionError" :title="t('customField.optionLoadFailed')" type="error" show-icon :closable="false">

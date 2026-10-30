@@ -10,7 +10,6 @@ import PageToolbar from "./page/PageToolbar.vue";
 import StatusTag from "./StatusTag.vue";
 import ResourceState from "./ResourceState.vue";
 import TableIconButton from "./TableIconButton.vue";
-import ToolbarIconButton from "./page/ToolbarIconButton.vue";
 import { statusTone } from "../status";
 import type { FaultEvent } from "../types";
 import type { RepairContext } from "../page-context";
@@ -90,7 +89,7 @@ function repairActionIcon(fault: FaultEvent) {
       <template #toolbar>
         <PageToolbar>
           <template #search>
-            <SearchField v-model="repairKeyword" :placeholder="t('repair.searchPlaceholder')" :aria-label="t('repair.title')" @search="searchRepairs" />
+            <SearchField v-model="repairKeyword" :placeholder="t('repair.listSearchPlaceholder')" :aria-label="t('repair.listSearchPlaceholder')" @search="searchRepairs" />
           </template>
           <template #filters>
             <div class="page-toolbar__filter-group">
@@ -100,17 +99,17 @@ function repairActionIcon(fault: FaultEvent) {
               </el-select>
             </div>
           </template>
-          <template #actions>
-            <ToolbarIconButton
+          <template v-if="can('faults.export')" #actions>
+            <el-button
               v-if="can('faults.export')"
               :icon="Download"
-              :label="t('asset.exportData')"
+              :aria-label="t('asset.exportData')"
               :loading="exportingRepairs"
               :disabled="exportingRepairs"
               @click="exportRepairs"
-            />
+            >{{ t('asset.exportData') }}</el-button>
           </template>
-          <template #primary>
+          <template v-if="can('faults.manage')" #primary>
           <el-button v-if="can('faults.manage')" class="page-primary-action" type="primary" @click="openFaultModal()">{{ t('repair.addFault') }}</el-button>
           </template>
         </PageToolbar>

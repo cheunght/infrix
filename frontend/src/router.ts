@@ -23,7 +23,7 @@ export type RackSection = "locations" | "view";
 export type LocationTypeFilter = "" | "data-center" | "room";
 export type LocationStatusFilter = "" | "active" | "inactive";
 
-// App.vue owns the shell and page data context; routed records select the page
+// AppSession.vue owns the shell and page data context; routed records select the page
 // component while their meta remains the source of truth for navigation state.
 const RoutePlaceholder = defineComponent({
   name: "RoutePlaceholder",
@@ -139,6 +139,7 @@ const pageComponents: Partial<Record<Page, () => Promise<Component>>> = {
     "ElDatePicker",
     "ElDialog",
     "ElDrawer",
+    "ElEmpty",
     "ElInputNumber",
     "ElOption",
     "ElPagination",
@@ -165,6 +166,7 @@ const pageComponents: Partial<Record<Page, () => Promise<Component>>> = {
     "ElSkeleton",
     "ElTable",
     "ElTableColumn",
+    "ElTag",
     "ElTooltip",
   ]),
   settings: lazyPage(() => import("./components/SettingsPage.vue"), [

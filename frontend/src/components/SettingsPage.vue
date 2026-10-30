@@ -91,6 +91,9 @@ const auditTabs = computed<PageTabItem[]>(() => [
 watch(settingsSection, () => {
   auditTab.value = "audit";
 });
+watch([settingsSection, auditTab], () => {
+  showAuditFilters.value = false;
+});
 const hasAuditFilters = computed(() => Boolean(
   auditFilters.value.search?.trim() ||
   auditFilters.value.resource_type ||
@@ -225,22 +228,22 @@ function openAuditDetail(log: AuditLog) {
       <template #subnav>
         <PageTabs v-model="auditTab" :items="auditTabs" />
       </template>
-      <PageContent surface>
+      <template #toolbar>
         <PageToolbar v-if="auditTab === 'audit'" class="settings-list-toolbar">
           <template #search>
-            <SearchField v-model="auditFilters.search" :loading="auditListLoading" :placeholder="t('settings.auditSearchPlaceholder')" :aria-label="t('settings.audit')" @search="searchAuditLogs" />
+            <SearchField v-model="auditFilters.search" :loading="auditListLoading" :placeholder="t('settings.auditListSearchPlaceholder')" :aria-label="t('settings.auditListSearchPlaceholder')" @search="searchAuditLogs" />
           </template>
           <template #filters>
             <ToolbarIconButton :icon="Filter" :label="t('asset.moreFilters')" :badge="activeAuditFilterCount" @click="openAuditFilters" />
           </template>
           <template #actions>
-            <ToolbarIconButton
+            <el-button
               :icon="Download"
-              :label="t('settings.exportAudit')"
+              :aria-label="t('settings.exportAudit')"
               :loading="auditExporting"
               :disabled="auditExporting"
               @click="exportAuditLogs"
-            />
+            >{{ t('settings.exportAudit') }}</el-button>
           </template>
         </PageToolbar>
         <PageToolbar v-else class="settings-list-toolbar">
@@ -257,9 +260,11 @@ function openAuditDetail(log: AuditLog) {
             </el-select>
           </template>
           <template #actions>
-            <ToolbarIconButton :icon="Refresh" :label="t('common.refresh')" :loading="notificationDeliveryBusy" :disabled="notificationDeliveryBusy" @click="refreshNotificationDelivery" />
+            <el-button :icon="Refresh" :aria-label="t('common.refresh')" :loading="notificationDeliveryBusy" :disabled="notificationDeliveryBusy" @click="refreshNotificationDelivery" >{{ t('common.refresh') }}</el-button>
           </template>
         </PageToolbar>
+      </template>
+      <PageContent surface>
         <template v-if="auditTab === 'audit'">
           <el-alert v-if="auditListError" :title="t('settings.auditLoadFailed')" type="error" show-icon :closable="false">
             <template #default>

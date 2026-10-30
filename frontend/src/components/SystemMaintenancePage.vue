@@ -10,7 +10,6 @@ import PageContainer from "./page/PageContainer.vue";
 import PageContent from "./page/PageContent.vue";
 import PageTabs, { type PageTabItem } from "./page/PageTabs.vue";
 import PageToolbar from "./page/PageToolbar.vue";
-import ToolbarIconButton from "./page/ToolbarIconButton.vue";
 import SystemOperations from "./SystemOperations.vue";
 import BackupRestorePage from "./BackupRestorePage.vue";
 import DetailSection from "./DetailSection.vue";
@@ -154,18 +153,11 @@ function changeMaintenanceTab(value: string) {
     <PageContent surface>
       <PageToolbar v-if="maintenanceTab === 'operations' || (maintenanceTab === 'backup' && context.can('system.reset'))" class="settings-form-toolbar">
         <template #actions>
-          <ToolbarIconButton
-            v-if="maintenanceTab === 'operations'"
-            :icon="Refresh"
-            :label="t('common.refresh')"
-            :loading="statusLoading"
-            :disabled="statusLoading"
-            @click="loadStatus"
-          />
-          <template v-else-if="maintenanceTab === 'backup' && context.can('system.reset')">
-            <el-button type="primary" :loading="backupCreating" :disabled="maintenanceBusy" @click="createBackup">{{ t('settings.createBackup') }}</el-button>
-            <ToolbarIconButton :icon="Refresh" :label="t('common.refresh')" :loading="backupLoading" :disabled="backupLoading || maintenanceBusy" @click="loadBackups" />
-          </template>
+          <el-button v-if="maintenanceTab === 'operations'" :icon="Refresh" :loading="statusLoading" :disabled="statusLoading" @click="loadStatus">{{ t('common.refresh') }}</el-button>
+          <el-button v-else :icon="Refresh" :loading="backupLoading" :disabled="backupLoading || maintenanceBusy" @click="loadBackups">{{ t('common.refresh') }}</el-button>
+        </template>
+        <template v-if="maintenanceTab === 'backup' && context.can('system.reset')" #primary>
+          <el-button type="primary" :loading="backupCreating" :disabled="maintenanceBusy" @click="createBackup">{{ t('settings.createBackup') }}</el-button>
         </template>
       </PageToolbar>
 

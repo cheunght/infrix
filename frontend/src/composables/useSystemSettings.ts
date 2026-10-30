@@ -199,15 +199,6 @@ function settingsFieldErrors(error: unknown): FormErrors {
   return result;
 }
 
-function cloneSystemSettingsForm(value: SystemSettings): SystemSettingsForm {
-  const form = { ...value } as unknown as SystemSettingsForm;
-  form.smtp_password = "";
-  for (const key of Object.keys(form) as Array<keyof SystemSettingsForm>) {
-    form[key] = cloneFormValue(form[key]) as never;
-  }
-  return form;
-}
-
 function patchFromForm(
   form: SystemSettingsForm,
   keys: readonly (keyof SystemSettingsForm)[],
@@ -368,8 +359,12 @@ export function useSystemSettings(deps: SystemSettingsDeps) {
         return false;
       systemSettingsSnapshot.value = result;
       const flat = flattenSnapshot(result);
+      const cleanKeys = (Object.keys(DEFAULT_SYSTEM_SETTINGS_FORM) as Array<keyof SystemSettingsForm>)
+        .filter(key => !systemSettings.value || (key === "smtp_password"
+          ? !systemSettingsForm.value.smtp_password
+          : JSON.stringify(systemSettingsForm.value[key]) === JSON.stringify(systemSettings.value[key])));
+      syncFormFields(flat, cleanKeys);
       systemSettings.value = flat;
-      systemSettingsForm.value = cloneSystemSettingsForm(flat);
       applySystemSettingsSnapshot(result);
       return true;
     } catch (error) {

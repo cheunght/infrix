@@ -17,7 +17,7 @@ export interface ApiClientOptions {
  * Shared authenticated API plumbing for all page composables.
  *
  * The client owns read-request cancellation and the monotonically increasing
- * load token, while App.vue remains responsible for deciding which page to load.
+ * load token, while AppSession.vue remains responsible for deciding which page to load.
  */
 export function useApiClient({
   csrfToken,
@@ -27,6 +27,7 @@ export function useApiClient({
   const loadVersion = ref(0);
   let activeLoadController: AbortController | null = null;
   const loadRequests = createRequestCoordinator();
+  let disposed = false;
 
   function beginLoad() {
     activeLoadController?.abort();
@@ -40,6 +41,7 @@ export function useApiClient({
   }
 
   async function loadCsrf(signal?: AbortSignal) {
+    if (disposed) throw new DOMException("Session ended", "AbortError");
     const response = await fetch(`${apiBase}/auth/csrf/`, {
       credentials: "include",
       signal,
@@ -60,6 +62,7 @@ export function useApiClient({
     retryCsrf = true,
     signal?: AbortSignal,
   ): Promise<T> {
+    if (disposed) throw new DOMException("Session ended", "AbortError");
     const method = (options.method || "GET").toUpperCase();
     // Route changes may cancel page reads; mutation cancellation must be explicit.
     const inheritedLoadSignal =
@@ -100,6 +103,7 @@ export function useApiClient({
     filename?: string,
     options: RequestInit = {},
   ) {
+    if (disposed) throw new DOMException("Session ended", "AbortError");
     await downloadBlob(path, {
       ...options,
       filename,
@@ -110,6 +114,8 @@ export function useApiClient({
   }
 
   function dispose() {
+    disposed = true;
+    loadVersion.value += 1;
     activeLoadController?.abort();
     loadRequests.cancelAll();
   }

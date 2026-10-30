@@ -44,7 +44,6 @@ const systemSettingsSaving = context.systemSettingsSaving;
         <el-select v-model="form.date_format" :disabled="!context.can('settings.manage') || systemSettingsSaving" class="settings-system__control">
           <el-option v-for="option in (systemSettingDefinition('date_format')?.options || [])" :key="String(option.value)" :label="systemSettingOptionLabel('date_format', option, t)" :value="option.value" />
         </el-select>
-        <div class="settings-system__help">{{ systemSettingHelp('date_format', t) }}</div>
       </el-form-item>
       <el-form-item :label="systemSettingLabel('currency', t)" :error="errors.currency">
         <el-select v-model="form.currency" :disabled="!context.can('settings.manage') || systemSettingsSaving" class="settings-system__control">

@@ -59,7 +59,10 @@ export function useFacilities(deps: FacilitiesDeps) {
   const locatedRack = ref<Rack | null>(null);
   function focusRackDetail(rack: Rack | null) {
     locatedRack.value = rack;
-    if (rack) focusedRackId.value = rack.id;
+    if (rack) {
+      racks.value = racks.value.map(row => row.id === rack.id ? rack : row);
+      focusedRackId.value = rack.id;
+    }
   }
   const facilitySummary = ref<FacilitySummary | null>(null);
   const locationManagementLoading = ref(false);
@@ -355,7 +358,25 @@ export function useFacilities(deps: FacilitiesDeps) {
         rackPage.value = lastPage;
         return loadRackView(version);
       }
-      focusedRackId.value = racks.value.find((rack) => rack.id === requestedFocusedRackId)?.id
+      if (requestedFocusedRackId && !racks.value.some(rack => rack.id === requestedFocusedRackId)) {
+        try {
+          const target = await deps.request<Rack>(`/racks/${requestedFocusedRackId}/`);
+          if (!deps.isCurrentLoad(version) || requestId !== rackViewRequestId.value) return;
+          let centerMatches = true;
+          if (selectedDataCenter.value !== null) {
+            const room = serverRooms.value.find(room => room.id === target.room)
+              || await deps.request<ServerRoom>(`/server-rooms/${target.room}/`);
+            centerMatches = room.data_center === selectedDataCenter.value;
+          }
+          if (!deps.isCurrentLoad(version) || requestId !== rackViewRequestId.value) return;
+          locatedRack.value = centerMatches && (selectedRoom.value === null || target.room === selectedRoom.value) ? target : null;
+        } catch (error) {
+          if (isAbortError(error) || !deps.isCurrentLoad(version) || requestId !== rackViewRequestId.value) return;
+          locatedRack.value = null;
+        }
+      }
+      if (!deps.isCurrentLoad(version) || requestId !== rackViewRequestId.value) return;
+      focusedRackId.value = visibleRacks.value.find((rack) => rack.id === requestedFocusedRackId)?.id
         || racks.value[0]?.id
         || null;
       return true;

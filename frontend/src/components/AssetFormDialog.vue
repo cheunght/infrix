@@ -533,7 +533,6 @@ watch(() => assetForm.value.purchase_date, () => {
     v-model="showAssetModal"
     class="asset-form-dialog"
     :title="assetModalMode === 'edit' ? t('assetForm.editTitle') : assetModalMode === 'clone' ? t('assetForm.cloneTitle') : t('assetForm.createTitle')"
-    :description="t('assetForm.description')"
     size="large"
     :loading="assetFormLoading"
     :loading-rows="10"

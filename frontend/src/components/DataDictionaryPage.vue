@@ -148,18 +148,18 @@ onMounted(() => {
         @update:model-value="updateRouteSection"
       />
     </template>
-    <PageContent surface>
+    <template #toolbar>
       <PageToolbar class="settings-list-toolbar">
         <template #search>
           <SearchField
             v-model="dictionarySearch"
             :loading="dictionaryLoading"
-            :placeholder="t('settings.searchDictionary', { item: localizedDictionaryLabel })"
-            :aria-label="t('settings.searchDictionary', { item: localizedDictionaryLabel })"
+            :placeholder="t('settings.dictionaryListSearchPlaceholder', { item: localizedDictionaryLabel })"
+            :aria-label="t('settings.dictionaryListSearchPlaceholder', { item: localizedDictionaryLabel })"
             @search="searchDictionaries"
           />
         </template>
-        <template #primary>
+        <template v-if="canManage()" #primary>
           <el-button
             v-if="canManage()"
             class="page-primary-action"
@@ -172,6 +172,8 @@ onMounted(() => {
           </el-button>
         </template>
       </PageToolbar>
+    </template>
+    <PageContent surface>
 
       <el-alert v-if="dictionaryError" :title="t('settings.dictionaryLoadFailed')" type="error" show-icon :closable="false">
         <template #default>
@@ -243,7 +245,6 @@ onMounted(() => {
   <FormDialogShell
     v-model="showDictionaryModal"
     :title="`${editingDictionary ? t('common.edit') : t('common.add')}${localizedDictionaryLabel}`"
-    :description="dictionarySection === 'manufacturers' ? '' : t('overlay.dictionaryDialogDescription')"
     size="small"
     :saving="dictionarySaving"
     :show-close="!dictionarySaving"

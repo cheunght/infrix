@@ -205,7 +205,6 @@ function formatLdapDiagnosticAt(value?: string | null) {
             <div class="settings-ldap-panel__section-heading">
               <div>
                 <h3>{{ t("settings.ldapSectionConnection") }}</h3>
-                <p>{{ t("settings.ldapSectionConnectionDescription") }}</p>
               </div>
             </div>
             <div class="settings-ldap-panel__grid">
@@ -245,7 +244,6 @@ function formatLdapDiagnosticAt(value?: string | null) {
             <div class="settings-ldap-panel__section-heading">
               <div>
                 <h3>{{ t("settings.ldapSectionServiceAccount") }}</h3>
-                <p>{{ t("settings.ldapSectionServiceAccountDescription") }}</p>
               </div>
             </div>
             <div class="settings-ldap-panel__grid">
@@ -276,7 +274,6 @@ function formatLdapDiagnosticAt(value?: string | null) {
             <div class="settings-ldap-panel__section-heading">
               <div>
                 <h3>{{ t("settings.ldapSectionUserDirectory") }}</h3>
-                <p>{{ t("settings.ldapSectionUserDirectoryDescription") }}</p>
               </div>
             </div>
             <div class="settings-ldap-panel__grid">

@@ -37,9 +37,6 @@ const smtpTestRecipientError = computed(() => {
           v-model="form.smtp_enabled"
           :disabled="!context.can('settings.manage') || systemSettingsSaving"
         />
-        <div class="settings-system__help">
-          {{ systemSettingHelp("smtp_enabled", t) }}
-        </div>
       </el-form-item>
       <el-form-item
         :label="systemSettingLabel('smtp_security_mode', t)"
@@ -58,9 +55,6 @@ const smtpTestRecipientError = computed(() => {
             :value="option.value"
           />
         </el-select>
-        <div class="settings-system__help">
-          {{ systemSettingHelp("smtp_security_mode", t) }}
-        </div>
       </el-form-item>
       <el-form-item
         :label="systemSettingLabel('smtp_host', t)"
@@ -137,9 +131,6 @@ const smtpTestRecipientError = computed(() => {
           :disabled="!context.can('settings.manage') || systemSettingsSaving"
           autocomplete="email"
         />
-        <div class="settings-system__help">
-          {{ systemSettingHelp("smtp_from_email", t) }}
-        </div>
       </el-form-item>
       <el-form-item
         :label="systemSettingLabel('smtp_from_name', t)"
@@ -149,9 +140,6 @@ const smtpTestRecipientError = computed(() => {
           v-model="form.smtp_from_name"
           :disabled="!context.can('settings.manage') || systemSettingsSaving"
         />
-        <div class="settings-system__help">
-          {{ systemSettingHelp("smtp_from_name", t) }}
-        </div>
       </el-form-item>
       <el-form-item
         :label="systemSettingLabel('smtp_timeout', t)"
@@ -165,9 +153,6 @@ const smtpTestRecipientError = computed(() => {
           :disabled="!context.can('settings.manage') || systemSettingsSaving"
           class="settings-system__control"
         />
-        <div class="settings-system__help">
-          {{ systemSettingHelp("smtp_timeout", t) }}
-        </div>
       </el-form-item>
       <el-form-item
         class="settings-system__smtp-test-item"

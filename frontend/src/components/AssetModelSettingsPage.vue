@@ -1,10 +1,10 @@
 <script setup lang="ts">
 import { revisionHeaders } from "../revision";
-import { computed, onMounted, proxyRefs, reactive, ref } from "vue";
+import { computed, onBeforeUnmount, onMounted, proxyRefs, reactive, ref } from "vue";
 import { useI18n } from "vue-i18n";
-import { CircleCheck, CircleClose, Delete, Download, Edit, Filter, Upload } from "@element-plus/icons-vue";
+import { CircleCheck, CircleClose, Delete, Edit, Filter } from "@element-plus/icons-vue";
 import { ElMessage, type FormInstance, type FormRules } from "element-plus";
-import { pageItems, pageTotal, type PageResult } from "../api";
+import { isAbortError, pageItems, pageTotal, type PageResult } from "../api";
 import { normalizeApiError } from "../error-handling";
 import type { PageContext } from "../page-context";
 import type { AssetModel, CustomFieldSet, DictionaryItem } from "../types";
@@ -17,6 +17,7 @@ import StatusTag from "./StatusTag.vue";
 import FormDialogShell from "./FormDialogShell.vue";
 import TableIconButton from "./TableIconButton.vue";
 import ToolbarIconButton from "./page/ToolbarIconButton.vue";
+import ImportExportActions from "./page/ImportExportActions.vue";
 import SearchableSelect, { type SearchableSelectOption } from "./SearchableSelect.vue";
 
 type ModelImportRow = { line: number; name: string; valid: boolean; errors: unknown };
@@ -60,6 +61,12 @@ const filterManufacturer = ref("");
 const filterDeviceType = ref("");
 const filterFieldset = ref("");
 const loading = ref(false);
+let loadRequestId = 0;
+let loadController: AbortController | null = null;
+onBeforeUnmount(() => {
+  loadRequestId += 1;
+  loadController?.abort();
+});
 const error = ref("");
 const actionId = ref<number | null>(null);
 const saving = ref(false);
@@ -158,6 +165,10 @@ function monthText(value: number | null | undefined): string {
 
 async function loadModels() {
   if (!c.can("settings.view")) return;
+  const requestId = ++loadRequestId;
+  loadController?.abort();
+  const controller = new AbortController();
+  loadController = controller;
   loading.value = true;
   error.value = "";
   const params = new URLSearchParams({ page: String(page.value), page_size: String(pageSize.value), is_active: active.value || "all" });
@@ -166,16 +177,21 @@ async function loadModels() {
   if (filterDeviceType.value) params.set("device_type", filterDeviceType.value);
   if (filterFieldset.value) params.set("fieldset", filterFieldset.value);
   try {
-    const payload = await c.request<PageResult<AssetModel>>(`/asset-models/?${params.toString()}`);
+    const payload = await c.request<PageResult<AssetModel>>(`/asset-models/?${params.toString()}`, { signal: controller.signal });
+    if (requestId !== loadRequestId || controller.signal.aborted) return;
     rows.value = pageItems(payload);
     total.value = pageTotal(payload);
   } catch (loadError) {
+    if (requestId !== loadRequestId || controller.signal.aborted || isAbortError(loadError)) return;
     const normalized = normalizeApiError(loadError);
     error.value = normalized.kind === "unknown" ? t("assetModel.loadFailed") : normalized.message;
     rows.value = [];
     total.value = 0;
   } finally {
-    loading.value = false;
+    if (requestId === loadRequestId) {
+      loading.value = false;
+      loadController = null;
+    }
   }
 }
 
@@ -414,17 +430,16 @@ onMounted(() => void loadAll());
     <template #toolbar>
       <PageToolbar>
         <template #search>
-          <SearchField v-model="search" :loading="loading" :placeholder="t('assetModel.searchPlaceholder')" :aria-label="t('assetModel.searchPlaceholder')" @search="searchModels" />
+          <SearchField v-model="search" :loading="loading" :placeholder="t('assetModel.listSearchPlaceholder')" :aria-label="t('assetModel.listSearchPlaceholder')" @search="searchModels" />
         </template>
         <template #filters>
           <ToolbarIconButton :icon="Filter" :label="t('asset.moreFilters')" :badge="activeModelFilterCount" @click="openModelFilters" />
         </template>
         <template v-if="canManage" #actions>
-          <ToolbarIconButton :icon="Upload" :label="t('common.import')" @click="openImport" />
-          <ToolbarIconButton :icon="Download" :label="t('common.export')" :loading="exporting" :disabled="exporting" @click="exportModels" />
+          <ImportExportActions :can-import="canManage" :can-export="canManage" :exporting="exporting" @import="openImport" @export="exportModels" />
         </template>
-        <template #primary>
-          <el-button v-if="canManage" type="primary" :disabled="saving" @click="openModal()">{{ t('assetModel.add') }}</el-button>
+        <template v-if="canManage" #primary>
+          <el-button type="primary" :disabled="saving" @click="openModal()">{{ t('assetModel.add') }}</el-button>
         </template>
       </PageToolbar>
     </template>

@@ -56,12 +56,12 @@ function applyTagFilters() {
     <template #toolbar>
       <PageToolbar class="settings-content-toolbar">
         <template #search>
-            <SearchField v-model="c.tagSearch" :loading="c.tagListLoading" :placeholder="t('tag.searchPlaceholder')" :aria-label="t('tag.searchPlaceholder')" @search="c.refreshTagList()" />
+            <SearchField v-model="c.tagSearch" :loading="c.tagListLoading" :placeholder="t('tag.listSearchPlaceholder')" :aria-label="t('tag.listSearchPlaceholder')" @search="c.refreshTagList()" />
         </template>
         <template #filters>
           <ToolbarIconButton :icon="Filter" :label="t('asset.moreFilters')" :badge="activeTagFilterCount" @click="openTagFilters" />
         </template>
-        <template #primary>
+        <template v-if="c.can('tags.manage')" #primary>
           <el-button v-if="c.can('tags.manage')" class="page-primary-action" type="primary" :disabled="c.tagSaving" @click="c.openTagModal()">{{ t('tag.add') }}</el-button>
         </template>
       </PageToolbar>
@@ -133,7 +133,7 @@ function applyTagFilters() {
     </template>
   </el-drawer>
 
-  <FormDialogShell v-model="c.showTagModal" :title="c.editingTag ? t('tag.editTitle') : t('tag.createTitle')" :description="t('tag.description')" size="small" :saving="c.tagSaving" :show-close="!c.tagSaving" :close-disabled="c.tagSaving" :close-on-click-modal="!c.tagSaving" :close-on-press-escape="!c.tagSaving">
+  <FormDialogShell v-model="c.showTagModal" :title="c.editingTag ? t('tag.editTitle') : t('tag.createTitle')" size="small" :saving="c.tagSaving" :show-close="!c.tagSaving" :close-disabled="c.tagSaving" :close-on-click-modal="!c.tagSaving" :close-on-press-escape="!c.tagSaving">
     <el-form ref="tagFormRef" class="horizontal-form" :model="c.tagForm" :rules="tagFormRules" label-position="right" :validate-on-rule-change="false" @submit.prevent="submitTag">
       <section class="form-dialog__section">
         <h3 class="form-dialog__section-title">{{ t('tag.basicInfo') }}</h3>

@@ -2,7 +2,7 @@
 <script setup lang="ts">
 import { computed, nextTick, reactive, ref, watch } from "vue";
 import { useI18n } from "vue-i18n";
-import { CopyDocument, Delete, Download, Edit, Filter, Operation, Plus, Printer, Upload } from "@element-plus/icons-vue";
+import { CopyDocument, Delete, Edit, Filter, Operation, Plus, Printer } from "@element-plus/icons-vue";
 import type { Asset, AssetBatchAssignmentAction, AssetCustomFilter, AssetStatus, CustomFieldFilterOperator, PersonOption } from "../types";
 import PagedTable from "./PagedTable.vue";
 import SearchField from "./SearchField.vue";
@@ -18,6 +18,7 @@ import AssetQrDialog from "./AssetQrDialog.vue";
 import BulkEditAssetDialog from "./BulkEditAssetDialog.vue";
 import DynamicFieldDisplay from "./fields/DynamicFieldDisplay.vue";
 import ToolbarIconButton from "./page/ToolbarIconButton.vue";
+import ImportExportActions from "./page/ImportExportActions.vue";
 import SearchableSelect, { type SearchableSelectOption } from "./SearchableSelect.vue";
 import type { AssetLedgerContext } from "../page-context";
 import { ASSET_STATUS_OPTIONS, businessOptionLabel, isAssetStatus } from "../business-enums";
@@ -303,8 +304,8 @@ const hasAssetFilters = computed(() => Boolean(
 const assetColumnMinWidths: Record<string, number> = {
   name: 220,
   device_type: 120,
-  manufacturer: 150,
-  status: 105,
+  manufacturer: 140,
+  status: 90,
   data_center: 160,
   server_room: 140,
   rack_code: 110,
@@ -312,6 +313,7 @@ const assetColumnMinWidths: Record<string, number> = {
   manufacturer_model: 150,
   maintenance_expiry_date: 130,
 };
+const assetColumnWidths: Record<string, number> = { status: 90, manufacturer: 140 };
 
 function assetColumnMinWidth(column: { key: string; width?: number }): number {
   return column.width || assetColumnMinWidths[column.key] || 120;
@@ -512,8 +514,8 @@ async function openAllQrDialog() {
           <template #search>
             <SearchField
               v-model="assetSearch"
-              :placeholder="t('asset.searchPlaceholder')"
-              :aria-label="t('asset.title')"
+              :placeholder="t('asset.ledgerSearchPlaceholder')"
+              :aria-label="t('asset.ledgerSearchPlaceholder')"
               @search="searchLedger"
             />
           </template>
@@ -537,9 +539,8 @@ async function openAllQrDialog() {
                   <template #reference>
                     <el-button
                       :icon="Operation"
-                      :aria-label="t('asset.showColumns')"
-                      :title="t('asset.showColumns')"
-                    />
+                      :aria-label="t('asset.columnSettings')"
+                    >{{ t('asset.columnSettings') }}</el-button>
                   </template>
                   <div class="ep-column-list">
                     <el-button link type="primary" @click="resetAssetColumns">{{ t('asset.restoreColumns') }}</el-button>
@@ -564,23 +565,28 @@ async function openAllQrDialog() {
                     </div>
                   </div>
                 </el-popover>
-                <ToolbarIconButton
+                <el-tooltip
                   v-if="can('assets.view') && assetCount"
-                  :icon="Printer"
-                  :label="t('asset.printFilteredLabels', { count: assetCount })"
-                  :loading="assetLabelPrintLoading"
-                  :disabled="assetLabelPrintLoading"
-                  @click="openAllQrDialog"
-                />
+                  :content="t('asset.printFilteredLabels', { count: assetCount })"
+                  placement="bottom"
+                  :enterable="false"
+                >
+                  <span class="asset-ledger-print-action"><el-button
+                    :icon="Printer"
+                    :aria-label="t('asset.printFilteredLabels', { count: assetCount })"
+                    :loading="assetLabelPrintLoading"
+                    :disabled="assetLabelPrintLoading"
+                    @click="openAllQrDialog"
+                  >{{ t('asset.printLabelsShort') }}</el-button></span>
+                </el-tooltip>
             </div>
             <span v-if="can('assets.manage') || can('assets.export')" class="asset-ledger-action-divider" aria-hidden="true" />
             <div v-if="can('assets.manage') || can('assets.export')" class="asset-ledger-action-group asset-ledger-action-group--data" role="group" :aria-label="t('asset.dataTools')">
-              <ToolbarIconButton v-if="can('assets.manage')" :icon="Upload" :label="t('common.import')" @click="openImportDialog" />
-              <ToolbarIconButton v-if="can('assets.export')" :icon="Download" :label="t('common.export')" :loading="exportingAssets" :disabled="exportingAssets" @click="exportAssets" />
+              <ImportExportActions :can-import="can('assets.manage')" :can-export="can('assets.export')" :exporting="exportingAssets" @import="openImportDialog" @export="exportAssets" />
             </div>
           </template>
-          <template #primary>
-            <el-button v-if="can('assets.manage')" class="page-primary-action" type="primary" @click="openNewAssetModal">{{ t('asset.addAsset') }}</el-button>
+          <template v-if="can('assets.manage')" #primary>
+            <el-button class="page-primary-action" type="primary" @click="openNewAssetModal">{{ t('asset.addAsset') }}</el-button>
           </template>
         </PageToolbar>
       </template>
@@ -633,9 +639,11 @@ async function openAllQrDialog() {
               :key="column.key"
               :label="assetColumnLabel(column)"
               :prop="column.key"
+              :width="assetColumnWidths[column.key]"
               :min-width="assetColumnMinWidth(column)"
+              :class-name="column.key === 'status' ? 'asset-ledger-status-cell' : undefined"
               :fixed="column.key === 'name' || column.key === 'status' ? 'left' : undefined"
-              :show-overflow-tooltip="['data_center', 'server_room', 'rack_code', 'u_range'].includes(column.key)"
+              :show-overflow-tooltip="['status', 'manufacturer', 'data_center', 'server_room', 'rack_code', 'u_range'].includes(column.key)"
               :sortable="assetSortFieldForColumn(column.key) ? 'custom' : false"
             >
               <template #header><span>{{ assetColumnLabel(column) }}</span></template>

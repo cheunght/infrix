@@ -99,7 +99,6 @@ defineExpose({ busy, ready, save });
     <el-button v-if="!saved && !busy" @click="load">{{ t('common.retry') }}</el-button>
     <template v-if="saved">
       <section class="settings-system__section settings-branding__section">
-        <p class="settings-branding__description">{{ t('branding.description') }}</p>
         <div class="settings-system__form settings-branding__form">
           <el-form-item :label="t('branding.displayName')" :error="fields.display_name?.join('；')">
             <el-input v-model="name" class="settings-system__control" :maxlength="80" :disabled="busy || !context.can('settings.manage')" />
@@ -109,11 +108,11 @@ defineExpose({ busy, ready, save });
               <img v-if="saved[kind]" class="settings-branding__preview" :src="saved[kind]!" :alt="t(`branding.${kind}`)" @error="clearPreview(kind)" />
               <el-upload :key="`${kind}-${uploadKey}`" :auto-upload="false" :limit="1" :accept="kind === 'favicon' ? '.png' : '.png,.jpg,.jpeg,.webp'" :disabled="busy || !context.can('settings.manage')" :on-change="(file: UploadFile) => select(kind, file)" :on-remove="() => { delete files[kind]; }">
                 <el-button :disabled="busy || !context.can('settings.manage')">{{ t('common.upload') }}</el-button>
-                <template #tip><div class="el-upload__tip">{{ t('branding.uploadHelp') }}</div></template>
               </el-upload>
             </div>
           </el-form-item>
         </div>
+        <p class="el-upload__tip">{{ t('branding.uploadHelp') }}</p>
       </section>
     </template>
   </div>

@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, nextTick, ref, watch } from "vue";
+import { computed, ref, watch } from "vue";
 import { useI18n } from "vue-i18n";
 import { Download, Grid } from "@element-plus/icons-vue";
 import { ElMessage } from "element-plus/es/components/message/index.mjs";
@@ -35,9 +35,13 @@ const emit = defineEmits<{
 const { t } = useI18n();
 const entries = ref<QrEntry[]>([]);
 const loading = ref(false);
+const printing = ref(false);
 const error = ref("");
-const storedLabelSize = typeof window === "undefined" ? "" : window.localStorage.getItem("infrix.asset-label-size");
-const storedLabelTemplate = typeof window === "undefined" ? "" : window.localStorage.getItem("infrix.asset-label-template");
+function storedPreference(key: string): string | null {
+  try { return window.localStorage.getItem(key); } catch { return null; }
+}
+const storedLabelSize = storedPreference("infrix.asset-label-size");
+const storedLabelTemplate = storedPreference("infrix.asset-label-template");
 const labelSize = ref<"small" | "medium">(storedLabelSize === "small" ? "small" : "medium");
 const labelTemplate = ref<LabelTemplateKey>(
   storedLabelTemplate === "compact" || storedLabelTemplate === "location" ? storedLabelTemplate : "standard",
@@ -48,8 +52,10 @@ const labelTemplateFields = computed(() => LABEL_TEMPLATE_FIELDS[labelTemplate.v
 
 watch([labelSize, labelTemplate], () => {
   if (typeof window === "undefined") return;
-  window.localStorage.setItem("infrix.asset-label-size", labelSize.value);
-  window.localStorage.setItem("infrix.asset-label-template", labelTemplate.value);
+  try {
+    window.localStorage.setItem("infrix.asset-label-size", labelSize.value);
+    window.localStorage.setItem("infrix.asset-label-template", labelTemplate.value);
+  } catch { /* Label preferences are optional. */ }
 });
 
 function modelLabel(asset: Asset): string {
@@ -136,51 +142,62 @@ function escapeHtml(value: string): string {
 }
 
 async function printEntries() {
-  if (!entries.value.length) return;
-  const printWindow = window.open("", "_blank", "noopener,noreferrer,width=960,height=760");
+  if (!entries.value.length || printing.value) return;
+  const printWindow = window.open("", "_blank", "width=960,height=760");
   if (!printWindow) {
     ElMessage.warning(t("asset.qrCodePrintBlocked"));
     return;
   }
-  const isSmall = labelSize.value === "small";
-  const labelWidth = isSmall ? "50mm" : "70mm";
-  const labelHeight = isSmall ? "30mm" : "40mm";
-  const qrSize = isSmall ? "18mm" : "24mm";
-  const labels = entries.value.map((entry) => `
-    <article class="asset-qr-print-label">
-      <img src="${entry.image}" alt="${escapeHtml(t("asset.qrCodeAlt", { asset: entry.asset.asset_no }))}">
-      <div class="asset-qr-print-copy">
-        ${labelTemplateFields.value.map((field) => `<span class="asset-qr-print-field asset-qr-print-field--${field}">${escapeHtml(labelFieldValue(entry.asset, field))}</span>`).join("")}
-      </div>
-    </article>`).join("");
-  printWindow.document.write(`<!doctype html>
-    <html lang="${escapeHtml(document.documentElement.lang || "zh-CN")}">
-      <head>
-        <meta charset="utf-8">
-        <title>${escapeHtml(t("asset.qrCodeTitle"))}</title>
-        <style>
-          * { box-sizing: border-box; }
-          @page { margin: 8mm; }
-          body { margin: 0; padding: 8mm; color: #1f2937; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
-          .asset-qr-print-sheet { display: grid; grid-template-columns: repeat(2, ${labelWidth}); gap: 5mm; align-items: start; }
-          .asset-qr-print-label { display: flex; align-items: center; gap: 3mm; width: ${labelWidth}; height: ${labelHeight}; padding: 3mm; border: 0.3mm solid #dcdfe6; border-radius: 1mm; break-inside: avoid; page-break-inside: avoid; overflow: hidden; }
-          .asset-qr-print-label img { flex: 0 0 ${qrSize}; width: ${qrSize}; height: ${qrSize}; image-rendering: pixelated; }
-          .asset-qr-print-copy { display: flex; min-width: 0; flex: 1; flex-direction: column; gap: 1mm; overflow: hidden; }
-          .asset-qr-print-field { overflow-wrap: anywhere; word-break: break-word; line-height: 1.15; }
-          .asset-qr-print-field--assetNo { font-size: ${isSmall ? "9pt" : "11pt"}; font-weight: 700; }
-          .asset-qr-print-field--name { font-size: ${isSmall ? "7pt" : "9pt"}; font-weight: 600; }
-          .asset-qr-print-field--model, .asset-qr-print-field--location { color: #4b5563; font-size: ${isSmall ? "6pt" : "8pt"}; }
-          .asset-qr-print-field--serial { color: #606266; font-size: ${isSmall ? "6pt" : "7pt"}; }
-          @media print { body { padding: 0; } .asset-qr-print-sheet { gap: 4mm; } }
-        </style>
-      </head>
-      <body><main class="asset-qr-print-sheet">${labels}</main></body>
-    </html>`);
-  printWindow.document.close();
-  await nextTick();
-  printWindow.focus();
-  printWindow.print();
-  printWindow.close();
+  printWindow.opener = null;
+  printing.value = true;
+  try {
+    const isSmall = labelSize.value === "small";
+    const labelWidth = isSmall ? "50mm" : "70mm";
+    const labelHeight = isSmall ? "30mm" : "40mm";
+    const qrSize = isSmall ? "18mm" : "24mm";
+    const labels = entries.value.map((entry) => `
+      <article class="asset-qr-print-label">
+        <img src="${entry.image}" alt="${escapeHtml(t("asset.qrCodeAlt", { asset: entry.asset.asset_no }))}">
+        <div class="asset-qr-print-copy">
+          ${labelTemplateFields.value.map((field) => `<span class="asset-qr-print-field asset-qr-print-field--${field}">${escapeHtml(labelFieldValue(entry.asset, field))}</span>`).join("")}
+        </div>
+      </article>`).join("");
+    printWindow.document.write(`<!doctype html>
+      <html lang="${escapeHtml(document.documentElement.lang || "zh-CN")}">
+        <head>
+          <meta charset="utf-8">
+          <meta name="referrer" content="no-referrer">
+          <title>${escapeHtml(t("asset.qrCodeTitle"))}</title>
+          <style>
+            * { box-sizing: border-box; }
+            @page { margin: 8mm; }
+            body { margin: 0; padding: 8mm; color: #1f2937; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
+            .asset-qr-print-sheet { display: grid; grid-template-columns: repeat(2, ${labelWidth}); gap: 5mm; align-items: start; }
+            .asset-qr-print-label { display: flex; align-items: center; gap: 3mm; width: ${labelWidth}; height: ${labelHeight}; padding: 3mm; border: 0.3mm solid #dcdfe6; border-radius: 1mm; break-inside: avoid; page-break-inside: avoid; overflow: hidden; }
+            .asset-qr-print-label img { flex: 0 0 ${qrSize}; width: ${qrSize}; height: ${qrSize}; image-rendering: pixelated; }
+            .asset-qr-print-copy { display: flex; min-width: 0; flex: 1; flex-direction: column; gap: 1mm; overflow: hidden; }
+            .asset-qr-print-field { overflow-wrap: anywhere; word-break: break-word; line-height: 1.15; }
+            .asset-qr-print-field--assetNo { font-size: ${isSmall ? "9pt" : "11pt"}; font-weight: 700; }
+            .asset-qr-print-field--name { font-size: ${isSmall ? "7pt" : "9pt"}; font-weight: 600; }
+            .asset-qr-print-field--model, .asset-qr-print-field--location { color: #4b5563; font-size: ${isSmall ? "6pt" : "8pt"}; }
+            .asset-qr-print-field--serial { color: #606266; font-size: ${isSmall ? "6pt" : "7pt"}; }
+            @media print { body { padding: 0; } .asset-qr-print-sheet { gap: 4mm; } }
+          </style>
+        </head>
+        <body><main class="asset-qr-print-sheet">${labels}</main></body>
+      </html>`);
+    printWindow.document.close();
+    await Promise.all(Array.from(printWindow.document.images, image => image.decode()));
+    if (printWindow.closed) return;
+    printWindow.onafterprint = () => printWindow.close();
+    printWindow.focus();
+    printWindow.print();
+  } catch {
+    printWindow.close();
+    ElMessage.error(t("asset.qrCodeGenerateFailed"));
+  } finally {
+    printing.value = false;
+  }
 }
 </script>
 
@@ -197,7 +214,6 @@ async function printEntries() {
         <el-icon aria-hidden="true"><Grid /></el-icon>
         <div>
           <strong>{{ t('asset.qrCodeTitle') }}</strong>
-          <span>{{ t('asset.qrCodeDescription') }}</span>
         </div>
       </div>
     </template>
@@ -239,7 +255,7 @@ async function printEntries() {
 
     <template #footer>
       <el-button @click="close">{{ t('common.close') }}</el-button>
-      <el-button type="primary" :disabled="!entries.length || loading" @click="printEntries">
+      <el-button type="primary" :disabled="!entries.length || loading || printing" @click="printEntries">
         {{ t('asset.printLabels') }}
       </el-button>
     </template>

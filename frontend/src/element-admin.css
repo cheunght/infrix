@@ -2316,7 +2316,14 @@ body,
 
 .asset-ledger-toolbar .page-toolbar__actions {
   gap: 8px;
+  flex-wrap: nowrap;
 }
+
+.asset-ledger-toolbar .el-button { white-space: nowrap; }
+.asset-ledger-toolbar .asset-ledger-action-group > .el-button + .el-button { margin-left: 0; }
+.asset-ledger-print-action { display: inline-flex; }
+.asset-ledger-table .asset-ledger-status-cell .status-tag { max-width: 100%; }
+.asset-ledger-table .asset-ledger-status-cell .el-tag__content { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
 
 .toolbar-icon-button__wrapper {
   display: inline-flex;

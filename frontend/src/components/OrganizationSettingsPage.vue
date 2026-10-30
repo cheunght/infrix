@@ -148,6 +148,9 @@ const {
 const { can } = context;
 
 const showPeopleFilters = ref(false);
+watch(organizationTab, () => {
+  showPeopleFilters.value = false;
+});
 const peopleFilterDraft = reactive({ department: "", active: "true" });
 const userTableRef = ref<{ clearSelection: () => void } | null>(null);
 let userSearchTimer: ReturnType<typeof setTimeout> | null = null;
@@ -267,6 +270,46 @@ function applyPeopleFilters() {
         <PageTabs :key="organizationTabsKey" v-model="organizationTab" :items="organizationTabs" @update:model-value="changeOrganizationTab" />
       </template>
 
+      <template v-if="['users', 'departments', 'people'].includes(organizationTab)" #toolbar>
+        <PageToolbar v-if="['users', 'departments', 'people'].includes(organizationTab)" :key="`organization-toolbar-${organizationTab}`" class="settings-list-toolbar">
+          <template v-if="organizationTab === 'users'" #search>
+            <SearchField v-model="userSearch" :loading="organizationLoading" :placeholder="t('settings.userListSearchPlaceholder')" :aria-label="t('settings.userListSearchPlaceholder')" @search="triggerUserSearch" />
+          </template>
+          <template v-if="organizationTab === 'users' && (can('organization.manage') || selectedUserIds.length)" #primary>
+            <div class="settings-user-primary-actions">
+              <div v-if="selectedUserIds.length" class="settings-user-batch-actions">
+                <el-tag type="info">{{ t('settings.selectedUsers', { count: selectedUserIds.length }) }}</el-tag>
+                <el-button v-if="can('organization.manage')" :loading="userBatchSaving" :disabled="userBatchSaving" @click="batchUpdateUserStatus(true)">{{ t('settings.batchEnable') }}</el-button>
+                <el-button v-if="can('organization.manage')" :loading="userBatchSaving" :disabled="userBatchSaving" @click="batchUpdateUserStatus(false)">{{ t('settings.batchDisable') }}</el-button>
+                <el-button link :disabled="userBatchSaving" @click="clearUserSelection">{{ t('common.cancel') }}</el-button>
+              </div>
+              <el-button v-if="can('organization.manage')" class="page-primary-action" type="primary" :loading="userSaving" :disabled="userSaving || userBatchSaving" @click="openUserModal()">{{ t('settings.addUser') }}</el-button>
+            </div>
+          </template>
+          <template v-if="organizationTab === 'departments'" #search>
+            <SearchField v-model="departmentSearch" :loading="departmentLoading" :placeholder="t('settings.departmentListSearchPlaceholder')" :aria-label="t('settings.departmentListSearchPlaceholder')" @search="searchDepartments" />
+          </template>
+          <template v-if="organizationTab === 'departments'" #primary>
+            <el-button class="page-primary-action" type="primary" :loading="departmentSaving" :disabled="departmentSaving" @click="openDepartmentModal()">{{ t('settings.addDepartment') }}</el-button>
+          </template>
+          <template v-if="organizationTab === 'departments' && can('settings.manage')" #actions>
+            <el-button v-if="can('settings.manage')" :icon="Upload" :aria-label="t('settings.departmentImport')" @click="openDepartmentImport" >{{ t('settings.departmentImport') }}</el-button>
+          </template>
+          <template v-if="organizationTab === 'people'" #search>
+            <SearchField v-model="responsibilityDirectorySearch" :loading="responsibilityDirectoryLoading" :placeholder="t('settings.personListSearchPlaceholder')" :aria-label="t('settings.personListSearchPlaceholder')" @search="searchResponsibilityDirectory" />
+          </template>
+          <template v-if="organizationTab === 'people'" #filters>
+            <ToolbarIconButton :icon="Filter" :label="t('asset.moreFilters')" :badge="activePeopleFilterCount" @click="openPeopleFilters" />
+          </template>
+          <template v-if="organizationTab === 'people' && can('settings.manage')" #actions>
+            <el-button v-if="can('settings.manage')" :icon="Upload" :aria-label="t('common.import')" @click="openPeopleImport" >{{ t('common.import') }}</el-button>
+          </template>
+          <template v-if="organizationTab === 'people' && can('settings.manage')" #primary>
+            <el-button v-if="can('settings.manage')" class="page-primary-action" type="primary" :loading="responsibilityDirectorySaving" :disabled="responsibilityDirectorySaving" @click="openResponsibilitySubjectModal()">{{ t('settings.addPerson') }}</el-button>
+          </template>
+        </PageToolbar>
+      </template>
+
       <PageContent v-if="organizationTab === 'ldap'" surface>
         <PageToolbar class="settings-form-toolbar">
           <template #actions>
@@ -294,44 +337,6 @@ function applyPeopleFilters() {
       </PageContent>
 
       <PageContent v-else surface>
-        <PageToolbar v-if="['users', 'departments', 'people'].includes(organizationTab)" :key="`organization-toolbar-${organizationTab}`" class="settings-list-toolbar">
-          <template v-if="organizationTab === 'users'" #search>
-            <SearchField v-model="userSearch" :loading="organizationLoading" :placeholder="t('settings.userSearchPlaceholder')" :aria-label="t('settings.user')" @search="triggerUserSearch" />
-          </template>
-          <template v-if="organizationTab === 'users'" #primary>
-            <div class="settings-user-primary-actions">
-              <div v-if="selectedUserIds.length" class="settings-user-batch-actions">
-                <el-tag type="info">{{ t('settings.selectedUsers', { count: selectedUserIds.length }) }}</el-tag>
-                <el-button v-if="can('organization.manage')" :loading="userBatchSaving" :disabled="userBatchSaving" @click="batchUpdateUserStatus(true)">{{ t('settings.batchEnable') }}</el-button>
-                <el-button v-if="can('organization.manage')" :loading="userBatchSaving" :disabled="userBatchSaving" @click="batchUpdateUserStatus(false)">{{ t('settings.batchDisable') }}</el-button>
-                <el-button link :disabled="userBatchSaving" @click="clearUserSelection">{{ t('common.cancel') }}</el-button>
-              </div>
-              <el-button v-if="can('organization.manage')" class="page-primary-action" type="primary" :loading="userSaving" :disabled="userSaving || userBatchSaving" @click="openUserModal()">{{ t('settings.addUser') }}</el-button>
-            </div>
-          </template>
-          <template v-if="organizationTab === 'departments'" #search>
-            <SearchField v-model="departmentSearch" :loading="departmentLoading" :placeholder="t('settings.departmentName')" :aria-label="t('settings.departments')" @search="searchDepartments" />
-          </template>
-          <template v-if="organizationTab === 'departments'" #primary>
-            <el-button class="page-primary-action" type="primary" :loading="departmentSaving" :disabled="departmentSaving" @click="openDepartmentModal()">{{ t('settings.addDepartment') }}</el-button>
-          </template>
-          <template v-if="organizationTab === 'departments'" #actions>
-            <ToolbarIconButton v-if="can('settings.manage')" :icon="Upload" :label="t('settings.departmentImport')" @click="openDepartmentImport" />
-          </template>
-          <template v-if="organizationTab === 'people'" #search>
-            <SearchField v-model="responsibilityDirectorySearch" :loading="responsibilityDirectoryLoading" :placeholder="t('settings.personSearchPlaceholder')" :aria-label="t('settings.peopleTab')" @search="searchResponsibilityDirectory" />
-          </template>
-          <template v-if="organizationTab === 'people'" #filters>
-            <ToolbarIconButton :icon="Filter" :label="t('asset.moreFilters')" :badge="activePeopleFilterCount" @click="openPeopleFilters" />
-          </template>
-          <template v-if="organizationTab === 'people'" #actions>
-            <ToolbarIconButton v-if="can('settings.manage')" :icon="Upload" :label="t('common.import')" @click="openPeopleImport" />
-          </template>
-          <template v-if="organizationTab === 'people'" #primary>
-            <el-button v-if="can('settings.manage')" class="page-primary-action" type="primary" :loading="responsibilityDirectorySaving" :disabled="responsibilityDirectorySaving" @click="openResponsibilitySubjectModal()">{{ t('settings.addPerson') }}</el-button>
-          </template>
-        </PageToolbar>
-
         <PeopleSettingsPage v-if="organizationTab === 'people'" :context="context" :organization="organization" />
         <template v-else-if="organizationTab === 'departments'">
           <el-alert v-if="departmentError" :title="t('settings.departmentDataLoadFailed')" type="error" show-icon :closable="false">
@@ -400,7 +405,7 @@ function applyPeopleFilters() {
     />
 
     <DataScopeDialog v-model="showDataScope" :user="scopeUser" :request="context.request" />
-    <FormDialogShell v-model="showUserModal" :title="editingUser ? t('settings.editUser') : t('settings.addUser')" :description="t('overlay.userDialogDescription')" size="medium" :saving="userSaving" :show-close="!userSaving" :close-on-click-modal="!userSaving" :close-on-press-escape="!userSaving" :close-disabled="userSaving">
+    <FormDialogShell v-model="showUserModal" :title="editingUser ? t('settings.editUser') : t('settings.addUser')" size="medium" :saving="userSaving" :show-close="!userSaving" :close-on-click-modal="!userSaving" :close-on-press-escape="!userSaving" :close-disabled="userSaving">
       <el-form ref="userFormRef" :model="userForm" :rules="userFormRules" :validate-on-rule-change="false" label-position="right" class="horizontal-form user-account-form" @submit.prevent="saveUser">
         <section class="form-dialog__section"><h3 class="form-dialog__section-title">{{ t('overlay.accountInformation') }}</h3><div class="horizontal-form__rows"><el-form-item :label="t('auth.username')" prop="username" required :error="userFormErrors.username"><el-input v-model="userForm.username" :disabled="!!editingUser" autocomplete="username" :validate-event="false" :placeholder="t('overlay.enterUsername')" /><FieldHelp v-if="editingUser" :text="usernameEditHelp" /></el-form-item><el-form-item :label="t('auth.email')" prop="email" :error="userFormErrors.email"><el-input v-model="userForm.email" type="email" autocomplete="email" :validate-event="false" :prefix-icon="Message" :placeholder="t('overlay.enterEmailOptional')" /></el-form-item><el-form-item :label="t('auth.lastName')" prop="last_name" required :error="userFormErrors.last_name"><el-input v-model="userForm.last_name" autocomplete="family-name" :validate-event="false" :prefix-icon="Edit" :placeholder="t('overlay.enterLastName')" /></el-form-item><el-form-item :label="t('auth.firstName')" prop="first_name" required :error="userFormErrors.first_name"><el-input v-model="userForm.first_name" autocomplete="given-name" :validate-event="false" :prefix-icon="Edit" :placeholder="t('overlay.enterFirstName')" /></el-form-item></div></section>
         <section v-if="!editingUser" class="form-dialog__section"><h3 class="form-dialog__section-title">{{ t('overlay.personInformation') }}</h3><div class="horizontal-form__rows"><el-form-item :label="t('settings.person')" prop="person_id" :error="userFormErrors.person_id"><SearchableSelect v-model="userForm.person_id" :request="context.request" endpoint="/people/" :map-option="mapUnlinkedPerson" :base-query="{ is_active: true, account: 'unlinked' }" :placeholder="t('overlay.selectPersonOptional')" :aria-label="t('settings.person')" clearable /><FieldHelp :text="t('overlay.personSelectHelp')" /></el-form-item></div></section>

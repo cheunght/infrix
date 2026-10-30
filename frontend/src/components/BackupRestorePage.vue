@@ -51,10 +51,6 @@ function formatCreatedAt(value: string): string {
 
 <template>
   <section class="backup-restore-page">
-    <header class="backup-restore-page__header">
-      <p class="backup-restore-page__description">{{ t("settings.backupRestoreDescription") }}</p>
-    </header>
-
     <el-alert v-if="error" class="backup-restore-page__notice" :title="error" type="error" show-icon :closable="false" />
     <el-alert v-if="notice" class="backup-restore-page__notice" :title="notice" type="success" show-icon :closable="false" />
     <el-alert

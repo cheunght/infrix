@@ -1,5 +1,6 @@
 <script setup lang="ts">
-import { computed, provide } from "vue";
+import { computed, provide, watch } from "vue";
+import { provideRackHints } from "../composables/useRackHints";
 import { useRoute, useRouter } from "vue-router";
 import { useRackOperations, RackOperationsKey } from "../composables/useRackOperations";
 import { useRackReservations, RackReservationsKey } from "../composables/useRackReservations";
@@ -10,7 +11,8 @@ import RackCapacityPlanner from "./RackCapacityPlanner.vue";
 import { useRackCapacityPlanning } from "../composables/useRackCapacityPlanning";
 import { useRackComparison, RACK_COMPARE_LIMIT } from "../composables/useRackComparison";
 import { useI18n } from "vue-i18n";
-import { Download } from "@element-plus/icons-vue";
+import { ArrowDown } from "@element-plus/icons-vue";
+import StatusTag from "./StatusTag.vue";
 import RackAssetInspector from "./RackAssetInspector.vue";
 import RackDetailPanel from "./RackDetailPanel.vue";
 import RackFormDialog from "./RackFormDialog.vue";
@@ -21,15 +23,17 @@ import SearchField from "./SearchField.vue";
 import PageContainer from "./page/PageContainer.vue";
 import PageContent from "./page/PageContent.vue";
 import PageToolbar from "./page/PageToolbar.vue";
-import ToolbarIconButton from "./page/ToolbarIconButton.vue";
 import SearchableSelect, { type SearchableSelectOption, type SearchableSelectValue } from "./SearchableSelect.vue";
 import type { DataCenter, Rack, RackStatus, ServerRoom } from "../types";
 import type { RackSharedContext } from "../page-context";
-import { rackStatusValue } from "../business-enums";
+import { rackStatusLabel, rackStatusTone, rackStatusValue } from "../business-enums";
 
 const props = defineProps<{ context: RackSharedContext }>();
 const { t } = useI18n();
 const context = props.context;
+const rackHints = provideRackHints();
+const route = useRoute();
+watch(() => route.fullPath, () => rackHints.hide());
 const operations = useRackOperations(context, useRoute(), useRouter());
 const reservations = useRackReservations(context, operations.placementRevision);
 provide(RackReservationsKey, reservations);
@@ -184,16 +188,16 @@ function deleteCurrentRack() {
             <SearchField
               v-model="locationSearch"
               :loading="locationManagementLoading"
-              :placeholder="t('location.searchPlaceholder')"
-              :aria-label="t('rack.searchLocationNameOrAddress')"
+              :placeholder="t('location.listSearchPlaceholder')"
+              :aria-label="t('location.listSearchPlaceholder')"
               @search="context.changeLocationSearch"
             />
           </template>
           <template v-else #search>
             <SearchField
               v-model="selectedRack"
-              :placeholder="t('rack.search')"
-              :aria-label="t('rack.searchRackNameOrCode')"
+              :placeholder="t('rack.listSearchPlaceholder')"
+              :aria-label="t('rack.listSearchPlaceholder')"
               @search="context.changeRackFilter"
             />
           </template>
@@ -230,25 +234,21 @@ function deleteCurrentRack() {
               <SearchableSelect :model-value="selectedRoom" class="toolbar-filter--md" :request="context.request" endpoint="/server-rooms/" :map-option="mapRoom" :selected-option="selectedViewRoomOption" :base-query="{ data_center: selectedDataCenter, is_active: true }" :placeholder="t('location.room')" :aria-label="t('location.room')" clearable @update:model-value="changeViewRoom" />
             </div>
           </template>
-          <template v-if="rackSection === 'view'" #actions>
-            <el-button :disabled="!planningRackIds.length" @click="planning.open">{{ t('rackPlan.title') }}</el-button>
+          <template v-if="rackSection === 'view' && (can('racks.view') || comparison.selecting.value || can('assets.view') || can('racks.export'))" #actions>
+            <el-button v-if="comparison.selecting.value" :disabled="comparison.leaving.value || comparison.coolingDown.value" @click="comparison.exit">{{ t('rackCompare.exit') }}</el-button>
             <el-button v-if="can('assets.view')" @click="operations.openSearch">{{ t('rackOps.findAsset') }}</el-button>
             <el-button v-if="can('assets.view') && can('assets.manage')" :disabled="operations.busy.value" @click="operations.open('mount')">{{ t('rackOps.mount') }}</el-button>
-            <ToolbarIconButton
-              v-if="can('racks.export')"
-              :icon="Download"
-              :label="t('rack.exportLayout')"
-              :loading="exportingRackLayout"
-              :disabled="exportingRackLayout"
-              @click="context.exportRackLayout"
-            />
+            <el-dropdown trigger="click">
+              <el-button :loading="exportingRackLayout">{{ t('rack.tools') }}<el-icon class="el-icon--right"><ArrowDown /></el-icon></el-button>
+              <template #dropdown><el-dropdown-menu>
+                <el-dropdown-item :disabled="!planningRackIds.length" @click="planning.open">{{ t('rackPlan.title') }}</el-dropdown-item>
+                <el-dropdown-item v-if="can('racks.export')" :disabled="exportingRackLayout" @click="context.exportRackLayout">{{ t(exportingRackLayout ? 'rack.exportingLayout' : 'rack.exportLayout') }}</el-dropdown-item>
+              </el-dropdown-menu></template>
+            </el-dropdown>
           </template>
-          <template #primary>
+          <template v-if="rackSection === 'locations' && can('racks.manage')" #primary>
             <el-button v-if="can('racks.manage') && rackSection === 'locations'" class="page-primary-action" type="primary" @click="context.openDataCenterModal()">
               {{ t('location.createDataCenter') }}
-            </el-button>
-            <el-button v-else-if="can('racks.manage') && rackSection === 'view'" class="page-primary-action" type="primary" @click="context.openRackModal()">
-              {{ t('rack.addRack') }}
             </el-button>
           </template>
         </PageToolbar>
@@ -259,11 +259,7 @@ function deleteCurrentRack() {
       </PageContent>
 
       <PageContent v-else min-height="0">
-        <div class="rack-comparison-selection">
-          <span>{{ t('rackCompare.selectionHint', { count: comparison.ids.value.length, limit: RACK_COMPARE_LIMIT }) }}</span>
-          <el-button v-for="entry in comparison.entries.value" :key="entry.id" size="small" :aria-label="t('rackCompare.remove', { rack: entry.rack?.code || `#${entry.id}` })" @click="comparison.toggle(entry.id)">{{ entry.rack?.code || `#${entry.id}` }} ×</el-button>
-          <el-button v-if="comparison.ids.value.length || comparison.invalid.value" link @click="comparison.clear">{{ t('rackCompare.clear') }}</el-button>
-        </div>
+        <el-alert v-if="comparison.exitError.value" :title="comparison.exitError.value" type="warning" :closable="false" />
         <el-alert v-if="comparison.invalid.value" :title="t('rackCompare.invalid')" type="warning" :closable="false" />
         <el-alert v-if="operations.locateError.value" :title="operations.locateError.value" type="warning" :closable="false" />
         <el-alert v-if="operations.locatedAsset.value && !operations.locatedAsset.value.rack_allocation" :title="`${operations.locatedAsset.value.asset_no} · ${operations.mountedLocation(operations.locatedAsset.value)}`" type="info" :closable="false">
@@ -271,9 +267,21 @@ function deleteCurrentRack() {
         </el-alert>
         <section
           class="resource-workspace resource-workspace--rack"
+          :class="{ 'resource-workspace--compare': comparison.active.value }"
           :aria-label="t('rack.locationWorkspace')"
         >
-          <RackListPanel :context="context" :comparison-ids="comparison.ids.value" :comparison-limit="RACK_COMPARE_LIMIT" @compare="comparison.toggle" />
+          <RackListPanel :context="context" :comparison-ids="comparison.selecting.value ? comparison.ids.value : undefined" :comparison-limit="RACK_COMPARE_LIMIT" @compare="comparison.toggle">
+            <template v-if="can('racks.manage')" #actions>
+              <el-button size="small" type="primary" @click="context.openRackModal()">{{ t('rack.addRack') }}</el-button>
+            </template>
+            <template v-if="comparison.selecting.value" #comparison>
+              <div class="rack-comparison-selection">
+                <span>{{ t('rackCompare.selectionHint', { count: comparison.ids.value.length, limit: RACK_COMPARE_LIMIT }) }}</span>
+                <el-button v-for="entry in comparison.entries.value" :key="entry.id" size="small" :aria-label="t('rackCompare.remove', { rack: entry.rack?.code || `#${entry.id}` })" @click="comparison.toggle(entry.id)">{{ entry.rack?.code || `#${entry.id}` }} ×</el-button>
+                <el-button v-if="comparison.ids.value.length || comparison.invalid.value" link @click="comparison.clear">{{ t('rackCompare.clear') }}</el-button>
+              </div>
+            </template>
+          </RackListPanel>
 
           <RackComparisonPanel v-if="comparison.active.value" :context="context" :comparison="comparison" :operations="operations" />
 
@@ -281,12 +289,15 @@ function deleteCurrentRack() {
             <template #header>
               <div class="resource-detail-header">
                 <div class="resource-detail-title">
-                  <strong>{{ currentRack?.code || t('rack.title') }}</strong>
-                  <span v-if="currentRack">{{ rackLocationLabel(currentRack) }}</span>
-                  <span v-else>{{ t('rack.selectRackHint') }}</span>
+                  <div class="rack-workspace-identity">
+                    <div><strong :title="currentRack?.code">{{ currentRack?.code || t('rack.title') }}</strong><span v-if="currentRack?.name">{{ currentRack.name }}</span><StatusTag v-if="currentRack" size="small" :tone="rackStatusTone(currentRack.status, currentRack.is_active)" :label="rackStatusLabel(currentRack.status, currentRack.is_active)" /></div>
+                    <span v-if="currentRack">{{ rackLocationLabel(currentRack) }}</span>
+                  </div>
+                  <span v-if="!currentRack">{{ t('rack.selectRackHint') }}</span>
                 </div>
                 <div v-if="currentRack && can('racks.view')" class="resource-detail-actions">
-                  <el-button :disabled="currentRack.occupancy_restricted || reservations.busy.value || operations.busy.value" @click="reservations.open(currentRack)">{{ t('rackReserve.title') }}</el-button>
+                  <el-button v-if="!comparison.selecting.value" size="small" @click="comparison.enter">{{ t('rackCompare.title') }}</el-button>
+                  <el-button size="small" :disabled="currentRack.occupancy_restricted || reservations.busy.value || operations.busy.value" @click="reservations.open(currentRack)">{{ t('rackReserve.title') }}</el-button>
                   <template v-if="can('racks.manage')">
                     <el-button
                       link
@@ -294,26 +305,14 @@ function deleteCurrentRack() {
                       :disabled="deletingRackId === currentRack.id || updatingRackId === currentRack.id"
                       @click="context.openRackModal(currentRack, viewRoom || undefined)"
                     >{{ t('common.edit') }}</el-button>
-                    <el-button
-                      link
-                      :loading="updatingRackId === currentRack.id"
-                      :disabled="deletingRackId === currentRack.id || updatingRackId === currentRack.id || exportingRackLayout"
-                      @click="updateCurrentRackStatus"
-                    >{{ rackStatusActionLabel(currentRack) }}</el-button>
-                    <el-button
-                      link
-                      :loading="updatingRackId === currentRack.id"
-                      :disabled="deletingRackId === currentRack.id || updatingRackId === currentRack.id || exportingRackLayout"
-                      @click="updateCurrentRackReservation"
-                    >{{ rackReservationActionLabel(currentRack) }}</el-button>
-                    <el-button
-                      link
-                      type="danger"
-                      :loading="deletingRackId === currentRack.id"
-                      :disabled="currentRackHasAssets || deletingRackId === currentRack.id || updatingRackId === currentRack.id || exportingRackLayout"
-                      :title="currentRackHasAssets ? rackDeleteHint : undefined"
-                      @click="deleteCurrentRack"
-                    >{{ t('common.delete') }}</el-button>
+                    <el-dropdown trigger="click">
+                      <el-button size="small" :disabled="deletingRackId === currentRack.id || updatingRackId === currentRack.id">{{ t('common.more') }}<el-icon class="el-icon--right"><ArrowDown /></el-icon></el-button>
+                      <template #dropdown><el-dropdown-menu>
+                        <el-dropdown-item :disabled="deletingRackId === currentRack.id || updatingRackId === currentRack.id || exportingRackLayout" @click="updateCurrentRackStatus">{{ rackStatusActionLabel(currentRack) }}</el-dropdown-item>
+                        <el-dropdown-item :disabled="deletingRackId === currentRack.id || updatingRackId === currentRack.id || exportingRackLayout" @click="updateCurrentRackReservation">{{ rackReservationActionLabel(currentRack) }}</el-dropdown-item>
+                        <el-dropdown-item :disabled="currentRackHasAssets || deletingRackId === currentRack.id || updatingRackId === currentRack.id || exportingRackLayout" :title="currentRackHasAssets ? rackDeleteHint : undefined" divided @click="deleteCurrentRack">{{ t('common.delete') }}</el-dropdown-item>
+                      </el-dropdown-menu></template>
+                    </el-dropdown>
                   </template>
                 </div>
               </div>
@@ -336,14 +335,17 @@ function deleteCurrentRack() {
                   <div class="rack-detail-grid__canvas">
                     <div class="rack-canvas-shell">
                       <el-alert v-if="currentRack.occupancy_restricted" :title="t('dataScope.occupancyHint')" type="info" :closable="false" />
-                      <RackLayoutCanvas v-else :context="context" />
+                      <RackLayoutCanvas v-else :context="context" appearance="cabinet" />
                     </div>
                   </div>
                   <div class="rack-detail-grid__side">
-                    <RackAssetInspector :context="context" />
+                    <RackAssetInspector :context="context" back-to-overview />
                     <RackDetailPanel
                       v-show="!rackDetailOpen"
                       :rack="currentRack"
+                      :can-view-assets="can('assets.view')"
+                      :selected-asset-id="context.detailAsset.value?.id"
+                      @select-asset="operations.locate"
                       :used-u="rackUsedU(currentRack)"
                       :utilization="rackUtilization(currentRack)"
                       :utilization-color="rackUtilizationColor(currentRack)"

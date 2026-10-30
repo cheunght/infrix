@@ -34,7 +34,6 @@ const emit = defineEmits<{
           :loading="props.loading"
           :disabled="props.disabled"
           :aria-label="props.label"
-          :title="props.label"
           @click="emit('click', $event)"
         />
       </span>
@@ -47,7 +46,6 @@ const emit = defineEmits<{
         :loading="props.loading"
         :disabled="props.disabled"
         :aria-label="props.label"
-        :title="props.label"
         @click="emit('click', $event)"
       />
     </span>

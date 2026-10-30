@@ -732,7 +732,6 @@ function mapUnlinkedPerson(item: Record<string, unknown>): SearchableSelectOptio
   <FormDialogShell
     v-model="showProfileModal"
     :title="t('auth.profileTitle')"
-    :description="t('auth.profileDescription')"
     size="large"
     class="profile-settings-dialog"
     :loading="profileLoading"
@@ -808,7 +807,6 @@ function mapUnlinkedPerson(item: Record<string, unknown>): SearchableSelectOptio
   <FormDialogShell
     v-model="showLicenseModal"
     :title="editingLicense ? t('overlay.editLicense') : t('overlay.addLicense')"
-    :description="t('overlay.licenseDialogDescription')"
     size="medium"
     :saving="licenseSaving"
     :error="licenseFormError"
@@ -879,7 +877,6 @@ function mapUnlinkedPerson(item: Record<string, unknown>): SearchableSelectOptio
   <ActionDialogShell
     v-model="showPasswordModal"
     :title="passwordChangeRequired ? t('auth.forcePasswordChangeTitle') : t('auth.changePassword')"
-    :description="t('overlay.passwordDialogDescription')"
     size="small"
     :pending="passwordSaving"
     :error="passwordError"
@@ -909,7 +906,6 @@ function mapUnlinkedPerson(item: Record<string, unknown>): SearchableSelectOptio
     v-model="showFaultModal"
     class="repair-dialog repair-dialog--fault"
     :title="t('repair.addFault')"
-    :description="t('overlay.faultDialogDescription')"
     size="medium"
     :saving="faultSaving"
     :error="faultError"
@@ -1100,7 +1096,6 @@ function mapUnlinkedPerson(item: Record<string, unknown>): SearchableSelectOptio
     v-model="showRepairPartUsageModal"
     class="repair-dialog repair-dialog--part-usage"
     :title="t('repair.recordPartUsage')"
-    :description="t('repair.partUsageDialogDescription')"
     size="medium"
     :pending="repairPartUsageSaving"
     :error="repairPartUsageError"
@@ -1206,7 +1201,6 @@ function mapUnlinkedPerson(item: Record<string, unknown>): SearchableSelectOptio
   <ActionDialogShell
     v-model="showImportDialog"
     :title="t('asset.importAssets')"
-    :description="t('overlay.importDialogDescription')"
     size="large"
     class="asset-import-dialog"
     :close-on-click-modal="false"
@@ -1326,7 +1320,6 @@ function mapUnlinkedPerson(item: Record<string, unknown>): SearchableSelectOptio
   <FormDialogShell
     v-model="showDataCenterModal"
     :title="editingDataCenter ? t('overlay.editDataCenter') : t('location.createDataCenter')"
-    :description="t('overlay.dataCenterDialogDescription')"
     size="medium"
     :saving="dataCenterSaving"
     :show-close="!dataCenterSaving"
@@ -1358,7 +1351,6 @@ function mapUnlinkedPerson(item: Record<string, unknown>): SearchableSelectOptio
   <FormDialogShell
     v-model="showRoomModal"
     :title="editingRoom ? t('overlay.editRoom') : t('location.createRoom')"
-    :description="t('overlay.roomDialogDescription')"
     size="medium"
     :saving="roomSaving"
     :show-close="!roomSaving"

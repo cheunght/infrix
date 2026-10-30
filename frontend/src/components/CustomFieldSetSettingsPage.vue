@@ -1,10 +1,10 @@
 <script setup lang="ts">
 import { revisionHeaders } from "../revision";
-import { computed, onMounted, proxyRefs, reactive, ref } from "vue";
+import { computed, onBeforeUnmount, onMounted, proxyRefs, reactive, ref } from "vue";
 import { useI18n } from "vue-i18n";
 import { ArrowDown, ArrowUp, CircleCheck, CircleClose, Delete, Edit, Filter, Rank } from "@element-plus/icons-vue";
 import type { FormInstance, FormRules } from "element-plus";
-import { pageItems, pageTotal, type PageResult } from "../api";
+import { isAbortError, pageItems, pageTotal, type PageResult } from "../api";
 import { normalizeApiError } from "../error-handling";
 import type { PageContext } from "../page-context";
 import type { CustomField, CustomFieldSet, CustomFieldSetItem } from "../types";
@@ -32,6 +32,12 @@ const pageSize = ref(20);
 const search = ref("");
 const active = ref("");
 const loading = ref(false);
+let loadRequestId = 0;
+let loadController: AbortController | null = null;
+onBeforeUnmount(() => {
+  loadRequestId += 1;
+  loadController?.abort();
+});
 const saving = ref(false);
 const error = ref("");
 const formErrors = ref<Record<string, string>>({});
@@ -69,18 +75,27 @@ function applyFieldsetFilters() {
 }
 
 async function loadFieldsets() {
+  const requestId = ++loadRequestId;
+  loadController?.abort();
+  const controller = new AbortController();
+  loadController = controller;
   loading.value = true;
   error.value = "";
   const params = new URLSearchParams({ page: String(page.value), page_size: String(pageSize.value), is_active: active.value || "all" });
   if (search.value.trim()) params.set("search", search.value.trim());
   try {
-    const payload = await c.request<PageResult<CustomFieldSet>>(`/custom-fieldsets/?${params}`);
+    const payload = await c.request<PageResult<CustomFieldSet>>(`/custom-fieldsets/?${params}`, { signal: controller.signal });
+    if (requestId !== loadRequestId || controller.signal.aborted) return;
     rows.value = pageItems(payload);
     total.value = pageTotal(payload);
   } catch (loadError) {
+    if (requestId !== loadRequestId || controller.signal.aborted || isAbortError(loadError)) return;
     error.value = normalizeApiError(loadError).message;
   } finally {
-    loading.value = false;
+    if (requestId === loadRequestId) {
+      loading.value = false;
+      loadController = null;
+    }
   }
 }
 
@@ -216,9 +231,9 @@ onMounted(() => void loadAll());
   <PageContainer>
     <template #toolbar>
       <PageToolbar>
-        <template #search><SearchField v-model="search" :loading="loading" :placeholder="t('customFieldSet.search')" @search="page = 1; loadFieldsets()" /></template>
+        <template #search><SearchField :aria-label="t('customFieldSet.listSearchPlaceholder')" v-model="search" :loading="loading" :placeholder="t('customFieldSet.listSearchPlaceholder')" @search="page = 1; loadFieldsets()" /></template>
         <template #filters><ToolbarIconButton :icon="Filter" :label="t('asset.moreFilters')" :badge="activeFieldsetFilterCount" @click="openFieldsetFilters" /></template>
-        <template #primary><el-button v-if="canManage" type="primary" @click="openModal()">{{ t('customFieldSet.add') }}</el-button></template>
+        <template v-if="canManage" #primary><el-button v-if="canManage" type="primary" @click="openModal()">{{ t('customFieldSet.add') }}</el-button></template>
       </PageToolbar>
     </template>
     <PageContent surface>
@@ -257,7 +272,7 @@ onMounted(() => void loadAll());
     </template>
   </el-drawer>
 
-  <FormDialogShell v-model="showModal" :title="editing ? t('customFieldSet.edit') : t('customFieldSet.create')" :description="t('customFieldSet.help')" size="large" :saving="saving" :close-disabled="saving">
+  <FormDialogShell v-model="showModal" :title="editing ? t('customFieldSet.edit') : t('customFieldSet.create')" size="large" :saving="saving" :close-disabled="saving">
     <el-form ref="formRef" :model="form" :rules="rules" class="horizontal-form" label-position="right">
       <section class="form-dialog__section"><div class="horizontal-form__rows"><el-form-item :label="t('common.name')" prop="name" required :error="formErrors.name"><el-input v-model="form.name" maxlength="120" /></el-form-item><el-form-item :label="t('common.description')" :error="formErrors.description"><el-input v-model="form.description" type="textarea" :rows="2" /></el-form-item><el-form-item :label="t('common.status')"><el-switch v-model="form.is_active" /></el-form-item></div></section>
       <section class="form-dialog__section"><h3 class="form-dialog__section-title">{{ t('customFieldSet.members') }}</h3><div class="fieldset-library"><el-checkbox v-for="field in availableFields" :key="field.id" :model-value="selected(field.id)" @change="toggleField(field, Boolean($event))">{{ field.name }} <span class="fieldset-library__code">{{ field.key }}</span></el-checkbox></div></section>

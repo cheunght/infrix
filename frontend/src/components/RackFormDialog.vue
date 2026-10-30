@@ -127,7 +127,6 @@ watch(showRackModal, (open) => {
   <FormDialogShell
     v-model="showRackModal"
     :title="editingRack ? t('rackForm.editTitle') : t('rackForm.createTitle')"
-    :description="t('rackForm.description')"
     size="medium"
     :saving="rackSaving"
     :close-on-click-modal="!rackSaving"

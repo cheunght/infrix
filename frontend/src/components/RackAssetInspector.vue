@@ -1,13 +1,13 @@
 <script setup lang="ts">
 import { inject, ref, watch } from "vue";
 import { useI18n } from "vue-i18n";
-import { Close } from "@element-plus/icons-vue";
+import { ArrowLeft, Close } from "@element-plus/icons-vue";
 import AssetDetailContent from "./AssetDetailContent.vue";
 import type { AssetDetail } from "../types";
 import type { RackInspectorContext } from "../page-context";
 import { RackOperationsKey } from "../composables/useRackOperations";
 
-const props = defineProps<{ context: RackInspectorContext }>();
+const props = defineProps<{ context: RackInspectorContext; backToOverview?: boolean }>();
 const { t } = useI18n();
 const operations = inject(RackOperationsKey, null);
 const { rackDetailOpen, detailAsset, detailLoading, detailError, retryAssetDetail, closeAssetDetail } = props.context;
@@ -16,6 +16,8 @@ const displayedAsset = ref<AssetDetail | null>(detailAsset.value);
 watch(detailAsset, (asset) => {
   if (asset) displayedAsset.value = asset;
 });
+
+watch(detailError, (error) => { if (error) displayedAsset.value = null; });
 
 watch(rackDetailOpen, (open) => {
   if (!open) displayedAsset.value = null;
@@ -28,15 +30,15 @@ watch(rackDetailOpen, (open) => {
       <div class="rack-asset-inspector__header">
         <div class="rack-asset-inspector__heading">
           <strong>{{ t('rack.assetDetails') }}</strong>
-          <span>{{ displayedAsset?.asset_no || t('common.loading') }}</span>
+          <span>{{ detailError ? t('common.dataLoadFailed') : displayedAsset?.asset_no || t('common.loading') }}</span>
         </div>
         <el-button
           class="rack-inspector-close"
           text
           circle
-          :icon="Close"
-          :aria-label="t('common.close')"
-          :title="t('common.close')"
+          :icon="backToOverview ? ArrowLeft : Close"
+          :aria-label="t(backToOverview ? 'rack.backToOverview' : 'common.close')"
+          :title="t(backToOverview ? 'rack.backToOverview' : 'common.close')"
           @click="operations ? operations.closeDetail() : closeAssetDetail()"
         />
       </div>

@@ -1,10 +1,10 @@
 <script setup lang="ts">
 import { revisionHeaders } from "../revision";
-import { computed, onMounted, proxyRefs, reactive, ref } from "vue";
+import { computed, onBeforeUnmount, onMounted, proxyRefs, reactive, ref } from "vue";
 import { useI18n } from "vue-i18n";
 import { CircleCheck, CircleClose, Delete, Edit, Filter } from "@element-plus/icons-vue";
 import type { FormInstance, FormRules } from "element-plus";
-import { pageItems, pageTotal, type PageResult } from "../api";
+import { isAbortError, pageItems, pageTotal, type PageResult } from "../api";
 import { normalizeApiError } from "../error-handling";
 import type { PageContext } from "../page-context";
 import type { CustomFieldSet, DictionaryItem } from "../types";
@@ -32,6 +32,12 @@ const pageSize = ref(20);
 const search = ref("");
 const active = ref("");
 const loading = ref(false);
+let loadRequestId = 0;
+let loadController: AbortController | null = null;
+onBeforeUnmount(() => {
+  loadRequestId += 1;
+  loadController?.abort();
+});
 const error = ref("");
 const saving = ref(false);
 const actionId = ref<number | null>(null);
@@ -71,18 +77,27 @@ function mapFieldset(item: Record<string, unknown>): SearchableSelectOption {
 }
 
 async function loadRows() {
+  const requestId = ++loadRequestId;
+  loadController?.abort();
+  const controller = new AbortController();
+  loadController = controller;
   loading.value = true;
   error.value = "";
   const params = new URLSearchParams({ page: String(page.value), page_size: String(pageSize.value), is_active: active.value || "all" });
   if (search.value.trim()) params.set("search", search.value.trim());
   try {
-    const payload = await c.request<PageResult<DictionaryItem>>(`/device-types/?${params}`);
+    const payload = await c.request<PageResult<DictionaryItem>>(`/device-types/?${params}`, { signal: controller.signal });
+    if (requestId !== loadRequestId || controller.signal.aborted) return;
     rows.value = pageItems(payload);
     total.value = pageTotal(payload);
   } catch (loadError) {
+    if (requestId !== loadRequestId || controller.signal.aborted || isAbortError(loadError)) return;
     error.value = normalizeApiError(loadError).message;
   } finally {
-    loading.value = false;
+    if (requestId === loadRequestId) {
+      loading.value = false;
+      loadController = null;
+    }
   }
 }
 
@@ -153,9 +168,9 @@ onMounted(() => { void loadRows(); });
   <PageContainer>
     <template #toolbar>
       <PageToolbar>
-        <template #search><SearchField v-model="search" :loading="loading" :placeholder="t('settings.searchDictionary', { item: t('settings.deviceType') })" @search="page = 1; loadRows()" /></template>
+        <template #search><SearchField :aria-label="t('settings.deviceTypeListSearchPlaceholder')" v-model="search" :loading="loading" :placeholder="t('settings.deviceTypeListSearchPlaceholder')" @search="page = 1; loadRows()" /></template>
         <template #filters><ToolbarIconButton :icon="Filter" :label="t('asset.moreFilters')" :badge="activeDeviceTypeFilterCount" @click="openDeviceTypeFilters" /></template>
-        <template #primary><el-button v-if="canManage" type="primary" :disabled="saving" @click="openModal()">{{ t('settings.addType') }}</el-button></template>
+        <template v-if="canManage" #primary><el-button v-if="canManage" type="primary" :disabled="saving" @click="openModal()">{{ t('settings.addType') }}</el-button></template>
       </PageToolbar>
     </template>
     <PageContent surface>

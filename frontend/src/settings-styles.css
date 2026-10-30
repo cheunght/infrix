@@ -30,7 +30,7 @@
   max-width: none;
 }
 
-/* Form and list actions share the same toolbar geometry inside their surface. */
+/* List controls sit above their surface; form actions stay with their form. */
 .settings-page > .page-container {
   gap: var(--page-section-gap, 16px);
 }
@@ -44,6 +44,14 @@
 
 .settings-page .settings-list-toolbar {
   margin-bottom: var(--space-lg, 16px);
+}
+
+.page-container__toolbar > .settings-list-toolbar,
+.page-container__toolbar > .settings-content-toolbar {
+  min-height: var(--el-component-size, 32px);
+  margin: 0;
+  padding: 0;
+  border: 0;
 }
 
 .settings-page .settings-form-toolbar {
@@ -370,13 +378,6 @@
   gap: 16px;
 }
 
-.settings-branding__description {
-  margin: 0;
-  color: var(--el-text-color-secondary);
-  font-size: 13px;
-  line-height: 20px;
-  min-width: 0;
-}
 
 .settings-branding__form {
   align-items: start;
@@ -1174,15 +1175,7 @@
   gap: 18px;
 }
 
-.backup-restore-page__header {
-  display: flex;
-  min-width: 0;
-  align-items: center;
-  justify-content: space-between;
-  gap: 20px;
-}
 
-.backup-restore-page__description,
 .backup-restore-page__help {
   min-width: 0;
   margin: 0;
@@ -1371,11 +1364,6 @@
   overflow-wrap: anywhere;
 }
 
-@media (max-width: 720px) {
-  .backup-restore-page__header {
-    flex-direction: column;
-  }
-}
 
 @media (max-width: 960px) {
   .backup-restore-table {

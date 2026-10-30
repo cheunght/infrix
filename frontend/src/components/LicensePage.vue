@@ -105,8 +105,8 @@ function formatLicenseExpiry(value: string | null | undefined): string {
         <template #search>
           <SearchField
             v-model="licenseKeyword"
-            :placeholder="t('license.searchPlaceholder')"
-            :aria-label="t('license.title')"
+            :placeholder="t('license.listSearchPlaceholder')"
+            :aria-label="t('license.listSearchPlaceholder')"
             :loading="licenseListLoading"
             @search="searchLicenses"
           />
@@ -119,17 +119,17 @@ function formatLicenseExpiry(value: string | null | undefined): string {
             @click="openLicenseFilters"
           />
         </template>
-        <template #actions>
-          <ToolbarIconButton
+        <template v-if="can('licenses.export')" #actions>
+          <el-button
             v-if="can('licenses.export')"
             :icon="Download"
-            :label="t('asset.exportData')"
+            :aria-label="t('asset.exportData')"
             :loading="exportingLicenses"
             :disabled="exportingLicenses"
             @click="exportLicenses"
-          />
+          >{{ t('asset.exportData') }}</el-button>
         </template>
-        <template #primary>
+        <template v-if="can('licenses.manage')" #primary>
           <el-button v-if="can('licenses.manage')" class="page-primary-action" type="primary" @click="openLicenseModal()">
             {{ t('license.addLicense') }}
           </el-button>

@@ -34,7 +34,6 @@ function mapDigestPerson(item: Record<string, unknown>): SearchableSelectOption 
         <header class="settings-system__notification-section-heading settings-system__notification-section-heading--with-control">
           <div class="settings-system__notification-section-heading-copy">
             <h2>{{ t('settings.emailDigestSection') }}</h2>
-            <p>{{ t('settings.emailDigestSectionDescription') }}</p>
           </div>
           <div class="settings-system__notification-section-switch">
             <el-form-item class="settings-system__notification-form-item" :error="errors.email_digest_enabled">
@@ -74,20 +73,17 @@ function mapDigestPerson(item: Record<string, unknown>): SearchableSelectOption 
       <section class="settings-system__notification-section">
         <header class="settings-system__notification-section-heading">
           <h2>{{ t('settings.inAppNotificationsSection') }}</h2>
-          <p>{{ t('settings.inAppNotificationsSectionDescription') }}</p>
         </header>
         <div class="settings-system__notification-list">
           <div class="settings-system__notification-row">
             <div class="settings-system__notification-copy">
               <div class="settings-system__notification-title">{{ systemSettingLabel('notify_maintenance', t) }}</div>
-              <div class="settings-system__help">{{ systemSettingHelp('notify_maintenance', t) }}</div>
             </div>
             <div class="settings-system__notification-field">
               <div class="settings-system__notification-field-label">{{ systemSettingLabel('maintenance_expiry_days', t) }}</div>
               <el-form-item class="settings-system__notification-form-item" :error="errors.maintenance_expiry_days">
                 <el-input-number v-model="form.maintenance_expiry_days" :min="0" :max="3650" :step="1" :disabled="!context.can('settings.manage') || systemSettingsSaving" />
               </el-form-item>
-              <div class="settings-system__help">{{ systemSettingHelp('maintenance_expiry_days', t) }}</div>
             </div>
             <div class="settings-system__notification-switch">
               <el-form-item class="settings-system__notification-form-item" :error="errors.notify_maintenance">
@@ -100,7 +96,6 @@ function mapDigestPerson(item: Record<string, unknown>): SearchableSelectOption 
           <div class="settings-system__notification-row">
             <div class="settings-system__notification-copy">
               <div class="settings-system__notification-title">{{ systemSettingLabel('notify_license_expiry', t) }}</div>
-              <div class="settings-system__help">{{ systemSettingHelp('notify_license_expiry', t) }}</div>
             </div>
             <div class="settings-system__notification-field">
               <div class="settings-system__notification-field-label">{{ systemSettingLabel('license_expiry_days', t) }}</div>
@@ -120,7 +115,6 @@ function mapDigestPerson(item: Record<string, unknown>): SearchableSelectOption 
           <div v-for="key in simpleNotificationFields" :key="key" class="settings-system__notification-row settings-system__notification-row--without-field">
             <div class="settings-system__notification-copy settings-system__notification-copy--wide">
               <div class="settings-system__notification-title">{{ systemSettingLabel(key, t) }}</div>
-              <div class="settings-system__help">{{ systemSettingHelp(key, t) }}</div>
             </div>
             <div class="settings-system__notification-switch">
               <el-form-item class="settings-system__notification-form-item" :error="errors[key]">
