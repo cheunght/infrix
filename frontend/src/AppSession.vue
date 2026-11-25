@@ -38,6 +38,7 @@ import { useSpareParts } from "./composables/useSpareParts";
 import { useSettings } from "./composables/useSettings";
 import { useOrganizationSettings } from "./composables/useOrganizationSettings";
 import { useSystemSettings } from "./composables/useSystemSettings";
+import { useSidebarKeyboard } from "./composables/useSidebarKeyboard";
 import { isAbortError } from "./api";
 import { normalizeApiError, type ActionMessageType } from "./error-handling";
 import { useRoute, useRouter, type RouteLocationRaw } from "vue-router";
@@ -84,6 +85,7 @@ const globalOverlayElementComponents: readonly ElementPlusComponentName[] = [
   "ElEmpty",
   "ElInputNumber",
   "ElOption",
+  "ElPagination",
   "ElRadioButton",
   "ElRadioGroup",
   "ElSelect",
@@ -128,8 +130,9 @@ const pageTitle = computed(() => {
   return route.meta.title || t("nav.dashboard");
 });
 const loading = ref(false);
-const authChecked = ref(false);
+const authChecked = ref(props.startSignedOut);
 const authenticated = ref(false);
+const sessionRouteReady = ref(false);
 watch(authenticated, (current, previous) => {
   if (previous && !current) emit("session-ended");
 }, { flush: "sync" });
@@ -156,6 +159,14 @@ const {
   roleName,
   hasBusinessCapability,
 } = useAuthorization(authorization);
+function canUseSystemSettings(capability: string) {
+  if (!can(capability)) return false;
+  const scope = authorization.value.data_scope;
+  if (!scope || authorization.value.is_system_admin) return true;
+  if (capability === "settings.view") return scope.global_read;
+  if (capability === "settings.manage") return scope.global_write;
+  return true;
+}
 const sidebarCollapsed = ref(
   localStorage.getItem("infrix.sidebar.collapsed") === "1" ||
     (window.matchMedia?.("(max-width: 900px)").matches &&
@@ -357,6 +368,7 @@ const organizationSettings = useOrganizationSettings({
   isCurrentLoad,
   confirmAction,
   can,
+  canManageReferences: () => canUseSystemSettings("settings.manage"),
   currentUsername: username,
   downloadFile: download,
   actionMessage,
@@ -366,7 +378,7 @@ const systemSettingsController = useSystemSettings({
   request,
   beginLoad,
   isCurrentLoad,
-  can,
+  can: canUseSystemSettings,
   actionMessage,
   actionMessageType,
 });
@@ -576,17 +588,13 @@ const auth = useAuth({
   request,
   loadCsrf,
   routerReplace: (location) => router.replace(location),
-  syncRouteState,
-  ensureRouteAccess,
   bootstrapApplication: bootstrapAuthenticatedSession,
   bootstrapError,
   resetBootstrap: resetBootstrapState,
   authenticated,
-  authChecked,
   passwordChangeRequired,
   authSource,
   authorization,
-  can,
   hasBusinessCapability,
   userName,
   username,
@@ -614,7 +622,7 @@ const auth = useAuth({
   locale: currentLocale,
   setLocale,
 });
-const { checkAuth, login, verifyTwoFactor, cancelTwoFactor, logout, loadProfile, saveProfile, changePassword, openPasswordModal } = auth;
+const { checkAuth, login, loggingIn, verifyTwoFactor, cancelTwoFactor, logout, loadProfile, saveProfile, changePassword, openPasswordModal } = auth;
 const overlayAuth = {
   username,
   loadProfile,
@@ -1111,13 +1119,12 @@ function resolveAssetConfigSection(requested: string): AssetConfigSection {
   return "tags";
 }
 
-function syncRouteState(): boolean {
+function syncRouteState(): boolean | Promise<unknown> {
   // Permission-dependent normalization must wait for the session probe or login.
   if (!authenticated.value) return false;
   const routePage = route.meta.page || "dashboard";
   if (routePage === "settings" && route.meta.settingsSection === "dictionaries" && routeQueryValue("tab") === "device-types") {
-    void router.replace(routeForPage("asset-config", { assetConfigSection: "device-types" }));
-    return true;
+    return router.replace(routeForPage("asset-config", { assetConfigSection: "device-types" }));
   }
   const rackFilterQueryKeys = ["room", "rack", "rack_code", "device_type"];
   const locationQueryKeys = ["data_center", "search", "type", "status"];
@@ -1258,7 +1265,7 @@ function syncRouteState(): boolean {
     spareSearch.value = routeQueryValue("search");
   }
   if (rackViewRouteSyncDeferred) return true;
-  return clearRouteQuery(queryKeysToClear);
+  return replaceRouteQueryWithout(queryKeysToClear) ?? false;
 }
 
 function routeIsAllowed() {
@@ -1281,7 +1288,7 @@ function routeIsAllowed() {
   }
   if (routePage !== "settings") return true;
   const section = route.meta.settingsSection || "system";
-  if (section === "system" && !can("settings.view")) return false;
+  if (section === "system" && !canUseSystemSettings("settings.view")) return false;
   if (section === "dictionaries" && !can("settings.view")) return false;
   if (section === "organization" && !can("organization.manage") && !can("settings.manage") && !can("settings.view")) return false;
   if (section === "audit" && !can("audit.view")) return false;
@@ -1302,15 +1309,12 @@ function firstAllowedRoute(): RouteLocationRaw | null {
   if (can("licenses.view")) return routeForPage("licenses");
   if (can("inventory.view")) return routeForPage("inventory");
   if (can("faults.view")) return routeForPage("repairs");
-  if (can("settings.view")) return routeForPage("settings", { settingsSection: "system" });
   if (can("organization.manage") || can("settings.manage") || can("settings.view")) return routeForPage("settings", { settingsSection: "organization", organizationTab: can("organization.manage") ? organizationTab.value : can("settings.manage") ? "departments" : "people" });
   if (can("audit.view")) return routeForPage("settings", { settingsSection: "audit" });
-  if (can("system.reset")) return routeForPage("settings", { settingsSection: "maintenance" });
   return null;
 }
 
 function ensureRouteAccess() {
-  if (!authenticated.value) return true;
   if (routeIsAllowed()) {
     accessDenied.value = false;
     return true;
@@ -1344,8 +1348,12 @@ function navigateToRoute(location: RouteLocationRaw, reloadIfSame = false) {
 }
 
 function clearRouteQuery(keys: string[]): boolean {
+  return Boolean(replaceRouteQueryWithout(keys));
+}
+
+function replaceRouteQueryWithout(keys: string[]): Promise<unknown> | undefined {
   const routeName = route.name;
-  if (!routeName) return false;
+  if (!routeName) return;
   const nextQuery = { ...route.query };
   let changed = false;
   for (const key of keys) {
@@ -1358,7 +1366,7 @@ function clearRouteQuery(keys: string[]): boolean {
     const isRackView = routeName === "racks-view" && keys.some((key) => rackViewFilterQueryKeys.includes(key as typeof rackViewFilterQueryKeys[number]));
     if (isRackView) markRackViewQueryPending(nextQuery);
     const targetRackViewKey = isRackView ? rackViewQueryKey(nextQuery) : null;
-    void router.replace({ name: routeName, query: nextQuery }).then(
+    return router.replace({ name: routeName, query: nextQuery }).then(
       () => {
         if (targetRackViewKey) settleRackViewQueryPending(targetRackViewKey);
       },
@@ -1367,7 +1375,6 @@ function clearRouteQuery(keys: string[]): boolean {
       },
     );
   }
-  return changed;
 }
 
 function updateRouteQuery(updates: Record<string, string | undefined>): boolean {
@@ -1557,14 +1564,32 @@ function openRackSection(section: RackSection | string, query: Record<string, st
     true,
   );
 }
-async function bootstrapApplication() {
-  await loadSystemSettings();
+async function bootstrapApplication(signal: AbortSignal) {
+  if (canUseSystemSettings("settings.view")) await loadSystemSettings();
+  if (signal.aborted || !authenticated.value) return;
   applySystemSettingsDefaults();
-  // Large reference collections are loaded by their owning page or by the
-  // searchable selectors on demand.  Keeping them out of the authenticated
-  // bootstrap prevents every login from fetching all facilities, dictionary
-  // entries, custom fields and tags before the user has opened a form.
-  await load();
+
+  const fallback = routeIsAllowed() ? null : firstAllowedRoute();
+  if (fallback && router.resolve(fallback).fullPath !== route.fullPath) {
+    await router.replace(fallback);
+  }
+  if (signal.aborted || !authenticated.value) return;
+
+  accessDenied.value = !routeIsAllowed();
+  if (!accessDenied.value) {
+    const initialPath = route.fullPath;
+    const normalization = syncRouteState();
+    if (typeof normalization !== "boolean") {
+      await normalization;
+      if (signal.aborted || !authenticated.value) return;
+      accessDenied.value = !routeIsAllowed();
+      if (!accessDenied.value && route.fullPath !== initialPath) syncRouteState();
+    }
+  }
+  const firstPageLoad = accessDenied.value ? undefined : load(true);
+  sessionRouteReady.value = true;
+  if (!accessDenied.value && !sidebarCollapsed.value) openActiveSidebarSubmenu();
+  await firstPageLoad;
 }
 function beginBootstrapAttempt() {
   bootstrapController?.abort();
@@ -1573,6 +1598,7 @@ function beginBootstrapAttempt() {
   const id = ++bootstrapAttemptId;
   bootstrapLoading.value = true;
   bootstrapError.value = false;
+  sessionRouteReady.value = false;
   return { id, controller };
 }
 function isCurrentBootstrapAttempt(id: number, controller: AbortController) {
@@ -1597,7 +1623,7 @@ function resetBootstrapState() {
 }
 async function loadAuthenticatedApplication(id: number, controller: AbortController) {
   try {
-    await bootstrapApplication();
+    await bootstrapApplication(controller.signal);
   } catch (error) {
     recordBootstrapFailure(id, controller, error);
   }
@@ -1616,8 +1642,9 @@ async function runInitialBootstrap() {
   try {
     await loadCsrf(attempt.controller.signal);
     if (!isCurrentBootstrapAttempt(attempt.id, attempt.controller)) return;
-    if (!props.startSignedOut) await checkAuth(attempt.controller.signal);
+    await checkAuth(attempt.controller.signal);
     if (!isCurrentBootstrapAttempt(attempt.id, attempt.controller)) return;
+    authChecked.value = true;
     if (authenticated.value && !passwordChangeRequired.value && hasBusinessCapability.value) {
       resetMainScroll();
       await loadAuthenticatedApplication(attempt.id, attempt.controller);
@@ -1645,8 +1672,8 @@ function closeAssetDetail() {
   showAssetDetail.value = false;
   detailAsset.value = null;
 }
-async function load() {
-  if (!authenticated.value) return;
+async function load(systemSettingsAlreadyLoaded = false) {
+  if (!authenticated.value || passwordChangeRequired.value || !routeIsAllowed()) return;
   const version = beginLoad();
   // These pages own their loading, error and empty states. Avoid stacking the
   // route-level mask on top of their table/card mask during navigation.
@@ -1679,8 +1706,9 @@ async function load() {
       await Promise.all([loadCustomFields(version), loadTags(version)]);
     }
     if (page.value === "settings") {
-      if (settingsSection.value === "system" && can("settings.view"))
-        await loadSystemSettings(version);
+      if (settingsSection.value === "system") {
+        if (!systemSettingsAlreadyLoaded) await loadSystemSettings(version);
+      }
       else if (settingsSection.value === "organization" && (can("organization.manage") || can("settings.manage") || can("settings.view"))) {
         if (organizationTab.value === "ldap") {
           await Promise.all([loadLdapConfiguration(version), loadLdapStatus(version)]);
@@ -1706,7 +1734,7 @@ async function load() {
         await loadTags(version);
       else if (settingsSection.value === "maintenance") {
         // System maintenance has no list data to load.
-      } else await loadSystemSettings(version);
+      }
     }
   } catch (error) {
     console.error(error);
@@ -1760,7 +1788,7 @@ function openSettingsSection(
     return;
   }
   if (section === "organization" && !can("organization.manage")) organizationTab.value = can("settings.manage") ? "departments" : "people";
-  if (section === "system" && !can("settings.view")) return;
+  if (section === "system" && !canUseSystemSettings("settings.view")) return;
   if (section === "audit" && !can("audit.view")) return;
   if (section === "maintenance" && !can("settings.view")) return;
   closeTransientUi();
@@ -1790,7 +1818,7 @@ function changeOrganizationTab(value: string) {
   }), true);
 }
 function changeSystemSettingsTab(value: string) {
-  if (!can("settings.view")) return;
+  if (!canUseSystemSettings("settings.view")) return;
   if (value !== "general" && value !== "security" && value !== "smtp" && value !== "notifications" && value !== "branding") return;
   systemSettingsTab.value = value;
   navigateToRoute(routeForPage("settings", {
@@ -1834,6 +1862,7 @@ const activeMenu = computed(() =>
         ? "asset-list"
         : page.value,
 );
+useSidebarKeyboard(sidebarMenu, sidebarCollapsed, activeMenu);
 function handleMenuSelect(index: string) {
   if (index === "asset-config-menu") {
     openAssetConfiguration(can("settings.view") ? "models" : can("custom_fields.view") ? "fieldsets" : "tags");
@@ -1923,6 +1952,7 @@ watch(
 watch(
   () => route.fullPath,
   (_fullPath, previousPath) => {
+    if (!authenticated.value || !sessionRouteReady.value || passwordChangeRequired.value) return;
     const previousRoute = previousPath ? router.resolve(previousPath) : null;
     // Rack/device selection changes the URL without invalidating the rack list.
     const rackSelectionOnly = route.name === "racks-view"
@@ -1930,9 +1960,9 @@ watch(
       && rackViewQueryKey({ ...route.query, rack: undefined })
         === rackViewQueryKey({ ...previousRoute.query, rack: undefined });
     const inventoryPositionOnly = route.name === "inventory" && previousRoute?.name === "inventory";
-    const queryNormalized = syncRouteState();
     if (!rackSelectionOnly && !inventoryPositionOnly) closeTransientUi();
-    if (!authenticated.value || !ensureRouteAccess()) return;
+    if (!ensureRouteAccess()) return;
+    const queryNormalized = syncRouteState();
     if (!sidebarCollapsed.value) openActiveSidebarSubmenu();
     if (queryNormalized || rackSelectionOnly || inventoryPositionOnly) return;
     void load();
@@ -1963,7 +1993,7 @@ onMounted(async () => {
   backupOperations.start();
   void loadBranding();
   window.addEventListener("resize", updateViewportHeight);
-  await runInitialBootstrap();
+  if (!props.startSignedOut) await runInitialBootstrap();
 });
 onBeforeUnmount(() => {
   ElMessage.closeAll();
@@ -2087,6 +2117,7 @@ const pageContext = {
   settingsSection, organizationTab, changeOrganizationTab, systemSettingsTab, changeSystemSettingsTab,
   organizationSettings,
   systemSettings, systemSettingsForm, systemSettingsLoading,
+  canUseSystemSettings,
   systemSettingsSaving, systemSettingsError, systemSettingsFormErrors, systemSettingsDirty,
   systemSmtpTesting, systemSmtpTestRecipient,
   loadSystemSettings, retrySystemSettings, resetSystemSettingsForm, saveSystemSettings, testSystemSmtp,
@@ -2178,10 +2209,10 @@ watch(hasOpenGlobalOverlay, (isOpen) => {
       </template>
     </el-result>
   </div>
-  <div v-else-if="!authChecked" class="loading-screen">{{ t("common.checkingLogin") }}</div>
+  <div v-else-if="!authChecked || (authenticated && hasBusinessCapability && !passwordChangeRequired && !sessionRouteReady)" class="loading-screen" role="status">{{ t("common.checkingLogin") }}</div>
   <div v-else-if="!authenticated" class="login-screen">
     <div class="login-card">
-      <div class="login-language-switcher"><LanguageSwitcher /></div>
+      <div class="login-language-switcher"><LanguageSwitcher :disabled="loggingIn || twoFactorVerifying" /></div>
       <div class="login-brand">
         <img class="login-brand-wordmark" :src="brandingLogo" :alt="branding.display_name" @error="brandingImageFailed('logo')" />
         <div class="login-brand-subtitle">{{ t('auth.productSubtitle') }}</div>
@@ -2238,6 +2269,8 @@ watch(hasOpenGlobalOverlay, (isOpen) => {
             type="primary"
             native-type="submit"
             block
+            :loading="loggingIn"
+            :disabled="loggingIn"
             >{{ t('auth.login') }}</el-button
           >
         </el-form>
@@ -2291,13 +2324,16 @@ watch(hasOpenGlobalOverlay, (isOpen) => {
         :popper-offset="12"
         @select="handleMenuSelect"
       >
-        <el-menu-item v-if="can('dashboard.view')" index="dashboard" :aria-label="t('nav.dashboard')"
+        <el-menu-item v-if="can('dashboard.view')" index="dashboard" data-sidebar-item="dashboard" :aria-label="t('nav.dashboard')"
           ><el-icon><House /></el-icon
           ><template #title><span class="sidebar-menu-label">{{ t('nav.dashboard') }}</span></template></el-menu-item
         >
         <el-sub-menu
           v-if="can('assets.view') || can('custom_fields.view') || can('tags.view') || can('settings.view') || can('spares.view')"
           index="asset-menu"
+          id="sidebar-group-asset-menu"
+          tabindex="-1"
+          popper-class="ep-sidebar-popup ep-sidebar-group-asset-menu"
           :aria-label="t('nav.assets')"
           ><template #title><el-icon><Monitor /></el-icon><span>{{ t('nav.assets') }}</span></template
           ><el-menu-item v-if="can('assets.view')" index="asset-list">{{ t('nav.assetList') }}</el-menu-item
@@ -2305,6 +2341,9 @@ watch(hasOpenGlobalOverlay, (isOpen) => {
           ><el-sub-menu
             v-if="can('custom_fields.view') || can('tags.view') || can('settings.view')"
             index="asset-config-menu"
+            id="sidebar-group-asset-config-menu"
+            tabindex="-1"
+            popper-class="ep-sidebar-popup ep-sidebar-group-asset-config-menu"
             :aria-label="t('nav.assetConfiguration')"
           >
             <template #title>{{ t('nav.assetConfiguration') }}</template>
@@ -2325,7 +2364,7 @@ watch(hasOpenGlobalOverlay, (isOpen) => {
             >
           </el-sub-menu>
         </el-sub-menu>
-        <el-sub-menu v-if="can('racks.view')" index="racks-menu" :aria-label="t('nav.racks')">
+        <el-sub-menu v-if="can('racks.view')" index="racks-menu" id="sidebar-group-racks-menu" tabindex="-1" popper-class="ep-sidebar-popup ep-sidebar-group-racks-menu" :aria-label="t('nav.racks')">
           <template #title>
             <el-icon><OfficeBuilding /></el-icon>
             <span>{{ t('nav.racks') }}</span>
@@ -2333,25 +2372,28 @@ watch(hasOpenGlobalOverlay, (isOpen) => {
           <el-menu-item index="racks-locations">{{ t('nav.locations') }}</el-menu-item>
           <el-menu-item index="racks-view">{{ t('nav.rackView') }}</el-menu-item>
         </el-sub-menu>
-        <el-menu-item v-if="can('licenses.view')" index="licenses" :aria-label="t('nav.licenses')"
+        <el-menu-item v-if="can('licenses.view')" index="licenses" data-sidebar-item="licenses" :aria-label="t('nav.licenses')"
           ><el-icon><Key /></el-icon
           ><template #title><span class="sidebar-menu-label">{{ t('nav.licenses') }}</span></template></el-menu-item
         >
-        <el-menu-item v-if="can('inventory.view')" index="inventory" :aria-label="t('nav.inventory')"
+        <el-menu-item v-if="can('inventory.view')" index="inventory" data-sidebar-item="inventory" :aria-label="t('nav.inventory')"
           ><el-icon><Checked /></el-icon
           ><template #title><span class="sidebar-menu-label">{{ t('nav.inventory') }}</span></template></el-menu-item
         >
-        <el-menu-item v-if="can('faults.view')" index="repairs" :aria-label="t('nav.repairs')"
+        <el-menu-item v-if="can('faults.view')" index="repairs" data-sidebar-item="repairs" :aria-label="t('nav.repairs')"
           ><el-icon><Warning /></el-icon
           ><template #title><span class="sidebar-menu-label">{{ t('nav.repairs') }}</span></template></el-menu-item
         >
         <el-sub-menu
           v-if="can('settings.view') || can('organization.manage') || can('settings.manage') || can('audit.view') || can('system.reset')"
           index="settings"
+          id="sidebar-group-settings"
+          tabindex="-1"
+          popper-class="ep-sidebar-popup ep-sidebar-group-settings"
           :aria-label="t('nav.settings')"
           ><template #title
             ><el-icon><Setting /></el-icon><span>{{ t('nav.settings') }}</span></template
-          ><el-menu-item v-if="can('settings.view')" index="settings-system"
+          ><el-menu-item v-if="canUseSystemSettings('settings.view')" index="settings-system"
             >{{ t('nav.system') }}</el-menu-item
           ><el-menu-item v-if="can('organization.manage') || can('settings.manage') || can('settings.view')" index="settings-organization"
             >{{ t('nav.organization') }}</el-menu-item
@@ -2374,13 +2416,15 @@ watch(hasOpenGlobalOverlay, (isOpen) => {
         ><div class="page-heading"><h1>{{ pageTitle }}</h1></div>
         <div class="header-tools">
           <SearchField
+            v-if="can('assets.view')"
             class="ep-global-search"
             v-model="assetLookup"
             :placeholder="t('asset.searchPlaceholder')"
-            :aria-label="t('asset.title')"
+            :aria-label="t('asset.globalSearchLabel')"
             @search="lookupAsset"
           />
           <NotificationCenter
+            v-if="can('dashboard.view')"
             :request="request"
             :can="can"
             :username="username"

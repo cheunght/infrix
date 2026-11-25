@@ -17,7 +17,7 @@ from openpyxl.styles import Alignment, Font, PatternFill
 from openpyxl.utils import get_column_letter
 
 from .audit import write_audit_log
-from .imports import ImportFileError, ImportValidationError
+from .imports import ImportFileError, ImportValidationError, iter_import_worksheet_rows
 from .models import Department
 from .operation_limits import MAX_ASSET_MODEL_IMPORT_BYTES, MAX_ASSET_MODEL_IMPORT_ROWS
 
@@ -130,7 +130,7 @@ def _read_upload(upload):
             (item for item in workbook.worksheets if item.title == "部门导入"),
             workbook.worksheets[0],
         )
-        iterator = sheet.iter_rows()
+        iterator = iter_import_worksheet_rows(sheet)
         header_cells = next(iterator, None)
         if not header_cells:
             raise ImportFileError("部门导入文件第一行必须包含字段名")
@@ -235,6 +235,7 @@ def _base_row(line, row):
         "operation": "error",
         "valid": False,
         "changes": [],
+        "change_details": [],
         "errors": [],
     }
 
@@ -399,6 +400,18 @@ def _analyze_rows(parsed, departments):
             if current_parent_by_code.get(spec["key"]) != spec["parent_key"]:
                 changes.append("parent_code")
             result["changes"] = changes
+            if "name" in changes:
+                result["change_details"].append({
+                    "field": "name", "label": "部门名称",
+                    "old_value": existing.name, "new_value": spec["name"],
+                })
+            if "parent_code" in changes:
+                old_parent = by_id.get(existing.parent_id)
+                result["change_details"].append({
+                    "field": "parent_code", "label": "上级部门",
+                    "old_value": f"{old_parent.code} / {old_parent.name}" if old_parent else "",
+                    "new_value": f"{result['parent_code']} / {result['parent']}" if result["parent_code"] else "",
+                })
             result["operation"] = "update" if changes else "unchanged"
             result["valid"] = True
 

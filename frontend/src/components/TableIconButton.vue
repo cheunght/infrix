@@ -22,7 +22,7 @@ const emit = defineEmits<{
 </script>
 
 <template>
-  <el-tooltip :content="props.label" placement="top">
+  <el-tooltip :content="props.label" placement="top" :trigger="['hover', 'focus']">
     <el-button
       class="table-icon-action"
       link
@@ -31,7 +31,6 @@ const emit = defineEmits<{
       :disabled="props.disabled"
       :loading="props.loading"
       :aria-label="props.label"
-      :title="props.label"
       @click.stop="emit('click', $event)"
     />
   </el-tooltip>

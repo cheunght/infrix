@@ -3,7 +3,8 @@ import { computed, ref } from "vue";
 import { useI18n } from "vue-i18n";
 import { Download, Upload } from "@element-plus/icons-vue";
 import FormDialogShell from "./FormDialogShell.vue";
-import type { DepartmentImportPreview, DepartmentImportRow } from "../types";
+import type { DepartmentImportPreview } from "../types";
+import ReferenceImportReview from "./ReferenceImportReview.vue";
 
 const props = defineProps<{
   modelValue: boolean;
@@ -26,6 +27,8 @@ const { t } = useI18n();
 const fileInput = ref<HTMLInputElement | null>(null);
 const canCommit = computed(() => Boolean(
   props.preview
+  && props.file
+  && props.preview.valid > 0
   && props.preview.error === 0
   && !props.previewing
   && !props.importing,
@@ -42,27 +45,6 @@ function handleFileChange(event: Event) {
   emit("select", file);
 }
 
-function operationLabel(operation: DepartmentImportRow["operation"]): string {
-  switch (operation) {
-    case "create": return t("settings.departmentImportCreate");
-    case "update": return t("settings.departmentImportUpdate");
-    case "unchanged": return t("settings.departmentImportUnchanged");
-    default: return t("settings.departmentImportError");
-  }
-}
-
-function operationType(operation: DepartmentImportRow["operation"]): "success" | "warning" | "info" | "danger" {
-  switch (operation) {
-    case "create": return "success";
-    case "update": return "warning";
-    case "unchanged": return "info";
-    default: return "danger";
-  }
-}
-
-function rowErrors(row: DepartmentImportRow): string {
-  return row.errors.map((item) => item.label ? `${item.label}: ${item.message}` : item.message).join("; ");
-}
 </script>
 
 <template>
@@ -95,12 +77,6 @@ function rowErrors(row: DepartmentImportRow): string {
 
       <template v-if="preview">
         <el-alert
-          :title="t('settings.departmentImportPreviewSummary', preview)"
-          :type="preview.error ? 'warning' : 'success'"
-          :closable="false"
-          show-icon
-        />
-        <el-alert
           v-if="preview.ignored_columns.length"
           class="department-import-dialog__ignored"
           :title="t('settings.departmentImportIgnoredColumns', { columns: preview.ignored_columns.join(', ') })"
@@ -108,28 +84,7 @@ function rowErrors(row: DepartmentImportRow): string {
           :closable="false"
           show-icon
         />
-        <el-table
-          class="department-import-dialog__table"
-          :data="preview.rows"
-          max-height="360"
-          stripe
-          border
-          table-layout="fixed"
-        >
-          <el-table-column prop="line" :label="t('common.line')" width="64" />
-          <el-table-column prop="code" :label="t('settings.departmentImportCode')" min-width="120" show-overflow-tooltip />
-          <el-table-column prop="name" :label="t('settings.departmentName')" min-width="130" show-overflow-tooltip />
-          <el-table-column prop="parent_code" :label="t('settings.departmentImportParentCode')" min-width="130" show-overflow-tooltip />
-          <el-table-column prop="parent" :label="t('settings.parentDepartment')" min-width="130" show-overflow-tooltip />
-          <el-table-column :label="t('settings.departmentImportOperation')" width="96">
-            <template #default="{ row }">
-              <el-tag :type="operationType(row.operation)" effect="light">{{ operationLabel(row.operation) }}</el-tag>
-            </template>
-          </el-table-column>
-          <el-table-column :label="t('settings.departmentImportErrors')" min-width="240" show-overflow-tooltip>
-            <template #default="{ row }">{{ rowErrors(row) || "—" }}</template>
-          </el-table-column>
-        </el-table>
+        <ReferenceImportReview kind="department" :preview="preview" :disabled="previewing || importing" />
       </template>
       <el-empty v-else :image-size="64" :description="t('settings.departmentImportChooseFile')" />
     </div>
@@ -175,7 +130,4 @@ function rowErrors(row: DepartmentImportRow): string {
   margin-top: -2px;
 }
 
-.department-import-dialog__table {
-  width: 100%;
-}
 </style>

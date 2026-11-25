@@ -12,6 +12,8 @@ from dataclasses import dataclass
 from datetime import date, datetime
 from decimal import Decimal, InvalidOperation
 from io import BytesIO, StringIO
+from xml.etree.ElementTree import ParseError
+from zipfile import BadZipFile
 import csv
 import hashlib
 import re
@@ -179,23 +181,34 @@ def _normalize_headers(values):
 
 
 def _rows_from_csv(content):
+    reader = csv.reader(StringIO(content, newline=""), strict=True)
+    rows = []
     try:
-        reader = csv.reader(StringIO(content))
         header_values = next(reader, None)
+        headers = _normalize_headers(header_values or [])
+        while True:
+            line = reader.line_num + 1
+            values = next(reader, None)
+            if values is None:
+                break
+            if all(_is_blank(value) for value in values):
+                continue
+            if any(not _is_blank(value) for value in values[len(headers):]):
+                raise ImportFileError(f"第 {line} 行包含多余列")
+            values = values[:len(headers)] + [""] * max(0, len(headers) - len(values))
+            rows.append((line, {header: _cell_text(value) for header, value in zip(headers, values)}))
+            if len(rows) > IMPORT_MAX_ROWS:
+                raise ImportFileError(f"单次导入最多支持 {IMPORT_MAX_ROWS} 条资产")
     except csv.Error as exc:
         raise ImportFileError("CSV 文件结构无法解析") from exc
-    headers = _normalize_headers(header_values or [])
-    rows = []
-    for line, values in enumerate(reader, start=2):
-        if not any(not _is_blank(value) for value in values):
-            continue
-        if len(values) > len(headers) and any(not _is_blank(value) for value in values[len(headers):]):
-            raise ImportFileError(f"第 {line} 行包含多余列")
-        values = list(values[:len(headers)]) + [""] * max(0, len(headers) - len(values))
-        rows.append((line, {header: _cell_text(value) for header, value in zip(headers, values)}))
-        if len(rows) > IMPORT_MAX_ROWS:
-            raise ImportFileError(f"单次导入最多支持 {IMPORT_MAX_ROWS} 条资产")
     return headers, rows
+
+
+def iter_import_worksheet_rows(sheet):
+    try:
+        yield from sheet.iter_rows()
+    except (ParseError, BadZipFile, EOFError, ValueError, IndexError) as exc:
+        raise ImportFileError("Excel 文件无法解析，请确认文件为有效的 .xlsx 工作簿") from exc
 
 
 def _rows_from_xlsx(content):
@@ -209,7 +222,7 @@ def _rows_from_xlsx(content):
         sheet = workbook.worksheets[0]
         if sheet.max_row and sheet.max_row > IMPORT_MAX_ROWS + 1:
             raise ImportFileError(f"单次导入最多支持 {IMPORT_MAX_ROWS} 条资产")
-        iterator = sheet.iter_rows()
+        iterator = iter_import_worksheet_rows(sheet)
         header_cells = next(iterator, None)
         if not header_cells:
             raise ImportFileError("Excel 文件第一行必须包含字段名")
@@ -665,7 +678,7 @@ def _preview_write_access(*, lock):
 
     Duplicate-key checks in InnoDB can retain shared index locks even at
     READ COMMITTED. Trial inserts of the same identity must not race. This
-    per-row lease is never taken inside the real commit transaction: that
+    lease is never taken inside the real commit transaction: that
     transaction may already hold rows needed by a standalone preview.
     """
     if lock or connection.vendor != "mysql":
@@ -684,7 +697,7 @@ def _preview_write_access(*, lock):
             cursor.execute("SELECT RELEASE_LOCK(%s)", [name])
 
 
-def _preview_row(line, row, headers, duplicate_counts, *, lock=False, request=None):
+def _preview_row(line, row, headers, duplicate_counts, trial_assets, *, lock=False, request=None):
     asset_no = row.get("asset_no", "").strip()
     base = {
         "line": line,
@@ -699,37 +712,30 @@ def _preview_row(line, row, headers, duplicate_counts, *, lock=False, request=No
         "errors": [],
     }
     if asset_no and duplicate_counts[asset_no] > 1:
+        base["action"] = "conflict"
         base["errors"] = [{"field": "asset_no", "label": "资产编号", "message": "文件内重复的资产编号"}]
         return base
     if asset_no:
         existing_query = Asset.all_objects.select_for_update() if lock else Asset.all_objects
-        if existing_query.filter(asset_no=asset_no).exists():
-            base["errors"] = [{"field": "asset_no", "label": "资产编号", "message": "资产编号已存在，资产导入仅支持新增"}]
+        existing_id = existing_query.filter(asset_no=asset_no).values_list("pk", flat=True).first()
+        if existing_id is not None:
+            base["action"] = "conflict"
+            message = "文件内重复的资产编号" if existing_id in trial_assets else "资产编号已存在，资产导入仅支持新增"
+            base["errors"] = [{"field": "asset_no", "label": "资产编号", "message": message}]
             return base
-    for attempt in range(4):
-        try:
+    try:
+        with transaction.atomic():
             payload = _prepare_payload(row, headers, request)
             serializer = AssetWriteSerializer(data=payload, context={"request": request} if request is not None else {})
             serializer.is_valid(raise_exception=True)
-            with _preview_write_access(lock=lock), transaction.atomic():
-                serializer.save()
-                transaction.set_rollback(True)
-            break
-        except OperationalError as exc:
-            if lock or not _transient_database_error(exc):
-                raise
-            # Only replay a standalone, fully rolled-back preview. InnoDB
-            # may abort the entire transaction, so never retry a savepoint
-            # inside the commit transaction or automatically replay writes.
-            if not connection.in_atomic_block and attempt < 3:
-                time.sleep(0.02 * (attempt + 1))
-                continue
-            base["errors"] = _error_items({"row": "数据正在被并发操作，请稍后重新预览"})
-            return base
-        except Exception as exc:
-            detail = getattr(exc, "detail", None) or getattr(exc, "message_dict", None) or str(exc)
-            base["errors"] = _error_items(detail)
-            return base
+            asset_id = serializer.save().pk
+        trial_assets.add(asset_id)
+    except OperationalError:
+        raise
+    except Exception as exc:
+        detail = getattr(exc, "detail", None) or getattr(exc, "message_dict", None) or str(exc)
+        base["errors"] = _error_items(detail)
+        return base
     base["valid"] = True
     base["action"] = "create"
     return base
@@ -737,15 +743,34 @@ def _preview_row(line, row, headers, duplicate_counts, *, lock=False, request=No
 
 def _preview_parsed(parsed, *, lock=False, request=None):
     duplicate_counts = Counter(row.get("asset_no", "").strip() for _line, row in parsed.rows if row.get("asset_no", "").strip())
-    rows = [_preview_row(line, row, parsed.headers, duplicate_counts, lock=lock, request=request) for line, row in parsed.rows]
+    for attempt in range(4):
+        try:
+            with _preview_write_access(lock=lock), transaction.atomic():
+                trial_assets = set()
+                # Successful trial rows remain visible to the rest of the file.
+                rows = [
+                    _preview_row(line, row, parsed.headers, duplicate_counts, trial_assets, lock=lock, request=request)
+                    for line, row in parsed.rows
+                ]
+                transaction.set_rollback(True)
+            break
+        except OperationalError as exc:
+            if lock or not _transient_database_error(exc):
+                raise
+            # InnoDB may have aborted the transaction. Retry only a standalone
+            # preview after all of its writes have been rolled back.
+            if connection.in_atomic_block or attempt == 3:
+                raise ImportFileError("数据正在被并发操作，请稍后重新预览") from exc
+            time.sleep(0.02 * (attempt + 1))
     valid = sum(1 for row in rows if row["valid"])
     invalid = len(rows) - valid
+    conflicts = sum(1 for row in rows if row["action"] == "conflict")
     return {
         "filename": parsed.filename,
         "total": len(rows),
         "valid": valid,
         "invalid": invalid,
-        "summary": {"ready": valid, "conflicts": 0, "errors": invalid},
+        "summary": {"ready": valid, "conflicts": conflicts, "errors": invalid - conflicts},
         "rows": rows,
     }
 

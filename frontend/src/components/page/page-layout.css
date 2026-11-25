@@ -137,13 +137,34 @@ header.page-header.page-header--compact {
 }
 
 .page-tabs {
+  display: flex;
+  gap: var(--space-xl);
+  align-items: stretch;
   min-width: 0;
   margin: 0;
+  overflow-x: auto;
+  box-shadow: inset 0 -1px var(--el-border-color-light);
 }
 
-.page-tabs .el-tabs__header {
-  margin: 0;
+.page-tabs > button {
+  flex: 0 0 auto;
+  min-height: 40px;
+  padding: 0 2px;
+  border: 0;
+  border-bottom: 2px solid transparent;
+  background: transparent;
+  color: var(--el-text-color-regular);
+  font: inherit;
+  white-space: nowrap;
+  cursor: pointer;
 }
+
+.page-tabs > button:hover,
+.page-tabs > button[aria-selected="true"] { color: var(--el-color-primary); }
+.page-tabs > button[aria-selected="true"] { border-bottom-color: currentColor; }
+.page-tabs > button:disabled { color: var(--el-text-color-disabled); cursor: default; }
+.page-tabs > button:focus-visible,
+[role="tabpanel"]:focus-visible { outline: 2px solid var(--el-color-primary); outline-offset: -2px; }
 
 .page-tabs__label {
   display: inline-flex;

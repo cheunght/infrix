@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onBeforeUnmount, reactive, ref, watch } from "vue";
+import { computed, onBeforeUnmount, reactive, ref, useId, watch } from "vue";
 import { useI18n } from "vue-i18n";
 import { CircleCheck, CircleClose, Delete, Edit, Filter, InfoFilled, Lock, Message, Upload, User } from "@element-plus/icons-vue";
 import type { FormInstance } from "element-plus";
@@ -21,7 +21,7 @@ import FormDialogShell from "./FormDialogShell.vue";
 import FieldHelp from "./FieldHelp.vue";
 import PageContainer from "./page/PageContainer.vue";
 import PageContent from "./page/PageContent.vue";
-import PageTabs, { type PageTabItem } from "./page/PageTabs.vue";
+import PageTabs, { pageTabPanelAttrs, type PageTabItem } from "./page/PageTabs.vue";
 import PageToolbar from "./page/PageToolbar.vue";
 import TableIconButton from "./TableIconButton.vue";
 import ToolbarIconButton from "./page/ToolbarIconButton.vue";
@@ -34,6 +34,7 @@ const props = defineProps<{
 const { t } = useI18n();
 const context = props.context;
 const organization = props.organization;
+const canManageReferences = computed(() => context.canUseSystemSettings("settings.manage"));
 const scopeUser = ref<ManagedUser | null>(null);
 const showDataScope = ref(false);
 function openDataScope(user: ManagedUser) { scopeUser.value = user; showDataScope.value = true; }
@@ -255,6 +256,7 @@ function clearPeopleFilters() {
   peopleFilterDraft.active = "true";
 }
 
+const panelId = useId();
 function applyPeopleFilters() {
   responsibilityDirectoryType.value = peopleFilterDraft.department;
   responsibilityDirectoryActive.value = peopleFilterDraft.active;
@@ -265,9 +267,9 @@ function applyPeopleFilters() {
 
 <template>
   <div class="infrix-page settings-page organization-settings-page">
-    <PageContainer v-if="organizationTabs.length" :key="'organization-settings'">
+    <PageContainer v-if="organizationTabs.length" :key="'organization-settings'" :tab-panel="pageTabPanelAttrs(panelId, organizationTab)">
       <template #subnav>
-        <PageTabs :key="organizationTabsKey" v-model="organizationTab" :items="organizationTabs" @update:model-value="changeOrganizationTab" />
+        <PageTabs :key="organizationTabsKey" v-model="organizationTab" :items="organizationTabs" :panel-id="panelId" @update:model-value="changeOrganizationTab" />
       </template>
 
       <template v-if="['users', 'departments', 'people'].includes(organizationTab)" #toolbar>
@@ -289,11 +291,11 @@ function applyPeopleFilters() {
           <template v-if="organizationTab === 'departments'" #search>
             <SearchField v-model="departmentSearch" :loading="departmentLoading" :placeholder="t('settings.departmentListSearchPlaceholder')" :aria-label="t('settings.departmentListSearchPlaceholder')" @search="searchDepartments" />
           </template>
-          <template v-if="organizationTab === 'departments'" #primary>
+          <template v-if="organizationTab === 'departments' && canManageReferences" #primary>
             <el-button class="page-primary-action" type="primary" :loading="departmentSaving" :disabled="departmentSaving" @click="openDepartmentModal()">{{ t('settings.addDepartment') }}</el-button>
           </template>
-          <template v-if="organizationTab === 'departments' && can('settings.manage')" #actions>
-            <el-button v-if="can('settings.manage')" :icon="Upload" :aria-label="t('settings.departmentImport')" @click="openDepartmentImport" >{{ t('settings.departmentImport') }}</el-button>
+          <template v-if="organizationTab === 'departments' && canManageReferences" #actions>
+            <el-button :icon="Upload" :aria-label="t('settings.departmentImport')" @click="openDepartmentImport">{{ t('settings.departmentImport') }}</el-button>
           </template>
           <template v-if="organizationTab === 'people'" #search>
             <SearchField v-model="responsibilityDirectorySearch" :loading="responsibilityDirectoryLoading" :placeholder="t('settings.personListSearchPlaceholder')" :aria-label="t('settings.personListSearchPlaceholder')" @search="searchResponsibilityDirectory" />
@@ -301,11 +303,11 @@ function applyPeopleFilters() {
           <template v-if="organizationTab === 'people'" #filters>
             <ToolbarIconButton :icon="Filter" :label="t('asset.moreFilters')" :badge="activePeopleFilterCount" @click="openPeopleFilters" />
           </template>
-          <template v-if="organizationTab === 'people' && can('settings.manage')" #actions>
-            <el-button v-if="can('settings.manage')" :icon="Upload" :aria-label="t('common.import')" @click="openPeopleImport" >{{ t('common.import') }}</el-button>
+          <template v-if="organizationTab === 'people' && canManageReferences" #actions>
+            <el-button :icon="Upload" :aria-label="t('common.import')" @click="openPeopleImport">{{ t('common.import') }}</el-button>
           </template>
-          <template v-if="organizationTab === 'people' && can('settings.manage')" #primary>
-            <el-button v-if="can('settings.manage')" class="page-primary-action" type="primary" :loading="responsibilityDirectorySaving" :disabled="responsibilityDirectorySaving" @click="openResponsibilitySubjectModal()">{{ t('settings.addPerson') }}</el-button>
+          <template v-if="organizationTab === 'people' && canManageReferences" #primary>
+            <el-button class="page-primary-action" type="primary" :loading="responsibilityDirectorySaving" :disabled="responsibilityDirectorySaving" @click="openResponsibilitySubjectModal()">{{ t('settings.addPerson') }}</el-button>
           </template>
         </PageToolbar>
       </template>
@@ -349,7 +351,7 @@ function applyPeopleFilters() {
               <el-table-column prop="code" :label="t('settings.code')" min-width="150" />
               <el-table-column prop="parent_name" :label="t('settings.parentDepartment')" min-width="200"><template #default="{ row }">{{ row.parent_name || '—' }}</template></el-table-column>
               <el-table-column prop="assets_count" :label="t('settings.assetCount')" width="120" />
-              <el-table-column v-if="can('settings.manage')" :label="t('common.operation')" width="84" fixed="right"><template #default="{ row }"><div class="ep-table-actions"><el-button-group><TableIconButton :icon="Edit" :label="t('common.edit')" type="primary" :disabled="departmentActionId === row.id || departmentSaving" @click="openDepartmentModal(row)" /><TableIconButton :icon="Delete" :label="t('common.delete')" type="danger" :disabled="departmentActionId === row.id || departmentSaving || row.assets_count > 0" @click="deleteDepartment(row)" /></el-button-group></div></template></el-table-column>
+              <el-table-column v-if="canManageReferences" :label="t('common.operation')" width="84" fixed="right"><template #default="{ row }"><div class="ep-table-actions"><el-button-group><TableIconButton :icon="Edit" :label="t('common.edit')" type="primary" :disabled="departmentActionId === row.id || departmentSaving" @click="openDepartmentModal(row)" /><TableIconButton :icon="Delete" :label="t('common.delete')" type="danger" :disabled="departmentActionId === row.id || departmentSaving || row.assets_count > 0" @click="deleteDepartment(row)" /></el-button-group></div></template></el-table-column>
             </el-table>
           </PagedTable>
         </template>

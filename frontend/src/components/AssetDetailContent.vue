@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onMounted, ref, toRefs, watch } from "vue";
+import { computed, onMounted, ref, toRefs, useId, watch } from "vue";
 import { useI18n } from "vue-i18n";
 import {
   formatSystemDate,
@@ -37,7 +37,7 @@ import DynamicFieldDisplay from "./fields/DynamicFieldDisplay.vue";
 import DetailSection from "./DetailSection.vue";
 import DescriptionList from "./DescriptionList.vue";
 import AttachmentSection from "./AttachmentSection.vue";
-import PageTabs, { type PageTabItem } from "./page/PageTabs.vue";
+import PageTabs, { pageTabPanelAttrs, type PageTabItem } from "./page/PageTabs.vue";
 
 const props = withDefaults(
   defineProps<{
@@ -70,6 +70,7 @@ onMounted(() => {
 });
 const isDrawer = computed(() => props.variant === "drawer");
 const activeDetailTab = ref("overview");
+const panelId = useId();
 const detailTabs = computed<PageTabItem[]>(() => [
   { label: t("asset.overview"), value: "overview" },
   { label: t("asset.history"), value: "history" },
@@ -751,7 +752,9 @@ function retryDetail() {
         v-if="isDrawer"
         v-model="activeDetailTab"
         :items="detailTabs"
+        :panel-id="panelId"
       />
+      <div v-bind="isDrawer ? pageTabPanelAttrs(panelId, activeDetailTab) : undefined">
       <template v-if="!isDrawer || activeDetailTab === 'overview'">
       <div v-if="showSummary !== false" class="asset-detail-summary">
         <div>
@@ -1252,6 +1255,7 @@ function retryDetail() {
         :context="auditHistoryContext"
         :collapsible="false"
       />
+      </div>
 
       <footer v-if="isDrawer" class="asset-detail-footer">
         <span v-for="field in systemFields" :key="field.key"

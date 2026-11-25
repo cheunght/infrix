@@ -619,6 +619,20 @@ export type PeopleImportRowError = {
   code?: string;
   message: string;
 };
+export type ImportChangeDetail = {
+  field: string;
+  label: string;
+  old_value: string | boolean | number | null;
+  new_value: string | boolean | number | null;
+};
+export type AssetModelImportRow = {
+  line: number;
+  name: string;
+  valid: boolean;
+  errors: unknown;
+  values?: Record<string, string | boolean | number | null>;
+};
+export type AssetModelImportPreview = { total: number; valid: number; invalid: number; rows: AssetModelImportRow[] };
 export type PeopleImportRow = {
   line: number;
   employee_no: string;
@@ -627,6 +641,8 @@ export type PeopleImportRow = {
   operation: "create" | "update" | "unchanged" | "error" | string;
   valid: boolean;
   changes: string[];
+  change_details?: ImportChangeDetail[];
+  values?: Record<string, string | boolean | number | null>;
   errors: PeopleImportRowError[];
 };
 export type PeopleImportPreview = {
@@ -657,6 +673,7 @@ export type DepartmentImportRow = {
   operation: "create" | "update" | "unchanged" | "error" | string;
   valid: boolean;
   changes: string[];
+  change_details?: ImportChangeDetail[];
   errors: PeopleImportRowError[];
 };
 export type DepartmentImportPreview = {
@@ -1139,13 +1156,7 @@ export type AuthorizationSnapshot = {
   roles: AuthorizationRole[];
   capabilities: string[];
   is_system_admin: boolean;
-  data_scope?: {
-    global_read: boolean; global_write: boolean;
-    read_data_centers: number[]; write_data_centers: number[];
-    unlocated_read: boolean; unlocated_write: boolean; global_stock_metrics: boolean;
-    read_departments: number[]; write_departments: number[]; all_departments_read: boolean; all_departments_write: boolean; unowned_read: boolean; unowned_write: boolean;
-    rules?: DataScopeRule[];
-  };
+  data_scope?: { global_read: boolean; global_write: boolean };
 };
 export type Role = { code: string; name: string; description: string; capabilities: string[]; user_count?: number };
 export type AuthSource = "local" | "ldap";

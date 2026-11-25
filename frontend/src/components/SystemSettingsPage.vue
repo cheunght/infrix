@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, ref } from "vue";
+import { computed, ref, useId } from "vue";
 import { useI18n } from "vue-i18n";
 import type { SettingsContext } from "../page-context";
 import type { SystemSettingsForm } from "../types";
@@ -7,7 +7,7 @@ import type { SystemSettingsTab } from "../router";
 import { SYSTEM_SETTING_DEFINITIONS } from "../system-settings-config";
 import PageContainer from "./page/PageContainer.vue";
 import PageContent from "./page/PageContent.vue";
-import PageTabs, { type PageTabItem } from "./page/PageTabs.vue";
+import PageTabs, { pageTabPanelAttrs, type PageTabItem } from "./page/PageTabs.vue";
 import PageToolbar from "./page/PageToolbar.vue";
 import BrandingSettings from "./BrandingSettings.vue";
 import GeneralSettingsSection from "./GeneralSettingsSection.vue";
@@ -107,15 +107,16 @@ function saveCurrentSystemSettings() {
   return context.saveSystemSettings(currentSystemSettingsKeys.value);
 }
 
+const panelId = useId();
 function saveBranding(reset = false) {
   void brandingSettingsRef.value?.save(reset);
 }
 </script>
 
 <template>
-  <PageContainer>
+  <PageContainer :tab-panel="pageTabPanelAttrs(panelId, systemSettingsTab)">
     <template #subnav>
-      <PageTabs v-model="systemSettingsTab" :items="systemSettingsTabItems" @update:model-value="context.changeSystemSettingsTab" />
+      <PageTabs v-model="systemSettingsTab" :items="systemSettingsTabItems" :panel-id="panelId" @update:model-value="context.changeSystemSettingsTab" />
     </template>
     <PageContent surface>
       <PageToolbar v-if="systemSettings" class="settings-form-toolbar">

@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onMounted, ref, watch } from "vue";
+import { computed, onMounted, ref, useId, watch } from "vue";
 import { useRoute, useRouter } from "vue-router";
 import { useI18n } from "vue-i18n";
 import { CircleCheck, CircleClose, Delete, Edit } from "@element-plus/icons-vue";
@@ -8,7 +8,7 @@ import PagedTable from "./PagedTable.vue";
 import SearchField from "./SearchField.vue";
 import PageContainer from "./page/PageContainer.vue";
 import PageContent from "./page/PageContent.vue";
-import PageTabs, { type PageTabItem } from "./page/PageTabs.vue";
+import PageTabs, { pageTabPanelAttrs, type PageTabItem } from "./page/PageTabs.vue";
 import PageToolbar from "./page/PageToolbar.vue";
 import StatusTag from "./StatusTag.vue";
 import TableIconButton from "./TableIconButton.vue";
@@ -133,6 +133,7 @@ async function submitDictionary() {
   await saveDictionary();
 }
 
+const panelId = useId();
 watch(() => route.query.tab, syncRouteSection, { immediate: true });
 onMounted(() => {
   if (!dictionaryLoading.value && canView()) void loadDictionaries();
@@ -140,11 +141,12 @@ onMounted(() => {
 </script>
 
 <template>
-  <PageContainer>
+  <PageContainer :tab-panel="pageTabPanelAttrs(panelId, dictionarySection)">
     <template #subnav>
       <PageTabs
         v-model="dictionarySection"
         :items="dictionaryTabs"
+        :panel-id="panelId"
         @update:model-value="updateRouteSection"
       />
     </template>

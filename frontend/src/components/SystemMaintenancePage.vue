@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, ref, watch } from "vue";
+import { computed, ref, useId, watch } from "vue";
 import { onBeforeRouteLeave, onBeforeRouteUpdate, useRoute, useRouter } from "vue-router";
 import { useI18n } from "vue-i18n";
 import { Refresh } from "@element-plus/icons-vue";
@@ -8,7 +8,7 @@ import { routeForPage, type MaintenanceTab } from "../router";
 import { useSystemMaintenance } from "../composables/useSystemMaintenance";
 import PageContainer from "./page/PageContainer.vue";
 import PageContent from "./page/PageContent.vue";
-import PageTabs, { type PageTabItem } from "./page/PageTabs.vue";
+import PageTabs, { pageTabPanelAttrs, type PageTabItem } from "./page/PageTabs.vue";
 import PageToolbar from "./page/PageToolbar.vue";
 import SystemOperations from "./SystemOperations.vue";
 import BackupRestorePage from "./BackupRestorePage.vue";
@@ -133,6 +133,7 @@ watch(
   { immediate: true },
 );
 
+const panelId = useId();
 function changeMaintenanceTab(value: string) {
   if (systemResetSaving.value) return;
   if (value !== "operations" && value !== "backup" && value !== "reset") return;
@@ -146,9 +147,9 @@ function changeMaintenanceTab(value: string) {
 </script>
 
 <template>
-  <PageContainer content-class="settings-maintenance-container">
+  <PageContainer content-class="settings-maintenance-container" :tab-panel="pageTabPanelAttrs(panelId, maintenanceTab)">
     <template #subnav>
-      <PageTabs v-model="maintenanceTab" :items="maintenanceTabs" @update:model-value="changeMaintenanceTab" />
+      <PageTabs v-model="maintenanceTab" :items="maintenanceTabs" :panel-id="panelId" @update:model-value="changeMaintenanceTab" />
     </template>
     <PageContent surface>
       <PageToolbar v-if="maintenanceTab === 'operations' || (maintenanceTab === 'backup' && context.can('system.reset'))" class="settings-form-toolbar">

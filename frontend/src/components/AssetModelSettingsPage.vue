@@ -4,10 +4,10 @@ import { computed, onBeforeUnmount, onMounted, proxyRefs, reactive, ref } from "
 import { useI18n } from "vue-i18n";
 import { CircleCheck, CircleClose, Delete, Edit, Filter } from "@element-plus/icons-vue";
 import { ElMessage, type FormInstance, type FormRules } from "element-plus";
-import { isAbortError, pageItems, pageTotal, type PageResult } from "../api";
+import { ApiError, isAbortError, pageItems, pageTotal, type PageResult } from "../api";
 import { normalizeApiError } from "../error-handling";
 import type { PageContext } from "../page-context";
-import type { AssetModel, CustomFieldSet, DictionaryItem } from "../types";
+import type { AssetModel, AssetModelImportPreview, CustomFieldSet, DictionaryItem } from "../types";
 import PageContainer from "./page/PageContainer.vue";
 import PageContent from "./page/PageContent.vue";
 import PageToolbar from "./page/PageToolbar.vue";
@@ -19,9 +19,7 @@ import TableIconButton from "./TableIconButton.vue";
 import ToolbarIconButton from "./page/ToolbarIconButton.vue";
 import ImportExportActions from "./page/ImportExportActions.vue";
 import SearchableSelect, { type SearchableSelectOption } from "./SearchableSelect.vue";
-
-type ModelImportRow = { line: number; name: string; valid: boolean; errors: unknown };
-type ModelImportPreview = { total: number; valid: number; invalid: number; rows: ModelImportRow[] };
+import ReferenceImportReview from "./ReferenceImportReview.vue";
 
 const props = defineProps<{ context: PageContext }>();
 const { t } = useI18n();
@@ -66,6 +64,8 @@ let loadController: AbortController | null = null;
 onBeforeUnmount(() => {
   loadRequestId += 1;
   loadController?.abort();
+  importRequestId += 1;
+  importController?.abort();
 });
 const error = ref("");
 const actionId = ref<number | null>(null);
@@ -82,10 +82,12 @@ const exporting = ref(false);
 const showImportModal = ref(false);
 const importFile = ref<File | null>(null);
 const importFileInput = ref<HTMLInputElement>();
-const importPreview = ref<ModelImportPreview | null>(null);
+const importPreview = ref<AssetModelImportPreview | null>(null);
 const importPreviewing = ref(false);
 const importing = ref(false);
 const importError = ref("");
+let importRequestId = 0;
+let importController: AbortController | null = null;
 const showModelFilters = ref(false);
 const modelFilterDraft = reactive({ manufacturer: "", deviceType: "", fieldset: "", active: "" });
 
@@ -143,7 +145,8 @@ const activeModelFilterCount = computed(() =>
   Number(Boolean(active.value)),
 );
 
-const canManage = computed(() => c.can("settings.manage"));
+const canManage = computed(() => c.canUseSystemSettings("settings.manage"));
+const canExport = computed(() => c.can("settings.manage"));
 const formRules = computed<FormRules>(() => ({
   name: [{ required: true, whitespace: true, message: t("assetModel.nameRequired"), trigger: "blur" }],
   manufacturer: [{ required: true, message: t("assetModel.manufacturerRequired"), trigger: "change" }],
@@ -163,8 +166,8 @@ function monthText(value: number | null | undefined): string {
   return value == null ? t("assetModel.unset") : `${value} ${t("common.months")}`;
 }
 
-async function loadModels() {
-  if (!c.can("settings.view")) return;
+async function loadModels(): Promise<boolean> {
+  if (!c.can("settings.view")) return false;
   const requestId = ++loadRequestId;
   loadController?.abort();
   const controller = new AbortController();
@@ -178,15 +181,17 @@ async function loadModels() {
   if (filterFieldset.value) params.set("fieldset", filterFieldset.value);
   try {
     const payload = await c.request<PageResult<AssetModel>>(`/asset-models/?${params.toString()}`, { signal: controller.signal });
-    if (requestId !== loadRequestId || controller.signal.aborted) return;
+    if (requestId !== loadRequestId || controller.signal.aborted) return false;
     rows.value = pageItems(payload);
     total.value = pageTotal(payload);
+    return true;
   } catch (loadError) {
-    if (requestId !== loadRequestId || controller.signal.aborted || isAbortError(loadError)) return;
+    if (requestId !== loadRequestId || controller.signal.aborted || isAbortError(loadError)) return false;
     const normalized = normalizeApiError(loadError);
     error.value = normalized.kind === "unknown" ? t("assetModel.loadFailed") : normalized.message;
     rows.value = [];
     total.value = 0;
+    return false;
   } finally {
     if (requestId === loadRequestId) {
       loading.value = false;
@@ -216,6 +221,7 @@ function changePageSize(next: number) {
 }
 
 function openModal(model?: AssetModel) {
+  if (!canManage.value) return;
   editing.value = model || null;
   form.value = model
     ? {
@@ -340,17 +346,13 @@ async function deleteModel(model: AssetModel) {
 }
 
 function openImport() {
+  if (!canManage.value || importing.value || importPreviewing.value) return;
+  importController?.abort();
+  importRequestId += 1;
   importFile.value = null;
   importPreview.value = null;
   importError.value = "";
   showImportModal.value = true;
-}
-
-function importErrorText(value: unknown): string {
-  if (!value) return "";
-  if (Array.isArray(value)) return value.map(importErrorText).filter(Boolean).join("；");
-  if (typeof value === "object") return Object.values(value as Record<string, unknown>).map(importErrorText).filter(Boolean).join("；");
-  return String(value);
 }
 
 function importRequestErrorText(error: unknown, fallback: string): string {
@@ -360,6 +362,7 @@ function importRequestErrorText(error: unknown, fallback: string): string {
 }
 
 async function chooseImportFile(event: Event) {
+  if (!canManage.value || importing.value || importPreviewing.value) return;
   const selected = (event.target as HTMLInputElement).files?.[0] || null;
   if (!selected) return;
   importFile.value = selected;
@@ -367,36 +370,59 @@ async function chooseImportFile(event: Event) {
   importError.value = "";
   const body = new FormData();
   body.append("file", selected);
+  importController?.abort();
+  const controller = new AbortController();
+  importController = controller;
+  const requestId = ++importRequestId;
   importPreviewing.value = true;
   try {
-    importPreview.value = await c.request<ModelImportPreview>("/asset-models/import/preview/", { method: "POST", body });
+    const preview = await c.request<AssetModelImportPreview>("/asset-models/import/preview/", { method: "POST", body, signal: controller.signal });
+    if (controller.signal.aborted || requestId !== importRequestId) return;
+    importPreview.value = preview;
   } catch (previewError) {
+    if (isAbortError(previewError) || requestId !== importRequestId) return;
     importError.value = importRequestErrorText(previewError, t("assetModel.previewFailed"));
   } finally {
-    importPreviewing.value = false;
-    if (importFileInput.value) importFileInput.value.value = "";
+    if (requestId === importRequestId) {
+      importPreviewing.value = false;
+      importController = null;
+      if (importFileInput.value) importFileInput.value.value = "";
+    }
   }
 }
 
 async function confirmImport() {
-  if (!importFile.value || !importPreview.value?.valid || importPreview.value.invalid || importing.value) return;
+  if (!canManage.value || !importFile.value || !importPreview.value?.valid || importPreview.value.invalid || importing.value || importPreviewing.value) return;
   const body = new FormData();
   body.append("file", importFile.value);
+  importController?.abort();
+  const controller = new AbortController();
+  importController = controller;
+  const requestId = ++importRequestId;
   importing.value = true;
   importError.value = "";
   try {
-    const result = await c.request<{ created: number }>("/asset-models/import/", { method: "POST", body });
+    const result = await c.request<{ created: number }>("/asset-models/import/", { method: "POST", body, signal: controller.signal });
+    if (controller.signal.aborted || requestId !== importRequestId) return;
     showImportModal.value = false;
     ElMessage.success(t("assetModel.importSuccess", { count: result.created }));
-    await loadModels().catch(() => ElMessage.warning(t("common.refreshFailed")));
+    const refreshed = await loadModels();
+    if (!refreshed && !controller.signal.aborted && requestId === importRequestId) ElMessage.warning(t("common.refreshFailed"));
   } catch (commitError) {
+    if (isAbortError(commitError) || requestId !== importRequestId) return;
+    const details = commitError instanceof ApiError ? commitError.details : null;
+    if (details && typeof details === "object" && "preview" in details) {
+      const latest = (details as { preview?: AssetModelImportPreview }).preview;
+      if (latest && Array.isArray(latest.rows)) importPreview.value = latest;
+    }
     importError.value = importRequestErrorText(commitError, t("assetModel.importFailed"));
   } finally {
-    importing.value = false;
+    if (requestId === importRequestId) { importing.value = false; importController = null; }
   }
 }
 
 async function downloadTemplate() {
+  if (!canManage.value) return;
   try {
     await c.downloadFile("/asset-models/import/template/", "infrix-asset-model-import.xlsx");
   } catch (downloadError) {
@@ -405,7 +431,7 @@ async function downloadTemplate() {
 }
 
 async function exportModels() {
-  if (exporting.value) return;
+  if (!canExport.value || exporting.value) return;
   exporting.value = true;
   const params = new URLSearchParams();
   if (search.value.trim()) params.set("search", search.value.trim());
@@ -435,8 +461,8 @@ onMounted(() => void loadAll());
         <template #filters>
           <ToolbarIconButton :icon="Filter" :label="t('asset.moreFilters')" :badge="activeModelFilterCount" @click="openModelFilters" />
         </template>
-        <template v-if="canManage" #actions>
-          <ImportExportActions :can-import="canManage" :can-export="canManage" :exporting="exporting" @import="openImport" @export="exportModels" />
+        <template v-if="canExport" #actions>
+          <ImportExportActions :can-import="canManage" :can-export="canExport" :exporting="exporting" @import="openImport" @export="exportModels" />
         </template>
         <template v-if="canManage" #primary>
           <el-button type="primary" :disabled="saving" @click="openModal()">{{ t('assetModel.add') }}</el-button>
@@ -551,7 +577,7 @@ onMounted(() => void loadAll());
     <template #footer><el-button :disabled="saving" @click="showModal = false">{{ t('common.cancel') }}</el-button><el-button type="primary" :loading="saving" :disabled="saving || !canManage" @click="saveModel">{{ editing ? t('common.save') : t('common.create') }}</el-button></template>
   </FormDialogShell>
 
-  <FormDialogShell v-model="showImportModal" :title="t('assetModel.importTitle')" :description="t('assetModel.importHint')" size="medium" :saving="importing || importPreviewing" :close-disabled="importing || importPreviewing">
+  <FormDialogShell v-model="showImportModal" :title="t('assetModel.importTitle')" :description="t('assetModel.importHint')" size="large" :saving="importing || importPreviewing" :close-disabled="importing || importPreviewing">
     <div class="asset-model-import">
       <input ref="importFileInput" class="asset-model-import__input" type="file" accept=".xlsx" @change="chooseImportFile" />
       <div class="asset-model-import__actions">
@@ -561,12 +587,7 @@ onMounted(() => void loadAll());
       </div>
       <el-alert v-if="importError" :title="importError" type="error" show-icon :closable="false" />
       <template v-if="importPreview">
-        <el-alert :title="t('assetModel.previewSummary', importPreview)" :type="importPreview.invalid ? 'warning' : 'success'" show-icon :closable="false" />
-        <div v-if="importPreview.rows.length" class="asset-model-import__preview">
-          <div v-for="row in importPreview.rows" :key="row.line" class="asset-model-import__row" :class="{ 'asset-model-import__row--invalid': !row.valid }">
-            <span>#{{ row.line }}</span><strong>{{ row.name || '—' }}</strong><span>{{ row.valid ? t('assetModel.ready') : importErrorText(row.errors) }}</span>
-          </div>
-        </div>
+        <ReferenceImportReview kind="model" :preview="importPreview" :disabled="importing || importPreviewing" />
       </template>
     </div>
     <template #footer><el-button :disabled="importing || importPreviewing" @click="showImportModal = false">{{ t('common.cancel') }}</el-button><el-button type="primary" :loading="importing" :disabled="!importPreview?.valid || !!importPreview.invalid || importPreviewing" @click="confirmImport">{{ t('assetModel.import') }}</el-button></template>
@@ -583,9 +604,4 @@ onMounted(() => void loadAll());
 .asset-model-import__input { display: none; }
 .asset-model-import__actions { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; min-width: 0; }
 .asset-model-import__actions span { min-width: 0; color: var(--el-text-color-secondary); overflow-wrap: anywhere; }
-.asset-model-import__preview { max-height: 320px; overflow-y: auto; border: 1px solid var(--el-border-color-lighter); border-radius: 8px; }
-.asset-model-import__row { display: grid; grid-template-columns: 52px minmax(120px, .7fr) minmax(0, 1fr); gap: 12px; padding: 10px 12px; border-bottom: 1px solid var(--el-border-color-lighter); align-items: start; }
-.asset-model-import__row:last-child { border-bottom: 0; }
-.asset-model-import__row--invalid { color: var(--el-color-danger); }
-@media (max-width: 640px) { .asset-model-import__row { grid-template-columns: 42px minmax(0, 1fr); } .asset-model-import__row > :last-child { grid-column: 1 / -1; } }
 </style>

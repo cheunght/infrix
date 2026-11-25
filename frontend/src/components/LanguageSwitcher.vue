@@ -1,15 +1,20 @@
 <script setup lang="ts">
+import { onBeforeUnmount } from "vue";
 import { useI18n } from "vue-i18n";
 import { Check, Compass } from "@element-plus/icons-vue";
 import { loadLocaleMessages, setLocale, SUPPORTED_LOCALES, type Locale } from "../i18n";
 
-withDefaults(defineProps<{ disabled?: boolean }>(), { disabled: false });
+const props = withDefaults(defineProps<{ disabled?: boolean }>(), { disabled: false });
 const emit = defineEmits<{ change: [locale: Locale] }>();
 
 const { t, locale } = useI18n();
+let disposed = false;
+onBeforeUnmount(() => { disposed = true; });
 
 async function changeLocale(value: string | number | object) {
+  if (props.disabled) return;
   await loadLocaleMessages(value);
+  if (disposed || props.disabled) return;
   const locale = setLocale(value);
   emit("change", locale);
 }

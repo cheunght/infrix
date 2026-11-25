@@ -1,6 +1,6 @@
 import { useAccountEditor } from "./useAccountEditor";
 import { revisionHeaders } from "../revision";
-import { computed, ref, watch, type Ref } from "vue";
+import { computed, getCurrentScope, onScopeDispose, ref, watch, type Ref } from "vue";
 import { ApiError, isAbortError, pageItems, pageTotal, type PageResult } from "../api";
 import {
   clearFieldError,
@@ -38,6 +38,7 @@ export interface OrganizationSettingsDeps {
   isCurrentLoad: (version: number) => boolean;
   confirmAction: (message: string) => Promise<boolean>;
   can: CapabilityFn;
+  canManageReferences: () => boolean;
   currentUsername: Ref<string>;
   downloadFile: (path: string, filename?: string) => Promise<void>;
   actionMessage: Ref<string>;
@@ -618,6 +619,9 @@ export function useOrganizationSettings(deps: OrganizationSettingsDeps) {
     showPeopleImportModal.value = false; showDepartmentImportModal.value = false;
     resetPeopleImportState(); resetDepartmentImportState();
   }, {flush: "sync"});
+  if (getCurrentScope()) onScopeDispose(() => {
+    resetPeopleImportState(); resetDepartmentImportState();
+  });
 
   function resetPeopleImportState() {
     peopleImportController?.abort();
@@ -631,7 +635,7 @@ export function useOrganizationSettings(deps: OrganizationSettingsDeps) {
   }
 
   function openPeopleImport() {
-    if (!deps.can("settings.manage")) return;
+    if (!deps.canManageReferences() || peopleImporting.value) return;
     resetPeopleImportState();
     showPeopleImportModal.value = true;
   }
@@ -657,7 +661,7 @@ export function useOrganizationSettings(deps: OrganizationSettingsDeps) {
   }
 
   async function previewPeopleImport(file: File | null): Promise<boolean> {
-    if (!deps.can("settings.manage")) return false;
+    if (!deps.canManageReferences() || peopleImporting.value) return false;
     peopleImportController?.abort();
     const controller = new AbortController();
     peopleImportController = controller;
@@ -696,13 +700,13 @@ export function useOrganizationSettings(deps: OrganizationSettingsDeps) {
   }
 
   async function commitPeopleImport(): Promise<boolean> {
-    if (peopleImporting.value) return false;
-    if (!deps.can("settings.manage")) return false;
+    if (peopleImporting.value || peopleImportPreviewing.value) return false;
+    if (!deps.canManageReferences()) return false;
     if (!peopleImportFile.value) {
       peopleImportError.value = tr("settings.peopleImportNoFile");
       return false;
     }
-    if (!peopleImportPreview.value || peopleImportPreview.value.error > 0) {
+    if (!peopleImportPreview.value?.valid || peopleImportPreview.value.error > 0) {
       peopleImportError.value = tr("settings.peopleImportNoValidPreview");
       return false;
     }
@@ -753,7 +757,7 @@ export function useOrganizationSettings(deps: OrganizationSettingsDeps) {
   }
 
   async function downloadPeopleImportTemplate() {
-    if (!deps.can("settings.manage")) return;
+    if (!deps.canManageReferences()) return;
     try {
       await deps.downloadFile("/people/import/template/", "infrix-people-import.xlsx");
     } catch (error) {
@@ -773,7 +777,7 @@ export function useOrganizationSettings(deps: OrganizationSettingsDeps) {
   }
 
   function openDepartmentImport() {
-    if (!deps.can("settings.manage")) return;
+    if (!deps.canManageReferences() || departmentImporting.value) return;
     resetDepartmentImportState();
     showDepartmentImportModal.value = true;
   }
@@ -799,7 +803,7 @@ export function useOrganizationSettings(deps: OrganizationSettingsDeps) {
   }
 
   async function previewDepartmentImport(file: File | null): Promise<boolean> {
-    if (!deps.can("settings.manage")) return false;
+    if (!deps.canManageReferences() || departmentImporting.value) return false;
     departmentImportController?.abort();
     const controller = new AbortController();
     departmentImportController = controller;
@@ -838,13 +842,13 @@ export function useOrganizationSettings(deps: OrganizationSettingsDeps) {
   }
 
   async function commitDepartmentImport(): Promise<boolean> {
-    if (departmentImporting.value) return false;
-    if (!deps.can("settings.manage")) return false;
+    if (departmentImporting.value || departmentImportPreviewing.value) return false;
+    if (!deps.canManageReferences()) return false;
     if (!departmentImportFile.value) {
       departmentImportError.value = tr("settings.departmentImportNoFile");
       return false;
     }
-    if (!departmentImportPreview.value || departmentImportPreview.value.error > 0) {
+    if (!departmentImportPreview.value?.valid || departmentImportPreview.value.error > 0) {
       departmentImportError.value = tr("settings.departmentImportNoValidPreview");
       return false;
     }
@@ -900,7 +904,7 @@ export function useOrganizationSettings(deps: OrganizationSettingsDeps) {
   }
 
   async function downloadDepartmentImportTemplate() {
-    if (!deps.can("settings.manage")) return;
+    if (!deps.canManageReferences()) return;
     try {
       await deps.downloadFile("/departments/import/template/", "infrix-department-import.xlsx");
     } catch (error) {
@@ -909,7 +913,7 @@ export function useOrganizationSettings(deps: OrganizationSettingsDeps) {
   }
 
   function openResponsibilitySubjectModal(subject?: Person) {
-    if (!deps.can("settings.manage")) return;
+    if (!deps.canManageReferences()) return;
     if (departmentOptions.value.length === 0 && !departmentLoading.value) {
       void loadDepartments();
     }
@@ -932,7 +936,7 @@ export function useOrganizationSettings(deps: OrganizationSettingsDeps) {
 
   async function saveResponsibilitySubject() {
     const editor = personEditorSequence;
-    if (!deps.can("settings.manage") || responsibilityDirectorySaving.value) return;
+    if (!deps.canManageReferences() || responsibilityDirectorySaving.value) return;
     const name = responsibilityDirectoryForm.value.name.trim();
     if (!name) {
       responsibilityDirectoryFormErrors.value = { name: tr("settings.personNameRequired") };
@@ -971,7 +975,7 @@ export function useOrganizationSettings(deps: OrganizationSettingsDeps) {
   }
 
   async function toggleResponsibilitySubject(subject: Person) {
-    if (!deps.can("settings.manage") || responsibilityDirectoryActionId.value === subject.id) return;
+    if (!deps.canManageReferences() || responsibilityDirectoryActionId.value === subject.id) return;
     responsibilityDirectoryActionId.value = subject.id;
     try {
       await deps.request(`/people/${subject.id}/`, {
@@ -989,7 +993,7 @@ export function useOrganizationSettings(deps: OrganizationSettingsDeps) {
   }
 
   async function deleteResponsibilitySubject(subject: Person) {
-    if (!deps.can("settings.manage") || responsibilityDirectoryActionId.value === subject.id) return;
+    if (!deps.canManageReferences() || responsibilityDirectoryActionId.value === subject.id) return;
     if ((subject.asset_count || 0) > 0) {
       setActionMessage(tr("settings.personInUse"), "error");
       return;
@@ -1008,7 +1012,7 @@ export function useOrganizationSettings(deps: OrganizationSettingsDeps) {
   }
 
   function openDepartmentModal(department?: Department) {
-    if (!deps.can("settings.manage")) return;
+    if (!deps.canManageReferences()) return;
     departmentEditorSequence += 1;
     editingDepartment.value = department ? { ...department } : null;
     departmentFormErrors.value = {};
@@ -1024,7 +1028,7 @@ export function useOrganizationSettings(deps: OrganizationSettingsDeps) {
 
   async function saveDepartment() {
     const editor = departmentEditorSequence;
-    if (!deps.can("settings.manage") || departmentSaving.value) return;
+    if (!deps.canManageReferences() || departmentSaving.value) return;
     departmentSaving.value = true;
     departmentFormErrors.value = {};
     const editingId = editingDepartment.value?.id;
@@ -1055,7 +1059,7 @@ export function useOrganizationSettings(deps: OrganizationSettingsDeps) {
   }
 
   async function deleteDepartment(department: Department) {
-    if (!deps.can("settings.manage") || departmentActionId.value === department.id) return;
+    if (!deps.canManageReferences() || departmentActionId.value === department.id) return;
     if ((department.people_count || 0) > 0) {
       setActionMessage(tr("settings.departmentInUse"), "error");
       return;

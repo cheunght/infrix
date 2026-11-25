@@ -8,6 +8,7 @@ const props = withDefaults(
     contentClass?: string;
     compactControls?: boolean;
     toolbarVisible?: boolean;
+    tabPanel?: { id: string; role: string; "aria-labelledby": string; tabindex: number };
   }>(),
   {
     title: "",
@@ -40,7 +41,7 @@ const props = withDefaults(
     <div v-if="(props.toolbarVisible && Boolean($slots.toolbar))" class="page-container__toolbar">
       <slot name="toolbar" />
     </div>
-    <div class="page-container__body" :class="contentClass">
+    <div class="page-container__body" :class="contentClass" v-bind="tabPanel">
       <slot />
     </div>
   </section>

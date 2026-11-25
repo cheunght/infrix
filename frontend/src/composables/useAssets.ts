@@ -1,5 +1,6 @@
 import { useAssetLifecycle } from "./useAssetLifecycle";
-import { computed, reactive, ref, watch, type Ref } from "vue";
+import { copyImportReviewErrors, downloadImportReviewErrors } from "../import-review";
+import { computed, getCurrentScope, onScopeDispose, reactive, ref, watch, type Ref } from "vue";
 import type { LocationQuery } from "vue-router";
 import { ElMessage } from "element-plus/es/components/message/index.mjs";
 import { ApiError, buildExportQuery, isAbortError, pageItems, pageTotal, type PageResult } from "../api";
@@ -709,12 +710,12 @@ export function useAssets(deps: AssetsDeps) {
   const showImportDialog = ref(false);
   const importStep = ref<ImportStep>("upload");
   const importPreview = ref<ImportPreview | null>(null);
-  const importPreviewFilter = ref<"all" | "errors">("all");
   const importPreviewError = ref("");
   const importPreviewing = ref(false);
   const importing = ref(false);
   const importResult = ref<ImportResult>({ created: 0, total: 0, errors: [] });
   let importController: AbortController | null = null;
+  let importRequestId = 0;
   const detailRequestId = ref(0);
   let detailController: AbortController | null = null;
   const detailAssetId = ref<number | null>(null);
@@ -2293,14 +2294,17 @@ export function useAssets(deps: AssetsDeps) {
   watch(deps.authenticated, active => {
     if (!active) { showImportDialog.value = false; resetImportState(); }
   }, {flush: "sync"});
+  if (getCurrentScope()) onScopeDispose(resetImportState);
 
   function resetImportState() {
+    importRequestId += 1;
     importController?.abort();
     importController = null;
+    importPreviewing.value = false;
+    importing.value = false;
     importFile.value = null;
     importStep.value = "upload";
     importPreview.value = null;
-    importPreviewFilter.value = "all";
     importPreviewError.value = "";
     importResult.value = { created: 0, total: 0, errors: [] };
   }
@@ -2320,7 +2324,6 @@ export function useAssets(deps: AssetsDeps) {
     importFile.value = null;
     importStep.value = "upload";
     importPreview.value = null;
-    importPreviewFilter.value = "all";
     importPreviewError.value = "";
   }
   async function onElementUploadChange(file: { raw?: File }) {
@@ -2329,7 +2332,6 @@ export function useAssets(deps: AssetsDeps) {
     if (!selected || importPreviewing.value || importing.value) return;
     importFile.value = selected;
     importPreview.value = null;
-    importPreviewFilter.value = "all";
     importPreviewError.value = "";
     await previewImport();
   }
@@ -2339,50 +2341,55 @@ export function useAssets(deps: AssetsDeps) {
     const form = new FormData();
     form.append("file", importFile.value);
     importController?.abort();
-    importController = new AbortController();
+    const controller = new AbortController();
+    importController = controller;
+    const requestId = ++importRequestId;
     importPreviewing.value = true;
     importPreviewError.value = "";
     try {
-      const preview = await deps.request<ImportPreview>("/assets/import/preview/", { method: "POST", body: form, signal: importController.signal });
+      const preview = await deps.request<ImportPreview>("/assets/import/preview/", { method: "POST", body: form, signal: controller.signal });
+      if (controller.signal.aborted || requestId !== importRequestId) return;
       const normalizedPreview = normalizeImportPreview(preview);
       importPreview.value = normalizedPreview;
       importStep.value = "preview";
       setActionMessage(tr("asset.importPreviewSummary", { valid: normalizedPreview.valid, invalid: normalizedPreview.invalid }));
     } catch (error) {
-      if (isAbortError(error)) return;
+      if (isAbortError(error) || controller.signal.aborted || requestId !== importRequestId) return;
       importPreviewError.value = errorMessage(error, tr("asset.importPreviewFailed"));
     } finally {
-      importPreviewing.value = false;
-      importController = null;
+      if (requestId === importRequestId) {
+        importPreviewing.value = false;
+        importController = null;
+      }
     }
   }
-  const filteredImportRows = computed(() => {
-    if (!importPreview.value || importPreviewFilter.value === "all") return importPreview.value?.rows || [];
-    return importPreview.value.rows.filter((row) => !row.valid);
-  });
   async function confirmImportPreview() {
     if (!deps.can("assets.manage")) return;
-    if (!importPreview.value?.valid || importPreview.value.invalid || !importFile.value || importing.value) return;
+    if (!importPreview.value?.valid || importPreview.value.invalid || !importFile.value || importing.value || importPreviewing.value) return;
     const form = new FormData();
     form.append("file", importFile.value);
     importController?.abort();
-    importController = new AbortController();
+    const controller = new AbortController();
+    importController = controller;
+    const requestId = ++importRequestId;
     importing.value = true;
     importPreviewError.value = "";
     try {
-      const result = await deps.request<ImportResult>("/assets/import/", { method: "POST", body: form, signal: importController.signal });
+      const result = await deps.request<ImportResult>("/assets/import/", { method: "POST", body: form, signal: controller.signal });
+      if (controller.signal.aborted || requestId !== importRequestId) return;
       importResult.value = result;
       importStep.value = "result";
       const importMessage = result.errors.length
         ? tr("overlay.importCreatedWithErrors", { created: result.created, failed: result.errors.length })
         : tr("asset.importSuccess", { count: result.created });
       const refreshed = await loadAssets();
+      if (controller.signal.aborted || requestId !== importRequestId) return;
       setActionMessage(
         refreshed ? importMessage : `${importMessage}；${tr("common.refreshFailed")}，${tr("common.retry")}`,
         result.errors.length || !refreshed ? "error" : "success",
       );
     } catch (error) {
-      if (isAbortError(error)) return;
+      if (isAbortError(error) || controller.signal.aborted || requestId !== importRequestId) return;
       const details = error instanceof ApiError ? error.details : null;
       if (details && typeof details === "object" && "preview" in details) {
         const latest = (details as { preview?: ImportPreview }).preview;
@@ -2390,42 +2397,28 @@ export function useAssets(deps: AssetsDeps) {
           const normalizedPreview = normalizeImportPreview(latest);
           importPreview.value = normalizedPreview;
           importStep.value = "preview";
-          importPreviewFilter.value = normalizedPreview.invalid ? "errors" : "all";
         }
       }
       importPreviewError.value = errorMessage(error, tr("asset.importConfirmFailed"));
     } finally {
-      importing.value = false;
-      importController = null;
+      if (requestId === importRequestId) {
+        importing.value = false;
+        importController = null;
+      }
     }
   }
-  async function copyImportErrors() {
-    const text = importResult.value.errors
-      .flatMap((item) => formatImportErrorEntries(item.detail).map(({ label, message }) => (
-        `${tr("overlay.importErrorLine", { line: item.line })}${label ? `${label}：` : ""}${message}`
-      )))
-      .join("\n");
-    try {
-      await navigator.clipboard.writeText(text);
-      ElMessage.success(tr("asset.importErrorsCopied"));
-    } catch {
-      ElMessage.warning(tr("asset.copyDenied"));
-    }
+  const importErrorRows = computed(() => importStep.value === "preview"
+    ? (importPreview.value?.rows || []).filter(row => !row.valid).map(row => ({ line: row.line, detail: row.errors }))
+    : importResult.value.errors);
+
+  function importErrorReportRows() {
+    return importErrorRows.value.map(item => ({ line: item.line, errors: formatImportErrorEntries(item.detail) }));
+  }
+  function copyImportErrors() {
+    return copyImportReviewErrors(importErrorReportRows());
   }
   function downloadImportErrors() {
-    const csvCell = (value: unknown) => `"${String(value ?? "").replace(/"/g, '""')}"`;
-    const rows = [
-      [tr("common.line"), tr("common.field"), tr("common.errorDetails")].map(csvCell).join(","),
-      ...importResult.value.errors.flatMap((item) => formatImportErrorEntries(item.detail).map(({ label, message }) => (
-        [item.line, label || tr("common.errorDetails"), message].map(csvCell).join(",")
-      ))),
-    ];
-    const url = URL.createObjectURL(new Blob([`\ufeff${rows.join("\n")}`], { type: "text/csv;charset=utf-8" }));
-    const link = document.createElement("a");
-    link.href = url;
-    link.download = "asset-import-errors.csv";
-    link.click();
-    URL.revokeObjectURL(url);
+    downloadImportReviewErrors(importErrorReportRows(), "asset-import-errors.csv");
   }
   async function downloadImportTemplate() {
     if (!deps.can("assets.manage")) return;
@@ -2763,13 +2756,11 @@ export function useAssets(deps: AssetsDeps) {
     importFile,
     showImportDialog,
     importStep,
-    importPreviewFilter,
     importPreviewError,
     importPreviewing,
     importing,
     onElementUploadChange,
     importPreview,
-    filteredImportRows,
     importResult,
     copyImportErrors,
     downloadImportErrors,

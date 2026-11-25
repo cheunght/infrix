@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, reactive, ref, watch } from "vue";
+import { computed, reactive, ref, useId, watch } from "vue";
 import { useI18n } from "vue-i18n";
 import { Download, Filter, Refresh, View } from "@element-plus/icons-vue";
 import PagedTable from "./PagedTable.vue";
@@ -14,7 +14,7 @@ import OrganizationSettingsPage from "./OrganizationSettingsPage.vue";
 import DescriptionList from "./DescriptionList.vue";
 import PageContainer from "./page/PageContainer.vue";
 import PageContent from "./page/PageContent.vue";
-import PageTabs, { type PageTabItem } from "./page/PageTabs.vue";
+import PageTabs, { pageTabPanelAttrs, type PageTabItem } from "./page/PageTabs.vue";
 import PageToolbar from "./page/PageToolbar.vue";
 import TableIconButton from "./TableIconButton.vue";
 import ToolbarIconButton from "./page/ToolbarIconButton.vue";
@@ -37,6 +37,7 @@ import {
 const props = defineProps<{ context: SettingsContext }>();
 const { t } = useI18n();
 const context = props.context;
+const systemSettingsContext = { ...context, can: context.canUseSystemSettings };
 
 type NotificationDeliveryLogsHandle = {
   busy: boolean;
@@ -84,6 +85,7 @@ const {
 } = context;
 
 const auditTab = ref("audit");
+const auditPanelId = useId();
 const auditTabs = computed<PageTabItem[]>(() => [
   { value: "audit", label: t("settings.auditTab") },
   { value: "mail-delivery", label: t("settings.mailDeliveryTab") },
@@ -214,7 +216,7 @@ function openAuditDetail(log: AuditLog) {
   <div class="infrix-page settings-page">
     <CustomFieldSettingsPage v-if="settingsSection === 'custom-fields'" :context="props.context" />
     <TagSettingsPage v-else-if="settingsSection === 'tags'" :context="props.context" />
-    <SystemSettingsPage v-else-if="settingsSection === 'system' && can('settings.view')" :context="props.context" />
+    <SystemSettingsPage v-else-if="settingsSection === 'system' && context.canUseSystemSettings('settings.view')" :context="systemSettingsContext" />
 
     <DataDictionaryPage v-else-if="settingsSection === 'dictionaries' && can('settings.view')" :context="props.context" />
 
@@ -224,9 +226,9 @@ function openAuditDetail(log: AuditLog) {
       :organization="props.context.organizationSettings"
     />
 
-    <PageContainer v-else-if="settingsSection === 'audit' && can('audit.view')">
+    <PageContainer v-else-if="settingsSection === 'audit' && can('audit.view')" :tab-panel="pageTabPanelAttrs(auditPanelId, auditTab)">
       <template #subnav>
-        <PageTabs v-model="auditTab" :items="auditTabs" />
+        <PageTabs v-model="auditTab" :items="auditTabs" :panel-id="auditPanelId" />
       </template>
       <template #toolbar>
         <PageToolbar v-if="auditTab === 'audit'" class="settings-list-toolbar">

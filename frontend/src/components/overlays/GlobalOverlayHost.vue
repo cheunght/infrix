@@ -12,6 +12,7 @@ import AssetDetailDrawer from "../AssetDetailDrawer.vue";
 import AssetDisposalDialog from "../AssetDisposalDialog.vue";
 import AttachmentSection from "../AttachmentSection.vue";
 import AssetFormDialog from "../AssetFormDialog.vue";
+import AssetImportReview from "../AssetImportReview.vue";
 import AccountSecurityPanel from "../AccountSecurityPanel.vue";
 import ActionDialogShell from "../ActionDialogShell.vue";
 import FieldHelp from "../FieldHelp.vue";
@@ -128,13 +129,11 @@ const {
   assetListError,
   showImportDialog,
   importStep,
-  importPreviewFilter,
   importPreviewError,
   importPreviewing,
   importing,
   importResult,
   importPreview,
-  filteredImportRows,
   copyImportErrors,
   downloadImportErrors,
   downloadImportTemplate,
@@ -711,10 +710,6 @@ function editCurrentAsset() {
   if (assetId) void openAssetEditor(assetId);
 }
 
-function importRowErrorText(row: { errors: Array<{ label: string; message: string }> }) {
-  return row.errors.map((error) => `${error.label}：${error.message}`).join("；");
-}
-
 function mapUnlinkedPerson(item: Record<string, unknown>): SearchableSelectOption {
   const person = item as unknown as PersonOption;
   return {
@@ -1254,34 +1249,7 @@ function mapUnlinkedPerson(item: Record<string, unknown>): SearchableSelectOptio
         <el-button link type="primary" :disabled="importPreviewing || importing" @click="chooseAnotherImportFile">{{ t('common.chooseAnother') }}</el-button>
       </div>
       <el-alert :title="t('overlay.importValidationNotice')" type="info" :closable="false" show-icon />
-      <div class="import-preview-summary">
-        <StatusTag tone="info" :label="t('overlay.importTotalRows', { count: importPreview.total })" />
-        <StatusTag tone="success" :label="t('overlay.importValidRows', { count: importPreview.valid })" />
-        <StatusTag tone="danger" :label="t('overlay.importInvalidRows', { count: importPreview.invalid })" />
-        <el-radio-group v-model="importPreviewFilter" size="small" class="import-preview-filter">
-          <el-radio-button label="all">{{ t('common.all') }}</el-radio-button>
-          <el-radio-button label="errors">{{ t('overlay.onlyErrors') }}</el-radio-button>
-        </el-radio-group>
-      </div>
-      <el-table class="action-dialog__table" :data="filteredImportRows" border stripe max-height="460" row-key="line" :empty-text="t('overlay.importNoMatchingRows')">
-        <el-table-column prop="line" :label="t('overlay.excelRow')" width="88" />
-        <el-table-column prop="asset_no" :label="t('asset.code')" min-width="150" />
-        <el-table-column prop="name" :label="t('asset.name')" min-width="170" />
-        <el-table-column prop="device_type" :label="t('asset.deviceType')" min-width="120" />
-        <el-table-column prop="location" :label="t('common.location')" min-width="220" />
-        <el-table-column prop="depreciation" :label="t('asset.depreciation')" min-width="230" />
-        <el-table-column :label="t('overlay.validationResult')" width="112" fixed="right">
-          <template #default="{ row }">
-            <StatusTag :tone="row.valid ? 'success' : 'danger'" :label="row.valid ? t('overlay.importable') : t('overlay.invalid')" />
-          </template>
-        </el-table-column>
-        <el-table-column :label="t('overlay.errorDetails')" min-width="300">
-          <template #default="{ row }">
-            <span v-if="row.errors.length" class="import-preview-errors import-preview-errors--summary">{{ importRowErrorText(row) }}</span>
-            <span v-else class="muted-text">—</span>
-          </template>
-        </el-table-column>
-      </el-table>
+      <AssetImportReview :preview="importPreview" :disabled="importing" @copy-errors="copyImportErrors" @download-errors="downloadImportErrors" />
     </template>
     <template v-else>
       <section class="action-dialog__result">

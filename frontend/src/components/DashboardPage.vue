@@ -339,20 +339,18 @@ function recentChangeLabel(action: string): string {
               </span>
               <el-icon aria-hidden="true"><ArrowRight /></el-icon>
             </button>
-            <button
-              v-if="can('assets.view')"
-              type="button"
-              class="dashboard-risk-item dashboard-risk-item--maintenance"
-              @click="goToAssets({ warranty: 'within_30_days' })"
-            >
+            <div v-if="can('assets.view') && dashboardData" class="dashboard-risk-item dashboard-risk-item--maintenance">
               <span class="dashboard-risk-item__icon" aria-hidden="true"><Timer /></span>
-              <span class="dashboard-risk-item__copy">
-                <small>{{ t('dashboard.warrantyExpiring') }}</small>
-                <strong>{{ dashboardData?.expiring.within_30_days ?? '—' }}</strong>
-                <span v-if="dashboardData">{{ t('dashboard.expiredItems', { count: dashboardData.expiring.expired || 0 }) }}</span>
-              </span>
-              <el-icon aria-hidden="true"><ArrowRight /></el-icon>
-            </button>
+              <div class="dashboard-maintenance-links">
+                <button type="button" @click="goToAssets({ warranty: 'within_30_days' })">
+                  <span>{{ t('dashboard.warrantyExpiring') }}</span>
+                  <strong>{{ dashboardData.expiring.within_30_days }}</strong>
+                </button>
+                <button type="button" @click="goToAssets({ warranty: 'expired' })">
+                  {{ t('dashboard.warrantyExpiredItems', { count: dashboardData.expiring.expired || 0 }) }}
+                </button>
+              </div>
+            </div>
             <button
               v-if="inventorySummary"
               type="button"

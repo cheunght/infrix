@@ -70,6 +70,8 @@ const pageComponents: Partial<Record<Page, () => Promise<Component>>> = {
     "ElTooltip",
   ]),
   "asset-config": lazyPage(() => import("./components/AssetConfigurationPage.vue"), [
+    "ElRadioGroup",
+    "ElRadioButton",
     "ElAlert",
     "ElCard",
     "ElCheckbox",
@@ -170,6 +172,8 @@ const pageComponents: Partial<Record<Page, () => Promise<Component>>> = {
     "ElTooltip",
   ]),
   settings: lazyPage(() => import("./components/SettingsPage.vue"), [
+    "ElRadioGroup",
+    "ElRadioButton",
     "ElCard",
     "ElCheckbox",
     "ElCollapse",

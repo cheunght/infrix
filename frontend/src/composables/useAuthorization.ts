@@ -25,11 +25,15 @@ export function normalizeAuthorizationSnapshot(value: unknown): AuthorizationSna
     ? source.capabilities.filter((item): item is string => typeof item === "string")
     : [];
   const primary = typeof source.primary_role_code === "string" ? source.primary_role_code : null;
+  const scope = source.data_scope as Record<string, unknown> | null | undefined;
   return {
     primary_role_code: primary,
     roles,
     capabilities,
     is_system_admin: Boolean(source.is_system_admin),
+    ...(scope && {
+      data_scope: { global_read: scope.global_read === true, global_write: scope.global_write === true },
+    }),
   };
 }
 

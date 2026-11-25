@@ -1,7 +1,8 @@
 <script setup lang="ts">
-import { computed, onMounted, ref, watch } from "vue";
+import { computed, nextTick, onMounted, ref, watch } from "vue";
 import { useI18n } from "vue-i18n";
 import { Bell, Refresh } from "@element-plus/icons-vue";
+import type { ButtonInstance } from "element-plus";
 import { formatSystemDate, formatSystemDateTime } from "../system-settings";
 import { useNotifications } from "../composables/useNotifications";
 import type { OperationalAlert } from "../types";
@@ -19,6 +20,8 @@ const emit = defineEmits<{
 
 const { t } = useI18n();
 const visible = ref(false);
+const trigger = ref<ButtonInstance>();
+const panel = ref<HTMLElement>();
 const username = computed(() => props.username);
 const {
   alerts,
@@ -143,7 +146,7 @@ function alertAccessibleLabel(alert: OperationalAlert) {
 
 function handleSelect(alert: OperationalAlert) {
   markRead(alert.id);
-  visible.value = false;
+  dismiss();
   emit("select", alert);
 }
 
@@ -152,11 +155,33 @@ function handleMarkAllRead() {
 }
 
 function handleOpen() {
-  void loadNotifications();
+  if (visible.value && document.activeElement === trigger.value?.ref) panel.value?.focus({ preventScroll: true });
+}
+
+function dismiss(event?: KeyboardEvent) {
+  if (!visible.value) return;
+  event?.preventDefault();
+  event?.stopPropagation();
+  visible.value = false;
+  trigger.value?.ref?.focus({ preventScroll: true });
+}
+
+function handleFocusOut(event: FocusEvent) {
+  const next = event.relatedTarget;
+  if (next instanceof Node && next !== trigger.value?.ref && !panel.value?.contains(next)) {
+    visible.value = false;
+  }
 }
 
 watch(username, () => {
   visible.value = false;
+});
+
+watch(visible, async (open) => {
+  if (!open) return;
+  void loadNotifications();
+  await nextTick();
+  handleOpen();
 });
 
 const showingLimitedAlerts = computed(
@@ -169,33 +194,36 @@ onMounted(() => {
 </script>
 
 <template>
-  <el-popover
+  <el-tooltip
     v-model:visible="visible"
     placement="bottom-end"
-    :width="420"
+    effect="light"
+    role="dialog"
+    :aria-label="t('notifications.title')"
+    :teleported="false"
     trigger="click"
-    popper-class="notification-center__popover"
+    popper-class="el-popover notification-center__popover"
     @show="handleOpen"
   >
-    <template #reference>
-      <el-button
+    <el-button
+        ref="trigger"
         class="notification-center__trigger"
         text
-        aria-haspopup="dialog"
-        :aria-expanded="visible ? 'true' : 'false'"
         :aria-label="t('notifications.title')"
         :title="t('notifications.title')"
+        @keydown.esc="dismiss"
       >
         <el-badge :value="unreadCount" :max="99" :hidden="unreadCount === 0">
           <el-icon class="header-control-icon"><Bell /></el-icon>
         </el-badge>
       </el-button>
-    </template>
-
+    <template #content>
     <section
+      ref="panel"
       class="notification-center"
-      role="dialog"
-      :aria-label="t('notifications.title')"
+      tabindex="-1"
+      @keydown.esc="dismiss"
+      @focusout="handleFocusOut"
     >
       <header class="notification-center__header">
         <div class="notification-center__heading">
@@ -300,12 +328,14 @@ onMounted(() => {
         </el-button>
       </footer>
     </section>
-  </el-popover>
+    </template>
+  </el-tooltip>
 </template>
 
 <style scoped>
 :global(.notification-center__popover) {
   box-sizing: border-box;
+  width: 420px;
   max-width: calc(100vw - 24px);
 }
 

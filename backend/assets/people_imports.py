@@ -18,7 +18,7 @@ from openpyxl.utils import get_column_letter
 from rest_framework.exceptions import ValidationError as DRFValidationError
 
 from .audit import write_audit_log
-from .imports import ImportFileError, ImportValidationError
+from .imports import ImportFileError, ImportValidationError, iter_import_worksheet_rows
 from .models import Department, Person
 from .operation_limits import MAX_ASSET_MODEL_IMPORT_BYTES, MAX_ASSET_MODEL_IMPORT_ROWS
 from .serializers import PersonSerializer
@@ -117,7 +117,7 @@ def _read_upload(upload):
             (item for item in workbook.worksheets if item.title == "人员导入"),
             workbook.worksheets[0],
         )
-        iterator = sheet.iter_rows()
+        iterator = iter_import_worksheet_rows(sheet)
         header_cells = next(iterator, None)
         if not header_cells:
             raise ImportFileError("人员导入文件第一行必须包含字段名")
@@ -249,6 +249,8 @@ def _base_row(line, row, person=None):
         "operation": "error",
         "valid": False,
         "changes": [],
+        "change_details": [],
+        "values": {key: row.get(key, "").strip() for key in PEOPLE_IMPORT_FIELDS},
         "errors": [],
     }
 
@@ -301,6 +303,15 @@ def _analyze_rows(parsed, *, lock=False):
                 partial=person is not None,
             )
             serializer.is_valid(raise_exception=True)
+            effective_values = {}
+            for field in PEOPLE_UPDATE_FIELDS:
+                current = getattr(person, field) if person is not None else (True if field == "is_active" else "")
+                value = serializer.validated_data.get(field, current)
+                if field == "department":
+                    value = f"{value.code} / {value.name}" if value else ""
+                effective_values[field] = value
+            result["values"].update(effective_values)
+            result["name"] = effective_values["name"]
             if person is None:
                 result["operation"] = "create"
                 result["valid"] = True
@@ -309,6 +320,15 @@ def _analyze_rows(parsed, *, lock=False):
                 continue
 
             result["changes"] = _changed_fields(person, serializer.validated_data)
+            for field in result["changes"]:
+                old_value = getattr(person, field)
+                if field == "department":
+                    old_value = f"{old_value.code} / {old_value.name}" if old_value else ""
+                result["change_details"].append({
+                    "field": field,
+                    "label": "所属部门" if field == "department" else PEOPLE_IMPORT_FIELD_LABELS[field],
+                    "old_value": old_value, "new_value": effective_values[field],
+                })
             result["operation"] = "update" if result["changes"] else "unchanged"
             result["valid"] = True
             internal.append({"result": result, "serializer": serializer})

@@ -3,7 +3,8 @@ import { computed, ref } from "vue";
 import { useI18n } from "vue-i18n";
 import { Download, Upload } from "@element-plus/icons-vue";
 import FormDialogShell from "./FormDialogShell.vue";
-import type { PeopleImportPreview, PeopleImportRow } from "../types";
+import type { PeopleImportPreview } from "../types";
+import ReferenceImportReview from "./ReferenceImportReview.vue";
 
 const props = defineProps<{
   modelValue: boolean;
@@ -26,6 +27,8 @@ const { t } = useI18n();
 const fileInput = ref<HTMLInputElement | null>(null);
 const canCommit = computed(() => Boolean(
   props.preview
+  && props.file
+  && props.preview.valid > 0
   && props.preview.error === 0
   && !props.previewing
   && !props.importing,
@@ -42,27 +45,6 @@ function handleFileChange(event: Event) {
   emit("select", file);
 }
 
-function operationLabel(operation: PeopleImportRow["operation"]): string {
-  switch (operation) {
-    case "create": return t("settings.peopleImportCreate");
-    case "update": return t("settings.peopleImportUpdate");
-    case "unchanged": return t("settings.peopleImportUnchanged");
-    default: return t("settings.peopleImportError");
-  }
-}
-
-function operationType(operation: PeopleImportRow["operation"]): "success" | "warning" | "info" | "danger" {
-  switch (operation) {
-    case "create": return "success";
-    case "update": return "warning";
-    case "unchanged": return "info";
-    default: return "danger";
-  }
-}
-
-function rowErrors(row: PeopleImportRow): string {
-  return row.errors.map((item) => item.label ? `${item.label}：${item.message}` : item.message).join("；");
-}
 </script>
 
 <template>
@@ -95,12 +77,6 @@ function rowErrors(row: PeopleImportRow): string {
 
       <template v-if="preview">
         <el-alert
-          :title="t('settings.peopleImportPreviewSummary', preview)"
-          :type="preview.error ? 'warning' : 'success'"
-          :closable="false"
-          show-icon
-        />
-        <el-alert
           v-if="preview.ignored_columns.length"
           class="people-import-dialog__ignored"
           :title="t('settings.peopleImportIgnoredColumns', { columns: preview.ignored_columns.join(', ') })"
@@ -108,27 +84,7 @@ function rowErrors(row: PeopleImportRow): string {
           :closable="false"
           show-icon
         />
-        <el-table
-          class="people-import-dialog__table"
-          :data="preview.rows"
-          max-height="360"
-          stripe
-          border
-          table-layout="fixed"
-        >
-          <el-table-column prop="line" :label="t('common.line')" width="64" />
-          <el-table-column prop="employee_no" :label="t('settings.peopleImportEmployeeNo')" min-width="130" show-overflow-tooltip />
-          <el-table-column prop="name" :label="t('settings.personName')" min-width="110" show-overflow-tooltip />
-          <el-table-column prop="department" :label="t('settings.peopleImportDepartment')" min-width="120" show-overflow-tooltip />
-          <el-table-column :label="t('settings.peopleImportOperation')" width="96">
-            <template #default="{ row }">
-              <el-tag :type="operationType(row.operation)" effect="light">{{ operationLabel(row.operation) }}</el-tag>
-            </template>
-          </el-table-column>
-          <el-table-column :label="t('settings.peopleImportErrors')" min-width="240" show-overflow-tooltip>
-            <template #default="{ row }">{{ rowErrors(row) || "—" }}</template>
-          </el-table-column>
-        </el-table>
+        <ReferenceImportReview kind="people" :preview="preview" :disabled="previewing || importing" />
       </template>
       <el-empty v-else :image-size="64" :description="t('settings.peopleImportChooseFile')" />
     </div>
@@ -174,7 +130,4 @@ function rowErrors(row: PeopleImportRow): string {
   margin-top: -2px;
 }
 
-.people-import-dialog__table {
-  width: 100%;
-}
 </style>

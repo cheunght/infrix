@@ -1,4 +1,4 @@
-import { ref, watch, type Ref } from "vue";
+import { onScopeDispose, ref, watch, type Ref } from "vue";
 import { revisionHeaders } from "../revision";
 import { ApiError, isAbortError } from "../api";
 import {
@@ -8,7 +8,7 @@ import {
   type ActionMessageType,
 } from "../error-handling";
 import type { RequestFn } from "../page-context";
-import { i18n, normalizeLocale, type Locale } from "../i18n";
+import { i18n, loadLocaleMessages, normalizeLocale, type Locale } from "../i18n";
 import type { AuthSource } from "../types";
 import type { AuthorizationSnapshot } from "../types";
 import { emptyAuthorizationSnapshot, normalizeAuthorizationSnapshot } from "./useAuthorization";
@@ -17,17 +17,13 @@ export interface AuthDeps {
   request: RequestFn;
   loadCsrf: (signal?: AbortSignal) => Promise<void>;
   routerReplace: (location: string) => Promise<unknown>;
-  syncRouteState: () => void;
-  ensureRouteAccess: () => boolean;
   bootstrapApplication: () => Promise<void>;
   bootstrapError: Ref<boolean>;
   resetBootstrap: () => void;
   authenticated: Ref<boolean>;
-  authChecked: Ref<boolean>;
   passwordChangeRequired: Ref<boolean>;
   authSource: Ref<AuthSource>;
   authorization: Ref<AuthorizationSnapshot>;
-  can: (capability: string) => boolean;
   hasBusinessCapability: Ref<boolean>;
   userName: Ref<string>;
   username: Ref<string>;
@@ -79,6 +75,9 @@ type AuthPayload = {
 
 export function useAuth(deps: AuthDeps) {
   const profileRevision = ref<number>();
+  const loggingIn = ref(false);
+  let disposed = false;
+  onScopeDispose(() => { disposed = true; }, true);
   function setActionMessage(message: string, type: ActionMessageType = "success") {
     deps.actionMessageType.value = type;
     deps.actionMessage.value = message;
@@ -134,23 +133,26 @@ export function useAuth(deps: AuthDeps) {
     deps.showPasswordModal.value = true;
   }
 
-  function applyAuthPayload(user: AuthPayload) {
+  async function applyAuthPayload(user: AuthPayload, signal?: AbortSignal) {
+    const locale = await loadLocaleMessages(user.locale || deps.locale.value);
+    if (disposed || signal?.aborted) throw new DOMException("Session ended", "AbortError");
+    // Apply the loaded language before publishing the session to the shell.
+    deps.setLocale(locale);
     profileRevision.value = user.revision;
-    deps.authenticated.value = true;
     deps.username.value = user.username;
     deps.userName.value = user.display_name;
     deps.profileForm.value = {
       first_name: user.first_name || "",
       last_name: user.last_name || "",
       email: user.email || "",
-      locale: normalizeLocale(user.locale || deps.locale.value),
+      locale,
     };
-    deps.setLocale(user.locale || deps.locale.value);
     deps.userIsActive.value = user.is_active !== false;
     deps.lastLogin.value = user.last_login || null;
     deps.authorization.value = normalizeAuthorizationSnapshot(user.authorization);
     deps.authSource.value = user.auth_source === "ldap" ? "ldap" : "local";
     deps.passwordChangeRequired.value = Boolean(user.password_change_required);
+    deps.authenticated.value = true;
   }
 
   function clearSessionIdentity() {
@@ -179,9 +181,7 @@ export function useAuth(deps: AuthDeps) {
         "/auth/me/",
         signal ? { signal } : undefined,
       );
-      applyAuthPayload(user);
-      deps.syncRouteState();
-      deps.ensureRouteAccess();
+      await applyAuthPayload(user, signal);
       if (deps.passwordChangeRequired.value) openPasswordModal();
     } catch (error) {
       if (isAbortError(error)) return;
@@ -192,16 +192,14 @@ export function useAuth(deps: AuthDeps) {
       // behind the bootstrap error page.
       if (!(error instanceof ApiError) || (error.status !== 401 && error.status !== 403)) throw error;
       clearSessionIdentity();
-    } finally {
-      deps.authChecked.value = true;
     }
   }
 
   async function finishLogin(user: AuthPayload) {
-    applyAuthPayload(user);
-    deps.syncRouteState();
-    deps.ensureRouteAccess();
     deps.password.value = "";
+    await applyAuthPayload(user);
+    deps.twoFactorRequired.value = false;
+    deps.twoFactorCode.value = "";
     await deps.loadCsrf();
     if (deps.passwordChangeRequired.value) {
       openPasswordModal();
@@ -212,6 +210,8 @@ export function useAuth(deps: AuthDeps) {
   }
 
   async function login() {
+    if (loggingIn.value) return;
+    loggingIn.value = true;
     deps.loginError.value = "";
     deps.twoFactorError.value = "";
     deps.twoFactorRequired.value = false;
@@ -253,6 +253,8 @@ export function useAuth(deps: AuthDeps) {
       } else {
         deps.loginError.value = loginMessage;
       }
+    } finally {
+      loggingIn.value = false;
     }
   }
 
@@ -270,8 +272,6 @@ export function useAuth(deps: AuthDeps) {
         body: JSON.stringify({ code: deps.twoFactorCode.value.trim() }),
       });
       sessionEstablished = true;
-      deps.twoFactorRequired.value = false;
-      deps.twoFactorCode.value = "";
       await finishLogin(user);
     } catch (error) {
       if (isAbortError(error)) return;
@@ -322,7 +322,7 @@ export function useAuth(deps: AuthDeps) {
     deps.profileError.value = "";
     try {
       const user = await deps.request<AuthPayload>("/auth/me/");
-      applyAuthPayload(user);
+      await applyAuthPayload(user);
       return true;
     } catch (error) {
       if (isAbortError(error)) return false;
@@ -353,11 +353,12 @@ export function useAuth(deps: AuthDeps) {
           locale: form.locale,
         }),
       });
-      applyAuthPayload(user);
+      await applyAuthPayload(user);
       deps.showProfileModal.value = false;
       setActionMessage(i18n.global.t("auth.profileSaved"));
       return true;
     } catch (error) {
+      if (isAbortError(error)) return false;
       const normalized = normalizeApiError(error);
       deps.profileFormErrors.value = fieldErrorsToText(
         normalized.fieldErrors,
@@ -380,6 +381,7 @@ export function useAuth(deps: AuthDeps) {
         headers: revisionHeaders({ revision }),
         body: JSON.stringify({ locale }),
       });
+      if (disposed || !deps.authenticated.value) return false;
       // Keep profile drafts, and let a newer profile load/save win over this
       // reply rather than pairing its version with an older locale.
       if (profileRevision.value === revision) {
@@ -389,6 +391,7 @@ export function useAuth(deps: AuthDeps) {
       deps.setLocale(deps.profileForm.value.locale);
       return true;
     } catch {
+      if (disposed || !deps.authenticated.value) return false;
       if (profileRevision.value === revision) deps.profileForm.value.locale = previousLocale;
       deps.setLocale(deps.profileForm.value.locale);
       setActionMessage(i18n.global.t("auth.languageSaveFailed"), "error");
@@ -433,6 +436,7 @@ export function useAuth(deps: AuthDeps) {
   return {
     checkAuth,
     login,
+    loggingIn,
     verifyTwoFactor,
     cancelTwoFactor,
     logout,

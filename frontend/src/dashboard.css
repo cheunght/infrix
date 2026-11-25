@@ -226,9 +226,36 @@
   border-left-color: #7c4ce8;
 }
 
-.dashboard-risk-item--maintenance {
+.dashboard-risk-item.dashboard-risk-item--maintenance {
+  grid-template-columns: 36px minmax(0, 1fr);
+  cursor: default;
+  background: var(--color-surface);
+  border-color: var(--color-border-soft);
   border-left-color: var(--color-warning);
 }
+
+.dashboard-maintenance-links {
+  display: grid;
+  gap: 4px;
+}
+
+.dashboard-maintenance-links button {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 2px 0;
+  border: 0;
+  background: transparent;
+  color: var(--el-color-primary);
+  font: inherit;
+  font-size: var(--dashboard-meta-size);
+  text-align: left;
+  cursor: pointer;
+}
+
+.dashboard-maintenance-links button:hover { text-decoration: underline; }
+.dashboard-maintenance-links button:focus-visible { outline: 2px solid var(--el-color-primary); }
 
 .dashboard-risk-item--inventory {
   border-left-color: var(--color-brand-primary);

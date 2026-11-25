@@ -4166,17 +4166,20 @@ def asset_model_import_preview(request):
 @parser_classes([MultiPartParser, FormParser])
 @global_endpoint
 def asset_model_import(request):
-    with transaction.atomic():
-        created = commit_asset_model_import(request.FILES.get("file"))
-        for model in created:
-            write_audit_log(
-                request,
-                action="create",
-                resource_type="asset_model",
-                resource_id=model.pk,
-                after=model_snapshot(model),
-                extra={"source": "asset_model_import"},
-            )
+    try:
+        with transaction.atomic():
+            created = commit_asset_model_import(request.FILES.get("file"))
+            for model in created:
+                write_audit_log(
+                    request,
+                    action="create",
+                    resource_type="asset_model",
+                    resource_id=model.pk,
+                    after=model_snapshot(model),
+                    extra={"source": "asset_model_import"},
+                )
+    except ImportValidationError as exc:
+        return Response({"detail": "导入文件存在异常，请先修正", "preview": exc.preview}, status=400)
     return Response({"created": len(created), "total": len(created), "errors": []})
 
 

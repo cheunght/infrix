@@ -51,7 +51,7 @@ const {
   departmentOptions,
 } = props.organization;
 
-const canManage = computed(() => props.context.can("settings.manage"));
+const canManage = computed(() => props.context.canUseSystemSettings("settings.manage"));
 const hasFilters = computed(() => Boolean(search.value.trim() || departmentFilter.value || activeFilter.value !== "true"));
 const modalTitle = computed(() =>
   editingSubject.value ? t("settings.editPerson") : t("settings.addPerson"),
