@@ -34,7 +34,7 @@ const props = defineProps<{
 const { t } = useI18n();
 const context = props.context;
 const organization = props.organization;
-const canManageReferences = computed(() => context.canUseSystemSettings("settings.manage"));
+const canManageReferences = computed(() => context.canManageReferences());
 const scopeUser = ref<ManagedUser | null>(null);
 const showDataScope = ref(false);
 function openDataScope(user: ManagedUser) { scopeUser.value = user; showDataScope.value = true; }

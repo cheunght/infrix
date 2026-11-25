@@ -353,7 +353,10 @@ if DB_ENGINE == "mysql":
         },
     }}
 elif DB_ENGINE == "sqlite":
-    DATABASES = {"default": {"ENGINE": "django.db.backends.sqlite3", "NAME": BASE_DIR / "db.sqlite3"}}
+    DATABASES = {"default": {
+        "ENGINE": "django.db.backends.sqlite3",
+        "NAME": Path(os.getenv("INFRIX_SQLITE_PATH", str(BASE_DIR / "db.sqlite3"))).expanduser(),
+    }}
 
 AUTH_PASSWORD_VALIDATORS = [
     {"NAME": "django.contrib.auth.password_validation.UserAttributeSimilarityValidator"},

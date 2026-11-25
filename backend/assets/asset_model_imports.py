@@ -1,9 +1,9 @@
 from django.db import IntegrityError, transaction
-from openpyxl import Workbook, load_workbook
+from openpyxl import Workbook
 from openpyxl.styles import Alignment, Font, PatternFill
 from rest_framework.exceptions import ValidationError
 
-from .imports import ImportFileError, ImportValidationError, iter_import_worksheet_rows
+from .imports import ImportFileError, ImportValidationError, iter_import_worksheet_rows, load_import_workbook
 from .models import AssetModel, CustomFieldSet, DeviceType, Manufacturer
 from .operation_limits import MAX_ASSET_MODEL_IMPORT_BYTES, MAX_ASSET_MODEL_IMPORT_ROWS
 from .serializers import AssetModelSerializer
@@ -117,16 +117,17 @@ def _rows(upload):
     _validate_file_size(upload)
     upload.seek(0)
     try:
-        workbook = load_workbook(upload, read_only=True, data_only=False, keep_links=False)
-    except Exception as exc:
-        raise ValidationError({"file": "Excel 文件无法解析，请确认文件为有效的 .xlsx 工作簿"}) from exc
+        workbook = load_import_workbook(upload)
+    except ImportFileError as exc:
+        raise ValidationError({"file": str(exc)}) from exc
+
     try:
         worksheets = workbook.worksheets
         if not worksheets:
             raise ValidationError({"file": "Excel 文件没有可读取的工作表"})
         default_sheet = workbook.active if workbook.active in worksheets else worksheets[0]
         sheet = next((item for item in worksheets if item.title == "资产型号导入"), default_sheet)
-        rows = iter_import_worksheet_rows(sheet)
+        rows = iter_import_worksheet_rows(sheet, max_rows=MAX_ASSET_MODEL_IMPORT_ROWS)
         headers = [_cell_text(cell.value).lstrip("\ufeff").strip() for cell in next(rows, ())]
         while headers and not headers[-1]:
             headers.pop()

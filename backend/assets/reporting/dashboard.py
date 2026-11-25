@@ -5,13 +5,14 @@ only resolves the request scope and delegates here, keeping reporting rules
 out of the large API view module.
 """
 
-from collections import Counter, defaultdict
 from datetime import timedelta
 
-from django.db.models import Count, Q
+from django.db.models import Count, Q, Subquery, Value
+from django.db.models.functions import Coalesce
 from ..license_status import license_status_counts
 from ..models import AuditLog, FaultEvent, InventoryTask, MaintenanceContract, Rack
 from ..runtime_clock import system_localdate
+from ..timeline import audit_resource_id_subquery
 from .capacity import build_dashboard_capacity
 from .constants import (
     AUDIT_ACTION_LABELS,
@@ -71,8 +72,11 @@ def build_dashboard_payload(scope, *, include_faults=True, include_licenses=True
 
 
 def _build_asset_distributions(scope):
-    status_counts = Counter(asset.status for asset in scope.asset_rows)
-    asset_total = len(scope.asset_rows)
+    assets = scope.asset_queryset.order_by()
+    status_counts = dict(
+        assets.values("status").annotate(count=Count("pk", distinct=True)).values_list("status", "count")
+    )
+    asset_total = sum(status_counts.values())
     status_distribution = [
         {
             "status": status,
@@ -83,10 +87,9 @@ def _build_asset_distributions(scope):
         for status, label, color in STATUS_METADATA
     ]
 
-    type_counts = defaultdict(int)
-    for asset in scope.asset_rows:
-        type_name = asset.device_type.name if asset.device_type_id and asset.device_type else "其他设备"
-        type_counts[type_name] += 1
+    type_counts = assets.values(
+        type_name=Coalesce("asset_model__device_type__name", "standalone_device_type__name", Value("其他设备"))
+    ).annotate(count=Count("pk", distinct=True)).values_list("type_name", "count")
     type_distribution = [
         {
             "type": name,
@@ -95,7 +98,7 @@ def _build_asset_distributions(scope):
             "color": TYPE_PALETTE[index % len(TYPE_PALETTE)],
         }
         for index, (name, count) in enumerate(
-            sorted(type_counts.items(), key=lambda item: (-item[1], item[0]))
+            sorted(type_counts, key=lambda item: (-item[1], item[0]))
         )
     ]
     return {
@@ -225,12 +228,10 @@ def _build_inventory_summary(scope):
         )
     inventory_scope_rack_ids = set(inventory_rack_queryset.values_list("id", flat=True))
     checked_rack_ids = set()
-    checked_item_rows = latest_inventory.items.filter(status__isnull=False).values(
-        "status", "system_snapshot", "actual_rack_id"
+    checked_item_rows = latest_inventory.items.exclude(status="pending").values(
+        "system_snapshot", "actual_rack_id"
     )
     for item in checked_item_rows:
-        if item["status"] == "pending":
-            continue
         rack_id = item.get("actual_rack_id")
         if rack_id is None:
             snapshot = item.get("system_snapshot") or {}
@@ -265,17 +266,21 @@ def _build_inventory_summary(scope):
 
 
 def _build_recent_changes(scope):
-    asset_by_id = {asset.id: asset for asset in scope.asset_rows}
     audit_queryset = (
         AuditLog.objects.filter(
             resource_type="asset",
-            resource_id__in=[str(asset_id) for asset_id in scope.asset_ids],
+            resource_id__in=Subquery(audit_resource_id_subquery(scope.asset_queryset.order_by())),
         )
         .select_related("actor")
         .order_by("-created_at", "-id")[: DASHBOARD_LIMITS["recent_audit_rows"]]
     )
+    audit_rows = list(audit_queryset)
+    recent_ids = [int(log.resource_id) for log in audit_rows if log.resource_id.isdecimal()]
+    asset_by_id = scope.asset_queryset.filter(pk__in=recent_ids).select_related(
+        "asset_data_center", "rack_allocation__rack__room__data_center",
+    ).in_bulk()
     recent_changes = []
-    for log in audit_queryset:
+    for log in audit_rows:
         try:
             asset_id = int(log.resource_id)
         except (TypeError, ValueError):

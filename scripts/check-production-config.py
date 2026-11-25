@@ -4,13 +4,13 @@
 from __future__ import annotations
 
 import argparse
-import re
 import sys
 from pathlib import Path
 from urllib.parse import urlsplit
 
 
-_KEY_PATTERN = re.compile(r"[A-Za-z_][A-Za-z0-9_]*\Z")
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "backend"))
+from infrix_env import ConfigurationError, read_env_file
 _TRUE_VALUES = {"1", "true", "yes", "on"}
 _FALSE_VALUES = {"0", "false", "no", "off"}
 _PLACEHOLDER_PASSWORDS = {
@@ -21,36 +21,6 @@ _PLACEHOLDER_PASSWORDS = {
     "数据库密码",
     "请替换为数据库密码",
 }
-
-
-class ConfigurationError(ValueError):
-    """A safe, administrator-facing configuration error."""
-
-
-def read_env_file(path: Path) -> dict[str, str]:
-    if not path.is_file():
-        raise ConfigurationError(f"Production environment file not found: {path}")
-
-    values: dict[str, str] = {}
-    try:
-        lines = path.read_text(encoding="utf-8").splitlines()
-    except OSError as exc:
-        raise ConfigurationError(f"Unable to read environment file: {path}") from exc
-
-    for line_number, raw_line in enumerate(lines, start=1):
-        line = raw_line.strip()
-        if not line or line.startswith("#"):
-            continue
-        if line.startswith("export "):
-            line = line[7:].lstrip()
-        key, separator, value = line.partition("=")
-        key = key.strip()
-        if not separator or not _KEY_PATTERN.fullmatch(key):
-            raise ConfigurationError(
-                f"Invalid environment entry at line {line_number}; expected KEY=value."
-            )
-        values[key] = value.strip()
-    return values
 
 
 def _required(values: dict[str, str], name: str) -> str:

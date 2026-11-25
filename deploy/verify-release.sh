@@ -25,12 +25,28 @@ log() {
 [[ -f "$ENV_FILE" ]] || fail "未找到环境文件：$ENV_FILE"
 
 run_app() {
-  runuser -u "$APP_USER" -- "$APP_DIR/backend/run.sh" "$@"
+  runuser -u "$APP_USER" -- env INFRIX_ENV_FILE="$ENV_FILE" "$APP_DIR/backend/run.sh" "$@"
 }
 
+env_entries=()
+env_loaded=0
+while IFS= read -r -d '' entry; do
+  if [[ -z "$entry" ]]; then
+    env_loaded=1
+    break
+  fi
+  env_entries+=("$entry")
+done < <(runuser -u "$APP_USER" -- "$APP_DIR/backend/.venv/bin/python" -I "$APP_DIR/backend/infrix_env.py" "$ENV_FILE")
+[[ "$env_loaded" -eq 1 ]] || fail "无法加载环境配置：$ENV_FILE"
+
 env_value() {
-  local key="$1"
-  awk -F= -v key="$key" '$1 == key { sub(/^[^=]*=/, ""); print; exit }' "$ENV_FILE"
+  local key="$1" assignment
+  for assignment in "${env_entries[@]}"; do
+    if [[ "${assignment%%=*}" == "$key" ]]; then
+      printf '%s\n' "${assignment#*=}"
+      return
+    fi
+  done
 }
 
 verify_nginx_https_contract() {
@@ -176,12 +192,16 @@ log "检查应用静态资源"
 [[ -s "$APP_DIR/frontend/dist/platform-icon.png" ]] || fail "缺少浏览器图标：frontend/dist/platform-icon.png"
 
 log "检查 API 和 Nginx 反向代理"
-curl --retry 5 --retry-delay 1 --connect-timeout 3 --max-time 10 -fsS \
-  "${BASE_URL%/}/api/v1/auth/csrf/" >/dev/null || fail "API 健康检查失败：${BASE_URL%/}"
-curl --retry 5 --retry-delay 1 --connect-timeout 3 --max-time 10 -fsS \
-  "${BASE_URL%/}/" >/dev/null || fail "前端静态资源健康检查失败：${BASE_URL%/}"
-curl --retry 5 --retry-delay 1 --connect-timeout 3 --max-time 10 -fsS \
-  "${BASE_URL%/}/assets" >/dev/null || fail "前端路由刷新检查失败：${BASE_URL%/}/assets"
+curl_options=(--retry 5 --retry-delay 1 --connect-timeout 3 --max-time 10 -fsS)
+ca_file="${TLS_CA_FILE:-$(env_value TLS_CA_FILE)}"
+if [[ -n "$ca_file" ]]; then
+  curl_options+=(--cacert "$ca_file")
+fi
+for probe_path in /api/v1/auth/csrf/ / /assets; do
+  http_status="$(curl "${curl_options[@]}" -o /dev/null -w '%{http_code}' "${BASE_URL%/}$probe_path")" ||
+    fail "入口健康检查失败：$probe_path"
+  [[ "$http_status" == 200 ]] || fail "入口健康检查要求 HTTP 200：$probe_path"
+done
 
 log "上线验收通过"
 echo "应用目录：$APP_DIR"

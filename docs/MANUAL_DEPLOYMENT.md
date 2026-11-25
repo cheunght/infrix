@@ -143,13 +143,23 @@ reference layout is:
 The frontend build directory and dependency directory are generated on the
 deployment host and do not need to be supplied with the source package.
 
+Keep application code, the virtual environment, and static assets root-owned
+without group or other write permission. Give the service account write access
+to `/opt/infrix/var` (set `INFRIX_MEDIA_ROOT=/opt/infrix/var/media`), the
+configured backup directory, and the maintenance directory. A custom media path
+needs a dedicated writable parent, also listed under `ReadWritePaths`, to allow
+atomic media replacement.
+
 ## 6. Configure the production environment
 
 Use one production environment file for the application process. The reference
 file is `/etc/infrix/infrix.env`; a different path is valid when the process
-supervisor and `INFIX_ENV_FILE` usage are configured consistently. Use the
+supervisor and `INFRIX_ENV_FILE` usage are configured consistently. Use the
 repository's [`deploy/infrix.env.example`](../deploy/infrix.env.example) as the
-field reference instead of maintaining a second configuration sample here.
+field reference. Use literal, single-line `KEY=value` assignments and load them
+through `backend/run.sh` for management commands. With a custom file, set
+`INFRIX_ENV_FILE` for that command and `ENV_FILE` when invoking
+`deploy/verify-release.sh`.
 
 Production rejects short or placeholder secrets, wildcard hosts, non-HTTPS
 CSRF origins, insecure cookies, invalid proxy settings, and incomplete MySQL
@@ -235,9 +245,9 @@ Run the application migrations and initialization:
 
 ```bash
 cd /opt/infrix/backend
-/opt/infrix/backend/.venv/bin/python manage.py migrate --noinput
-/opt/infrix/backend/.venv/bin/python manage.py initialize_system_data
-/opt/infrix/backend/.venv/bin/python manage.py collectstatic --noinput --clear
+sudo -u infrix /opt/infrix/backend/run.sh migrate --noinput
+sudo -u infrix /opt/infrix/backend/run.sh initialize_system_data
+/opt/infrix/backend/run.sh collectstatic --noinput --clear
 ```
 
 ## 9. Application server and process supervision
@@ -271,11 +281,17 @@ User=infrix
 Group=infrix
 WorkingDirectory=/opt/infrix/backend
 EnvironmentFile=/etc/infrix/infrix.env
-ExecStart=/opt/infrix/backend/.venv/bin/gunicorn config.wsgi:application --bind 127.0.0.1:8001 --workers 3 --timeout 120
+ExecStart=/opt/infrix/backend/.venv/bin/gunicorn config.wsgi:application --bind 127.0.0.1:8001 --workers 3 --timeout 120 --graceful-timeout 75
+TimeoutStopSec=90
 Restart=always
 RestartSec=5
 PrivateTmp=true
 NoNewPrivileges=true
+ProtectSystem=strict
+ReadWritePaths=/opt/infrix/var /var/lib/infrix/backups /var/lib/infrix/maintenance
+CapabilityBoundingSet=
+UMask=0027
+Environment=PYTHONDONTWRITEBYTECODE=1
 
 [Install]
 WantedBy=multi-user.target
@@ -309,6 +325,11 @@ EnvironmentFile=/etc/infrix/infrix.env
 ExecStart=/opt/infrix/backend/.venv/bin/python manage.py send_notification_digest
 PrivateTmp=true
 NoNewPrivileges=true
+ProtectSystem=strict
+ReadWritePaths=/opt/infrix/var /var/lib/infrix/backups /var/lib/infrix/maintenance
+CapabilityBoundingSet=
+UMask=0027
+Environment=PYTHONDONTWRITEBYTECODE=1
 ```
 
 Schedule it with a systemd timer at the organization's preferred daily time.
@@ -340,7 +361,7 @@ sudo systemctl status infrix-notification-digest.timer --no-pager
 Run the command manually when needed:
 
 ```bash
-sudo -u infrix /opt/infrix/backend/.venv/bin/python /opt/infrix/backend/manage.py send_notification_digest
+sudo -u infrix /opt/infrix/backend/run.sh send_notification_digest
 ```
 
 ### Process and database connection settings
@@ -368,6 +389,7 @@ A reference Nginx routing layout is:
 ```nginx
 location /api/ {
     proxy_pass http://127.0.0.1:8001;
+    proxy_read_timeout 135s;
     proxy_set_header Host $host;
     proxy_set_header X-Real-IP $remote_addr;
     proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
@@ -376,7 +398,10 @@ location /api/ {
 
 location /admin/ {
     proxy_pass http://127.0.0.1:8001;
+    proxy_read_timeout 135s;
     proxy_set_header Host $host;
+    proxy_set_header X-Real-IP $remote_addr;
+    proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
     proxy_set_header X-Forwarded-Proto $http_x_forwarded_proto;
 }
 
@@ -391,7 +416,9 @@ location / {
 
 Production traffic must use HTTPS. When an external gateway terminates TLS,
 it must overwrite `X-Forwarded-Proto` with one value and only the trusted
-gateway may reach the internal Nginx listener. Set `DJANGO_HTTPS_MODE=proxy`.
+gateway may reach the internal Nginx listener. The gateway must overwrite
+client-supplied forwarding headers. Add its verified source IP to
+`DJANGO_TRUSTED_PROXY_IPS` if Django should resolve the original client address. Set `DJANGO_HTTPS_MODE=proxy`.
 
 If Nginx terminates TLS directly, configure the certificate and secure-request
 headers in Nginx and ensure Django receives the correct secure-request state.
@@ -441,7 +468,7 @@ Complete the applicable checks before making the application available:
 - Login, administration, API routing, and browser refreshes work.
 - Firewall, TLS gateway, certificate, and trusted-header rules are correct.
 
-When using the supplied systemd/Nginx layout, run the full read-only acceptance
+When using the supplied systemd/Nginx layout, run the deployment acceptance
 check as well:
 
 ```bash
@@ -476,9 +503,9 @@ Run the read-only preflight or the same core service from a shell with the
 production environment loaded:
 
 ```bash
-sudo -u infrix bash -c 'set -a; . /etc/infrix/infrix.env; set +a; cd /opt/infrix/backend; exec .venv/bin/python manage.py check_backup --json'
-sudo -u infrix bash -c 'set -a; . /etc/infrix/infrix.env; set +a; cd /opt/infrix/backend; exec .venv/bin/python manage.py create_backup'
-sudo -u infrix bash -c 'set -a; . /etc/infrix/infrix.env; set +a; cd /opt/infrix/backend; exec .venv/bin/python manage.py restore_backup infrix-backup-YYYYMMDD-HHMMSS.tar.gz --confirm-restore "RESTORE INFRIX"'
+sudo -u infrix /opt/infrix/backend/run.sh check_backup --json
+sudo -u infrix /opt/infrix/backend/run.sh create_backup
+sudo -u infrix /opt/infrix/backend/run.sh restore_backup infrix-backup-YYYYMMDD-HHMMSS.tar.gz --confirm-restore "RESTORE INFRIX"
 ```
 
 Built-in scheduling and retention are not implemented. If the organization
@@ -519,7 +546,7 @@ indexes, then run:
 
 ```bash
 cd /opt/infrix/backend
-/opt/infrix/backend/.venv/bin/python manage.py migrate --noinput
+sudo -u infrix /opt/infrix/backend/run.sh migrate --noinput
 /opt/infrix/backend/.venv/bin/python manage.py showmigrations assets
 ```
 

@@ -14,6 +14,7 @@ const stage = computed(() => {
   if (value === "draining") return t("settings.backupOperationDraining");
   if (value === "restoring_database") return t("settings.backupOperationDatabase");
   if (value === "restoring_media") return t("settings.backupOperationMedia");
+  if (value === "updating_audit_timeline_schema") return t("settings.backupOperationTimeline");
   if (value === "verifying_restored_media") return t("settings.backupOperationVerifying");
   return t("settings.backupOperationRunning");
 });

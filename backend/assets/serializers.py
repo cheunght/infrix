@@ -280,6 +280,10 @@ class TwoFactorCodeSerializer(serializers.Serializer):
     code = serializers.RegexField(regex=r"^\d{6}$", max_length=6, min_length=6)
 
 
+class TwoFactorDisableSerializer(TwoFactorCodeSerializer):
+    password = serializers.CharField(write_only=True, trim_whitespace=False)
+
+
 class BackupConfirmationSerializer(serializers.Serializer):
     confirmation = serializers.CharField(required=True, trim_whitespace=False)
 
@@ -729,16 +733,10 @@ class AssetBulkEditSerializer(serializers.Serializer):
                 values = raw_change.get("values", [])
                 if not isinstance(values, list):
                     raise serializers.ValidationError({"tags.values": "必须是数组"})
-                if any(isinstance(item, bool) for item in values):
-                    raise serializers.ValidationError({"tags.values": "标签 ID 必须是正整数"})
-                try:
-                    duplicate_values = len(values) != len(set(values))
-                except TypeError as exc:
-                    raise serializers.ValidationError({"tags.values": "标签 ID 必须是正整数"}) from exc
-                if duplicate_values:
-                    raise serializers.ValidationError({"tags.values": "标签 ID 不能重复"})
                 change["mode"] = mode
-                change["values"] = [self._positive_int(item, "tags.values") for item in values]
+                change["values"] = list(dict.fromkeys(
+                    self._positive_int(item, "tags.values") for item in values
+                ))
             else:
                 action = raw_change.get("action")
                 if action not in {"set", "clear"}:
@@ -1456,7 +1454,7 @@ class SparePartSerializer(ResourceRevisionSerializerMixin, serializers.ModelSeri
         total_quantity = getattr(obj, "total_quantity", None)
         if total_quantity is None:
             total_quantity = obj.stocks.aggregate(total=Sum("quantity"))["total"] or 0
-        return total_quantity <= obj.safety_stock
+        return 0 < obj.safety_stock and total_quantity < obj.safety_stock
 
     def get_has_stock_movements(self, obj) -> bool | None:
         from .data_scope import scope_for
@@ -2946,9 +2944,29 @@ class InventoryTaskSerializer(ResourceRevisionSerializerMixin, serializers.Model
         return obj.inspector.get_full_name() or obj.inspector.username
 
     def get_can_delete(self, obj) -> bool:
+        if hasattr(obj, "summary_total"):
+            return obj.status == "in_progress" and obj.summary_pending == obj.summary_total and not obj.has_inventory_resolution
         return inventory_task_can_delete(obj)
 
     def get_summary(self, obj) -> dict[str, Any]:
+        if hasattr(obj, "summary_total"):
+            total = obj.summary_total
+            checked = total - obj.summary_pending
+            return {
+                "total": total,
+                "checked": checked,
+                "pending": obj.summary_pending,
+                "normal": obj.summary_normal,
+                "exceptions": checked - obj.summary_normal,
+                "location_mismatch": obj.summary_location_mismatch,
+                "not_found": obj.summary_not_found,
+                "info_mismatch": obj.summary_info_mismatch,
+                "other": obj.summary_other,
+                "resolution_pending": obj.summary_resolution_pending,
+                "resolution_resolved": obj.summary_resolution_resolved,
+                "completion_rate": round(checked / total * 100, 1) if total else 0,
+            }
+
         prefetched = getattr(obj, "_prefetched_objects_cache", {}).get("items")
         if prefetched is not None:
             counts = Counter(item.status for item in prefetched)

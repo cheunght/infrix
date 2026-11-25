@@ -93,8 +93,6 @@ def confirm_inventory_item_normal(
 ):
     """Record a normal result from the immutable task snapshot."""
     _require_inventory_manager(actor)
-    from .audit import write_audit_log
-    from .serializers import InventoryItemSerializer
 
     admission = InventoryItem.objects.filter(pk=item_id).values("task_id", "asset_id", "system_snapshot").first()
     if admission is None:
@@ -105,6 +103,16 @@ def confirm_inventory_item_normal(
     task = InventoryTask.objects.select_for_update().get(pk=admission["task_id"])
     require_object(task, user=actor)
     item = InventoryItem.objects.select_for_update().get(pk=item_id)
+    return _confirm_inventory_item_normal_locked(
+        task, item, actor=actor, request=request, require_pending=require_pending,
+        source=source, notes=notes,
+    )
+
+
+def _confirm_inventory_item_normal_locked(task, item, *, actor, request, require_pending=False, source, notes):
+    from .audit import write_audit_log
+    from .serializers import InventoryItemSerializer
+
     if task.status != "in_progress":
         raise DRFValidationError({"detail": "已完成的盘点任务不能批量标记为正常"})
     if require_pending and item.status != "pending":
@@ -563,11 +571,15 @@ def record_inventory_observation(*, item_id, validated_data, actor, request):
     admission = InventoryItem.objects.select_related("actual_rack", "actual_data_center_ref").get(pk=item_id)
     # Lock physical parents before asset -> task -> item; joined FOR UPDATE
     # would implicitly lock the asset before its center and invert this.
-    observed_rack = validated_data.get("actual_rack", admission.actual_rack)
-    observed_center = validated_data.get("actual_data_center_ref", admission.actual_data_center_ref)
-    lock_asset_location(asset_id=admission.asset_id,
-        target_rack_id=observed_rack.pk if observed_rack else None,
-        target_data_center_id=observed_center.pk if observed_center else None)
+    if validated_data.get("status", admission.status) == "normal":
+        snapshot = admission.system_snapshot or {}
+        rack_id, center_id = snapshot.get("rack_id"), snapshot.get("data_center_id")
+    else:
+        observed_rack = validated_data.get("actual_rack", admission.actual_rack)
+        observed_center = validated_data.get("actual_data_center_ref", admission.actual_data_center_ref)
+        rack_id = observed_rack.pk if observed_rack else None
+        center_id = observed_center.pk if observed_center else None
+    lock_asset_location(asset_id=admission.asset_id, target_rack_id=rack_id, target_data_center_id=center_id)
     active_asset_for_update(admission.asset_id)
     task = InventoryTask.objects.select_for_update().get(pk=admission.task_id)
     require_object(task, user=actor)
@@ -583,14 +595,10 @@ def record_inventory_observation(*, item_id, validated_data, actor, request):
     if task.status == "completed":
         raise DRFValidationError({"detail": "已完成的盘点任务已锁定，不能修改"})
     if locked_serializer.validated_data.get("status", item.status) == "normal":
-        updated = confirm_inventory_item_normal(
-            item_id=item.pk,
-            actor=actor,
-            request=request,
-            notes=locked_serializer.validated_data.get("notes"),
-            source="inventory_result",
+        return _confirm_inventory_item_normal_locked(
+            task, item, actor=actor, request=request,
+            notes=locked_serializer.validated_data.get("notes"), source="inventory_result",
         )
-        return updated
     before_result = (
         item.status,
         item.actual_placement,

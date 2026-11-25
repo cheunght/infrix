@@ -94,6 +94,11 @@ const pageComponents: Partial<Record<Page, () => Promise<Component>>> = {
   ]),
   racks: lazyPage(() => import("./components/RackViewPage.vue"), [
     "ElCard",
+    "ElCollapse",
+    "ElCollapseItem",
+    "ElTimeline",
+    "ElTimelineItem",
+    "ElUpload",
     "ElDescriptions",
     "ElDescriptionsItem",
     "ElDialog",

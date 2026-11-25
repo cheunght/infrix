@@ -1,3 +1,4 @@
+import { revisionHeaders } from "../revision";
 import { useAssetLifecycle } from "./useAssetLifecycle";
 import { copyImportReviewErrors, downloadImportReviewErrors } from "../import-review";
 import { computed, getCurrentScope, onScopeDispose, reactive, ref, watch, type Ref } from "vue";
@@ -611,6 +612,15 @@ export function useAssets(deps: AssetsDeps) {
   const assetFormSaving = ref(false);
   const assetFormFieldErrors = ref<Record<string, string>>({});
   const assetFormRequestId = ref(0);
+  let assetEditorController: AbortController | null = null;
+  watch(showAssetModal, (visible) => {
+    if (visible) return;
+    if (assetEditorController || assetFormLoading.value) assetFormRequestId.value++;
+    assetEditorController?.abort();
+    assetEditorController = null;
+    assetFormLoading.value = false;
+  }, { flush: "sync" });
+  if (getCurrentScope()) onScopeDispose(() => assetEditorController?.abort());
   const depreciationStartTouched = ref(false);
   const assetCustomSchemaLoading = ref(false);
   const assetCustomSchemaError = ref("");
@@ -1723,20 +1733,28 @@ export function useAssets(deps: AssetsDeps) {
   async function openAssetEditor(assetId: number, clone = false) {
     if (!deps.can("assets.manage")) return;
     const requestId = ++assetFormRequestId.value;
+    assetEditorController?.abort();
+    const controller = new AbortController();
+    assetEditorController = controller;
     assetFormTarget.value = { assetId, clone, isNew: false };
     assetFormLoadError.value = "";
     assetFormFieldErrors.value = {};
     assetFormLoading.value = true;
     assetModalMode.value = clone ? "clone" : "edit";
-    editingAsset.value = clone ? null : ({ id: assetId } as Asset);
+    editingAsset.value = null;
     assetForm.value = emptyAssetForm();
     depreciationStartTouched.value = false;
     assetCustomFieldUserEditedKeys.clear();
     resetAssetCustomSchemaState();
     showAssetModal.value = true;
     try {
-      const detail = await deps.request<AssetDetail>(`/assets/${assetId}/`);
-      if (!detail || requestId !== assetFormRequestId.value) return;
+      const detail = await deps.request<AssetDetail>(`/assets/${assetId}/`, { signal: controller.signal });
+      if (requestId !== assetFormRequestId.value || controller.signal.aborted) return;
+      if (!detail) {
+        assetFormLoadError.value = tr("asset.formLoadFailed");
+        return;
+      }
+      if (!clone) revisionHeaders(detail);
       if (detail.asset_model && !assetModels.value.some((item) => item.id === detail.asset_model?.id)) {
         assetModels.value = [...assetModels.value, detail.asset_model];
       }
@@ -1831,16 +1849,19 @@ export function useAssets(deps: AssetsDeps) {
         assetForm.value.oob_ip = "";
       }
     } catch (error) {
-      if (requestId === assetFormRequestId.value && !isAbortError(error)) {
+      if (requestId === assetFormRequestId.value && !controller.signal.aborted) {
         assetFormLoadError.value = errorMessage(error, tr("asset.formLoadFailed"));
       }
     } finally {
+      if (assetEditorController === controller) assetEditorController = null;
       if (requestId === assetFormRequestId.value) assetFormLoading.value = false;
     }
   }
 
   async function openNewAssetModal() {
     if (!deps.can("assets.manage")) return;
+    assetEditorController?.abort();
+    assetEditorController = null;
     const requestId = ++assetFormRequestId.value;
     assetFormTarget.value = { assetId: null, clone: false, isNew: true };
     assetFormLoadError.value = "";
@@ -1963,7 +1984,9 @@ export function useAssets(deps: AssetsDeps) {
 
   async function saveAsset(discardIncompatibleCustomValues = false) {
     if (!deps.can("assets.manage")) return;
-    if (assetFormSaving.value || assetCustomSchemaLoading.value || assetCustomSchemaError.value) return;
+    if (assetFormSaving.value || assetFormLoading.value || assetFormLoadError.value ||
+        assetCustomSchemaLoading.value || assetCustomSchemaError.value) return;
+    if (assetModalMode.value === "edit" && !editingAsset.value) return;
     const editor = assetFormRequestId.value;
     const editingAssetId = editingAsset.value?.id || null;
     assetFormFieldErrors.value = {};
@@ -2063,10 +2086,7 @@ export function useAssets(deps: AssetsDeps) {
       const path = editingAsset.value ? `/assets/${editingAsset.value.id}/` : "/assets/";
       await deps.request(path, {
         method,
-        headers: {
-          "Content-Type": "application/json",
-          ...(editingAsset.value ? { "If-Match": `"${editingAsset.value.revision}"` } : {}),
-        },
+        headers: revisionHeaders(editingAsset.value),
         body: JSON.stringify({
           ...asset,
           ...depreciation,

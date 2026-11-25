@@ -47,6 +47,7 @@ const setupCode = ref("");
 const setupBusy = ref(false);
 const disableBusy = ref(false);
 const disableCode = ref("");
+const disablePassword = ref("");
 const twoFactorExpanded = ref(false);
 const tokens = ref<ApiToken[]>([]);
 const tokenLoading = ref(false);
@@ -64,6 +65,7 @@ function errorText(error: unknown, fallback: string): string {
   const normalized = normalizeApiError(error);
   const localizedErrorKeys: Record<string, string> = {
     invalid_two_factor_code: "security.twoFactorInvalidCode",
+    invalid_current_password: "security.invalidCurrentPassword",
     two_factor_unavailable: "security.twoFactorUnavailable",
     two_factor_not_configured: "security.twoFactorNotConfigured",
     two_factor_already_enabled: "security.twoFactorAlreadyEnabled",
@@ -112,6 +114,7 @@ function resetSetup() {
   setupQr.value = "";
   setupCode.value = "";
   disableCode.value = "";
+  disablePassword.value = "";
 }
 
 async function startTwoFactorSetup() {
@@ -159,13 +162,13 @@ async function confirmTwoFactor() {
 }
 
 async function disableTwoFactor() {
-  if (disableBusy.value || disableCode.value.trim().length !== 6) return;
+  if (disableBusy.value || !disablePassword.value || disableCode.value.trim().length !== 6) return;
   disableBusy.value = true;
   try {
     const response = await props.request<TwoFactorStatus>("/auth/2fa/disable/", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ code: disableCode.value.trim() }),
+      body: JSON.stringify({ code: disableCode.value.trim(), password: disablePassword.value }),
     });
     status.value = response;
     resetSetup();
@@ -351,6 +354,13 @@ watch(() => props.active, (active) => {
             <p class="account-security-help">{{ t('security.twoFactorDisableHelp') }}</p>
             <div class="account-security-inline-form account-security-inline-form--confirm">
               <el-input
+                v-model="disablePassword"
+                type="password"
+                autocomplete="current-password"
+                :placeholder="t('security.currentPassword')"
+                :aria-label="t('security.currentPassword')"
+              />
+              <el-input
                 v-model="disableCode"
                 class="account-security-code"
                 maxlength="6"
@@ -360,7 +370,7 @@ watch(() => props.active, (active) => {
                 :aria-label="t('auth.twoFactorCode')"
               />
               <el-button :disabled="disableBusy" @click="resetSetup">{{ t('common.cancel') }}</el-button>
-              <el-button type="danger" plain :loading="disableBusy" :disabled="disableCode.trim().length !== 6" @click="disableTwoFactor">
+              <el-button type="danger" plain :loading="disableBusy" :disabled="!disablePassword || disableCode.trim().length !== 6" @click="disableTwoFactor">
                 {{ t('security.disableTwoFactor') }}
               </el-button>
             </div>

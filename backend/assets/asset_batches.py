@@ -60,13 +60,14 @@ def _apply_bulk_edit(request, instance, changes, batch_operation_id):
     tag_change = changes.get("tags", {})
     if tag_change.get("enabled"):
         changed_fields.append("tags")
-        requested_tag_ids = tag_change.get("values", [])
+        requested_tag_ids = set(tag_change.get("values", []))
         requested_tags = list(Tag.objects.filter(pk__in=requested_tag_ids))
         if len(requested_tags) != len(requested_tag_ids):
             raise DRFValidationError({"tags": "存在不存在的标签"})
-        inactive_new = [tag.name for tag in requested_tags if not tag.is_active]
         existing_tag_ids = set(AssetTag.objects.filter(asset_id=instance.pk).values_list("tag_id", flat=True))
-        if inactive_new and any(tag_id not in existing_tag_ids for tag_id in requested_tag_ids):
+        if tag_change["mode"] != "remove" and any(
+            not tag.is_active and tag.pk not in existing_tag_ids for tag in requested_tags
+        ):
             raise DRFValidationError({"tags": "停用的标签不能用于资产"})
         requested_by_id = {tag.pk: tag for tag in requested_tags}
         if tag_change["mode"] == "add":

@@ -131,11 +131,9 @@ def register_two_factor_failure(user_id, client_ip: str, *, now=None) -> tuple[b
     return False, 0
 
 
-def clear_two_factor_throttle(user_id, client_ip: str) -> None:
-    with transaction.atomic():
-        for scope, key in _two_factor_keys(user_id, client_ip):
-            AuthThrottleState.objects.select_for_update().filter(scope=scope, key=key).update(
-                failure_count=0,
-                first_failed_at=None,
-                locked_until=None,
-            )
+def clear_two_factor_throttle(user_id) -> None:
+    AuthThrottleState.objects.filter(scope="account", key=f"two-factor-account:{user_id}").update(
+        failure_count=0,
+        first_failed_at=None,
+        locked_until=None,
+    )

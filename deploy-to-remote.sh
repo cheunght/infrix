@@ -8,12 +8,12 @@ usage() {
 
 示例：
   ./deploy-to-remote.sh root@rocky-host
-  ./deploy-to-remote.sh deploy@server-host /tmp/infrix-src
+  ./deploy-to-remote.sh deploy@server-host /var/tmp
 
 说明：
   ssh-target       SSH 目标，例如 user@hostname 或 ~/.ssh/config 中的主机别名
-  remote-source-dir 远程源码目录，必须是 SSH 用户可写目录；默认使用
-                     INFRIX_REMOTE_SRC 或 /tmp/infrix-src
+  remote-source-dir 远程暂存父目录，必须是 SSH 用户可写目录；默认使用
+                     INFRIX_REMOTE_SRC 或 /var/tmp。每次部署使用独立子目录。
 EOF
 }
 
@@ -41,17 +41,10 @@ if [[ -z "$HOST" || "$HOST" == -* ]]; then
   exit 2
 fi
 
-if [[ $# -eq 2 ]]; then
-  REMOTE_SRC="$2"
-else
-  # rsync connects as the SSH user, while deploy/install.sh escalates only
-  # after the source tree has been uploaded.  Keep the staging directory in a
-  # user-writable location so a normal sudo-capable deployment user does not
-  # need write permission on /opt.
-  REMOTE_SRC="${INFRIX_REMOTE_SRC:-/tmp/infrix-src}"
-fi
-if [[ ! "$REMOTE_SRC" =~ ^/[A-Za-z0-9._/-]+$ || "$REMOTE_SRC" == / || "$REMOTE_SRC" == /tmp || "$REMOTE_SRC" == /opt || "$REMOTE_SRC" == /home || "$REMOTE_SRC" == /root || "$REMOTE_SRC" == *'/../'* || "$REMOTE_SRC" == */.. ]]; then
-  echo "错误：remote-source-dir 必须是专用源码目录的绝对路径，不支持空格。" >&2
+REMOTE_PARENT="${2:-${INFRIX_REMOTE_SRC:-/var/tmp}}"
+if [[ ! "$REMOTE_PARENT" =~ ^/[A-Za-z0-9._/-]+$ || "$REMOTE_PARENT" == / ||
+      "$REMOTE_PARENT" == *'/../'* || "$REMOTE_PARENT" == */.. ]]; then
+  echo "错误：remote-source-dir 必须是暂存父目录的绝对路径，不支持空格。" >&2
   exit 2
 fi
 
@@ -67,7 +60,7 @@ shell_quote() {
   printf "'%s'" "$value"
 }
 
-REMOTE_SRC_QUOTED="$(shell_quote "$REMOTE_SRC")"
+REMOTE_PARENT_QUOTED="$(shell_quote "$REMOTE_PARENT")"
 PROJECT_ROOT="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)"
 DIST_FILTER=--exclude=frontend/dist/
 if [[ -f "$PROJECT_ROOT/frontend-release.json" ]]; then
@@ -88,13 +81,47 @@ fi
 ssh "${SSH_TTY[@]}" "$HOST" "$SUDO_COMMAND true"
 ssh "${SSH_TTY[@]}" "$HOST" "command -v rsync >/dev/null || $SUDO_COMMAND dnf install -y rsync"
 
+REMOTE_SRC="$(ssh -T "$HOST" "bash -s -- $REMOTE_PARENT_QUOTED" <<'REMOTE_STAGE'
+set -euo pipefail
+umask 077
+mkdir -p -- "$1"
+parent="$(realpath -e -- "$1")"
+directory="$parent"
+while :; do
+  read -r owner mode < <(stat -c '%u %a' -- "$directory")
+  if [[ "$owner" != 0 && "$owner" != "$UID" ]] ||
+     (( (8#$mode & 0022) != 0 && (8#$mode & 01000) == 0 )); then
+    echo '暂存父目录及其上级必须由 root 或部署账号控制。' >&2
+    exit 1
+  fi
+  [[ "$directory" == / ]] && break
+  directory="$(dirname -- "$directory")"
+done
+mktemp -d -- "$parent/infrix-src.XXXXXXXX"
+REMOTE_STAGE
+)"
+if [[ ! "$REMOTE_SRC" =~ ^/[A-Za-z0-9._/-]+/infrix-src\.[A-Za-z0-9]+$ ]]; then
+  echo "错误：未能创建远程独立暂存目录。" >&2
+  exit 1
+fi
+REMOTE_SRC_QUOTED="$(shell_quote "$REMOTE_SRC")"
+cleanup_remote_stage() {
+  ssh -T "$HOST" "rm -rf -- $REMOTE_SRC_QUOTED" || true
+}
+trap cleanup_remote_stage EXIT
+
 # macOS 自带 rsync 2.6.9 不支持 --info=progress2；--progress 同时兼容
 # macOS 和 Rocky 9，仍会显示文件传输进度。
 rsync -az --delete --progress \
   --exclude='.git/' \
   --exclude='.venv/' \
   --exclude='backend/.venv/' \
-  --exclude='backend/db.sqlite3' \
+  --exclude='backend/db.sqlite3*' \
+  --exclude='/var/' \
+  --exclude='backend/media' \
+  --exclude='backend/backups' \
+  --exclude='backend/.maintenance' \
+  --exclude='/ITAM-private/' \
   --exclude='backend/staticfiles/' \
   --exclude='frontend/node_modules/' \
   "$DIST_FILTER" \

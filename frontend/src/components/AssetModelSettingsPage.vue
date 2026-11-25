@@ -145,7 +145,7 @@ const activeModelFilterCount = computed(() =>
   Number(Boolean(active.value)),
 );
 
-const canManage = computed(() => c.canUseSystemSettings("settings.manage"));
+const canManage = computed(() => c.canManageReferences());
 const canExport = computed(() => c.can("settings.manage"));
 const formRules = computed<FormRules>(() => ({
   name: [{ required: true, whitespace: true, message: t("assetModel.nameRequired"), trigger: "blur" }],

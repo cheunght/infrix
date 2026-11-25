@@ -1455,11 +1455,27 @@ class AuditLog(Timestamped):
     resource_type = models.CharField(max_length=80)
     resource_id = models.CharField(max_length=80)
     payload = models.JSONField(default=dict, blank=True)
+    timeline_asset_id = models.PositiveBigIntegerField(null=True, editable=False)
+
+    def save(self, *args, **kwargs):
+        if self._state.adding:
+            from django.apps import apps
+            from .audit_identity import LEGACY_ASSET_RELATIONS, audit_resource_pk, recorded_asset_id
+
+            self.timeline_asset_id = recorded_asset_id(self.resource_type, self.resource_id, self.payload)
+            relation = LEGACY_ASSET_RELATIONS.get(self.resource_type)
+            if self.timeline_asset_id is None and relation:
+                pk = audit_resource_pk(self.resource_id)
+                if pk is not None:
+                    model, path = relation
+                    self.timeline_asset_id = apps.get_model("assets", model).objects.filter(pk=pk).values_list(path, flat=True).first()
+        super().save(*args, **kwargs)
 
     class Meta:
         indexes = [
             models.Index(fields=["-created_at", "-id"], name="assets_audit_recent_idx"),
             models.Index(fields=["resource_type", "resource_id", "-created_at", "-id"], name="assets_audit_resource_idx"),
+            models.Index(fields=["timeline_asset_id", "-created_at", "-id"], name="assets_audit_timeline_idx"),
         ]
 
 

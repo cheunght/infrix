@@ -634,14 +634,15 @@ def change_asset_placement(*, asset_id, rack_id, start_u=None, end_u=None, note=
                 current.rack_id == rack_id and current.start_u == start_u and current.end_u == end_u)
         if same and reservation_id is None:
             return asset
+        reservation = None
         if reservation_id is not None:
             from .rack_reservations import consume_units
-            consume_units(rack_id=rack_id, reservation_id=reservation_id, asset_id=asset.pk,
+            reservation = consume_units(rack_id=rack_id, reservation_id=reservation_id, asset_id=asset.pk,
                           start_u=start_u, end_u=end_u, request=request)
         if rack_id is None:
             unrack_asset(asset_id=asset.pk)
         else:
-            place_asset(asset_id=asset.pk, rack_id=rack_id, start_u=start_u, end_u=end_u)
+            place_asset(asset_id=asset.pk, rack_id=rack_id, start_u=start_u, end_u=end_u, consumed_reservation=reservation)
         asset.refresh_from_db()
         if asset.revision == previous_revision:
             asset.save(update_fields=["updated_at"])

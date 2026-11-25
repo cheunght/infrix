@@ -19,7 +19,7 @@ from drf_spectacular.types import OpenApiTypes
 from drf_spectacular.utils import OpenApiParameter, extend_schema
 
 from .data_scope import global_endpoint
-from .permissions import CanManageSystemSettings
+from .permissions import CanConfigureSystemSettings
 from .system_settings import apply_branding_patch, read_system_settings
 
 
@@ -146,7 +146,7 @@ class BrandingUpdateSerializer(serializers.Serializer):
         required=True, description="品牌设置返回的 revision；与系统设置共享版本，缺少 428，过期 409。")])
 @extend_schema(responses=OpenApiTypes.OBJECT, methods=["GET"])
 @api_view(["GET", "PATCH"])
-@permission_classes([CanManageSystemSettings])
+@permission_classes([CanConfigureSystemSettings])
 @global_endpoint
 def branding_configuration(request):
     if request.method == "GET":

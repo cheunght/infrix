@@ -214,15 +214,23 @@ def active_rack_reservations(rack):
     return list(rack.unit_reservations.filter(status="active"))
 
 
-def rack_position_ranges(allocations, total_u, *, exclude_asset_id=None, reservations=()):
+def rack_position_ranges(allocations, total_u, *, exclude_asset_id=None, reservations=(), replace_reservation=None):
     """One capacity rule for presentation, preview and locked placement writes."""
-    devices = [row for row in allocations if row.asset_id != exclude_asset_id]
-    holds = [row for row in reservations if row.status == "active"]
+    devices = [row for row in allocations if exclude_asset_id is None or row.asset_id != exclude_asset_id]
+    holds = [row for row in reservations if row.status == "active" and (
+        replace_reservation is None or row.pk != replace_reservation.pk
+    )]
     rows = sorted(devices + holds, key=lambda row: (row.start_u, row.end_u))
     occupied = [{"start_u": row.start_u, "end_u": row.end_u} for row in devices]
     reserved = [{"start_u": row.start_u, "end_u": row.end_u} for row in holds]
+    replaced_unit = (
+        replace_reservation.start_u
+        if replace_reservation is not None and replace_reservation.start_u == replace_reservation.end_u
+        else None
+    )
     gaps = [{"start_u": left.end_u + 1, "end_u": left.end_u + 1}
-            for left, right in zip(rows, rows[1:]) if right.start_u - left.end_u == 2]
+            for left, right in zip(rows, rows[1:])
+            if right.start_u - left.end_u == 2 and left.end_u + 1 != replaced_unit]
     available, cursor = [], 1
     for span in sorted(occupied + reserved + gaps, key=lambda span: span["start_u"]):
         if cursor < span["start_u"]:
@@ -233,8 +241,52 @@ def rack_position_ranges(allocations, total_u, *, exclude_asset_id=None, reserva
     return {"occupied_ranges": occupied, "reserved_ranges": reserved, "gap_ranges": gaps, "available_ranges": available}
 
 
+def validate_rack_placement(rack, start_u, end_u, *, allocations, holds, asset_id=None, replaced_reservation=None, unchanged=False):
+    if (
+        not rack.is_active
+        or not rack.room.is_active
+        or not rack.room.data_center.is_active
+        or getattr(rack, "status", "in_use") != "in_use"
+    ):
+        raise ValidationError({"rack_id": "预留或停用的机柜不能用于资产"})
+    if start_u < 1 or end_u < 1:
+        raise ValidationError({"rack_start_u": "U 位必须大于等于 1"})
+    if end_u < start_u:
+        raise ValidationError({"rack_start_u": "起始 U 位不能大于结束 U 位"})
+    if end_u > rack.total_u:
+        raise ValidationError({"rack_end_u": f"结束 U 位不能超过机柜容量 U{rack.total_u}"})
+
+    if any(start_u <= hold.end_u and end_u >= hold.start_u for hold in holds):
+        raise ValidationError({"configuration": "所选 U 位无法使用，请检查预留或联系设施管理员"})
+
+    conflict = next((
+        row for row in allocations
+        if (asset_id is None or row.asset_id != asset_id) and start_u <= row.end_u and end_u >= row.start_u
+    ), None)
+    if conflict:
+        from .data_scope import scoped
+        scope = serialization_scope()
+        visible = conflict.asset_id is None or scope is None or scoped(Asset.all_objects.filter(pk=conflict.asset_id)).exists()
+        message = (
+            f"机柜 {rack.code} 的 U{start_u}-U{end_u} 与资产 "
+            f"{conflict.asset.asset_no}（U{conflict.start_u}-U{conflict.end_u}）冲突"
+        ) if visible else "所选 U 位无法使用，请联系设施管理员"
+        raise ValidationError({"configuration": message})
+
+    if unchanged:
+        return
+    ranges = rack_position_ranges(
+        allocations, rack.total_u, exclude_asset_id=asset_id, reservations=holds,
+        replace_reservation=replaced_reservation,
+    )
+    if any(start_u <= gap["end_u"] and end_u >= gap["start_u"] for gap in ranges["gap_ranges"]):
+        scope = serialization_scope()
+        visible = scope is None or scope.full_department_access(center_id=rack.room.data_center_id)
+        raise ValidationError({"rack_start_u": "所选 U 位包含不可用的设备间 1U 间隙" if visible else "所选 U 位无法使用，请联系设施管理员"})
+
+
 @transaction.atomic
-def place_asset(*, asset_id: int, rack_id: int, start_u: int, end_u: int) -> bool:
+def place_asset(*, asset_id: int, rack_id: int, start_u: int, end_u: int, consumed_reservation=None) -> bool:
     """Place an asset in a rack using the canonical placement rules."""
 
     lock_asset_location(asset_id=asset_id, target_rack_id=rack_id)
@@ -255,55 +307,24 @@ def place_asset(*, asset_id: int, rack_id: int, start_u: int, end_u: int) -> boo
             "configuration": "已报废资产不能新增或调整机柜位置，请先保持下架",
         })
 
-    if (
-        not rack.is_active
-        or not rack.room.is_active
-        or not rack.room.data_center.is_active
-        or getattr(rack, "status", "in_use") != "in_use"
-    ):
-        raise ValidationError({"rack_id": "预留或停用的机柜不能用于资产"})
-    if start_u < 1 or end_u < 1:
-        raise ValidationError({"rack_start_u": "U 位必须大于等于 1"})
-    if end_u < start_u:
-        raise ValidationError({"rack_start_u": "起始 U 位不能大于结束 U 位"})
-    if end_u > rack.total_u:
-        raise ValidationError({"rack_end_u": f"结束 U 位不能超过机柜容量 U{rack.total_u}"})
-
-    holds = active_rack_reservations(rack)
-    if any(start_u <= hold.end_u and end_u >= hold.start_u for hold in holds):
-        raise ValidationError({"configuration": "所选 U 位无法使用，请检查预留或联系设施管理员"})
-
-    conflicts = (
-        RackUnitAllocation.objects.select_for_update()
-        .select_related("asset")
-        .filter(
-            rack_id=rack.pk,
-            start_u__lte=end_u,
-            end_u__gte=start_u,
-        )
-        .exclude(asset_id=locked_asset.pk)
-    )
-    conflict = conflicts.order_by("start_u", "id").first()
-    if conflict:
-        from .data_scope import scoped
-        scope = serialization_scope()
-        visible = scope is None or scoped(Asset.all_objects.filter(pk=conflict.asset_id)).exists()
-        message = (
-            f"机柜 {rack.code} 的 U{start_u}-U{end_u} 与资产 "
-            f"{conflict.asset.asset_no}（U{conflict.start_u}-U{conflict.end_u}）冲突"
-        ) if visible else "所选 U 位无法使用，请联系设施管理员"
-        raise ValidationError({"configuration": message})
-
     current = RackUnitAllocation.objects.filter(asset_id=locked_asset.pk).first()
-    if (current and current.rack_id == rack.pk and current.start_u == start_u and current.end_u == end_u
-            and locked_asset.asset_data_center_id == rack.room.data_center_id):
+    unchanged = bool(current and (
+        current.rack_id, current.start_u, current.end_u, locked_asset.asset_data_center_id,
+    ) == (rack.pk, start_u, end_u, rack.room.data_center_id))
+    replaces_hold = consumed_reservation is not None and (
+        consumed_reservation.rack_id, consumed_reservation.consumed_asset_id,
+        consumed_reservation.start_u, consumed_reservation.end_u, consumed_reservation.status,
+    ) == (rack_id, asset_id, start_u, end_u, "consumed")
+    validate_rack_placement(
+        rack, start_u, end_u,
+        allocations=list(rack.allocations.select_related("asset").only(
+            "start_u", "end_u", "asset", "asset__asset_no",
+        ).order_by("start_u", "id")),
+        holds=active_rack_reservations(rack), asset_id=locked_asset.pk, unchanged=unchanged,
+        replaced_reservation=consumed_reservation if replaces_hold else None,
+    )
+    if unchanged:
         return False
-
-    ranges = rack_position_ranges(rack.allocations.all(), rack.total_u, exclude_asset_id=locked_asset.pk, reservations=holds)
-    if any(start_u <= gap["end_u"] and end_u >= gap["start_u"] for gap in ranges["gap_ranges"]):
-        scope = serialization_scope()
-        visible = scope is None or scope.full_department_access(center_id=rack.room.data_center_id)
-        raise ValidationError({"rack_start_u": "所选 U 位包含不可用的设备间 1U 间隙" if visible else "所选 U 位无法使用，请联系设施管理员"})
 
     allocation = (
         RackUnitAllocation.objects.select_for_update()

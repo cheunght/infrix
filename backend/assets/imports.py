@@ -7,15 +7,13 @@ the preview/confirm transaction around that serializer.
 """
 
 from collections import Counter
-from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import date, datetime
 from decimal import Decimal, InvalidOperation
 from io import BytesIO, StringIO
-from xml.etree.ElementTree import ParseError
-from zipfile import BadZipFile
+from xml.etree.ElementTree import ParseError, iterparse
+from zipfile import BadZipFile, ZipFile
 import csv
-import hashlib
 import re
 import time
 
@@ -25,21 +23,29 @@ from django.db import IntegrityError, OperationalError, connection, transaction
 from django.db.models import Q
 from openpyxl import Workbook, load_workbook
 from openpyxl.styles import Alignment, Font, PatternFill
-from openpyxl.utils import get_column_letter
+from openpyxl.utils import coordinate_to_tuple, get_column_letter
+from openpyxl.xml.constants import SHEET_MAIN_NS
 from rest_framework.exceptions import ValidationError as DRFValidationError
 
+from .asset_configuration import (
+    configuration_rack, supporting_configuration, validate_asset_custom_values,
+    validated_network_configuration,
+)
 from .audit import asset_audit_snapshot, write_audit_log
 from .custom_fields import validate_custom_field_value
-from .data_scope import scoped
+from .data_scope import require_asset_boundary, require_center, require_department, scoped
 from .enum_contracts import ASSET_STATUS_LABELS
 from .lifecycle import validate_asset_status_transition
-from .models import Asset, AssetModel, CustomField, CustomFieldSetItem, DataCenter, Department, DeviceType, Manufacturer, Person, Rack, ServerRoom, Tag
+from .models import Asset, AssetModel, CustomField, CustomFieldSetItem, DataCenter, Department, DeviceType, Manufacturer, Person, Rack, RackUnitAllocation, ServerRoom, Tag
+from .physical_location import active_rack_reservations, validate_rack_placement
 from .serializers import AssetWriteSerializer
 from .system_settings import get_runtime_preferences
 
 
 IMPORT_MAX_FILE_SIZE = 10 * 1024 * 1024
 IMPORT_MAX_ROWS = 10000
+IMPORT_MAX_COLUMNS = 200
+IMPORT_MAX_XLSX_EXPANDED_BYTES = 64 * 1024 * 1024
 IMPORT_TEMPLATE_FORMAT = "infrix-asset-import"
 
 IMPORT_COLUMNS = (
@@ -204,24 +210,70 @@ def _rows_from_csv(content):
     return headers, rows
 
 
-def iter_import_worksheet_rows(sheet):
+def load_import_workbook(source):
     try:
-        yield from sheet.iter_rows()
+        with ZipFile(source) as archive:
+            entries = archive.infolist()
+            if len(entries) > 256 or sum(entry.file_size for entry in entries) > IMPORT_MAX_XLSX_EXPANDED_BYTES:
+                raise ImportFileError("Excel 文件解压后过大，请拆分文件后重试")
+        source.seek(0)
+        return load_workbook(source, read_only=True, data_only=False, keep_links=False)
+    except ImportFileError:
+        raise
+    except Exception as exc:  # openpyxl exposes several parser-specific exceptions
+        raise ImportFileError("Excel 文件无法解析，请确认文件为有效的 .xlsx 工作簿") from exc
+
+
+def iter_import_worksheet_rows(sheet, *, max_rows=IMPORT_MAX_ROWS, template_padding=0):
+    # Dimensions are optional and may be inaccurate. Validate the worksheet
+    # coordinates before openpyxl pads gaps into empty rows or columns.
+    row_limit = max_rows + template_padding + 1
+    max_row, max_col = 0, 0
+    row_number, column = 0, 0
+    row_count, cell_count = 0, 0
+    row_tag, cell_tag = f"{{{SHEET_MAIN_NS}}}row", f"{{{SHEET_MAIN_NS}}}c"
+    parents = []
+    try:
+        with sheet._get_source() as source:
+            for event, element in iterparse(source, events=("start", "end")):
+                if event == "end":
+                    parents.pop()
+                    if parents:
+                        parents[-1].remove(element)
+                    element.clear()
+                    continue
+                parents.append(element)
+                if element.tag == row_tag:
+                    row_count += 1
+                    cell_count = 0
+                    row_number = int(element.get("r") or row_number + 1)
+                    column = 0
+                    max_row = max(max_row, row_number)
+                elif element.tag == cell_tag:
+                    cell_count += 1
+                    coordinate = element.get("r")
+                    cell_row, column = coordinate_to_tuple(coordinate) if coordinate else (row_number, column + 1)
+                    max_row, max_col = max(max_row, cell_row), max(max_col, column)
+                if max(row_count, max_row) > row_limit:
+                    raise ImportFileError(
+                        f"单次导入最多支持 {max_rows} 条数据，工作表最多支持 {row_limit} 行（含表头），请缩小范围后重试"
+                    )
+                if max(cell_count, max_col) > IMPORT_MAX_COLUMNS:
+                    raise ImportFileError(f"Excel 工作表最多支持 {IMPORT_MAX_COLUMNS} 列，请缩小范围后重试")
+        if max_row and max_col:
+            yield from sheet.iter_rows(max_row=max_row, max_col=max_col)
     except (ParseError, BadZipFile, EOFError, ValueError, IndexError) as exc:
+        if isinstance(exc, ImportFileError):
+            raise
         raise ImportFileError("Excel 文件无法解析，请确认文件为有效的 .xlsx 工作簿") from exc
 
 
 def _rows_from_xlsx(content):
-    try:
-        workbook = load_workbook(filename=BytesIO(content), read_only=True, data_only=False, keep_links=False)
-    except Exception as exc:  # openpyxl exposes several parser-specific exceptions
-        raise ImportFileError("Excel 文件无法解析，请确认文件为有效的 .xlsx 工作簿") from exc
+    workbook = load_import_workbook(BytesIO(content))
     try:
         if not workbook.worksheets:
             raise ImportFileError("Excel 文件没有可读取的工作表")
         sheet = workbook.worksheets[0]
-        if sheet.max_row and sheet.max_row > IMPORT_MAX_ROWS + 1:
-            raise ImportFileError(f"单次导入最多支持 {IMPORT_MAX_ROWS} 条资产")
         iterator = iter_import_worksheet_rows(sheet)
         header_cells = next(iterator, None)
         if not header_cells:
@@ -479,7 +531,10 @@ def _resolve_assigned_person(row, request=None):
     return {"action": "assign", "target_person": person.pk, "reason": reason}
 
 
-def _prepare_payload(row, headers, request=None):
+def _prepare_payload(row, headers, request=None, *, preview=None):
+    def resolve(key, loader):
+        return preview.resolve(key, loader) if preview is not None else loader()
+
     asset_no = row.get("asset_no", "").strip()
     asset_name = row.get("name", "").strip()
     if not asset_no:
@@ -487,13 +542,21 @@ def _prepare_payload(row, headers, request=None):
     if not asset_name:
         raise DjangoValidationError({"name": "资产名称不能为空"})
 
-    owner = _named_active(_selection(Department.objects.all(), request, write=True),
-        row.get("owning_department"), "owning_department", "资产归属部门", allow_code=True)
-    asset_model = _named_asset_model(row.get("asset_model"))
+    owner_name = row.get("owning_department")
+    owner = resolve(("department", owner_name), lambda: _named_active(
+        _selection(Department.objects.all(), request, write=True), owner_name,
+        "owning_department", "资产归属部门", allow_code=True,
+    ))
+    model_name = row.get("asset_model")
+    asset_model = resolve(("model", model_name), lambda: _named_asset_model(model_name))
     manufacturer_name = row.get("manufacturer", "").strip()
-    manufacturer = _named_active(Manufacturer.objects, manufacturer_name, "manufacturer", "厂商", allow_code=True) if manufacturer_name else None
+    manufacturer = resolve(("manufacturer", manufacturer_name), lambda: _named_active(
+        Manufacturer.objects, manufacturer_name, "manufacturer", "厂商", allow_code=True,
+    ))
     device_type_name = row.get("device_type", "").strip()
-    device_type = _named_active(DeviceType.objects, device_type_name, "device_type", "设备类型") if device_type_name else None
+    device_type = resolve(("device_type", device_type_name), lambda: _named_active(
+        DeviceType.objects, device_type_name, "device_type", "设备类型",
+    ))
     if asset_model:
         if device_type and asset_model.device_type_id != device_type.pk:
             raise DjangoValidationError({"device_type": "设备类型与标准型号不一致"})
@@ -510,9 +573,13 @@ def _prepare_payload(row, headers, request=None):
     warranty_months = _nonnegative_integer(warranty_text, "warranty_months", "实际保修月数") if warranty_text else None
 
     asset_data_center_name = row.get("asset_data_center", "").strip()
-    asset_data_center = _named_active(_selection(DataCenter.objects.all(), request, write=True), asset_data_center_name, "asset_data_center", "数据中心") if asset_data_center_name else None
+    asset_data_center = resolve(("data_center", asset_data_center_name), lambda: _named_active(
+        _selection(DataCenter.objects.all(), request, write=True), asset_data_center_name, "asset_data_center", "数据中心",
+    ))
 
-    status = row.get("status", "").strip() or get_runtime_preferences().default_asset_status
+    status = row.get("status", "").strip() or resolve(
+        ("default_status",), lambda: get_runtime_preferences().default_asset_status,
+    )
     status = ASSET_STATUS_IMPORT_ALIASES.get(status, status)
     validate_asset_status_transition(None, status)
 
@@ -590,11 +657,14 @@ def _prepare_payload(row, headers, request=None):
 
     custom_values = {}
     custom_headers = [header for header in headers if header.startswith("custom__")]
-    fields_by_key = {
+    fields_by_key = resolve(("custom_fields",), lambda: {
         field.key: field
         for field in CustomField.objects.filter(key__in=[header[8:] for header in custom_headers]).prefetch_related("options")
-    }
-    allowed_field_ids = set(effective_fieldset.items.values_list("field_id", flat=True)) if effective_fieldset else set()
+    })
+    allowed_field_ids = resolve(
+        ("fieldset", effective_fieldset.pk),
+        lambda: set(effective_fieldset.items.values_list("field_id", flat=True)),
+    ) if effective_fieldset else set()
     for header in custom_headers:
         field_key = header[8:]
         field = fields_by_key.get(field_key)
@@ -672,32 +742,115 @@ def _transient_database_error(exc):
     return bool(exc.args and exc.args[0] in {1205, 1213})
 
 
-@contextmanager
-def _preview_write_access(*, lock):
-    """Coordinate rollback-only trial writes across database connections.
+def _preview_identity_keys(parsed):
+    """Use the same string equality as the database's asset unique indexes."""
+    keys = {
+        field: dict.fromkeys(
+            value for _, row in parsed.rows
+            if (value := row.get(field, "").strip()) and len(value) <= max_length
+        )
+        for field, max_length in (
+            ("asset_no", Asset._meta.get_field("asset_no").max_length),
+            ("serial_number", Asset._meta.get_field("serial_number").max_length),
+        )
+    }
+    if connection.vendor != "mysql":
+        return {field: {value: value for value in values} for field, values in keys.items()}
 
-    Duplicate-key checks in InnoDB can retain shared index locks even at
-    READ COMMITTED. Trial inserts of the same identity must not race. This
-    lease is never taken inside the real commit transaction: that
-    transaction may already hold rows needed by a standalone preview.
-    """
-    if lock or connection.vendor != "mysql":
-        yield
-        return
-    name = "infrix-asset-preview-" + hashlib.sha256(str(connection.settings_dict["NAME"]).encode()).hexdigest()[:40]
+    table = connection.ops.quote_name(Asset._meta.db_table)
     with connection.cursor() as cursor:
-        cursor.execute("SELECT GET_LOCK(%s, 10)", [name])
-        acquired = cursor.fetchone()[0] == 1
-    if not acquired:
-        raise OperationalError(1205, "asset preview validation is busy")
-    try:
-        yield
-    finally:
-        with connection.cursor() as cursor:
-            cursor.execute("SELECT RELEASE_LOCK(%s)", [name])
+        cursor.execute(f"SHOW FULL COLUMNS FROM {table} WHERE Field IN ('asset_no', 'serial_number')")
+        collations = {row[0]: row[2] for row in cursor.fetchall()}
+        result = {}
+        for field, values in keys.items():
+            collation = collations[field]
+            if not re.fullmatch(r"[a-zA-Z0-9]+_[a-zA-Z0-9_]+", collation):
+                raise ImportFileError("无法读取资产唯一字段的排序规则")
+            charset = collation.split("_", 1)[0]
+            expr = f"WEIGHT_STRING(CAST(%s AS CHAR CHARACTER SET {charset}) COLLATE {collation})"
+            values = list(values)
+            normalized = {}
+            for start in range(0, len(values), 250):
+                batch = values[start:start + 250]
+                cursor.execute("SELECT " + ", ".join([expr] * len(batch)), batch)
+                normalized.update(zip(batch, cursor.fetchone()))
+            result[field] = normalized
+    return result
 
 
-def _preview_row(line, row, headers, duplicate_counts, trial_assets, *, lock=False, request=None):
+class ImportPreview:
+    """Project successful rows into the current snapshot in workbook order."""
+
+    def __init__(self, parsed, request):
+        self.keys = _preview_identity_keys(parsed)
+        self.asset_numbers = set()
+        self.serial_numbers = set()
+        self.addresses = set()
+        self.racks = {}
+        self.lookups = {}
+        self.serializer = AssetWriteSerializer(context={"request": request} if request is not None else {})
+
+    def resolve(self, key, loader):
+        if key not in self.lookups:
+            self.lookups[key] = loader()
+        return self.lookups[key]
+
+    def validate(self, payload):
+        self.serializer.initial_data = payload
+        return self.serializer.run_validation(payload)
+
+    def asset_key(self, asset_no):
+        return self.keys["asset_no"].get(asset_no, asset_no)
+
+    def accept(self, data):
+        data = dict(data)
+        configuration = data.pop("configuration", {})
+        assignment = data.pop("assignment", None)
+        tags = data.pop("tags", [])
+        custom_values = data.pop("custom_values", {})
+        data.pop("discard_incompatible_custom_values", None)
+        asset = Asset(**data)
+
+        serial_key = self.keys["serial_number"][asset.serial_number] if asset.serial_number else None
+        if serial_key is not None and serial_key in self.serial_numbers:
+            raise DjangoValidationError({"serial_number": "文件内重复的序列号"})
+
+        require_department(asset.owning_department_id)
+        entries = validated_network_configuration(configuration, claimed_ips=self.addresses)
+        placement = configuration_rack(configuration)
+        if placement is None:
+            require_asset_boundary(asset.asset_data_center_id, asset.owning_department_id)
+        else:
+            rack, start_u, end_u = placement
+            require_center(rack.room.data_center_id)
+            require_asset_boundary(rack.room.data_center_id, asset.owning_department_id)
+            if rack.pk not in self.racks:
+                self.racks[rack.pk] = (
+                    list(rack.allocations.select_related("asset").only(
+                        "start_u", "end_u", "asset", "asset__asset_no",
+                    ).order_by("start_u", "id")),
+                    active_rack_reservations(rack),
+                )
+            allocations, holds = self.racks[rack.pk]
+            validate_rack_placement(rack, start_u, end_u, allocations=allocations, holds=holds)
+
+        supporting_configuration(configuration)
+        validate_asset_custom_values(asset, custom_values)
+        if len(tags) != len({tag.pk for tag in tags}):
+            raise DjangoValidationError({"tags": "文件中同一资产不能重复指定相同标签"})
+        if assignment is not None:
+            require_department(assignment["target_person"].department_id, write=False)
+
+        self.asset_numbers.add(self.asset_key(asset.asset_no))
+        if serial_key is not None:
+            self.serial_numbers.add(serial_key)
+        self.addresses.update(address for _, _, address in entries)
+        if placement is not None:
+            allocations.append(RackUnitAllocation(asset=asset, rack=rack, start_u=start_u, end_u=end_u))
+            allocations.sort(key=lambda row: row.start_u)
+
+
+def _import_row(line, row, headers, duplicate_counts, trial_assets, *, preview=None, commit_filename=None, request=None):
     asset_no = row.get("asset_no", "").strip()
     base = {
         "line": line,
@@ -711,25 +864,32 @@ def _preview_row(line, row, headers, duplicate_counts, trial_assets, *, lock=Fal
         "changes": [],
         "errors": [],
     }
-    if asset_no and duplicate_counts[asset_no] > 1:
-        base["action"] = "conflict"
-        base["errors"] = [{"field": "asset_no", "label": "资产编号", "message": "文件内重复的资产编号"}]
-        return base
     if asset_no:
-        existing_query = Asset.all_objects.select_for_update() if lock else Asset.all_objects
-        existing_id = existing_query.filter(asset_no=asset_no).values_list("pk", flat=True).first()
-        if existing_id is not None:
+        duplicate = duplicate_counts[asset_no] > 1 or (
+            preview is not None and preview.asset_key(asset_no) in preview.asset_numbers
+        )
+        existing_id = None if duplicate else Asset.all_objects.filter(asset_no=asset_no).values_list("pk", flat=True).first()
+        if duplicate or existing_id is not None:
             base["action"] = "conflict"
-            message = "文件内重复的资产编号" if existing_id in trial_assets else "资产编号已存在，资产导入仅支持新增"
+            message = ("文件内重复的资产编号" if duplicate or existing_id in trial_assets
+                       else "资产编号已存在，资产导入仅支持新增")
             base["errors"] = [{"field": "asset_no", "label": "资产编号", "message": message}]
             return base
     try:
-        with transaction.atomic():
-            payload = _prepare_payload(row, headers, request)
+        payload = _prepare_payload(row, headers, request, preview=preview)
+        if preview is not None:
+            preview.accept(preview.validate(payload))
+        else:
             serializer = AssetWriteSerializer(data=payload, context={"request": request} if request is not None else {})
             serializer.is_valid(raise_exception=True)
-            asset_id = serializer.save().pk
-        trial_assets.add(asset_id)
+            with transaction.atomic():
+                asset = serializer.save()
+                write_audit_log(
+                    request, action="create", resource_type="asset", resource_id=asset.pk,
+                    after=asset_audit_snapshot(asset.pk),
+                    extra={"source": "asset_import", "filename": commit_filename, "line": line},
+                )
+            trial_assets.add(asset.pk)
     except OperationalError:
         raise
     except Exception as exc:
@@ -741,27 +901,37 @@ def _preview_row(line, row, headers, duplicate_counts, trial_assets, *, lock=Fal
     return base
 
 
-def _preview_parsed(parsed, *, lock=False, request=None):
-    duplicate_counts = Counter(row.get("asset_no", "").strip() for _line, row in parsed.rows if row.get("asset_no", "").strip())
+def _import_rows(parsed, request, *, commit=False):
+    duplicate_counts = Counter(row.get("asset_no", "").strip() for _, row in parsed.rows if row.get("asset_no", "").strip())
+    trial_assets = set()
+    preview = None if commit else ImportPreview(parsed, request)
+    return [
+        _import_row(
+            line, row, parsed.headers, duplicate_counts, trial_assets,
+            preview=preview, commit_filename=parsed.filename if commit else None, request=request,
+        )
+        for line, row in parsed.rows
+    ]
+
+
+def _preview_parsed(parsed, *, request=None):
     for attempt in range(4):
         try:
-            with _preview_write_access(lock=lock), transaction.atomic():
-                trial_assets = set()
-                # Successful trial rows remain visible to the rest of the file.
-                rows = [
-                    _preview_row(line, row, parsed.headers, duplicate_counts, trial_assets, lock=lock, request=request)
-                    for line, row in parsed.rows
-                ]
-                transaction.set_rollback(True)
-            break
+            if connection.vendor == "mysql" and not connection.in_atomic_block:
+                with connection.cursor() as cursor:
+                    cursor.execute("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ, READ ONLY")
+            with transaction.atomic():
+                rows = _import_rows(parsed, request)
+            return _import_review(parsed, rows)
         except OperationalError as exc:
-            if lock or not _transient_database_error(exc):
+            if not _transient_database_error(exc):
                 raise
-            # InnoDB may have aborted the transaction. Retry only a standalone
-            # preview after all of its writes have been rolled back.
             if connection.in_atomic_block or attempt == 3:
                 raise ImportFileError("数据正在被并发操作，请稍后重新预览") from exc
             time.sleep(0.02 * (attempt + 1))
+
+
+def _import_review(parsed, rows):
     valid = sum(1 for row in rows if row["valid"])
     invalid = len(rows) - valid
     conflicts = sum(1 for row in rows if row["action"] == "conflict")
@@ -791,25 +961,10 @@ class AssetImportService:
         parsed = cls.parse(upload)
         try:
             with transaction.atomic():
-                preview = _preview_parsed(parsed, lock=True, request=request)
-                if preview["invalid"]:
-                    raise ImportValidationError(preview)
-                created = 0
-                for line, row in parsed.rows:
-                    payload = _prepare_payload(row, parsed.headers, request)
-                    serializer = AssetWriteSerializer(data=payload, context={"request": request})
-                    serializer.is_valid(raise_exception=True)
-                    asset = serializer.save()
-                    write_audit_log(
-                        request,
-                        action="create",
-                        resource_type="asset",
-                        resource_id=asset.pk,
-                        after=asset_audit_snapshot(asset.pk),
-                        extra={"source": "asset_import", "filename": parsed.filename, "line": line},
-                    )
-                    created += 1
-                return {"created": created, "total": len(parsed.rows), "errors": []}
+                review = _import_review(parsed, _import_rows(parsed, request, commit=True))
+                if review["invalid"]:
+                    raise ImportValidationError(review)
+                return {"created": review["valid"], "total": review["total"], "errors": []}
         except ImportValidationError:
             raise
         except (DjangoValidationError, DRFValidationError, IntegrityError, OperationalError) as exc:

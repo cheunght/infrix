@@ -96,8 +96,7 @@ function isNetworkError(error: unknown): boolean {
   if (!error || typeof error !== "object") return false;
   const name = "name" in error ? String((error as { name?: unknown }).name || "") : "";
   const message = "message" in error ? String((error as { message?: unknown }).message || "") : "";
-  return name === "TypeError"
-    || name === "NetworkError"
+  return name === "NetworkError"
     || /failed to fetch|networkerror|load failed|fetch failed/i.test(message);
 }
 

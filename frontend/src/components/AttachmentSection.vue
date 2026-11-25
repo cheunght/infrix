@@ -33,6 +33,7 @@ const uploading = ref(false);
 const downloadingId = ref<number | null>(null);
 const deletingId = ref<number | null>(null);
 const selectedFile = ref<File | null>(null);
+const uploadRef = ref<{ clearFiles: () => void }>();
 const category = ref("other");
 const note = ref("");
 let controller: AbortController | null = null;
@@ -73,7 +74,9 @@ function setDefaultCategory(options: AttachmentCategoryOption[]) {
 }
 
 function resetFile() {
+  uploadRef.value?.clearFiles();
   selectedFile.value = null;
+  uploadError.value = "";
 }
 
 function handleFileChange(file: { raw?: File }) {
@@ -210,6 +213,7 @@ onBeforeUnmount(() => {
     <div v-if="canManage" class="asset-attachments__upload">
       <div class="asset-attachments__upload-row">
         <el-upload
+          ref="uploadRef"
           :auto-upload="false"
           :show-file-list="false"
           :limit="1"

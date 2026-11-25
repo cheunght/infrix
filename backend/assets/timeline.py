@@ -9,11 +9,11 @@ from collections.abc import Mapping
 from typing import Any
 
 from django.db import connection
-from django.db.models import CharField, Q, QuerySet, Subquery
+from django.db.models import CharField, QuerySet
 from django.db.models.functions import Cast, Collate
 
 from .audit import json_value
-from .models import AuditLog, FaultEvent, RepairRecord
+from .models import AuditLog
 
 
 TIMELINE_EVENT_TYPES = (
@@ -33,7 +33,7 @@ _MAX_COLLECTION_ITEMS = 20
 _MYSQL_RESOURCE_ID_COLLATION = "utf8mb4_unicode_ci"
 
 
-def _legacy_resource_id_subquery(queryset):
+def audit_resource_id_subquery(queryset):
     """Build a portable string-ID subquery for legacy audit rows.
 
     ``AuditLog.resource_id`` is a character column.  On MariaDB, a plain
@@ -51,70 +51,7 @@ def _legacy_resource_id_subquery(queryset):
 
 
 def asset_timeline_queryset(asset_id: int) -> QuerySet[AuditLog]:
-    """Return only audit rows that can be attributed to ``asset_id``.
-
-    Direct asset rows use the indexed resource pair.  Related business audit
-    rows carry an asset id in their existing ``extra`` metadata.  The two
-    relational subqueries retain compatibility with older fault/repair audit
-    rows whose metadata predates that small enrichment.
-    """
-
-    asset_id = int(asset_id)
-    asset_resource = Q(resource_type="asset", resource_id=str(asset_id))
-    attachment_resource = Q(
-        resource_type="attachment",
-        payload__extra__asset_id=asset_id,
-        payload__extra__repair_id=None,
-    )
-    inventory_resource = Q(
-        resource_type="inventory_item",
-        payload__extra__asset_id=asset_id,
-    )
-    fault_resource = Q(
-        resource_type="fault_event",
-        payload__extra__asset_id=asset_id,
-    )
-    repair_resource = Q(
-        resource_type="repair_record",
-        payload__extra__asset_id=asset_id,
-    )
-    repair_part_usage_resource = Q(
-        resource_type="repair_part_usage",
-        payload__extra__asset_id=asset_id,
-    )
-    spare_stock_transaction_resource = Q(
-        resource_type="spare_stock_transaction",
-        payload__extra__asset_id=asset_id,
-    )
-
-    # Existing rows written before the related audit metadata was enriched can
-    # still be scoped without loading all audit logs into Python.
-    fault_ids = _legacy_resource_id_subquery(FaultEvent.objects.filter(asset_id=asset_id))
-    repair_ids = _legacy_resource_id_subquery(RepairRecord.objects.filter(fault__asset_id=asset_id))
-    legacy_fault_resource = Q(
-        resource_type="fault_event",
-        resource_id__in=Subquery(fault_ids),
-    )
-    legacy_repair_resource = Q(
-        resource_type="repair_record",
-        resource_id__in=Subquery(repair_ids),
-    )
-
-    return (
-        AuditLog.objects.select_related("actor")
-        .filter(
-            asset_resource
-            | attachment_resource
-            | inventory_resource
-            | fault_resource
-            | repair_resource
-            | repair_part_usage_resource
-            | spare_stock_transaction_resource
-            | legacy_fault_resource
-            | legacy_repair_resource
-        )
-        .order_by("-created_at", "-id")
-    )
+    return AuditLog.objects.filter(timeline_asset_id=asset_id).select_related("actor").order_by("-created_at", "-id")
 
 
 def _mapping(value: Any) -> dict[str, Any]:

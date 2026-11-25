@@ -14,7 +14,7 @@ from .runtime_clock import system_now
 
 
 def _require_digest_administrator(request):
-    if not can(request.user, "settings.manage") or not scope_for(request.user).global_write:
+    if not can(request.user, "organization.manage") or not scope_for(request.user).global_write:
         raise PermissionDenied({"code": "data_scope_global_required", "detail": "需要系统管理权限及全局写入范围"})
 
 

@@ -635,6 +635,7 @@ export interface SystemMaintenanceDependencies {
 
 export interface SettingsContext extends CustomFieldContext, TagContext {
   canUseSystemSettings: CapabilityFn;
+  canManageReferences: () => boolean;
   request: RequestFn;
   downloadFile: (path: string, filename?: string) => Promise<void>;
   actionMessage: Ref<string>;

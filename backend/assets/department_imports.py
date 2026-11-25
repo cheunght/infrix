@@ -12,12 +12,12 @@ from decimal import Decimal, InvalidOperation
 
 from django.core.exceptions import ValidationError as DjangoValidationError
 from django.db import IntegrityError, transaction
-from openpyxl import Workbook, load_workbook
+from openpyxl import Workbook
 from openpyxl.styles import Alignment, Font, PatternFill
 from openpyxl.utils import get_column_letter
 
 from .audit import write_audit_log
-from .imports import ImportFileError, ImportValidationError, iter_import_worksheet_rows
+from .imports import ImportFileError, ImportValidationError, iter_import_worksheet_rows, load_import_workbook
 from .models import Department
 from .operation_limits import MAX_ASSET_MODEL_IMPORT_BYTES, MAX_ASSET_MODEL_IMPORT_ROWS
 
@@ -113,15 +113,7 @@ def _read_upload(upload):
         raise ImportFileError("部门导入仅支持 .xlsx 文件")
 
     upload.seek(0)
-    try:
-        workbook = load_workbook(
-            upload,
-            read_only=True,
-            data_only=False,
-            keep_links=False,
-        )
-    except Exception as exc:  # openpyxl exposes several parser-specific exceptions
-        raise ImportFileError("Excel 文件无法解析，请确认文件为有效的 .xlsx 工作簿") from exc
+    workbook = load_import_workbook(upload)
 
     try:
         if not workbook.worksheets:
@@ -130,7 +122,9 @@ def _read_upload(upload):
             (item for item in workbook.worksheets if item.title == "部门导入"),
             workbook.worksheets[0],
         )
-        iterator = iter_import_worksheet_rows(sheet)
+        iterator = iter_import_worksheet_rows(
+            sheet, max_rows=MAX_DEPARTMENT_IMPORT_ROWS, template_padding=MAX_DEPARTMENT_IMPORT_ROWS,
+        )
         header_cells = next(iterator, None)
         if not header_cells:
             raise ImportFileError("部门导入文件第一行必须包含字段名")

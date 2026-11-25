@@ -65,7 +65,7 @@ urlpatterns = [
     path("system/settings/", system_settings),
     path("system/settings/smtp/test/", smtp_test_email),
     path("assets/import/template/", asset_import_template),
-    path("assets/import/preview/", asset_import_preview),
+    path("assets/import/preview/", asset_import_preview, name="asset_import_preview"),
     path("assets/import/", asset_import),
     path("asset-models/import/template/", asset_model_import_template),
     path("asset-models/import/preview/", asset_model_import_preview),

@@ -31,12 +31,13 @@ from django.conf import settings
 from django.contrib.auth import get_user_model
 from django.contrib.sessions.models import Session
 from django.core.cache import cache
-from django.db import DatabaseError, connection
+from django.core.management import call_command
+from django.db import DatabaseError, connection, transaction
 from django.db.migrations.recorder import MigrationRecorder
 from django.utils import timezone
 
 from .audit import write_audit_log
-from .models import Attachment
+from .models import Attachment, PersonalAccessToken
 from .maintenance_gate import MaintenanceUnavailable, maintenance_window, maintenance_subprocess_options
 
 
@@ -51,6 +52,10 @@ DATABASE_DUMP_NAME = "database.sql.gz"
 MANIFEST_NAME = "manifest.json"
 MEDIA_DIRECTORY_NAME = "media"
 MAX_MANIFEST_BYTES = 1024 * 1024
+AUDIT_TIMELINE_MIGRATIONS = {
+    "assets.0004_audit_timeline_asset", "assets.0005_backfill_audit_timeline_asset",
+}
+AUDIT_TIMELINE_PREVIOUS_MIGRATION = "assets.0003_rack_unit_reservation"
 _UNSAFE_DATABASE_SQL_RE = re.compile(
     rb"^\s*(?:/\*![0-9]*\s*)?(?:USE|CREATE\s+(?:DATABASE|SCHEMA)|"
     rb"DROP\s+(?:DATABASE|SCHEMA)|ALTER\s+(?:DATABASE|SCHEMA))\b",
@@ -343,28 +348,28 @@ def _find_binary(names: tuple[str, ...], *, error_code: str) -> str:
 
 def _run_dump(workdir: Path, output_path: Path) -> None:
     database = _database_settings()
+    name = database["name"]
+    session_table = Session._meta.db_table
     binary = _find_binary(("mariadb-dump", "mysqldump"), error_code="dump_client_missing")
-    args = [
-        binary,
-        "--defaults-extra-file=PLACEHOLDER",
+    common_args = [
         "--protocol=tcp",
         "--single-transaction",
         "--quick",
         "--skip-lock-tables",
-        "--triggers",
-        "--routines",
-        "--events",
         "--hex-blob",
         "--add-drop-table",
         "--default-character-set=utf8mb4",
-        database["name"],
     ]
+    # Keep the session table rebuildable with both dump clients, without exporting any session rows.
+    dump_args = (
+        ["--triggers", "--routines", "--events", f"--ignore-table={name}.{session_table}", name],
+        ["--no-data", "--triggers", name, session_table],
+    )
     try:
-        with _database_option_file(workdir, database) as option_file:
-            args[1] = f"--defaults-extra-file={option_file}"
-            with output_path.open("wb") as output:
+        with _database_option_file(workdir, database) as option_file, output_path.open("wb") as output:
+            for args in dump_args:
                 result = subprocess.run(
-                    args,
+                    [binary, f"--defaults-extra-file={option_file}", *common_args, *args],
                     stdin=subprocess.DEVNULL,
                     stdout=output,
                     stderr=subprocess.PIPE,
@@ -373,6 +378,13 @@ def _run_dump(workdir: Path, output_path: Path) -> None:
                     check=False,
                     **maintenance_subprocess_options(),
                 )
+                if result.returncode != 0:
+                    logger.error("MariaDB dump failed with exit code %s", result.returncode)
+                    raise BackupServiceError(
+                        "数据库备份失败，请检查 MariaDB 连接和权限。",
+                        code="database_dump_failed",
+                        status_code=502,
+                    )
     except OSError as exc:
         logger.exception("MariaDB dump process could not be started")
         raise BackupServiceError(
@@ -380,13 +392,6 @@ def _run_dump(workdir: Path, output_path: Path) -> None:
             code="database_dump_failed",
             status_code=502,
         ) from exc
-    if result.returncode != 0:
-        logger.error("MariaDB dump failed with exit code %s", result.returncode)
-        raise BackupServiceError(
-            "数据库备份失败，请检查 MariaDB 连接和权限。",
-            code="database_dump_failed",
-            status_code=502,
-        )
     if not output_path.is_file() or output_path.stat().st_size == 0:
         raise BackupServiceError(
             "数据库备份为空，已停止生成备份文件。",
@@ -883,7 +888,12 @@ def _validate_manifest(
     if check_migrations:
         current_state = _migration_state()
         backup_state = sorted(str(item) for item in migration_state)
-        if current_state != backup_state:
+        old_timeline_schema = (
+            AUDIT_TIMELINE_PREVIOUS_MIGRATION in backup_state
+            and AUDIT_TIMELINE_MIGRATIONS <= set(current_state)
+            and backup_state == [name for name in current_state if name not in AUDIT_TIMELINE_MIGRATIONS]
+        )
+        if current_state != backup_state and not old_timeline_schema:
             raise BackupServiceError(
                 "备份与当前应用的数据库迁移状态不一致，已停止恢复。",
                 code="migration_state_incompatible",
@@ -1348,7 +1358,7 @@ def _finalize_media_rollback(rollback_path: Path | None) -> None:
         logger.exception("Unable to remove media rollback directory")
 
 
-def _post_restore() -> tuple[int, list[str]]:
+def _post_restore() -> tuple[int, int, list[str]]:
     warnings: list[str] = []
     try:
         connection.close()
@@ -1362,21 +1372,24 @@ def _post_restore() -> tuple[int, list[str]]:
             code="post_restore_validation_failed",
             status_code=502,
         ) from exc
-    invalidated_sessions = 0
     try:
-        invalidated_sessions, _ = Session.objects.all().delete()
+        with transaction.atomic():
+            invalidated_sessions, _ = Session.objects.all().delete()
+            revoked_tokens = PersonalAccessToken.objects.filter(revoked_at__isnull=True).update(
+                revoked_at=timezone.now(),
+            )
         from .notification_delivery import suppress_restored_notifications
         suppress_restored_notifications()
         warnings.append("恢复前 SMTP 发送不能回滚；已暂停当日邮件摘要，次日恢复。")
     except Exception:
-        logger.exception("Unable to invalidate sessions after restore")
-        raise BackupServiceError("恢复后的会话失效未完成。", code="post_restore_validation_failed", status_code=502) from None
+        logger.exception("Unable to invalidate sessions and API tokens after restore")
+        raise BackupServiceError("恢复后的会话和 API Token 失效未完成。", code="post_restore_validation_failed", status_code=502) from None
     try:
         cache.clear()
     except Exception:
         logger.exception("Unable to clear Django cache after restore")
         warnings.append("恢复完成，但未能清理应用缓存。")
-    return invalidated_sessions, warnings
+    return invalidated_sessions, revoked_tokens, warnings
 
 
 def restore_backup(identifier, *, confirmation, request=None, actor=None, recover=False, before_operation=None):
@@ -1470,12 +1483,28 @@ def _restore_backup_locked(
             if not bool(validated.manifest.get("media_included")):
                 media_status = "unchanged"
             operation.stage("verifying_restored_media")
-            if _migration_state() != sorted(validated.manifest["migration_state"]):
+            restored_state = sorted(validated.manifest["migration_state"])
+            if _migration_state() != restored_state:
                 raise BackupServiceError("恢复后的迁移状态校验失败。", code="post_restore_validation_failed", status_code=502)
+            timeline_migrated = (
+                AUDIT_TIMELINE_PREVIOUS_MIGRATION in restored_state
+                and AUDIT_TIMELINE_MIGRATIONS.isdisjoint(restored_state)
+            )
+            if timeline_migrated:
+                operation.stage("updating_audit_timeline_schema")
+                try:
+                    call_command("migrate", "assets", "0005_backfill_audit_timeline_asset", interactive=False, verbosity=0)
+                except Exception as exc:
+                    logger.exception("Unable to upgrade the restored audit timeline")
+                    raise BackupServiceError("恢复后的资产时间线索引更新失败。", code="post_restore_validation_failed", status_code=502) from exc
+                if set(_migration_state()) != set(restored_state) | AUDIT_TIMELINE_MIGRATIONS:
+                    raise BackupServiceError("恢复后的迁移状态校验失败。", code="post_restore_validation_failed", status_code=502)
             restored_references = _referenced_media(media_root)
             if validated.manifest.get("backup_format_version") == 2 and restored_references != validated.manifest["media_references"]:
                 raise BackupServiceError("恢复后的数据库媒体引用与备份不一致。", code="media_reference_mismatch", status_code=502)
-            sessions_invalidated, warnings = _post_restore()
+            sessions_invalidated, revoked_tokens, warnings = _post_restore()
+            if timeline_migrated:
+                warnings.append("已补齐旧备份中的资产时间线索引。")
             if validated.manifest.get("backup_format_version") == 1:
                 warnings.append("旧格式备份没有媒体引用清单；已检查恢复后的引用文件存在。")
     except BackupServiceError as exc:
@@ -1521,6 +1550,7 @@ def _restore_backup_locked(
                 "database_status": database_status,
                 "media_status": media_status,
                 "sessions_invalidated": sessions_invalidated,
+                "revoked_token_count": revoked_tokens,
                 "requested_by": {"id": actor.pk, "username": actor.get_username()} if actor else None,
             },
         )

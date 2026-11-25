@@ -1,6 +1,6 @@
 """Location scope resolution for dashboard reports."""
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 
 from django.db.models import Q
 
@@ -18,18 +18,14 @@ class DashboardScope:
     selected_data_center: DataCenter | None
     selected_server_room: ServerRoom | None
     asset_queryset: object
-    asset_rows: list
     racks: list
     rooms: list
     active_data_centers: list
     user: object = None
-    _asset_ids_cache: list[int] | None = field(default=None, init=False, repr=False)
 
     @property
     def asset_ids(self):
-        if self._asset_ids_cache is None:
-            self._asset_ids_cache = [asset.id for asset in self.asset_rows]
-        return self._asset_ids_cache
+        return self.asset_queryset.order_by().values("pk")
 
 
 def _parse_id(value, label):
@@ -110,45 +106,6 @@ def resolve_dashboard_scope(request):
             )
         )
     asset_queryset = asset_queryset.distinct()
-    asset_rows = list(
-        asset_queryset.select_related(
-            "asset_model__device_type",
-            "standalone_device_type",
-            "asset_data_center",
-            "rack_allocation__rack__room__data_center",
-        ).only(
-            "id",
-            "asset_no",
-            "name",
-            "status",
-            "asset_model_id",
-            "asset_model__id",
-            "asset_model__device_type_id",
-            "asset_model__device_type__id",
-            "asset_model__device_type__name",
-            "standalone_device_type_id",
-            "standalone_device_type__id",
-            "standalone_device_type__name",
-            "asset_data_center_id",
-            "asset_data_center__id",
-            "asset_data_center__name",
-            "rack_allocation__id",
-            "rack_allocation__asset_id",
-            "rack_allocation__rack_id",
-            "rack_allocation__rack__id",
-            "rack_allocation__rack__code",
-            "rack_allocation__rack__is_active",
-            "rack_allocation__rack__room_id",
-            "rack_allocation__rack__room__id",
-            "rack_allocation__rack__room__name",
-            "rack_allocation__rack__room__is_active",
-            "rack_allocation__rack__room__data_center_id",
-            "rack_allocation__rack__room__data_center__id",
-            "rack_allocation__rack__room__data_center__name",
-            "rack_allocation__rack__room__data_center__is_active",
-        )
-    )
-
     rack_queryset = authorized(Rack.objects.all()).filter(
         is_active=True,
         room__is_active=True,
@@ -193,7 +150,6 @@ def resolve_dashboard_scope(request):
         selected_data_center=selected_data_center,
         selected_server_room=selected_server_room,
         asset_queryset=asset_queryset,
-        asset_rows=asset_rows,
         racks=racks,
         rooms=rooms,
         active_data_centers=list(active_data_center_queryset),

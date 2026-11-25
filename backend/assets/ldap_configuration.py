@@ -64,6 +64,10 @@ class ConfigurationIdentityError(Exception):
         self.errors = errors
 
 
+class LdapPasswordReplacementRequired(ValueError):
+    pass
+
+
 @dataclass(frozen=True)
 class EffectiveLDAPConfiguration:
     revision: int = 0
@@ -232,6 +236,14 @@ def merge_configuration(
         values["secret_available"] = True
         values["secret_error"] = None
     else:
+        if current.password_configured and any(
+            values[field] != getattr(current, field)
+            for field in (
+                "primary_host", "primary_port", "secondary_host", "secondary_port",
+                "bind_dn", "security_mode", "tls_server_name", "ca_cert_file",
+            )
+        ):
+            raise LdapPasswordReplacementRequired("修改 LDAP 服务端、绑定账户或传输安全设置时，请重新输入绑定密码")
         values["bind_password"] = current.bind_password
         values["password_configured"] = current.password_configured
         values["secret_available"] = current.secret_available

@@ -1,5 +1,8 @@
 """Shared rack, room and data-center capacity aggregations."""
 
+from django.db.models import Count, Q
+from django.db.models.functions import Coalesce
+
 from ..enum_contracts import RACK_STATUS_LABELS
 from ..models import Rack
 
@@ -134,21 +137,18 @@ def build_dashboard_capacity(scope):
         overview = data_center_overview_map.get(room.data_center_id)
         if overview is not None:
             overview["room_count"] += 1
-    for asset in scope.asset_rows:
-        allocation = getattr(asset, "rack_allocation", None)
-        if allocation and not (
-            allocation.rack.is_active
-            and allocation.rack.room.is_active
-            and allocation.rack.room.data_center.is_active
-        ):
-            continue
-        data_center_id = (
-            allocation.rack.room.data_center_id
-            if allocation
-            else asset.asset_data_center_id
+    asset_counts = scope.asset_queryset.order_by().filter(
+        Q(rack_allocation__isnull=True) | Q(
+            rack_allocation__rack__is_active=True,
+            rack_allocation__rack__room__is_active=True,
+            rack_allocation__rack__room__data_center__is_active=True,
         )
-        if data_center_id in data_center_overview_map:
-            data_center_overview_map[data_center_id]["asset_count"] += 1
+    ).values(
+        center_id=Coalesce("rack_allocation__rack__room__data_center_id", "asset_data_center_id")
+    ).annotate(count=Count("pk", distinct=True))
+    for row in asset_counts:
+        if row["center_id"] in data_center_overview_map:
+            data_center_overview_map[row["center_id"]]["asset_count"] = row["count"]
 
     for rack in rack_rows:
         overview = data_center_overview_map.get(rack["data_center_id"])

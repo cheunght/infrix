@@ -74,6 +74,8 @@ import type { PageContext } from "./page-context";
 
 const globalOverlayElementComponents: readonly ElementPlusComponentName[] = [
   "ElAlert",
+  "ElCheckbox",
+  "ElSwitch",
   "ElCollapse",
   "ElCollapseItem",
   "ElDescriptions",
@@ -160,12 +162,16 @@ const {
   hasBusinessCapability,
 } = useAuthorization(authorization);
 function canUseSystemSettings(capability: string) {
+  if (capability === "settings.manage") return can("organization.manage");
   if (!can(capability)) return false;
   const scope = authorization.value.data_scope;
   if (!scope || authorization.value.is_system_admin) return true;
   if (capability === "settings.view") return scope.global_read;
-  if (capability === "settings.manage") return scope.global_write;
   return true;
+}
+function canManageReferences() {
+  const { data_scope: scope, is_system_admin: isSystemAdmin } = authorization.value;
+  return can("settings.manage") && (!scope || isSystemAdmin || scope.global_write);
 }
 const sidebarCollapsed = ref(
   localStorage.getItem("infrix.sidebar.collapsed") === "1" ||
@@ -368,7 +374,7 @@ const organizationSettings = useOrganizationSettings({
   isCurrentLoad,
   confirmAction,
   can,
-  canManageReferences: () => canUseSystemSettings("settings.manage"),
+  canManageReferences,
   currentUsername: username,
   downloadFile: download,
   actionMessage,
@@ -2118,6 +2124,7 @@ const pageContext = {
   organizationSettings,
   systemSettings, systemSettingsForm, systemSettingsLoading,
   canUseSystemSettings,
+  canManageReferences,
   systemSettingsSaving, systemSettingsError, systemSettingsFormErrors, systemSettingsDirty,
   systemSmtpTesting, systemSmtpTestRecipient,
   loadSystemSettings, retrySystemSettings, resetSystemSettingsForm, saveSystemSettings, testSystemSmtp,

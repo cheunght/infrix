@@ -58,13 +58,13 @@ def _network_address_duplicate_message(address, *, same_asset=False):
     return f"{kind} 地址已被其他资产使用"
 
 
-def _validated_network_configuration(asset, data):
+def validated_network_configuration(data, *, asset=None, claimed_ips=frozenset()):
     """Normalize all submitted IPs and reject duplicate current addresses."""
     current_ids = set(
         AssetNetworkAddress.objects.select_for_update()
         .filter(asset_id=asset.pk)
         .values_list("pk", flat=True)
-    )
+    ) if asset is not None else set()
     entries = []
     seen = {}
     for role, key in NETWORK_CONFIGURATION_FIELDS:
@@ -89,14 +89,8 @@ def _validated_network_configuration(asset, data):
             # are owned by this atomic configuration operation and must be
             # excluded from the cross-asset uniqueness check.
             conflicts = conflicts.exclude(pk__in=current_ids)
-        conflict = conflicts.select_related("asset").first()
-        if conflict:
-            raise ValidationError({
-                key: _network_address_duplicate_message(
-                    address,
-                    same_asset=conflict.asset_id == asset.pk,
-                ),
-            })
+        if address in claimed_ips or conflicts.exists():
+            raise ValidationError({key: _network_address_duplicate_message(address)})
 
         seen[address] = key
         entries.append((role, key, address))
@@ -158,27 +152,7 @@ def _optional_date(data, key):
         raise ValidationError({key: "日期格式应为 YYYY-MM-DD"}) from exc
 
 
-@transaction.atomic
-def configure_asset(asset: Asset, data):
-    """Apply rack, IP, procurement and maintenance details for an asset.
-
-    A non-empty configuration is partial-update safe: omitted supporting
-    fields are filled from the current snapshot, while submitted blank values
-    remain explicit clear instructions.  An empty configuration intentionally
-    clears the non-placement supporting records; placement keeps its existing
-    partial-configuration compatibility rule in the serializer.
-    """
-    data = _merge_current_supporting_configuration(asset, data or {})
-    # Configuration updates may remove an existing allocation even when the
-    # submitted payload contains only supporting fields. Acquire the physical
-    # graph before the network rows so callers cannot hold an asset lock while
-    # a concurrent rack correction holds the rack/allocation locks.
-    if asset.pk:
-        lock_asset_location(
-            asset_id=asset.pk,
-            target_rack_id=data.get("rack_id") if isinstance(data, dict) else None,
-        )
-    network_entries = _validated_network_configuration(asset, data)
+def configuration_rack(data):
     data_center_value = _value(data, "data_center")
     room_id = _value(data, "server_room_id")
     rack_id = _value(data, "rack_id")
@@ -233,6 +207,34 @@ def configure_asset(asset: Asset, data):
             raise ValidationError({"rack_id": "未找到所选机柜，请先在机房机柜维护中创建"})
         if not rack.is_active or getattr(rack, "status", "in_use") != "in_use":
             raise ValidationError({"rack_id": "预留或停用的机柜不能用于资产"})
+        return rack, start_u, end_u
+    return None
+
+
+@transaction.atomic
+def configure_asset(asset: Asset, data):
+    """Apply rack, IP, procurement and maintenance details for an asset.
+
+    A non-empty configuration is partial-update safe: omitted supporting
+    fields are filled from the current snapshot, while submitted blank values
+    remain explicit clear instructions.  An empty configuration intentionally
+    clears the non-placement supporting records; placement keeps its existing
+    partial-configuration compatibility rule in the serializer.
+    """
+    data = _merge_current_supporting_configuration(asset, data or {})
+    # Configuration updates may remove an existing allocation even when the
+    # submitted payload contains only supporting fields. Acquire the physical
+    # graph before the network rows so callers cannot hold an asset lock while
+    # a concurrent rack correction holds the rack/allocation locks.
+    if asset.pk:
+        lock_asset_location(
+            asset_id=asset.pk,
+            target_rack_id=data.get("rack_id") if isinstance(data, dict) else None,
+        )
+    network_entries = validated_network_configuration(data, asset=asset)
+    placement = configuration_rack(data)
+    if placement is not None:
+        rack, start_u, end_u = placement
         place_asset(
             asset_id=asset.pk,
             rack_id=rack.pk,
@@ -243,24 +245,36 @@ def configure_asset(asset: Asset, data):
     else:
         unrack_asset(asset_id=asset.pk)
 
-    submitted_network_roles = {role for role, _key, _address in network_entries}
-    for role, _key in NETWORK_CONFIGURATION_FIELDS:
-        if role not in submitted_network_roles:
-            AssetNetworkAddress.objects.filter(asset=asset, role=role).delete()
+    submitted_by_address = {address: role for role, _key, address in network_entries}
+    submitted_roles = set(submitted_by_address.values())
+    existing = {entry.role: entry for entry in AssetNetworkAddress.objects.filter(asset=asset)}
+    released_roles = [
+        role for role, entry in existing.items()
+        if role not in submitted_roles or submitted_by_address.get(entry.address, role) != role
+    ]
+    if released_roles:
+        AssetNetworkAddress.objects.filter(asset=asset, role__in=released_roles).delete()
 
     for role, key, address in network_entries:
+        defaults = {"address": address, "is_primary": True}
+        if role in released_roles:
+            defaults.update(notes=existing[role].notes, status=existing[role].status)
         try:
             with transaction.atomic():
-                AssetNetworkAddress.objects.update_or_create(
-                    asset=asset,
-                    role=role,
-                    defaults={"address": address, "is_primary": True},
-                )
+                AssetNetworkAddress.objects.update_or_create(asset=asset, role=role, defaults=defaults)
         except IntegrityError as exc:
-            raise ValidationError({
-                key: _network_address_duplicate_message(address),
-            }) from exc
+            raise ValidationError({key: _network_address_duplicate_message(address)}) from exc
 
+    purchase, maintenance = supporting_configuration(data)
+    for model, values in ((ProcurementRecord, purchase), (MaintenanceContract, maintenance)):
+        if values is None:
+            model.objects.filter(asset=asset).delete()
+        else:
+            model.objects.update_or_create(asset=asset, defaults=values)
+
+
+def supporting_configuration(data):
+    purchase, maintenance = None, None
     purchase_fields = ("purchase_date", "supplier", "purchase_order_no", "purchase_amount", "procurement_notes")
     if any(_value(data, key) for key in purchase_fields):
         purchase_date = _optional_date(data, "purchase_date")
@@ -281,9 +295,10 @@ def configure_asset(asset: Asset, data):
                 DecimalValidator(max_digits=14, decimal_places=2)(amount)
             except ValidationError as exc:
                 raise ValidationError({"purchase_amount": "采购金额最多支持 2 位小数，且总位数不能超过 14 位"}) from exc
-        ProcurementRecord.objects.update_or_create(asset=asset, defaults={"purchase_date": purchase_date, "supplier": _value(data, "supplier"), "order_no": _value(data, "purchase_order_no"), "amount": amount, "notes": _value(data, "procurement_notes")})
-    else:
-        ProcurementRecord.objects.filter(asset=asset).delete()
+        purchase = {
+            "purchase_date": purchase_date, "supplier": _value(data, "supplier"),
+            "order_no": _value(data, "purchase_order_no"), "amount": amount, "notes": _value(data, "procurement_notes"),
+        }
 
     maintenance_values = [_value(data, key) for key in ("maintenance_provider", "maintenance_contract_no", "maintenance_start_date", "maintenance_expiry_date", "maintenance_notes")]
     if any(maintenance_values):
@@ -291,9 +306,23 @@ def configure_asset(asset: Asset, data):
         expiry_date = _optional_date(data, "maintenance_expiry_date")
         if start_date and expiry_date and expiry_date < start_date:
             raise ValidationError({"maintenance_expiry_date": "维保到期日不能早于开始日"})
-        MaintenanceContract.objects.update_or_create(asset=asset, defaults={"provider": _value(data, "maintenance_provider"), "contract_no": _value(data, "maintenance_contract_no"), "start_date": start_date, "expiry_date": expiry_date, "notes": _value(data, "maintenance_notes")})
-    else:
-        MaintenanceContract.objects.filter(asset=asset).delete()
+        maintenance = {
+            "provider": _value(data, "maintenance_provider"), "contract_no": _value(data, "maintenance_contract_no"),
+            "start_date": start_date, "expiry_date": expiry_date, "notes": _value(data, "maintenance_notes"),
+        }
+
+    for model, values, fields in (
+        (ProcurementRecord, purchase, {"supplier": "supplier", "order_no": "purchase_order_no"}),
+        (MaintenanceContract, maintenance, {"provider": "maintenance_provider", "contract_no": "maintenance_contract_no"}),
+    ):
+        if values is not None:
+            for field, source in fields.items():
+                try:
+                    model._meta.get_field(field).run_validators(values[field])
+                except ValidationError as exc:
+                    raise ValidationError({source: exc.messages}) from exc
+
+    return purchase, maintenance
 
 
 def _stored_custom_value(value):
@@ -334,8 +363,8 @@ def _existing_inactive_option_values(field, value):
     }
 
 
-def apply_asset_custom_values(asset: Asset, values, *, submitted=True, discard_incompatible=False):
-    """Validate and persist values against the asset's effective fieldset."""
+def validate_asset_custom_values(asset: Asset, values, *, submitted=True, discard_incompatible=False):
+    """Plan value changes against the effective fieldset without mutating it."""
     if values is None:
         values = {}
     if not isinstance(values, dict):
@@ -354,8 +383,9 @@ def apply_asset_custom_values(asset: Asset, values, *, submitted=True, discard_i
             raise ValidationError({"custom_values": f"不存在或不属于当前字段集的字段：{'、'.join(str(key) for key in unknown)}"})
 
     allowed_field_ids = set(item_by_field_id)
+    stored_values = AssetCustomValue.objects.filter(asset_id=asset.pk) if asset.pk else AssetCustomValue.objects.none()
     incompatible = list(
-        AssetCustomValue.objects.filter(asset=asset)
+        stored_values
         .exclude(field_id__in=allowed_field_ids)
         .select_related("field")
     )
@@ -364,15 +394,9 @@ def apply_asset_custom_values(asset: Asset, values, *, submitted=True, discard_i
             {"id": value.field_id, "key": value.field.key, "name": value.field.name}
             for value in incompatible
         ])
-    if incompatible:
-        AssetCustomValue.objects.filter(pk__in=[value.pk for value in incompatible]).delete()
-
     existing_values = {
         item.field_id: _stored_custom_value(item)
-        for item in AssetCustomValue.objects.filter(
-            asset_id=asset.pk,
-            field_id__in=[field.id for field in fields],
-        ).select_related("field")
+        for item in stored_values.filter(field_id__in=allowed_field_ids).select_related("field")
     }
 
     missing = []
@@ -412,6 +436,15 @@ def apply_asset_custom_values(asset: Asset, values, *, submitted=True, discard_i
             raise ValidationError({f"custom_values.{key}": str(exc)}) from exc
         operations.append((field, payload))
 
+    return operations, incompatible
+
+
+def apply_asset_custom_values(asset: Asset, values, *, submitted=True, discard_incompatible=False):
+    operations, incompatible = validate_asset_custom_values(
+        asset, values, submitted=submitted, discard_incompatible=discard_incompatible,
+    )
+    if incompatible:
+        AssetCustomValue.objects.filter(pk__in=[value.pk for value in incompatible]).delete()
     for field, payload in operations:
         if payload is None:
             AssetCustomValue.objects.filter(asset=asset, field=field).delete()

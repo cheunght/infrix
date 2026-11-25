@@ -61,7 +61,7 @@ from .enum_contracts import (
     STOCK_OPERATION_TYPE_LABELS,
     STOCK_OPERATION_TYPE_VALUES,
 )
-from .serializers import AdminPasswordResetSerializer, ApiTokenCreateSerializer, ApiTokenSerializer, AssetAssignmentEventSerializer, AssetAssignmentReturnSerializer, AssetAssignmentTargetSerializer, AssetBatchAssignmentResponseSerializer, AssetBatchAssignmentSerializer, AssetBatchDeleteResponseSerializer, AssetBatchDeleteSerializer, AssetBulkEditResponseSerializer, AssetBulkEditSerializer, AssetDetailSerializer, AssetDisposalRequestSerializer, AssetListSerializer, AssetModelOptionSerializer, AssetModelSerializer, AssetSerializer, AssetTimelineSerializer, AssetWriteSerializer, AttachmentSerializer, AuditLogSerializer, BackupConfirmationSerializer, CurrentUserProfileSerializer, CustomFieldOptionSerializer, CustomFieldRuntimeSchemaSerializer, CustomFieldSerializer, CustomFieldSetItemsWriteSerializer, CustomFieldSetOptionSerializer, CustomFieldSetSerializer, DataCenterOptionSerializer, DataCenterSerializer, DepartmentOptionSerializer, DepartmentSerializer, DeviceTypeOptionSerializer, DeviceTypeSerializer, DictionaryOptionSerializer, FaultEventSerializer, InventoryBulkNormalResponseSerializer, InventoryBulkNormalSerializer, InventoryBulkResolutionResponseSerializer, InventoryBulkResolutionSerializer, InventoryInspectorSerializer, InventoryItemPageSerializer, InventoryItemSerializer, InventoryResolutionSerializer, InventoryScopePreviewQuerySerializer, InventoryScopePreviewSerializer, InventoryTaskSerializer, LdapConfigurationUpdateSerializer, NotificationDeliverySerializer, PersonOptionSerializer, PersonSerializer, RackOptionSerializer, RackSerializer, RepairPartUsageCreateSerializer, RepairPartUsageSerializer, RepairRecordSerializer, RoleListResponseSerializer, ServerRoomOptionSerializer, ServerRoomSerializer, SoftwareLicenseSerializer, SparePartDetailSerializer, SparePartOptionSerializer, SparePartSerializer, SpareStockOptionSerializer, SpareStockSerializer, SpareStockTransactionSerializer, SmtpTestEmailSerializer, SystemResetSerializer, SystemSettingsPatchSerializer, SystemSettingsSnapshotSerializer, TagOptionSerializer, TagSerializer, TwoFactorCodeSerializer, UserBatchStatusResponseSerializer, UserBatchStatusSerializer, UserSerializer, _default_references_option
+from .serializers import AdminPasswordResetSerializer, ApiTokenCreateSerializer, ApiTokenSerializer, AssetAssignmentEventSerializer, AssetAssignmentReturnSerializer, AssetAssignmentTargetSerializer, AssetBatchAssignmentResponseSerializer, AssetBatchAssignmentSerializer, AssetBatchDeleteResponseSerializer, AssetBatchDeleteSerializer, AssetBulkEditResponseSerializer, AssetBulkEditSerializer, AssetDetailSerializer, AssetDisposalRequestSerializer, AssetListSerializer, AssetModelOptionSerializer, AssetModelSerializer, AssetSerializer, AssetTimelineSerializer, AssetWriteSerializer, AttachmentSerializer, AuditLogSerializer, BackupConfirmationSerializer, CurrentUserProfileSerializer, CustomFieldOptionSerializer, CustomFieldRuntimeSchemaSerializer, CustomFieldSerializer, CustomFieldSetItemsWriteSerializer, CustomFieldSetOptionSerializer, CustomFieldSetSerializer, DataCenterOptionSerializer, DataCenterSerializer, DepartmentOptionSerializer, DepartmentSerializer, DeviceTypeOptionSerializer, DeviceTypeSerializer, DictionaryOptionSerializer, FaultEventSerializer, InventoryBulkNormalResponseSerializer, InventoryBulkNormalSerializer, InventoryBulkResolutionResponseSerializer, InventoryBulkResolutionSerializer, InventoryInspectorSerializer, InventoryItemPageSerializer, InventoryItemSerializer, InventoryResolutionSerializer, InventoryScopePreviewQuerySerializer, InventoryScopePreviewSerializer, InventoryTaskSerializer, LdapConfigurationUpdateSerializer, NotificationDeliverySerializer, PersonOptionSerializer, PersonSerializer, RackOptionSerializer, RackSerializer, RepairPartUsageCreateSerializer, RepairPartUsageSerializer, RepairRecordSerializer, RoleListResponseSerializer, ServerRoomOptionSerializer, ServerRoomSerializer, SoftwareLicenseSerializer, SparePartDetailSerializer, SparePartOptionSerializer, SparePartSerializer, SpareStockOptionSerializer, SpareStockSerializer, SpareStockTransactionSerializer, SmtpTestEmailSerializer, SystemResetSerializer, SystemSettingsPatchSerializer, SystemSettingsSnapshotSerializer, TagOptionSerializer, TagSerializer, TwoFactorCodeSerializer, TwoFactorDisableSerializer, UserBatchStatusResponseSerializer, UserBatchStatusSerializer, UserSerializer, _default_references_option
 from .stock import create_spare_part_with_stock, record_stock_transaction, record_repair_part_usage
 from .inventory_writes import resolve_inventory_item, record_inventory_observation, update_inventory_task, delete_inventory_task, change_inventory_task_status, submit_inventory_batch
 from .fieldsets import fieldset_items_queryset, replace_fieldset_items, resolve_fieldset
@@ -76,7 +76,6 @@ from .physical_location import (
     lock_asset_location,
     lock_rack_location,
     lock_server_room_location,
-    lock_inventory_scope,
     place_asset,
 )
 from .inventory import get_inventory_scope_assets
@@ -119,6 +118,7 @@ from .ldap_auth import (
 from .ldap_configuration import (
     ConfigurationIdentityError,
     ConfigurationSecretError,
+    LdapPasswordReplacementRequired,
     configuration_errors,
     get_effective_ldap_configuration,
     merge_configuration,
@@ -127,7 +127,7 @@ from .ldap_configuration import (
 )
 from .configuration_secrets import ConfigurationSecretError, decrypt_secret, encrypt_secret
 from .attachment_storage import cleanup_attachment_file
-from .auth_security import default_api_token_expiry, generate_api_token, generate_totp_secret, provisioning_uri, totp_step_for_code
+from .auth_security import default_api_token_expiry, generate_api_token, generate_totp_secret, provisioning_uri, totp_step_for_code, is_fresh_totp_step
 from .auth_throttle import (
     clear_two_factor_throttle,
     register_two_factor_failure,
@@ -136,7 +136,7 @@ from .auth_throttle import (
 )
 from . import operation_limits
 from .smtp import SmtpConfigurationError, send_smtp_test_email
-from .permissions import BusinessRolePermission, CanExportAssets, CanExportFaults, CanExportInventory, CanExportLicenses, CanExportRacks, CanExportSpares, CanImportAssets, CanManageInventory, CanManageSystemSettings, CanResetSystem, CanViewAssetCustomFieldSchema, CanViewAssetTagsRuntime, CanViewAuditLog, CanViewDashboard, CanViewDepartmentRuntime, CanViewInventory, CanViewLicenses, CanViewManufacturerRuntime, CanViewPeopleRuntime, CanViewSparePartCategoryRuntime, IsSystemAdministrator
+from .permissions import BusinessRolePermission, CanConfigureSystemSettings, CanExportAssets, CanExportFaults, CanExportInventory, CanExportLicenses, CanExportRacks, CanExportSpares, CanImportAssets, CanManageInventory, CanManageSystemSettings, CanResetSystem, CanViewAssetCustomFieldSchema, CanViewAssetTagsRuntime, CanViewAuditLog, CanViewDashboard, CanViewDepartmentRuntime, CanViewInventory, CanViewLicenses, CanViewManufacturerRuntime, CanViewPeopleRuntime, CanViewSparePartCategoryRuntime, IsSystemAdministrator
 from .organization_access import (
     AccountActionDenied,
     can,
@@ -260,7 +260,7 @@ def _excel_value(value):
     """Keep user text as text so editable exports cannot inject formulas."""
     if value is None:
         return ""
-    if isinstance(value, str) and value[:1] in {"=", "+", "-", "@"}:
+    if isinstance(value, str) and value.lstrip()[:1] in {"=", "+", "-", "@"}:
         return f"'{value}"
     return value
 
@@ -1386,13 +1386,17 @@ class RackViewSet(AuditedModelViewSetMixin, ScopedModelViewSet):
         accepts = rack.is_active and rack.status == "in_use" and rack.room.is_active and rack.room.data_center.is_active
         holds = active_rack_reservations(rack)
         reservation_id = query.validated_data.get("reservation_id")
+        reservation = None
         if reservation_id is not None:
             from .rack_reservations import require_reservation_access
             require_reservation_access(rack, request, write=True)
-            if not any(row.pk == reservation_id for row in holds):
+            reservation = next((row for row in holds if row.pk == reservation_id), None)
+            if reservation is None:
                 raise NotFound("预留已结束或不属于目标机柜")
-            holds = [row for row in holds if row.pk != reservation_id]
-        ranges = rack_position_ranges(rack.allocations.all(), rack.total_u, exclude_asset_id=asset_id, reservations=holds)
+        ranges = rack_position_ranges(
+            rack.allocations.all(), rack.total_u, exclude_asset_id=asset_id, reservations=holds,
+            replace_reservation=reservation,
+        )
         return Response({"total_u": rack.total_u, "data_center_id": rack.room.data_center_id, "server_room_id": rack.room_id, "occupancy_restricted": restricted, "accepts_assets": accepts,
                          "available_ranges": None if restricted else ranges["available_ranges"] if accepts else [],
                          "gap_ranges": None if restricted else ranges["gap_ranges"],
@@ -2047,10 +2051,11 @@ class CustomFieldViewSet(SharedReferenceWriteMixin, AuditedModelViewSetMixin, Sc
         if not raw_id.isdigit():
             raise DRFValidationError({scope: "必须是有效的正整数 ID"})
         if scope == "asset":
-            asset = get_object_or_404(Asset.objects.select_related(
+            query = Asset.objects.select_related(
                 "asset_model__fieldset", "asset_model__device_type__default_fieldset",
                 "standalone_device_type__default_fieldset",
-            ), pk=int(raw_id))
+            )
+            asset = get_object_or_404(scoped(query, user=request.user), pk=int(raw_id))
             fieldset = resolve_fieldset(asset=asset)
             include_inactive = True
         elif scope == "asset_model":
@@ -2331,6 +2336,7 @@ class UserViewSet(ScopedModelViewSet):
 
     @action(detail=True, methods=["post"], url_path="reset-password")
     def reset_password(self, request, pk=None):
+        _security_change_requires_session(request)
         reset_account_password(request, self.get_object().pk)
         return Response({"ok": True})
 
@@ -2493,7 +2499,7 @@ def _inventory_items_queryset(task, request, *, filtered=True):
 class InventoryTaskViewSet(AuditedModelViewSetMixin, ScopedModelViewSet):
     queryset = InventoryTask.objects.select_related(
         "data_center", "server_room", "inspector"
-    ).prefetch_related("items")
+    )
     serializer_class = InventoryTaskSerializer
     permission_classes = [BusinessRolePermission]
     permission_resource = "inventory"
@@ -2503,6 +2509,30 @@ class InventoryTaskViewSet(AuditedModelViewSetMixin, ScopedModelViewSet):
     search_fields = ["name", "data_center__name", "server_room__name", "inspector__username"]
     ordering_fields = ["created_at", "start_at", "end_at", "name"]
     ordering = ["-created_at", "-id"]
+
+    def get_queryset(self):
+        queryset = super().get_queryset()
+        if self.action in {"list", "retrieve"}:
+            def item_count(**filters):
+                return Count("items", filter=Q(**filters))
+
+            exceptions = ~Q(items__status__in=("pending", "normal"))
+            queryset = queryset.annotate(
+                summary_total=Count("items"),
+                summary_pending=item_count(items__status="pending"),
+                summary_normal=item_count(items__status="normal"),
+                summary_location_mismatch=item_count(items__status="location_mismatch"),
+                summary_not_found=item_count(items__status="not_found"),
+                summary_info_mismatch=item_count(items__status="info_mismatch"),
+                summary_other=item_count(items__status="other"),
+                summary_resolution_pending=Count("items", filter=exceptions & Q(items__resolution_status="pending")),
+                summary_resolution_resolved=Count("items", filter=exceptions & Q(items__resolution_status="resolved")),
+                has_inventory_resolution=Exists(InventoryItem.objects.filter(task_id=OuterRef("pk")).filter(
+                    Q(resolution_status="resolved") | Q(resolved_by__isnull=False) | Q(resolved_at__isnull=False)
+                    | ~Q(resolution_action="") | ~Q(resolution_note__regex=r"^\s*$")
+                )),
+            )
+        return queryset
 
     def get_permissions(self):
         if self.action == "scope_preview":
@@ -2529,7 +2559,6 @@ class InventoryTaskViewSet(AuditedModelViewSetMixin, ScopedModelViewSet):
         description="预览创建盘点任务时将生成的资产范围，不创建任务或盘点明细。",
     )
     @action(detail=False, methods=["get"], url_path="scope-preview")
-    @transaction.atomic
     def scope_preview(self, request):
         query_params = {
             "scope": request.query_params.get("scope"),
@@ -2546,25 +2575,23 @@ class InventoryTaskViewSet(AuditedModelViewSetMixin, ScopedModelViewSet):
             raise PermissionDenied({"code": "data_scope_global_required", "detail": "全部资产盘点需要全局写入授权"})
         if data_center is not None:
             require_center(data_center.pk, user=request.user)
-        lock_inventory_scope(getattr(data_center, "pk", None), getattr(server_room, "pk", None))
         assets = get_inventory_scope_assets(data_center, server_room, scope=scope)
-        list(Asset.objects.select_for_update().filter(pk__in=assets.values("pk")).order_by("pk"))
-        require_queryset(assets)
-
-        total = assets.count()
-        racked = assets.filter(rack_allocation__isnull=False).count()
-        unracked = assets.filter(rack_allocation__isnull=True).count()
-        retired = assets.filter(status="retired").count()
-        unassigned = assets.filter(
-            rack_allocation__isnull=True,
-            asset_data_center__isnull=True,
-        ).count()
-        inactive_location = assets.filter(
-            Q(rack_allocation__rack__is_active=False)
-            | Q(rack_allocation__rack__room__is_active=False)
-            | Q(rack_allocation__rack__room__data_center__is_active=False)
-            | Q(rack_allocation__isnull=True, asset_data_center__is_active=False),
-        ).distinct().count()
+        require_queryset(assets, user=request.user)
+        counts = assets.aggregate(
+            total=Count("pk"),
+            racked=Count("pk", filter=Q(rack_allocation__isnull=False)),
+            retired=Count("pk", filter=Q(status="retired")),
+            unassigned=Count("pk", filter=Q(rack_allocation__isnull=True, asset_data_center__isnull=True)),
+            inactive_location=Count("pk", filter=(
+                Q(rack_allocation__rack__is_active=False)
+                | Q(rack_allocation__rack__room__is_active=False)
+                | Q(rack_allocation__rack__room__data_center__is_active=False)
+                | Q(rack_allocation__isnull=True, asset_data_center__is_active=False)
+            )),
+        )
+        total, racked = counts["total"], counts["racked"]
+        unracked = total - racked
+        retired, unassigned, inactive_location = counts["retired"], counts["unassigned"], counts["inactive_location"]
         warnings = []
         if unracked:
             warnings.append(f"当前范围包含 {unracked} 台未上架资产")
@@ -3059,15 +3086,10 @@ def _register_login_failure(
     return is_locked, retry_after
 
 
-def _clear_login_throttle(username, ip):
-    with transaction.atomic():
-        AuthThrottleState.objects.select_for_update().filter(
-            scope="account", key=_login_account_key(username),
-        ).update(failure_count=0, first_failed_at=None, locked_until=None)
-        AuthThrottleState.objects.select_for_update().filter(
-            scope="ip", key=ip,
-        ).update(failure_count=0, first_failed_at=None, locked_until=None)
-
+def _clear_login_throttle(username):
+    AuthThrottleState.objects.filter(
+        scope="account", key=_login_account_key(username),
+    ).update(failure_count=0, first_failed_at=None, locked_until=None)
 
 def _auth_response(user):
     # Authentication may have loaded the user before another editor saved it.
@@ -3207,7 +3229,7 @@ def auth_login(request):
             )
         return Response({"detail": "用户名或密码错误"}, status=400)
     user = authentication.user
-    _clear_login_throttle(username, ip)
+    _clear_login_throttle(username)
     profile = _security_profile(user)
     if authentication.auth_source == AUTH_SOURCE_LOCAL:
         if not profile.must_change_password and local_password_expired(user, profile=profile):
@@ -3239,6 +3261,7 @@ def auth_login(request):
         login(request, user, backend=LDAP_MODEL_BACKEND)
     else:
         login(request, user)
+    request.session.set_expiry(None)
     write_audit_log(
         request,
         action="login_success",
@@ -3254,11 +3277,11 @@ def auth_login(request):
     return Response(_auth_response(user))
 
 
-def _security_change_requires_session(request):
+def _security_change_requires_session(request, message="请使用浏览器登录会话管理账号安全设置"):
     """Do not let a bearer token change the account security boundary."""
 
     if request.auth is not None:
-        raise PermissionDenied("请使用浏览器登录会话管理账号安全设置")
+        raise PermissionDenied(message)
 
 
 def _two_factor_status_payload(profile):
@@ -3396,14 +3419,14 @@ def auth_2fa_confirm(request):
             )
         profile.two_factor_enabled = True
         profile.two_factor_confirmed_at = timezone.now()
-        profile.two_factor_last_used_step = None
+        profile.two_factor_last_used_step = step
         profile.save(update_fields=[
             "two_factor_enabled",
             "two_factor_confirmed_at",
             "two_factor_last_used_step",
             "updated_at",
         ])
-        clear_two_factor_throttle(request.user.pk, client_ip)
+        clear_two_factor_throttle(request.user.pk)
         write_audit_log(
             request,
             action="two_factor_enabled",
@@ -3414,12 +3437,14 @@ def auth_2fa_confirm(request):
     return Response(_two_factor_status_payload(profile))
 
 
-@extend_schema(request=TwoFactorCodeSerializer, responses=OpenApiTypes.OBJECT)
+@extend_schema(request=TwoFactorDisableSerializer, responses=OpenApiTypes.OBJECT)
 @api_view(["POST"])
 @permission_classes([IsAuthenticated])
 def auth_2fa_disable(request):
     _security_change_requires_session(request)
-    code = str(request.data.get("code", "")).strip()
+    serializer = TwoFactorDisableSerializer(data=request.data)
+    serializer.is_valid(raise_exception=True)
+    code = serializer.validated_data["code"]
     client_ip = _login_ip(request)
     locked, retry_after = two_factor_lock_status(request.user.pk, client_ip)
     if locked:
@@ -3428,6 +3453,13 @@ def auth_2fa_disable(request):
             status=429,
             headers={"Retry-After": str(retry_after)},
         )
+    try:
+        authentication = authenticate_with_source_routing(request, request.user.username, serializer.validated_data["password"])
+        password_verified = authentication.user.pk == request.user.pk
+    except AuthenticationFailure as exc:
+        if exc.infrastructure:
+            return Response({"detail": "认证服务暂时不可用", "code": "authentication_service_unavailable"}, status=503)
+        password_verified = False
     with transaction.atomic():
         profile = _locked_security_profile(request.user)
         if not profile.two_factor_enabled:
@@ -3444,7 +3476,8 @@ def auth_2fa_disable(request):
                 {"detail": "双重验证配置不可用", "code": "two_factor_unavailable"},
                 status=503,
             )
-        if totp_step_for_code(secret, code) is None:
+        step = totp_step_for_code(secret, code)
+        if not password_verified or not is_fresh_totp_step(step, profile.two_factor_last_used_step):
             is_locked, retry_after = _register_two_factor_management_failure(
                 request,
                 "disable",
@@ -3456,6 +3489,8 @@ def auth_2fa_disable(request):
                     status=429,
                     headers={"Retry-After": str(retry_after)},
                 )
+            if not password_verified:
+                return Response({"detail": "当前密码不正确", "code": "invalid_current_password"}, status=400)
             return Response(
                 {"detail": "验证码不正确或已过期", "code": "invalid_two_factor_code"},
                 status=400,
@@ -3471,7 +3506,7 @@ def auth_2fa_disable(request):
             "two_factor_last_used_step",
             "updated_at",
         ])
-        clear_two_factor_throttle(request.user.pk, client_ip)
+        clear_two_factor_throttle(request.user.pk)
         write_audit_log(
             request,
             action="two_factor_disabled",
@@ -3494,7 +3529,7 @@ def auth_2fa_verify(request):
             status=400,
         )
     try:
-        user = User.objects.get(pk=pending_user_id)
+        user = User.objects.get(pk=pending_user_id, is_active=True)
     except User.DoesNotExist:
         _clear_pending_two_factor(request)
         return Response(
@@ -3511,6 +3546,12 @@ def auth_2fa_verify(request):
             headers={"Retry-After": str(retry_after)},
         )
     with transaction.atomic():
+        if not User.objects.select_for_update().filter(pk=user.pk, is_active=True).exists():
+            _clear_pending_two_factor(request)
+            return Response(
+                {"detail": "双重验证会话已过期，请重新登录", "code": "two_factor_session_expired"},
+                status=400,
+            )
         profile = _locked_security_profile(user)
         if not profile.two_factor_enabled or not profile.two_factor_secret_encrypted:
             _clear_pending_two_factor(request)
@@ -3526,7 +3567,7 @@ def auth_2fa_verify(request):
                 status=503,
             )
         step = totp_step_for_code(secret, code)
-        if step is None or step == profile.two_factor_last_used_step:
+        if not is_fresh_totp_step(step, profile.two_factor_last_used_step):
             failures = int(request.session.get(TWO_FACTOR_PENDING_FAILURES_KEY, 0) or 0) + 1
             request.session[TWO_FACTOR_PENDING_FAILURES_KEY] = failures
             is_locked, retry_after = register_two_factor_failure(user.pk, client_ip)
@@ -3551,13 +3592,14 @@ def auth_2fa_verify(request):
             )
         profile.two_factor_last_used_step = step
         profile.save(update_fields=["two_factor_last_used_step", "updated_at"])
-        clear_two_factor_throttle(user.pk, client_ip)
+        clear_two_factor_throttle(user.pk)
         source = request.session.get(TWO_FACTOR_PENDING_SOURCE_KEY)
         if source == AUTH_SOURCE_LDAP:
             login(request, user, backend=LDAP_MODEL_BACKEND)
         else:
             login(request, user)
         _clear_pending_two_factor(request)
+        request.session.set_expiry(None)
         write_audit_log(
             request,
             action="login_success",
@@ -3718,12 +3760,15 @@ def auth_ldap_config(request):
         current = get_effective_ldap_configuration()
         password_value = serializer.validated_data.get("bind_password", "")
         password_submitted = bool(password_value)
-        candidate = merge_configuration(
-            current,
-            serializer.validated_data,
-            password_submitted=password_submitted,
-            password_value=password_value,
-        )
+        try:
+            candidate = merge_configuration(
+                current,
+                serializer.validated_data,
+                password_submitted=password_submitted,
+                password_value=password_value,
+            )
+        except LdapPasswordReplacementRequired as exc:
+            return Response({"bind_password": str(exc)}, status=400)
         errors = configuration_errors(candidate, require_password=candidate.enabled)
         if candidate.enabled and errors:
             return Response(errors, status=400)
@@ -3857,13 +3902,17 @@ def auth_ldap_diagnostics(request):
                 return Response(serializer.errors, status=400)
             current = get_effective_ldap_configuration()
             password_value = serializer.validated_data.get("bind_password", "")
-            staged_configuration = merge_configuration(
-                current,
-                serializer.validated_data,
-                password_submitted=bool(password_value),
-                password_value=password_value,
-            )
-            staged_errors = configuration_errors(staged_configuration, require_password=True)
+            try:
+                staged_configuration = merge_configuration(
+                    current,
+                    serializer.validated_data,
+                    password_submitted=bool(password_value),
+                    password_value=password_value,
+                )
+            except LdapPasswordReplacementRequired as exc:
+                staged_errors = {"bind_password": str(exc)}
+            else:
+                staged_errors = configuration_errors(staged_configuration, require_password=True)
             if staged_errors:
                 _write_ldap_diagnostic_audit(
                     request,
@@ -3970,8 +4019,9 @@ def _submit_web_maintenance(request, kind, filename=""):
 @extend_schema(request=OpenApiTypes.NONE, responses=OpenApiTypes.BINARY)
 @api_view(["GET"])
 @permission_classes([CanResetSystem])
+@global_endpoint
 def system_backup_download(request, backup_id):
-    del request
+    _security_change_requires_session(request, "请使用浏览器登录会话下载备份")
     try:
         download = open_backup_download(backup_id)
     except MaintenanceError as exc:
@@ -3981,6 +4031,7 @@ def system_backup_download(request, backup_id):
         as_attachment=True,
         filename=download.filename,
         content_type="application/gzip",
+        headers={"Cache-Control": "no-store"},
     )
 
 
@@ -4032,7 +4083,7 @@ def system_reset(request):
         required=True, description="系统设置快照的 revision；与品牌设置共享版本，缺少 428，过期 409。")])
 @extend_schema(responses=SystemSettingsSnapshotSerializer, methods=["GET"])
 @api_view(["GET", "PATCH"])
-@permission_classes([CanManageSystemSettings])
+@permission_classes([CanConfigureSystemSettings])
 @global_endpoint
 def system_settings(request):
     if request.method == "GET":
@@ -4056,7 +4107,7 @@ def system_settings(request):
 
 @extend_schema(request=SmtpTestEmailSerializer, responses=OpenApiTypes.OBJECT)
 @api_view(["POST"])
-@permission_classes([CanManageSystemSettings])
+@permission_classes([IsSystemAdministrator])
 @global_endpoint
 def smtp_test_email(request):
     serializer = SmtpTestEmailSerializer(data=request.data)
@@ -4933,7 +4984,7 @@ def rack_layout_export(request):
             group_start = 1
             group_end = group_start + len(prefix_racks) * (rack_width + gap) - gap - 1
             sheet.merge_cells(start_row=row_cursor, start_column=group_start, end_row=row_cursor, end_column=group_end)
-            group_cell = sheet.cell(row_cursor, group_start, f"{prefix} 组")
+            group_cell = sheet.cell(row_cursor, group_start, _excel_value(f"{prefix} 组"))
             group_cell.font = Font(bold=True, color="FFFFFF")
             group_cell.fill = PatternFill("solid", fgColor="1F4E78")
             group_cell.alignment = Alignment(horizontal="center")
@@ -4953,7 +5004,7 @@ def rack_layout_export(request):
                 holds = active_rack_reservations(rack)
                 effective_used_u = rack_effective_used_u(list(rack.allocations.all()), rack.total_u, reservations=holds)
                 meta_text = f"{rack.room.name} | {rack.total_u} U | 占用信息：无权限" if occupancy_restricted else f"{rack.room.name} | {rack.total_u} U | 已用 {effective_used_u} U（预留 {sum(row.units for row in holds)} U） | 可用 {rack.total_u - effective_used_u} U"
-                meta = sheet.cell(rack_top + 1, start_col, meta_text)
+                meta = sheet.cell(rack_top + 1, start_col, _excel_value(meta_text))
                 meta.font = Font(size=9, color="44546A")
                 meta.alignment = Alignment(horizontal="center")
                 sheet.column_dimensions[get_column_letter(start_col)].width = RACK_LAYOUT_SIDE_COLUMN_WIDTH
@@ -4994,7 +5045,7 @@ def rack_layout_export(request):
                         sheet.cell(row, start_col + 1).fill = PatternFill("solid", fgColor="FFF1CC")
                     if top != bottom:
                         sheet.merge_cells(start_row=top, start_column=start_col + 1, end_row=bottom, end_column=start_col + 1)
-                    cell = sheet.cell(top, start_col + 1, f"预留：{hold.purpose}")
+                    cell = sheet.cell(top, start_col + 1, _excel_value(f"预留：{hold.purpose}"))
                     cell.alignment = Alignment(horizontal="center", vertical="center", wrap_text=True)
                 for allocation in rack.allocations.all():
                     top_row = rack_top + 3 + (rack.total_u - allocation.end_u)
@@ -5015,7 +5066,7 @@ def rack_layout_export(request):
                             sheet.cell(row, col).fill = device_fill
                     if top_row != bottom_row:
                         sheet.merge_cells(start_row=top_row, start_column=start_col + 1, end_row=bottom_row, end_column=end_col - 1)
-                    cell = sheet.cell(top_row, start_col + 1, text)
+                    cell = sheet.cell(top_row, start_col + 1, _excel_value(text))
                     cell.alignment = Alignment(horizontal="center", vertical="center", wrap_text=True)
                     cell.font = Font(size=9, bold=True)
             row_cursor = rack_top + 3 + max_u + 2

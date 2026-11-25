@@ -527,6 +527,13 @@ def _validate_candidate_values(
                 errors["application_url"] = "请输入不含账号、查询参数或片段的 HTTPS 应用地址"
         if errors:
             raise SystemSettingsValidationError({"notifications": {"email_digest": {key: [value] for key, value in errors.items()}}})
+    if current.smtp_password_encrypted and not smtp_password and any(
+        values[field] != getattr(current, field)
+        for field in ("smtp_host", "smtp_port", "smtp_username", "smtp_security_mode")
+    ):
+        raise SystemSettingsValidationError({
+            "smtp": {"password": ["修改 SMTP 服务端、用户名或传输安全设置时，请重新输入密码"]},
+        })
     password_configured = bool(smtp_password) or bool(current.smtp_password_encrypted)
     if values.get("smtp_enabled"):
         errors = {}

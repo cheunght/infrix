@@ -122,12 +122,20 @@ class CanResetSystem(BasePermission):
 
 
 class CanManageSystemSettings(BasePermission):
-    """Use the existing settings view/manage capabilities by HTTP method."""
+    """Use the shared settings capabilities for reference data."""
 
     message = "当前角色没有系统设置权限"
 
     def has_permission(self, request, view):
         capability = "settings.view" if request.method in SAFE_METHODS else "settings.manage"
+        return can(request.user, capability)
+
+
+class CanConfigureSystemSettings(BasePermission):
+    message = "当前角色没有执行此系统设置操作的权限"
+
+    def has_permission(self, request, view):
+        capability = "settings.view" if request.method in SAFE_METHODS else "organization.manage"
         return can(request.user, capability)
 
 

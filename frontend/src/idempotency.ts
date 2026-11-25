@@ -8,9 +8,11 @@ export async function prepareIdempotency(path: string, options: RequestInit, hea
     !(route === "/spare-transactions/" || /^\/fault-events\/\d+\/part-usages\/$/.test(route)) ||
     headers.has("Idempotency-Key")) return () => {};
   if (typeof options.body !== "string") throw new Error("This mutation requires a JSON body");
-  const fingerprint = Array.from(new Uint8Array(await crypto.subtle.digest(
-    "SHA-256", new TextEncoder().encode(`${path}\n${options.body}`),
-  )), (byte) => byte.toString(16).padStart(2, "0")).join("");
+  const payload = new TextEncoder().encode(`${path}\n${options.body}`);
+  const digest = globalThis.crypto.subtle
+    ? new Uint8Array(await globalThis.crypto.subtle.digest("SHA-256", payload))
+    : (await import("@noble/hashes/sha256")).sha256(payload);
+  const fingerprint = Array.from(digest, (byte) => byte.toString(16).padStart(2, "0")).join("");
   const storageKey = prefix + fingerprint;
   let key = pending.get(fingerprint);
   try { key ||= sessionStorage.getItem(storageKey) || undefined; } catch { /* Privacy mode: retain in memory. */ }

@@ -87,3 +87,4 @@ def consume_units(*, rack_id, reservation_id, asset_id, start_u, end_u, request)
     row.save(update_fields=["status", "closed_by", "closed_at", "consumed_asset", "updated_at"])
     rack.save(update_fields=["updated_at"])
     _audit(row, request, "consumed")
+    return row

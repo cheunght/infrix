@@ -117,9 +117,11 @@ MYSQL_PWD='<database-password>' mariadb \
 
 源码目录至少应包含 `backend/manage.py`、`backend/requirements.txt`、`frontend/package.json` 和 `frontend/package-lock.json`。不要把 `/etc/infrix/infrix.env`、数据库、密码、密钥、备份或运行时数据放入源码目录。
 
+应用代码、虚拟环境和静态资源归 root 所有，关闭组和其他账号的写权限。服务账号可写 `/opt/infrix/var`、应用备份目录和维护目录。设置 `INFRIX_MEDIA_ROOT=/opt/infrix/var/media`，或指定服务账号可写的独立父目录以支持原子替换附件。自定义父目录也需要列入 `ReadWritePaths`。
+
 ## 6. 配置生产环境
 
-应用进程使用一份生产环境文件。默认路径为 `/etc/infrix/infrix.env`；如果使用其他路径，必须让进程管理器和 `INFIX_ENV_FILE` 保持一致。字段以仓库的 [`deploy/infrix.env.example`](../deploy/infrix.env.example) 为唯一参考。
+应用进程使用一份生产环境文件。默认路径为 `/etc/infrix/infrix.env`；如果使用其他路径，必须让进程管理器和 `INFRIX_ENV_FILE` 保持一致。环境文件使用单行字面量 `KEY=value`，通过 `backend/run.sh` 运行管理命令。用自定义路径执行验收时，向 `verify-release.sh` 传入 `ENV_FILE`。字段见 [`deploy/infrix.env.example`](../deploy/infrix.env.example)。
 
 创建目录并保护文件：
 
@@ -183,9 +185,9 @@ SMTP 是可选项，不会阻止应用启动。在“系统设置 → SMTP”中
 
 ```bash
 cd /opt/infrix/backend
-/opt/infrix/backend/.venv/bin/python manage.py migrate --noinput
-/opt/infrix/backend/.venv/bin/python manage.py initialize_system_data
-/opt/infrix/backend/.venv/bin/python manage.py collectstatic --noinput --clear
+sudo -u infrix /opt/infrix/backend/run.sh migrate --noinput
+sudo -u infrix /opt/infrix/backend/run.sh initialize_system_data
+/opt/infrix/backend/run.sh collectstatic --noinput --clear
 ```
 
 ## 9. 应用服务和进程管理
@@ -224,6 +226,11 @@ EnvironmentFile=/etc/infrix/infrix.env
 ExecStart=/opt/infrix/backend/.venv/bin/python manage.py send_notification_digest
 PrivateTmp=true
 NoNewPrivileges=true
+ProtectSystem=strict
+ReadWritePaths=/opt/infrix/var /var/lib/infrix/backups /var/lib/infrix/maintenance
+CapabilityBoundingSet=
+UMask=0027
+Environment=PYTHONDONTWRITEBYTECODE=1
 ```
 
 使用 systemd timer 调度，并执行：
@@ -237,7 +244,7 @@ sudo systemctl status infrix-notification-digest.timer --no-pager
 需要时可手工执行：
 
 ```bash
-sudo -u infrix /opt/infrix/backend/.venv/bin/python /opt/infrix/backend/manage.py send_notification_digest
+sudo -u infrix /opt/infrix/backend/run.sh send_notification_digest
 ```
 
 ### 进程与数据库连接配置
@@ -263,6 +270,7 @@ sudo -u infrix /opt/infrix/backend/.venv/bin/python /opt/infrix/backend/manage.p
 ```nginx
 location /api/ {
     proxy_pass http://127.0.0.1:8001;
+    proxy_read_timeout 135s;
     proxy_set_header Host $host;
     proxy_set_header X-Real-IP $remote_addr;
     proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
@@ -271,7 +279,10 @@ location /api/ {
 
 location /admin/ {
     proxy_pass http://127.0.0.1:8001;
+    proxy_read_timeout 135s;
     proxy_set_header Host $host;
+    proxy_set_header X-Real-IP $remote_addr;
+    proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
     proxy_set_header X-Forwarded-Proto $http_x_forwarded_proto;
 }
 
@@ -284,7 +295,7 @@ location / {
 }
 ```
 
-生产流量必须使用 HTTPS。外部网关终止 TLS 时，只有可信网关可以访问内部 Nginx，并且必须覆盖 `X-Forwarded-Proto` 为唯一值。使用本机 Nginx 终止 TLS 时，配置证书和安全请求头，并确保 Django 收到正确的 HTTPS 状态；不要信任任意客户端提交的转发头。
+生产流量必须使用 HTTPS。外部网关终止 TLS 时，只有可信网关可以访问内部 Nginx，网关必须覆盖客户端提交的转发头，并将 `X-Forwarded-Proto` 写为唯一值。需要按原始客户端地址限流时，把已核验的网关源 IP 加入 `DJANGO_TRUSTED_PROXY_IPS`。使用本机 Nginx 终止 TLS 时，配置证书和安全请求头，并确保 Django 收到正确的 HTTPS 状态；不要信任任意客户端提交的转发头。
 
 ## 11. 安装和升级流程
 
@@ -335,7 +346,7 @@ bash deploy/doctor.sh https://<hostname>
 ```
 
 该脚本要求真实 HTTPS、HTTP 200、有效 SPA 内容、CSRF token 和品牌接口均正常。
-使用随附的 systemd/Nginx 布局时，还可以运行完整的只读验收：
+使用随附的 systemd/Nginx 布局时，还可以运行部署验收：
 
 ```bash
 sudo env BASE_URL=https://<hostname> bash deploy/verify-release.sh
@@ -362,9 +373,9 @@ sudo env BASE_URL=https://<hostname> bash deploy/verify-release.sh
 在已加载生产环境文件的 shell 中执行只读检查或同一套核心服务：
 
 ```bash
-sudo -u infrix bash -c 'set -a; . /etc/infrix/infrix.env; set +a; cd /opt/infrix/backend; exec .venv/bin/python manage.py check_backup --json'
-sudo -u infrix bash -c 'set -a; . /etc/infrix/infrix.env; set +a; cd /opt/infrix/backend; exec .venv/bin/python manage.py create_backup'
-sudo -u infrix bash -c 'set -a; . /etc/infrix/infrix.env; set +a; cd /opt/infrix/backend; exec .venv/bin/python manage.py restore_backup infrix-backup-YYYYMMDD-HHMMSS.tar.gz --confirm-restore "RESTORE INFRIX"'
+sudo -u infrix /opt/infrix/backend/run.sh check_backup --json
+sudo -u infrix /opt/infrix/backend/run.sh create_backup
+sudo -u infrix /opt/infrix/backend/run.sh restore_backup infrix-backup-YYYYMMDD-HHMMSS.tar.gz --confirm-restore "RESTORE INFRIX"
 ```
 
 当前没有内置定时备份和保留策略。如需定时执行，应由部署方另行评审外部 systemd
@@ -400,7 +411,7 @@ sudo journalctl -u infrix -f
 
 ```bash
 cd /opt/infrix/backend
-/opt/infrix/backend/.venv/bin/python manage.py migrate --noinput
+sudo -u infrix /opt/infrix/backend/run.sh migrate --noinput
 /opt/infrix/backend/.venv/bin/python manage.py showmigrations assets
 ```
 

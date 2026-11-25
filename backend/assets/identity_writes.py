@@ -8,7 +8,7 @@ from django.db.models import F, Q
 from django.db.models.deletion import ProtectedError
 from django.shortcuts import get_object_or_404
 from django.utils import timezone
-from rest_framework.exceptions import APIException, ValidationError as DRFValidationError
+from rest_framework.exceptions import APIException, PermissionDenied, ValidationError as DRFValidationError
 from .audit import write_audit_log
 from .data_scope import scope_for
 from .ldap_auth import is_directory_managed
@@ -152,7 +152,10 @@ def reset_account_password(request, user_id):
     try:
         validate_account_action(target=instance, action="reset_password", actor=request.user)
     except AccountActionDenied as exc:
-        raise DRFValidationError({"detail": str(exc), "code": exc.code}) from exc
+        detail = {"detail": str(exc), "code": exc.code}
+        if exc.code == "directory_password_managed":
+            raise DRFValidationError(detail) from exc
+        raise PermissionDenied(detail) from exc
     serializer = AdminPasswordResetSerializer(
         data=request.data,
         context={"user": instance},

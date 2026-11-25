@@ -12,7 +12,7 @@ PASSWORD_CHANGE_PATHS = frozenset({
 })
 
 
-def requires_password_change(user):
+def requires_password_change(user, *, mark_expired=True):
     if not user or not user.is_authenticated:
         return False
     profile = UserSecurityProfile.objects.filter(user_id=user.pk).first()
@@ -21,13 +21,14 @@ def requires_password_change(user):
     if profile.must_change_password:
         return True
     if local_password_expired(user, profile=profile):
-        UserSecurityProfile.objects.filter(pk=profile.pk).update(must_change_password=True)
+        if mark_expired:
+            UserSecurityProfile.objects.filter(pk=profile.pk).update(must_change_password=True)
         return True
     return False
 
 
-def enforce_api_password_policy(request, user):
-    if request.path not in PASSWORD_CHANGE_PATHS and requires_password_change(user):
+def enforce_api_password_policy(request, user, *, mark_expired=True):
+    if request.path not in PASSWORD_CHANGE_PATHS and requires_password_change(user, mark_expired=mark_expired):
         raise PermissionDenied({
             "detail": "首次登录或密码过期后必须修改密码",
             "code": "password_change_required",

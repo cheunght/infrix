@@ -361,6 +361,10 @@ def validate_account_action(*, target, action: str, actor) -> None:
     if action == "reset_password":
         from ..ldap_auth import is_directory_managed
 
+        if is_current_user:
+            raise AccountActionDenied("请使用个人密码修改入口", code="self_password_reset_forbidden")
+        if target.is_superuser and not getattr(actor, "is_superuser", False):
+            raise AccountActionDenied("仅超级管理员可以重置其他超级管理员的密码", code="superuser_password_protected")
         if is_directory_managed(target):
             raise AccountActionDenied(
                 "Directory-managed accounts must change passwords through the corporate directory.",

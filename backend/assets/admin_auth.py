@@ -17,7 +17,7 @@ from django.views.decorators.csrf import csrf_protect
 from django.views.decorators.debug import sensitive_post_parameters
 from django.utils.decorators import method_decorator
 
-from .auth_security import totp_step_for_code
+from .auth_security import is_fresh_totp_step, totp_step_for_code
 from .auth_throttle import (
     clear_two_factor_throttle,
     register_two_factor_failure,
@@ -165,7 +165,7 @@ class SecureAdminSite(admin.AdminSite):
                 form.add_error(None, _("Too many failed attempts. Please try again later."))
         if request.method == "POST" and not locked and form.is_valid():
             user = form.get_user()
-            _clear_login_throttle(username, client_ip)
+            _clear_login_throttle(username)
             profile = UserSecurityProfile.objects.filter(user_id=user.pk).first()
             target = "/" if requires_password_change(user) else _admin_redirect(request, self.name)
             if profile and profile.two_factor_enabled:
@@ -178,7 +178,8 @@ class SecureAdminSite(admin.AdminSite):
                 auth_login(request, user, backend=LDAP_MODEL_BACKEND)
             else:
                 auth_login(request, user)
-            request.session[ADMIN_2FA_VERIFIED_USER_KEY] = user.pk
+            request.session.pop(ADMIN_2FA_VERIFIED_USER_KEY, None)
+            request.session.set_expiry(None)
             return HttpResponseRedirect(target)
         if request.method == "POST" and not locked and form.errors:
             actor = None
@@ -225,37 +226,37 @@ class SecureAdminSite(admin.AdminSite):
         locked, retry_after = two_factor_lock_status(user.pk, client_ip)
         if request.method == "POST" and not locked:
             code = str(request.POST.get("code", "")).strip()
-            profile = UserSecurityProfile.objects.filter(user_id=user.pk).first()
             step = None
-            if profile and profile.two_factor_enabled and profile.two_factor_secret_encrypted:
-                try:
-                    secret = decrypt_secret(profile.two_factor_secret_encrypted)
-                    step = totp_step_for_code(secret, code)
-                except ConfigurationSecretError:
-                    form.add_error(None, _("Two-factor authentication is unavailable."))
-            if step is not None and profile and step != profile.two_factor_last_used_step:
-                with transaction.atomic():
-                    profile = UserSecurityProfile.objects.select_for_update().get(pk=profile.pk)
-                    if step == profile.two_factor_last_used_step:
-                        step = None
-                    else:
-                        profile.two_factor_last_used_step = step
-                        profile.save(update_fields=["two_factor_last_used_step", "updated_at"])
-                if step is not None:
-                    clear_two_factor_throttle(user.pk, client_ip)
-                    source = request.session.get(ADMIN_PENDING_SOURCE_KEY)
-                    if source == AUTH_SOURCE_LDAP:
-                        auth_login(request, user, backend=LDAP_MODEL_BACKEND)
-                    else:
-                        auth_login(request, user)
-                    request.session[ADMIN_2FA_VERIFIED_USER_KEY] = user.pk
-                    target = request.session.get(ADMIN_PENDING_NEXT_KEY) or reverse(
-                        "admin:index", current_app=self.name
-                    )
-                    if requires_password_change(user):
-                        target = "/"
+            with transaction.atomic():
+                if not User.objects.select_for_update().filter(pk=user.pk, is_active=True, is_staff=True).exists():
                     _clear_admin_pending(request)
-                    return HttpResponseRedirect(target)
+                    return HttpResponseRedirect(reverse("admin:login"))
+                profile = UserSecurityProfile.objects.select_for_update().filter(user_id=user.pk).first()
+                if profile and profile.two_factor_enabled and profile.two_factor_secret_encrypted:
+                    try:
+                        secret = decrypt_secret(profile.two_factor_secret_encrypted)
+                        candidate = totp_step_for_code(secret, code)
+                    except ConfigurationSecretError:
+                        form.add_error(None, _("Two-factor authentication is unavailable."))
+                    else:
+                        if is_fresh_totp_step(candidate, profile.two_factor_last_used_step):
+                            step = candidate
+                            profile.two_factor_last_used_step = step
+                            profile.save(update_fields=["two_factor_last_used_step", "updated_at"])
+            if step is not None:
+                clear_two_factor_throttle(user.pk)
+                source = request.session.get(ADMIN_PENDING_SOURCE_KEY)
+                if source == AUTH_SOURCE_LDAP:
+                    auth_login(request, user, backend=LDAP_MODEL_BACKEND)
+                else:
+                    auth_login(request, user)
+                request.session[ADMIN_2FA_VERIFIED_USER_KEY] = user.pk
+                target = request.session.get(ADMIN_PENDING_NEXT_KEY) or reverse("admin:index", current_app=self.name)
+                if requires_password_change(user):
+                    target = "/"
+                _clear_admin_pending(request)
+                request.session.set_expiry(None)
+                return HttpResponseRedirect(target)
 
             if not form.errors:
                 is_locked, retry_after = register_two_factor_failure(user.pk, client_ip)

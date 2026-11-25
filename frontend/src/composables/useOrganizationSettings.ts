@@ -442,6 +442,7 @@ export function useOrganizationSettings(deps: OrganizationSettingsDeps) {
     ldapDiagnosticLoading.value = true;
     ldapDiagnosticError.value = "";
     ldapDiagnosticResult.value = null;
+    ldapConfigurationFormErrors.value = {};
     try {
       const result = await deps.request<LdapDiagnosticResult>("/auth/ldap/diagnostics/", {
         method: "POST",
@@ -456,6 +457,12 @@ export function useOrganizationSettings(deps: OrganizationSettingsDeps) {
       ldapDiagnosticResult.value = normalized;
       return normalized.success;
     } catch (error) {
+      const fieldErrors = extractFieldErrors(error, LDAP_CONFIGURATION_FIELDS);
+      if (Object.keys(fieldErrors).length) {
+        ldapConfigurationFormErrors.value = fieldErrors;
+        ldapDiagnosticError.value = tr("settings.ldapConfigurationValidationFailed");
+        return false;
+      }
       const details = error && typeof error === "object" && "details" in error
         ? (error as { details?: unknown }).details
         : undefined;

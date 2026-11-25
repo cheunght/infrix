@@ -55,7 +55,7 @@ def _maintenance_alerts(today, expiry_days=ALERT_EXPIRY_DAYS, limit=None, *, use
     alerts = []
     contracts = (
         _authorized(MaintenanceContract, user).select_related("asset")
-        .filter(expiry_date__isnull=False, expiry_date__lte=expiry_limit)
+        .filter(asset__archived_at__isnull=True, expiry_date__isnull=False, expiry_date__lte=expiry_limit)
         .order_by("expiry_date", "asset__asset_no", "id")
     )
     if limit is not None:
@@ -232,6 +232,7 @@ def _alert_counts(*, today, now, setting, include_assets, include_licenses, incl
     if include_assets and setting.notify_maintenance:
         expiry_limit = today + timedelta(days=max(0, int(setting.maintenance_expiry_days)))
         maintenance = _authorized(MaintenanceContract, user).filter(
+            asset__archived_at__isnull=True,
             expiry_date__isnull=False,
             expiry_date__lte=expiry_limit,
         )

@@ -78,6 +78,10 @@ def totp_step_for_code(secret: str, code: str, *, now: float | None = None) -> i
     return None
 
 
+def is_fresh_totp_step(step: int | None, last_used_step: int | None) -> bool:
+    return step is not None and (last_used_step is None or step > last_used_step)
+
+
 def hash_api_token(raw_token: str) -> str:
     """Hash a high-entropy token with the deployment secret before storage."""
 
@@ -96,6 +100,10 @@ def default_api_token_expiry():
 
 def token_is_expired(token: PersonalAccessToken) -> bool:
     return token.expires_at is not None and token.expires_at < timezone.localdate()
+
+
+def _is_read_only_import_preview(request):
+    return getattr(getattr(request, "resolver_match", None), "url_name", None) == "asset_import_preview"
 
 
 class PersonalAccessTokenAuthentication(BaseAuthentication):
@@ -125,11 +133,13 @@ class PersonalAccessTokenAuthentication(BaseAuthentication):
 
         from .data_scope import admit
         admit(request, token.user)
-        enforce_api_password_policy(request, token.user)
+        record_usage = not _is_read_only_import_preview(request)
+        enforce_api_password_policy(request, token.user, mark_expired=record_usage)
 
-        now = timezone.now()
-        if token.last_used_at is None or token.last_used_at <= now - timedelta(minutes=5):
-            PersonalAccessToken.objects.filter(pk=token.pk).update(last_used_at=now)
+        if record_usage:
+            now = timezone.now()
+            if token.last_used_at is None or token.last_used_at <= now - timedelta(minutes=5):
+                PersonalAccessToken.objects.filter(pk=token.pk).update(last_used_at=now)
         return token.user, token
 
     def authenticate_header(self, request):
@@ -145,7 +155,7 @@ class PolicySessionAuthentication(SessionAuthentication):
         if result is not None:
             from .data_scope import admit
             admit(request, result[0])
-            enforce_api_password_policy(request, result[0])
+            enforce_api_password_policy(request, result[0], mark_expired=not _is_read_only_import_preview(request))
         return result
 
 
